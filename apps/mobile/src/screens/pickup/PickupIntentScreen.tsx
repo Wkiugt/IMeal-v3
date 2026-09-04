@@ -1,354 +1,159 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ActivityIndicator,
-  Alert,
-  TouchableOpacity,
-  ScrollView,
-  Animated,
-} from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
-import { pickupAPI, PickupOption } from '../../api/pickupAPI';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Check, Clock3, Square } from 'lucide-react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { Check, Square } from 'lucide-react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation';
+import { useSession } from '../../auth/session';
+import { pickupAPI, type PickupOption } from '../../api/pickupAPI';
+import { initials } from '../../businessDate';
+import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
+import { PrototypeFrame, employeeNav, hybridEmployeeNav, PrototypeSectionTitle } from '../../ui/PrototypeShell';
+import { theme } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PickupIntent'>;
 
-export const PickupIntentScreen: React.FC<Props> = ({ route }) => {
-  const token = route.params.token;
+export function PickupIntentScreen({ navigation }: Props) {
+  const { token, profile, canUseKitchen } = useSession();
   const [loading, setLoading] = useState(true);
   const [options, setOptions] = useState<PickupOption[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [qrValue, setQrValue] = useState<string | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(5);
-
+  const [timeLeft, setTimeLeft] = useState(0);
   const progressAnim = useRef(new Animated.Value(1)).current;
 
-  const fetchOptions = async () => {
+  const fetchOptions = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
     try {
-      const res = await pickupAPI.getPickupOptions(token);
-      setOptions(res.options);
-      // Auto-select one item by default
-      if (res.options.length > 0) {
-        setSelectedIds(new Set([res.options[0].registrationId]));
-      } else {
-        setSelectedIds(new Set());
-      }
+      const response = await pickupAPI.getPickupOptions(token);
+      setOptions(response.options);
+      setSelectedIds((current) => current.size > 0 ? new Set([...current].filter((id) => response.options.some((option) => option.registrationId === id))) : new Set(response.options[0] ? [response.options[0].registrationId] : []));
     } catch (error: unknown) {
-      Alert.alert(
-        'Error',
-        error instanceof Error
-          ? error.message
-          : 'Unable to load pickup options',
-      );
+      Alert.alert('Pickup unavailable', error instanceof Error ? error.message : 'Unable to load pickup options');
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
 
-  useFocusEffect(
-    useCallback(() => {
-      void fetchOptions();
-    }, [token]),
-  );
+  useFocusEffect(useCallback(() => { void fetchOptions(); }, [fetchOptions]));
 
   useEffect(() => {
-    if (!isGenerating) {
+    if (!isGenerating || !token) {
       setQrValue(null);
       return;
     }
-
-    let refreshInterval: NodeJS.Timeout | undefined;
-    let countdownInterval: NodeJS.Timeout | undefined;
-    let isMounted = true;
-
-    const fetchQR = async () => {
-      if (!isMounted) return;
+    let cancelled = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let countdownTimer: ReturnType<typeof setInterval> | undefined;
+    const refresh = async () => {
+      if (cancelled) return;
       const ids = Array.from(selectedIds);
-      if (ids.length === 0) {
-        setIsGenerating(false);
-        return;
-      }
+      if (ids.length === 0) { setIsGenerating(false); return; }
       try {
         setQrLoading(true);
-        const res = await pickupAPI.generateQr(token, ids);
-        if (isMounted) {
-          setQrValue(res.qr);
-          setTimeLeft(5);
-          progressAnim.setValue(1);
-          Animated.timing(progressAnim, {
-            toValue: 0,
-            duration: 5000,
-            useNativeDriver: false,
-          }).start();
-        }
+        const response = await pickupAPI.generateQr(token, ids);
+        if (cancelled) return;
+        const ttl = response.ttl > 0 ? response.ttl : 5;
+        setQrValue(response.qr);
+        setTimeLeft(ttl);
+        progressAnim.setValue(1);
+        Animated.timing(progressAnim, { toValue: 0, duration: ttl * 1000, useNativeDriver: false }).start();
+        refreshTimer = setTimeout(() => { void refresh(); }, ttl * 1000);
       } catch (error: unknown) {
-        Alert.alert(
-          'QR unavailable',
-          error instanceof Error ? error.message : 'Unable to generate QR code',
-        );
-        setIsGenerating(false);
+        if (!cancelled) {
+          Alert.alert('QR unavailable', error instanceof Error ? error.message : 'Unable to generate QR code');
+          setIsGenerating(false);
+        }
       } finally {
-        if (isMounted) setQrLoading(false);
+        if (!cancelled) setQrLoading(false);
       }
     };
-
-    void fetchQR();
-    refreshInterval = setInterval(() => {
-      if (isMounted) {
-        void fetchQR();
-      }
-    }, 5000);
-
-    countdownInterval = setInterval(() => {
-      if (isMounted) {
-        setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
-      }
-    }, 1000);
-
+    void refresh();
+    countdownTimer = setInterval(() => setTimeLeft((current) => Math.max(0, current - 1)), 1000);
     return () => {
-      isMounted = false;
-      clearInterval(refreshInterval);
-      clearInterval(countdownInterval);
+      cancelled = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      if (countdownTimer) clearInterval(countdownTimer);
       progressAnim.stopAnimation();
     };
-  }, [isGenerating, selectedIds]);
+  }, [isGenerating, progressAnim, selectedIds, token]);
 
   const toggleSelection = (registrationId: string) => {
-    const next = new Set(selectedIds);
-    if (next.has(registrationId)) {
-      next.delete(registrationId);
-    } else {
-      next.add(registrationId);
-    }
-    setSelectedIds(next);
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(registrationId)) next.delete(registrationId); else next.add(registrationId);
+      return next;
+    });
   };
 
-  const handleGenerate = () => {
-    if (selectedIds.size === 0) {
-      Alert.alert(
-        'Selection Required',
-        'Please select at least one meal to generate a QR code.',
-      );
-      return;
-    }
-    setIsGenerating(true);
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" />
-      </View>
-    );
-  }
-
-  if (options.length === 0) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <Text style={styles.title}>Your Pickup Meals</Text>
-        <View style={styles.center}>
-          <Text style={styles.emptyText}>
-            You have no meals ready to pick up today.
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const navItems = canUseKitchen ? hybridEmployeeNav : employeeNav;
+  const go = (route: keyof RootStackParamList) => navigation.navigate(route as never);
+  const displayName = profile?.name || profile?.email.split('@')[0] || 'Employee';
 
   return (
-    <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>Your Pickup Meals</Text>
-
-      <ScrollView style={styles.list}>
-        {options.map((opt) => {
-          const isSelected = selectedIds.has(opt.registrationId);
-          return (
-            <TouchableOpacity
-              key={opt.registrationId}
-              style={[
-                styles.optionCard,
-                isSelected && styles.optionCardSelected,
-              ]}
-              onPress={() => toggleSelection(opt.registrationId)}
-            >
-              <View style={styles.cardHeader}>
-                {isSelected ? (
-                  <Check size={24} color="#4caf50" />
-                ) : (
-                  <Square size={24} color="#9e9e9e" />
-                )}
-                <Text style={styles.optionType}>
-                  {opt.type === 'OWN' ? 'My Meal' : 'Delegated Meal'}
-                </Text>
-              </View>
-              {opt.type === 'DELEGATED' && opt.owner && (
-                <Text style={styles.ownerText}>
-                  From: {opt.owner.name} ({opt.owner.email})
-                </Text>
-              )}
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-
-      <View style={styles.qrSection}>
-        {!isGenerating ? (
-          <TouchableOpacity style={styles.generateBtn} onPress={handleGenerate}>
-            <Text style={styles.generateBtnText}>Generate QR</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.qrContainer}>
-            {qrValue ? (
-              <View style={styles.qrWrapper}>
-                <QRCode value={qrValue} size={200} />
-                <Text style={styles.qrHelper}>
-                  Show this QR code to the Kitchen Staff.
-                </Text>
-
-                <View style={styles.timerWrapper}>
-                  <Text style={styles.timerText}>
-                    Refreshing in {timeLeft}s
-                  </Text>
-                  <View style={styles.progressBarContainer}>
-                    <Animated.View
-                      style={[
-                        styles.progressBar,
-                        {
-                          width: progressAnim.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: ['0%', '100%'],
-                          }),
-                        },
-                      ]}
-                    />
-                  </View>
-                </View>
-              </View>
-            ) : (
-              <ActivityIndicator size="large" />
-            )}
-            {qrLoading && qrValue && (
-              <ActivityIndicator size="small" style={styles.refreshIndicator} />
-            )}
-          </View>
-        )}
-      </View>
-    </SafeAreaView>
+    <PrototypeFrame activeRoute="PickupIntent" navItems={navItems} onNavigate={go}>
+      <PrototypeSectionTitle title="Meal Ticket" subtitle="Show this dynamic QR code to the kitchen staff" />
+      {loading ? <ActivityIndicator color={theme.colors.accentDeep} style={styles.loader} /> : options.length === 0 ? (
+        <PrototypeCard style={styles.emptyCard}><Text style={styles.emptyTitle}>No meals ready to pick up</Text><Text style={styles.emptyText}>Register a meal in Calendar before generating a ticket.</Text></PrototypeCard>
+      ) : (
+        <>
+          <PrototypeCard style={styles.selectionCard}>
+            <View style={styles.selectionHeader}><Eyebrow>MEALS TO PICK UP</Eyebrow><Text style={styles.selectionHint}>Select one or more</Text></View>
+            {options.map((option) => {
+              const selected = selectedIds.has(option.registrationId);
+              return <Pressable key={option.registrationId} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => toggleSelection(option.registrationId)} style={[styles.optionRow, selected && styles.optionSelected]}>{selected ? <Check size={20} color={theme.colors.accentDeep} /> : <Square size={20} color={theme.colors.muted} />}<View style={styles.optionCopy}><Text style={styles.optionTitle}>{option.type === 'OWN' ? 'My meal' : 'Delegated meal'}</Text><Text style={styles.optionDate}>{option.mealDate.slice(0, 10)}{option.owner ? ` · From ${option.owner.name}` : ''}</Text></View></Pressable>;
+            })}
+          </PrototypeCard>
+          <PrototypeCard style={styles.ticketCard}>
+            <View style={styles.ticketTop}>
+              {qrValue ? <QRCode value={qrValue} size={200} color={theme.colors.fg} backgroundColor={theme.colors.surface} /> : <View style={styles.qrPlaceholder}><ActivityIndicator color={theme.colors.accentDeep} /></View>}
+              <Avatar initials={initials(profile?.name, 'ME')} />
+              <Text style={styles.ticketName}>{displayName}</Text>
+              <Text style={styles.ticketId}>{profile?.userId || profile?.id || '—'}</Text>
+            </View>
+            <View style={styles.perforation} />
+            <View style={styles.progressTrack}><Animated.View style={[styles.progressFill, { transform: [{ scaleX: progressAnim }] }]} /></View>
+            <View style={styles.ticketBottom}><View style={styles.ticketRow}><Text style={styles.ticketKey}>Meal</Text><Text style={styles.ticketValue}>Lunch</Text></View><View style={styles.ticketRow}><Text style={styles.ticketKey}>Selected</Text><Text style={styles.ticketValue}>{selectedIds.size} meal{selectedIds.size === 1 ? '' : 's'}</Text></View><View style={styles.ticketNote}><Clock3 size={15} color={theme.colors.accentDeep} /><Text style={styles.ticketNoteText}>{qrLoading ? 'Refreshing code…' : `Code refreshes in ${timeLeft}s`}</Text></View></View>
+          </PrototypeCard>
+          <Pressable accessibilityRole="button" disabled={selectedIds.size === 0} onPress={() => setIsGenerating((current) => !current)} style={[styles.generateButton, selectedIds.size === 0 && styles.disabled]}><Text style={styles.generateText}>{isGenerating ? 'Pause ticket' : 'Generate ticket'}</Text></Pressable>
+        </>
+      )}
+    </PrototypeFrame>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    padding: 16,
-  },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 16,
-  },
-  list: {
-    flex: 1,
-  },
-  optionCard: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
-    backgroundColor: '#fafafa',
-  },
-  optionCardSelected: {
-    borderColor: '#4caf50',
-    backgroundColor: '#e8f5e9',
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  optionType: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginLeft: 12,
-  },
-  ownerText: {
-    fontSize: 14,
-    color: '#757575',
-    marginLeft: 36,
-  },
-  qrSection: {
-    paddingVertical: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#eeeeee',
-  },
-  generateBtn: {
-    backgroundColor: '#2196f3',
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  generateBtnText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  qrContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  qrWrapper: {
-    alignItems: 'center',
-    width: '100%',
-  },
-  qrHelper: {
-    marginTop: 16,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  timerWrapper: {
-    width: '80%',
-    alignItems: 'center',
-  },
-  timerText: {
-    fontSize: 14,
-    color: '#757575',
-    marginBottom: 6,
-  },
-  progressBarContainer: {
-    height: 4,
-    width: '100%',
-    backgroundColor: '#e0e0e0',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: '#4caf50',
-  },
-  refreshIndicator: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-  },
-  emptyText: {
-    fontSize: 16,
-    color: '#757575',
-    textAlign: 'center',
-  },
+  loader: { marginVertical: 44 },
+  emptyCard: { marginTop: 20 },
+  emptyTitle: { color: theme.colors.fg, fontSize: 17, fontWeight: '700' },
+  emptyText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },
+  selectionCard: { marginBottom: 16 },
+  selectionHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 },
+  selectionHint: { color: theme.colors.muted, fontSize: 12 },
+  optionRow: { minHeight: 52, paddingVertical: 9, paddingHorizontal: 10, borderRadius: theme.radii.sm, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  optionSelected: { backgroundColor: theme.colors.accentTint },
+  optionCopy: { flex: 1, gap: 3 },
+  optionTitle: { color: theme.colors.fg, fontSize: 14, fontWeight: '700' },
+  optionDate: { color: theme.colors.muted, fontSize: 12 },
+  ticketCard: { padding: 0, overflow: 'hidden', marginBottom: 16 },
+  ticketTop: { padding: 26, alignItems: 'center', gap: 10 },
+  qrPlaceholder: { width: 200, height: 200, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accentTint },
+  ticketName: { color: theme.colors.fg, fontSize: 17, fontWeight: '700', marginTop: 4 },
+  ticketId: { color: theme.colors.muted, fontFamily: theme.typography.fontMono, fontSize: 13 },
+  perforation: { height: 1, marginHorizontal: 14, borderTopWidth: 2, borderTopColor: theme.colors.border, borderStyle: 'dashed' },
+  progressTrack: { height: 4, marginHorizontal: 26, overflow: 'hidden', backgroundColor: theme.colors.accentTint },
+  progressFill: { width: '100%', height: '100%', backgroundColor: theme.colors.accentDeep, transformOrigin: 'left' },
+  ticketBottom: { padding: 22, gap: 14 },
+  ticketRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  ticketKey: { color: theme.colors.muted, fontSize: 13 },
+  ticketValue: { color: theme.colors.fg, fontSize: 13, fontWeight: '600' },
+  ticketNote: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
+  ticketNoteText: { color: theme.colors.muted, fontSize: 12 },
+  generateButton: { minHeight: 48, marginBottom: 16, borderRadius: theme.radii.md, backgroundColor: theme.colors.accentDeep, alignItems: 'center', justifyContent: 'center' },
+  generateText: { color: theme.colors.surface, fontSize: 14, fontWeight: '700' },
+  disabled: { opacity: 0.5 },
 });

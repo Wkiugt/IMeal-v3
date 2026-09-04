@@ -12,6 +12,9 @@ export interface ServingItem {
 
 export interface ResolveServingResponse {
   pickupSessionToken: string;
+  session: {
+    expiresAt: string;
+  };
   intent: {
     userId: string;
     items: ServingItem[];

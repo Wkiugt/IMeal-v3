@@ -1,0 +1,75 @@
+# Mobile UI 1:1 Implementation
+
+## Scope
+
+This change converts the mobile Staff and Kitchen actors to the preserved prototypes in `docs/System-design-UI/` without changing the server-authoritative meal, pickup, delegation, or serving workflows. Admin Web is outside this mobile scope.
+
+## Mobile navigation
+
+- Staff: `Dashboard | Calendar | Ticket | Profile`
+- Staff + Kitchen: `Dashboard | Calendar | Ticket | Check-in | Profile`
+- Kitchen-only: `Dashboard | Scanner`
+
+Protected routes no longer receive access tokens through navigation parameters. `SessionProvider` restores the Entra session and supplies the token/profile to mobile screens. Cold deep links redirect unauthenticated users to `Auth`.
+
+## Implemented surfaces
+
+- Employee dashboard: greeting, meal card, meal status, canteen location, ticket CTA.
+- Employee calendar: monthly booking markers, weekly registration toggles, server partial-success handling, cutoff error rollback.
+- Employee ticket: real pickup options, multi-selection, signed QR generation, five-second refresh/countdown, QR progress indicator.
+- Employee profile: identity, account metadata, preferences surface, delegation entry, logout.
+- Delegations: outgoing/incoming tabs, search, status pills, accept/decline/revoke actions.
+- Kitchen dashboard: serving slider, total meals, dietary breakdown, check-in progress, polling, pull-to-refresh, search, registration tabs, logs.
+- Kitchen scanner: camera permission state, QR resolve, explicit confirmation, proxy indicator, thirty-second pickup-session expiry, reduced-motion scan treatment.
+
+## API details
+
+The employee registration client uses the existing API controller paths:
+
+- `GET /registrations/week?startDate=YYYY-MM-DD`
+- `PUT /registrations/batch`
+
+The mobile API base strips a trailing `/api` for registration, auth, and direct controller paths. Pickup and serving endpoints retain the `/api` path supplied by `EXPO_PUBLIC_API_URL`.
+
+## Run
+
+Install dependencies with the repository's Yarn version:
+
+```powershell
+corepack enable
+corepack prepare yarn@4.18.0 --activate
+corepack yarn install --immutable
+```
+
+Create `apps/mobile/.env` with the public API and Entra values:
+
+```env
+EXPO_PUBLIC_API_URL=http://localhost:3000/api
+EXPO_PUBLIC_ENTRA_TENANT_ID=...
+EXPO_PUBLIC_ENTRA_CLIENT_ID=...
+EXPO_PUBLIC_ENTRA_API_SCOPE=...
+```
+
+Run web:
+
+```powershell
+corepack yarn workspace @imeal/mobile web
+```
+
+Run native Expo:
+
+```powershell
+corepack yarn workspace @imeal/mobile start
+```
+
+For Docker Compose's reverse proxy, use `EXPO_PUBLIC_API_URL=http://localhost/api`. A physical device must use the development machine's LAN IP instead of `localhost`.
+
+## Verification
+
+Validated during implementation:
+
+```text
+corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
+```
+
+Expo web smoke coverage included the login surface, protected cold deep links, employee dashboard/calendar/ticket/profile/delegations, kitchen dashboard, scanner permission state, 1440px desktop framing, and 360px/390px mobile layouts. Physical camera scanning and native-device session expiry still require a device with the API and Entra environment configured.
