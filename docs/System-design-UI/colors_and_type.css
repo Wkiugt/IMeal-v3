@@ -1,0 +1,448 @@
+/*
+  Meal Admin design system — colors, type, and shared primitives.
+  Extracted verbatim from the source prototype's :root tokens
+  (employee-meal-app.html, kitchen-staff-app.html, admin-*.html).
+  Paste this file's contents into the first <style> block of new
+  artifacts, or <link> it directly, before writing layout CSS.
+*/
+
+:root {
+  /* ── surfaces & text ─────────────────────────────────────────── */
+  --bg: oklch(100% 0 0); /* ≈ #ffffff */
+  --surface: oklch(100% 0 0); /* ≈ #ffffff */
+  --fg: oklch(27% 0.025 255); /* ≈ #262c3b */
+  --muted: oklch(44% 0.022 255); /* ≈ #5a606d */
+  --border: oklch(92% 0.014 240); /* ≈ #e2e5ea */
+
+  /* ── accent (single brand blue, three depths) ───────────────── */
+  --accent: oklch(80% 0.085 250); /* ≈ #a4c3ef */
+  --accent-deep: oklch(42% 0.135 250); /* ≈ #1f5fc2 */
+  --accent-soft: oklch(93% 0.035 250); /* ≈ #dde8fb */
+  --accent-tint: oklch(97% 0.016 250); /* ≈ #f1f5fc */
+  --fg-soft: color-mix(in oklch, var(--fg) 5%, transparent);
+
+  /* ── elevation ────────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 2px color-mix(in oklch, var(--fg) 7%, transparent);
+  --shadow-md: 0 10px 28px color-mix(in oklch, var(--fg) 10%, transparent);
+  --shadow-lg: 0 20px 48px color-mix(in oklch, var(--fg) 14%, transparent);
+
+  /* ── status semantics (good / warn / bad) ────────────────────── */
+  --status-good-tint: oklch(94% 0.05 155); /* ≈ #d7f0e0 */
+  --status-good-deep: oklch(38% 0.11 155); /* ≈ #1e7a4d */
+  --status-warn-tint: oklch(95% 0.05 85); /* ≈ #f7ecc7 */
+  --status-warn-deep: oklch(42% 0.13 85); /* ≈ #8a6300 */
+  --status-bad-tint: oklch(94% 0.045 25); /* ≈ #fbdfd8 */
+  --status-bad-deep: oklch(40% 0.15 25); /* ≈ #b3311f */
+
+  /*
+    Hex values above are approximate sRGB equivalents for tooling that
+    cannot parse oklch() (e.g. quick color-picker checks). They are NOT
+    the source of truth — every rule in this file and in every source
+    screen reads the oklch() custom properties directly. Do not swap
+    the properties above for these hex literals.
+  */
+
+  /* ── type ─────────────────────────────────────────────────────── */
+  --font-body:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui,
+    sans-serif;
+  --font-display:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui,
+    sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+
+  /* ── radius ───────────────────────────────────────────────────── */
+  --radius-sm: 14px;
+  --radius: 20px;
+  --radius-lg: 28px;
+  --radius-pill: 999px;
+
+  /* ── layout constants observed in source ─────────────────────── */
+  --sidebar-w: 248px;
+  --device-w: 390px;
+  --device-h: 844px;
+}
+
+/* ── base reset (shared by every source screen) ──────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  background: color-mix(in oklch, var(--fg) 3%, var(--bg));
+  color: var(--fg);
+  font-family: var(--font-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+img,
+svg {
+  display: block;
+}
+button,
+a {
+  font: inherit;
+  cursor: pointer;
+  color: inherit;
+}
+button {
+  background: none;
+  border: none;
+}
+a {
+  text-decoration: none;
+}
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+h1,
+h2,
+h3 {
+  margin: 0;
+  text-wrap: balance;
+  font-family: var(--font-display);
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+:focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+  }
+}
+
+/* ── type scale (as used across source screens) ──────────────────── */
+.od-display-xl {
+  font-family: var(--font-display);
+  font-size: 52px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.od-display-lg {
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.od-title-lg {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.od-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.od-title-sm {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+.od-body {
+  font-size: 14px;
+}
+.od-body-sm {
+  font-size: 13px;
+  color: var(--muted);
+}
+.od-caption {
+  font-size: 12px;
+  color: var(--muted);
+}
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin: 0;
+  text-transform: uppercase;
+}
+.od-mono {
+  font-family: var(--font-mono);
+}
+
+/* ── surfaces ─────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 24px;
+}
+
+/* ── pills / status chips ─────────────────────────────────────────── */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  flex: 0 0 auto;
+}
+.pill svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+.pill-soft {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+}
+.pill-outline {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.pill-solid {
+  background: var(--accent-deep);
+  color: var(--surface);
+}
+.pill-good {
+  background: var(--status-good-tint);
+  color: var(--status-good-deep);
+}
+.pill-warn {
+  background: var(--status-warn-tint);
+  color: var(--status-warn-deep);
+}
+.pill-bad {
+  background: var(--status-bad-tint);
+  color: var(--status-bad-deep);
+}
+
+/* ── avatar ───────────────────────────────────────────────────────── */
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+.avatar-lg {
+  width: 64px;
+  height: 64px;
+  font-size: 20px;
+}
+
+/* ── buttons ──────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 20px;
+  border-radius: var(--radius-pill);
+  font-size: 14px;
+  font-weight: 600;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.08s ease;
+}
+.btn svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+.btn-primary {
+  background: var(--accent-deep);
+  color: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.btn-primary:hover {
+  background: color-mix(in oklch, var(--accent-deep) 88%, black);
+  box-shadow: var(--shadow-md);
+}
+.btn-primary:active {
+  transform: scale(0.98);
+}
+.btn-secondary {
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover {
+  border-color: var(--muted);
+  background: var(--fg-soft);
+}
+.btn-secondary:active {
+  transform: scale(0.98);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.btn-ghost:hover {
+  color: var(--fg);
+  background: var(--fg-soft);
+}
+.btn-icon {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.btn-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.btn-icon:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+  background: var(--fg-soft);
+}
+.btn-icon.danger:hover {
+  color: var(--status-bad-deep);
+  border-color: color-mix(in oklch, var(--status-bad-deep) 35%, var(--border));
+  background: var(--status-bad-tint);
+}
+
+/* ── form field ───────────────────────────────────────────────────── */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field label {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.field-input {
+  width: 100%;
+  padding: 11px 13px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--accent-tint);
+  font-size: 13.5px;
+  color: var(--fg);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+.field-input::placeholder {
+  color: var(--muted);
+}
+.field-input:focus {
+  outline: none;
+  border-color: var(--accent-deep);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: var(--surface);
+}
+
+/* ── toggle switch ────────────────────────────────────────────────── */
+.toggle {
+  width: 50px;
+  height: 30px;
+  flex: 0 0 auto;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+  transition: background 0.18s ease;
+}
+.toggle:hover {
+  background: color-mix(in oklch, var(--border) 55%, var(--muted) 45%);
+}
+.toggle[aria-checked='true'] {
+  background: var(--accent-deep);
+}
+.toggle[aria-checked='true']:hover {
+  background: color-mix(in oklch, var(--accent-deep) 88%, black);
+}
+.toggle-thumb {
+  display: block;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.18s ease;
+}
+.toggle[aria-checked='true'] .toggle-thumb {
+  transform: translateX(20px);
+}
+
+/* ── data table ───────────────────────────────────────────────────── */
+.data-table th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 0 12px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.data-table td {
+  padding: 13px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
+}
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+.data-table td.num {
+  font-family: var(--font-mono);
+  text-align: right;
+}
+.data-table th.num {
+  text-align: right;
+}
+
+/* ── bar / progress meters ────────────────────────────────────────── */
+.bar-track,
+.progress-track {
+  height: 12px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-tint);
+  overflow: hidden;
+}
+.bar-fill,
+.progress-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent-deep);
+}

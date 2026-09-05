@@ -1,0 +1,340 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum RegistrationStatus {
+  ACTIVE
+  CANCELLED
+  SERVED
+  NO_SHOW
+}
+
+enum PickupDelegationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  REVOKED
+  COMPLETED
+}
+
+enum ServingConfirmStatus {
+  PROCESSING
+  SUCCESS
+  REJECTED
+}
+
+enum PenaltyStatus {
+  PENDING
+  PAID
+  WAIVED
+}
+
+enum JobRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  isActive Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  userRoles       UserRole[]
+  userPermissions UserPermission[]
+  registrations   Registration[]
+  delegations     PickupDelegation[] @relation("DelegateUser")
+  penalties       Penalty[]
+  notifications   Notification[]
+  pushDevices     PushDevice[]
+  auditLogs       AuditLog[]
+
+  @@map("users")
+}
+
+model Role {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model UserRole {
+  userId String @map("user_id")
+  roleId String @map("role_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model Permission {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  rolePermissions RolePermission[]
+  userPermissions UserPermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserPermission {
+  userId       String @map("user_id")
+  permissionId String @map("permission_id")
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, permissionId])
+  @@map("user_permissions")
+}
+
+model WeeklyMenu {
+  id        String   @id @default(uuid())
+  startDate DateTime @db.Date @map("start_date")
+  endDate   DateTime @db.Date @map("end_date")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  dailyMenus DailyMenu[]
+
+  @@unique([startDate])
+  @@map("weekly_menus")
+}
+
+model DailyMenu {
+  id           String   @id @default(uuid())
+  weeklyMenuId String   @map("weekly_menu_id")
+  date         DateTime @db.Date
+  isHoliday    Boolean  @default(false) @map("is_holiday")
+  isEnabled    Boolean  @default(true) @map("is_enabled")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  weeklyMenu WeeklyMenu          @relation(fields: [weeklyMenuId], references: [id], onDelete: Cascade)
+  revisions  DailyMenuRevision[]
+  mealDays   MealDay[]
+
+  @@unique([date])
+  @@map("daily_menus")
+}
+
+model DailyMenuRevision {
+  id          String   @id @default(uuid())
+  dailyMenuId String   @map("daily_menu_id")
+  content     String
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  dailyMenu DailyMenu @relation(fields: [dailyMenuId], references: [id], onDelete: Cascade)
+
+  @@map("daily_menu_revisions")
+}
+
+model MealDay {
+  id             String   @id @default(uuid())
+  dailyMenuId    String   @map("daily_menu_id")
+  mealType       String   @map("meal_type")
+  isServingReady Boolean  @default(false) @map("is_serving_ready")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  dailyMenu DailyMenu @relation(fields: [dailyMenuId], references: [id], onDelete: Cascade)
+
+  @@unique([dailyMenuId])
+  @@map("meal_days")
+}
+
+model Registration {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  mealDate  DateTime           @db.Date @map("meal_date")
+  status    RegistrationStatus
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  version   Int      @default(1)
+
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  delegations PickupDelegation[]
+  mealServing MealServing?
+
+  @@unique([userId, mealDate])
+  @@index([userId, mealDate])
+  @@map("registrations")
+}
+
+model PickupDelegation {
+  id             String   @id @default(uuid())
+  registrationId String   @map("registration_id")
+  delegateUserId String   @map("delegate_user_id")
+  status         PickupDelegationStatus @default(PENDING)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  delegateUser User         @relation("DelegateUser", fields: [delegateUserId], references: [id], onDelete: Cascade)
+
+  @@map("pickup_delegations")
+}
+
+model ServingConfirmRequest {
+  id             String   @id @default(uuid())
+  callerUserId   String   @map("caller_user_id")
+  idempotencyKey String   @map("idempotency_key")
+  status         ServingConfirmStatus
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([callerUserId, idempotencyKey])
+  @@map("serving_confirm_requests")
+}
+
+model MealServing {
+  id             String   @id @default(uuid())
+  registrationId String   @unique @map("registration_id")
+  servedAt       DateTime @default(now()) @map("served_at")
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  events       MealEvent[]
+
+  @@map("meal_servings")
+}
+
+model MealEvent {
+  id            String   @id @default(uuid())
+  mealServingId String   @map("meal_serving_id")
+  eventType     String   @map("event_type")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  mealServing MealServing @relation(fields: [mealServingId], references: [id], onDelete: Cascade)
+
+  @@map("meal_events")
+}
+
+model Penalty {
+  id             String    @id @default(uuid())
+  userId         String    @map("user_id")
+  amount         Int
+  reason         String
+  status         PenaltyStatus @default(PENDING)
+  paidAt         DateTime? @map("paid_at")
+  waivedAt       DateTime? @map("waived_at")
+  waiveReason    String?   @map("waive_reason")
+  waivedByUserId String?   @map("waived_by_user_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status])
+  @@index([createdAt])
+  @@map("penalties")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  content   String
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model PushDevice {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("push_devices")
+}
+
+model JobRun {
+  id          String    @id @default(uuid())
+  jobName     String    @map("job_name")
+  status      JobRunStatus
+  startedAt   DateTime  @default(now()) @map("started_at")
+  completedAt DateTime? @map("completed_at")
+
+  @@map("job_runs")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  action    String
+  details   String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
+
+model OutboxEvent {
+  id            String   @id @default(uuid())
+  aggregateType String   @map("aggregate_type")
+  aggregateId   String   @map("aggregate_id")
+  eventType     String   @map("event_type")
+  payload       String
+  status        OutboxStatus @default(PENDING)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("outbox_events")
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  version   Int      @default(1)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("app_settings")
+}
+
+model PickupSession {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  registrationIds String[] @map("registration_ids")
+  qrHash          String   @unique @map("qr_hash")
+  expiresAt       DateTime @map("expires_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("pickup_sessions")
+}

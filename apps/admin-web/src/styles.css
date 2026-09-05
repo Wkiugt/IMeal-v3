@@ -1,0 +1,206 @@
+:root {
+  color: #172033;
+  background: #f3f6fb;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+}
+
+.shell {
+  min-height: 100vh;
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px clamp(20px, 5vw, 72px);
+  color: white;
+  background: #123a72;
+}
+.brand {
+  margin: 0;
+  font-size: 1.35rem;
+}
+.profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.layout {
+  width: min(1180px, calc(100% - 32px));
+  margin: 28px auto;
+}
+.nav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.nav button,
+.button {
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 16px;
+  color: white;
+  background: #1f62ad;
+}
+.nav button[aria-pressed='true'] {
+  background: #123a72;
+}
+.button.secondary {
+  color: #123a72;
+  background: #e1ebf7;
+}
+.button.danger {
+  background: #a32727;
+}
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.card {
+  margin-bottom: 16px;
+  padding: 20px;
+  border: 1px solid #dce4ef;
+  border-radius: 12px;
+  background: white;
+  box-shadow: 0 6px 20px rgb(22 50 84 / 7%);
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.field {
+  display: grid;
+  gap: 6px;
+  min-width: 180px;
+}
+.field label {
+  color: #4c5b70;
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+.field input,
+.field select {
+  min-height: 40px;
+  border: 1px solid #bdc9d8;
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: white;
+}
+.week-header,
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.days {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+.row {
+  padding: 12px;
+  border-radius: 8px;
+  background: #f7f9fc;
+}
+.row-main {
+  min-width: 180px;
+}
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.status {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.status.pending {
+  color: #7b4d00;
+  background: #fff0c7;
+}
+.status.paid {
+  color: #11633a;
+  background: #d9f5e5;
+}
+.status.waived {
+  color: #555f6f;
+  background: #e7ebf0;
+}
+.error {
+  margin: 16px 0;
+  padding: 12px;
+  border-left: 4px solid #b42318;
+  color: #7a271a;
+  background: #fef3f2;
+}
+.empty {
+  padding: 36px;
+  color: #66758a;
+  text-align: center;
+}
+.login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.login .card {
+  width: min(440px, 100%);
+  text-align: center;
+}
+.muted {
+  color: #66758a;
+}
+.amount {
+  font-weight: 750;
+}
+
+@media (max-width: 720px) {
+  .header,
+  .week-header,
+  .row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .profile {
+    align-items: flex-end;
+  }
+  .row-actions {
+    width: 100%;
+  }
+  .row-actions .button {
+    flex: 1;
+  }
+}

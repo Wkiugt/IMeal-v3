@@ -1,0 +1,1065 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Meal Admin · Penalties &amp; Invoicing</title>
+    <style>
+      :root {
+        --bg: oklch(100% 0 0);
+        --surface: oklch(100% 0 0);
+        --fg: oklch(27% 0.025 255);
+        --muted: oklch(44% 0.022 255);
+        --border: oklch(92% 0.014 240);
+        --accent: oklch(80% 0.085 250);
+
+        --accent-deep: oklch(42% 0.135 250);
+        --accent-soft: oklch(93% 0.035 250);
+        --accent-tint: oklch(97% 0.016 250);
+        --fg-soft: color-mix(in oklch, var(--fg) 5%, transparent);
+        --shadow-sm: 0 1px 2px color-mix(in oklch, var(--fg) 7%, transparent);
+        --shadow-md: 0 10px 28px color-mix(in oklch, var(--fg) 10%, transparent);
+        --shadow-lg: 0 20px 48px color-mix(in oklch, var(--fg) 14%, transparent);
+
+        --status-good-tint: oklch(94% 0.05 155);
+        --status-good-deep: oklch(38% 0.11 155);
+        --status-warn-tint: oklch(95% 0.05 85);
+        --status-warn-deep: oklch(42% 0.13 85);
+        --status-bad-tint: oklch(94% 0.045 25);
+        --status-bad-deep: oklch(40% 0.15 25);
+
+        --font-body:
+          -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
+          system-ui, sans-serif;
+        --font-display:
+          -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI',
+          system-ui, sans-serif;
+        --font-mono:
+          ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+
+        --radius-sm: 14px;
+        --radius: 20px;
+        --radius-lg: 28px;
+        --radius-pill: 999px;
+
+        --sidebar-w: 248px;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
+      body {
+        margin: 0;
+        background: color-mix(in oklch, var(--fg) 3%, var(--bg));
+        color: var(--fg);
+        font-family: var(--font-body);
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      img,
+      svg {
+        display: block;
+      }
+      button,
+      a {
+        font: inherit;
+        cursor: pointer;
+        color: inherit;
+      }
+      button {
+        background: none;
+        border: none;
+      }
+      a {
+        text-decoration: none;
+      }
+      p {
+        margin: 0;
+        text-wrap: pretty;
+      }
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        text-wrap: balance;
+        font-family: var(--font-display);
+      }
+      :focus-visible {
+        outline: 2px solid var(--accent-deep);
+        outline-offset: 2px;
+        border-radius: 6px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          transition-duration: 0.001ms !important;
+          animation-duration: 0.001ms !important;
+        }
+      }
+
+      /* ── shared building blocks ─────────────────────────────────────── */
+      .eyebrow {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        letter-spacing: 0.07em;
+        color: var(--muted);
+        margin: 0;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+        padding: 24px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px;
+        border-radius: var(--radius-pill);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        flex: 0 0 auto;
+      }
+      .pill-soft {
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+      }
+      .pill-outline {
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid var(--border);
+      }
+      .pill-solid {
+        background: var(--accent-deep);
+        color: var(--surface);
+      }
+      .pill-good {
+        background: var(--status-good-tint);
+        color: var(--status-good-deep);
+      }
+      .pill-warn {
+        background: var(--status-warn-tint);
+        color: var(--status-warn-deep);
+      }
+      .pill-bad {
+        background: var(--status-bad-tint);
+        color: var(--status-bad-deep);
+      }
+      .pill svg {
+        width: 13px;
+        height: 13px;
+        flex: 0 0 auto;
+      }
+      .avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: var(--radius-pill);
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        font-size: 13px;
+        flex: 0 0 auto;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 11px 20px;
+        border-radius: var(--radius-pill);
+        font-size: 14px;
+        font-weight: 600;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease,
+          border-color 0.15s ease,
+          transform 0.08s ease;
+        white-space: nowrap;
+      }
+      .btn svg {
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+      }
+      .btn-primary {
+        background: var(--accent-deep);
+        color: var(--surface);
+        box-shadow: var(--shadow-sm);
+      }
+      .btn-primary:hover {
+        background: color-mix(in oklch, var(--accent-deep) 88%, black);
+        box-shadow: var(--shadow-md);
+      }
+      .btn-primary:active {
+        transform: scale(0.98);
+      }
+      .btn-secondary {
+        background: var(--surface);
+        color: var(--fg);
+        border: 1px solid var(--border);
+      }
+      .btn-secondary:hover {
+        border-color: var(--muted);
+        background: var(--fg-soft);
+      }
+      .btn-secondary:active {
+        transform: scale(0.98);
+      }
+      .btn-ghost {
+        background: transparent;
+        color: var(--muted);
+        padding: 8px 10px;
+        font-size: 12.5px;
+      }
+      .btn-ghost:hover {
+        color: var(--fg);
+        background: var(--fg-soft);
+      }
+      .btn-icon {
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius-pill);
+        color: var(--muted);
+        border: 1px solid var(--border);
+        transition:
+          background 0.15s ease,
+          color 0.15s ease,
+          border-color 0.15s ease;
+      }
+      .btn-icon svg {
+        width: 16px;
+        height: 16px;
+      }
+      .btn-icon:hover {
+        color: var(--fg);
+        border-color: var(--muted);
+        background: var(--fg-soft);
+      }
+      .btn-icon.danger:hover {
+        color: var(--status-bad-deep);
+        border-color: color-mix(
+          in oklch,
+          var(--status-bad-deep) 35%,
+          var(--border)
+        );
+        background: var(--status-bad-tint);
+      }
+
+      /* ── admin shell ────────────────────────────────────────────────── */
+      .admin-shell {
+        display: flex;
+        min-height: 100vh;
+      }
+      .sidebar-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: color-mix(in oklch, var(--fg) 45%, transparent);
+        z-index: 30;
+      }
+      .sidebar-backdrop.visible {
+        display: block;
+      }
+      .sidebar {
+        position: sticky;
+        top: 0;
+        flex: 0 0 auto;
+        width: var(--sidebar-w);
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        padding: 22px 16px;
+        z-index: 40;
+      }
+      .sidebar-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 4px 8px 22px;
+      }
+      .brand-mark {
+        width: 34px;
+        height: 34px;
+        border-radius: var(--radius);
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+      }
+      .brand-mark svg {
+        width: 18px;
+        height: 18px;
+      }
+      .brand-name {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 15.5px;
+        letter-spacing: -0.005em;
+      }
+      .sidebar-close {
+        display: none;
+        margin-left: auto;
+        width: 32px;
+        height: 32px;
+        border-radius: var(--radius-pill);
+        color: var(--muted);
+      }
+      .sidebar-close svg {
+        width: 18px;
+        height: 18px;
+      }
+      .sidebar-close:hover {
+        color: var(--fg);
+        background: var(--fg-soft);
+      }
+      .sidebar-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        flex: 1 1 auto;
+      }
+      .sidebar-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 12px;
+        border-radius: var(--radius);
+        color: var(--muted);
+        font-size: 14px;
+        font-weight: 600;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease;
+      }
+      .sidebar-nav-item svg {
+        width: 20px;
+        height: 20px;
+        flex: 0 0 auto;
+      }
+      .sidebar-nav-item:hover:not(.active) {
+        color: var(--fg);
+        background: var(--fg-soft);
+      }
+      .sidebar-nav-item.active {
+        color: var(--accent-deep);
+        background: var(--accent-soft);
+      }
+      .sidebar-foot {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px;
+        margin-top: 12px;
+        border-top: 1px solid var(--border);
+        padding-top: 18px;
+      }
+      .sidebar-foot-info {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .sidebar-foot-name {
+        font-size: 13.5px;
+        font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .sidebar-foot-role {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .admin-main-wrap {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .admin-topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 20px 32px;
+        background: color-mix(in oklch, var(--bg) 88%, transparent);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--border);
+      }
+      .topbar-menu-btn {
+        display: none;
+        width: 38px;
+        height: 38px;
+        border-radius: var(--radius-pill);
+        color: var(--fg);
+        flex: 0 0 auto;
+      }
+      .topbar-menu-btn svg {
+        width: 20px;
+        height: 20px;
+      }
+      .topbar-menu-btn:hover {
+        background: var(--fg-soft);
+      }
+      .topbar-titles {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .topbar-titles h1 {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin-top: 3px;
+      }
+      .topbar-profile {
+        flex: 0 0 auto;
+      }
+      .admin-main {
+        flex: 1 1 auto;
+        padding: 28px 32px 56px;
+        max-width: 1120px;
+        width: 100%;
+        margin: 0 auto;
+      }
+
+      @media (max-width: 900px) {
+        .sidebar {
+          position: fixed;
+          left: 0;
+          top: 0;
+          transform: translateX(-100%);
+          box-shadow: var(--shadow-lg);
+          transition: transform 0.22s ease;
+        }
+        .sidebar.open {
+          transform: translateX(0);
+        }
+        .sidebar-close {
+          display: grid;
+          place-items: center;
+        }
+        .topbar-menu-btn {
+          display: grid;
+          place-items: center;
+        }
+        .admin-topbar {
+          padding: 16px 20px;
+        }
+        .admin-main {
+          padding: 20px 20px 48px;
+        }
+      }
+      @media (max-width: 560px) {
+        .topbar-titles h1 {
+          font-size: 19px;
+        }
+        .admin-main {
+          padding: 16px 14px 40px;
+        }
+      }
+
+      /* ── penalties page ─────────────────────────────────────────────── */
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 18px;
+        margin-bottom: 26px;
+      }
+      .metric-card {
+        background: linear-gradient(
+          150deg,
+          var(--accent-tint),
+          var(--accent-soft)
+        );
+        border: 1px solid var(--accent-soft);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+        padding: 20px 22px;
+      }
+      .metric-icon-wrap {
+        width: 38px;
+        height: 38px;
+        border-radius: var(--radius);
+        background: color-mix(in oklch, var(--surface) 60%, transparent);
+        display: grid;
+        place-items: center;
+        margin-bottom: 12px;
+      }
+      .metric-icon-wrap svg {
+        width: 19px;
+        height: 19px;
+        color: var(--accent-deep);
+      }
+      .metric-label {
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .metric-value {
+        font-family: var(--font-display);
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin-top: 6px;
+      }
+
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 14px;
+      }
+      .section-head h2 {
+        font-size: 17px;
+        font-weight: 700;
+        letter-spacing: -0.005em;
+      }
+      .section-head p {
+        color: var(--muted);
+        font-size: 13px;
+        margin-top: 3px;
+      }
+
+      .penalty-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .penalty-card {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        flex-wrap: wrap;
+        padding: 18px 22px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+      }
+      .penalty-info {
+        flex: 1 1 240px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        min-width: 0;
+      }
+      .penalty-name-block {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+      .penalty-name {
+        font-weight: 700;
+        font-size: 15px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .penalty-dept {
+        font-size: 12.5px;
+        color: var(--muted);
+      }
+      .penalty-meta {
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 2px;
+        min-width: 100px;
+      }
+      .penalty-amount {
+        font-family: var(--font-mono);
+        font-weight: 700;
+        font-size: 18px;
+      }
+      .penalty-meals {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .penalty-status {
+        flex: 0 0 auto;
+      }
+      .penalty-action {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      @media (max-width: 640px) {
+        .penalty-card {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .penalty-info {
+          order: 1;
+        }
+        .penalty-meta {
+          order: 2;
+          align-items: baseline;
+          flex-direction: row;
+          justify-content: space-between;
+          width: 100%;
+        }
+        .penalty-status {
+          order: 3;
+        }
+        .penalty-action {
+          order: 4;
+          width: 100%;
+          flex-wrap: wrap;
+        }
+        .penalty-action .btn {
+          flex: 1 1 auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="admin-shell" data-od-id="admin-shell">
+      <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+      <aside class="sidebar" id="sidebar" data-od-id="admin-sidebar">
+        <div class="sidebar-head">
+          <div class="brand-mark" aria-hidden="true">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M6 3v9a3 3 0 0 0 6 0V3M9 8.5V3" />
+              <path d="M17.5 3c-1.4 1.4-2 3-2 5.2 0 1.8.9 2.8 2 3.3V21" />
+            </svg>
+          </div>
+          <span class="brand-name">Meal Admin</span>
+          <button
+            class="sidebar-close"
+            id="sidebarClose"
+            aria-label="Close menu"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            >
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+
+        <nav class="sidebar-nav" data-od-id="admin-nav">
+          <a
+            class="sidebar-nav-item"
+            href="admin-dashboard.html"
+            data-od-id="nav-admin-dashboard"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M4 11.5 12 4l8 7.5" />
+              <path d="M6 10v8.5a1 1 0 0 0 1 1h3v-6h4v6h3a1 1 0 0 0 1-1V10" />
+            </svg>
+            <span>Dashboard</span>
+          </a>
+          <a
+            class="sidebar-nav-item"
+            href="admin-metrics.html"
+            data-od-id="nav-admin-metrics"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M5 20V11" />
+              <path d="M12.5 20V4" />
+              <path d="M20 20v-8.5" />
+            </svg>
+            <span>Metrics &amp; Data</span>
+          </a>
+          <a
+            class="sidebar-nav-item active"
+            href="admin-penalties.html"
+            data-od-id="nav-admin-penalties"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="5" y="3" width="14" height="18" rx="2.4" />
+              <path d="M9 8.5h6M9 12h6M9 15.5h3.5" />
+            </svg>
+            <span>Penalties &amp; Invoicing</span>
+          </a>
+          <a
+            class="sidebar-nav-item"
+            href="admin-users.html"
+            data-od-id="nav-admin-users"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="9.5" cy="8" r="3.2" />
+              <path d="M3.8 20c0-3.3 2.5-5.8 5.7-5.8s5.7 2.5 5.7 5.8" />
+              <circle cx="17.3" cy="8.7" r="2.4" />
+              <path d="M15.8 14.5c2.3.4 4 2.4 4 5.5" />
+            </svg>
+            <span>User Management</span>
+          </a>
+          <a
+            class="sidebar-nav-item"
+            href="admin-menu.html"
+            data-od-id="nav-admin-menu"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
+              <path d="M3.5 9.5h17M8 3v3.5M16 3v3.5" />
+            </svg>
+            <span>Weekly Menu</span>
+          </a>
+        </nav>
+
+        <div class="sidebar-foot" data-od-id="admin-identity">
+          <div class="avatar">PQ</div>
+          <div class="sidebar-foot-info">
+            <span class="sidebar-foot-name">Pham Quang</span>
+            <span class="sidebar-foot-role">Admin</span>
+          </div>
+        </div>
+      </aside>
+
+      <div class="admin-main-wrap">
+        <header class="admin-topbar" data-od-id="admin-topbar">
+          <button
+            class="topbar-menu-btn"
+            id="sidebarOpen"
+            aria-label="Open menu"
+            aria-expanded="false"
+            aria-controls="sidebar"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            >
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+          </button>
+          <div class="topbar-titles">
+            <p class="eyebrow">ADMIN · BILLING</p>
+            <h1>Penalties &amp; Invoicing</h1>
+          </div>
+          <div class="topbar-profile"><div class="avatar">PQ</div></div>
+        </header>
+
+        <main class="admin-main" data-od-id="admin-penalties-content">
+          <div class="metric-grid" data-od-id="penalty-summary-cards">
+            <div class="metric-card" data-od-id="metric-outstanding">
+              <div class="metric-icon-wrap">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="5" y="3" width="14" height="18" rx="2.4" />
+                  <path d="M9 8.5h6M9 12h6M9 15.5h3.5" />
+                </svg>
+              </div>
+              <p class="metric-label">Total Outstanding</p>
+              <p class="metric-value">$126.00</p>
+            </div>
+            <div class="metric-card" data-od-id="metric-users-penalized">
+              <div class="metric-icon-wrap">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="9.5" cy="8" r="3.2" />
+                  <path d="M3.8 20c0-3.3 2.5-5.8 5.7-5.8s5.7 2.5 5.7 5.8" />
+                  <circle cx="17.3" cy="8.7" r="2.4" />
+                  <path d="M15.8 14.5c2.3.4 4 2.4 4 5.5" />
+                </svg>
+              </div>
+              <p class="metric-label">Users with Penalties</p>
+              <p class="metric-value">6</p>
+            </div>
+            <div class="metric-card" data-od-id="metric-collected">
+              <div class="metric-icon-wrap">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M5 12.5 10 17.5 19 6.5" />
+                </svg>
+              </div>
+              <p class="metric-label">Collected This Month</p>
+              <p class="metric-value">$27.00</p>
+            </div>
+          </div>
+
+          <div class="section-head">
+            <div>
+              <h2>Unused Booked Meals</h2>
+              <p>Penalties for meals booked but not checked in</p>
+            </div>
+          </div>
+
+          <div class="penalty-list" data-od-id="penalty-list">
+            <div class="penalty-card" data-od-id="penalty-minh-anh">
+              <div class="penalty-info">
+                <div class="avatar">MA</div>
+                <div class="penalty-name-block">
+                  <span class="penalty-name">Minh Anh</span>
+                  <span class="penalty-dept">Product Engineering</span>
+                </div>
+              </div>
+              <div class="penalty-meta">
+                <span class="penalty-amount">$27.00</span>
+                <span class="penalty-meals">3 unused meals</span>
+              </div>
+              <span class="penalty-status"
+                ><span class="pill pill-warn">Pending</span></span
+              >
+              <div class="penalty-action">
+                <button class="btn btn-primary">
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.7"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M2.5 10.5 17 3l-6.5 14-2.5-5.5Z" />
+                    <path d="M8 11.5 17 3" />
+                  </svg>
+                  Send Invoice Reminder
+                </button>
+              </div>
+            </div>
+
+            <div class="penalty-card" data-od-id="penalty-thu-le">
+              <div class="penalty-info">
+                <div class="avatar">TL</div>
+                <div class="penalty-name-block">
+                  <span class="penalty-name">Thu Le</span>
+                  <span class="penalty-dept">Design</span>
+                </div>
+              </div>
+              <div class="penalty-meta">
+                <span class="penalty-amount">$18.00</span>
+                <span class="penalty-meals">2 unused meals</span>
+              </div>
+              <span class="penalty-status"
+                ><span class="pill pill-soft">Reminder Sent</span></span
+              >
+              <div class="penalty-action">
+                <button class="btn btn-ghost">Resend</button>
+                <button class="btn btn-primary">
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M4.5 10.5 8 14l7.5-7.5" />
+                  </svg>
+                  Mark as Paid
+                </button>
+              </div>
+            </div>
+
+            <div class="penalty-card" data-od-id="penalty-duc-huy">
+              <div class="penalty-info">
+                <div class="avatar">DH</div>
+                <div class="penalty-name-block">
+                  <span class="penalty-name">Duc Huy</span>
+                  <span class="penalty-dept">Product Engineering</span>
+                </div>
+              </div>
+              <div class="penalty-meta">
+                <span class="penalty-amount">$45.00</span>
+                <span class="penalty-meals">5 unused meals</span>
+              </div>
+              <span class="penalty-status"
+                ><span class="pill pill-warn">Pending</span></span
+              >
+              <div class="penalty-action">
+                <button class="btn btn-primary">
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.7"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M2.5 10.5 17 3l-6.5 14-2.5-5.5Z" />
+                    <path d="M8 11.5 17 3" />
+                  </svg>
+                  Send Invoice Reminder
+                </button>
+              </div>
+            </div>
+
+            <div class="penalty-card" data-od-id="penalty-van-anh">
+              <div class="penalty-info">
+                <div class="avatar">VA</div>
+                <div class="penalty-name-block">
+                  <span class="penalty-name">Van Anh</span>
+                  <span class="penalty-dept">Operations</span>
+                </div>
+              </div>
+              <div class="penalty-meta">
+                <span class="penalty-amount">$36.00</span>
+                <span class="penalty-meals">4 unused meals</span>
+              </div>
+              <span class="penalty-status"
+                ><span class="pill pill-soft">Reminder Sent</span></span
+              >
+              <div class="penalty-action">
+                <button class="btn btn-ghost">Resend</button>
+                <button class="btn btn-primary">
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M4.5 10.5 8 14l7.5-7.5" />
+                  </svg>
+                  Mark as Paid
+                </button>
+              </div>
+            </div>
+
+            <div class="penalty-card" data-od-id="penalty-ngoc-phuong">
+              <div class="penalty-info">
+                <div class="avatar">NP</div>
+                <div class="penalty-name-block">
+                  <span class="penalty-name">Ngoc Phuong</span>
+                  <span class="penalty-dept">Customer Support</span>
+                </div>
+              </div>
+              <div class="penalty-meta">
+                <span class="penalty-amount">$9.00</span>
+                <span class="penalty-meals">1 unused meal</span>
+              </div>
+              <span class="penalty-status"
+                ><span class="pill pill-good">Paid</span></span
+              >
+            </div>
+
+            <div class="penalty-card" data-od-id="penalty-hoang-nam">
+              <div class="penalty-info">
+                <div class="avatar">HN</div>
+                <div class="penalty-name-block">
+                  <span class="penalty-name">Hoang Nam</span>
+                  <span class="penalty-dept">Sales</span>
+                </div>
+              </div>
+              <div class="penalty-meta">
+                <span class="penalty-amount">$18.00</span>
+                <span class="penalty-meals">2 unused meals</span>
+              </div>
+              <span class="penalty-status"
+                ><span class="pill pill-good">Paid</span></span
+              >
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      const sidebar = document.getElementById('sidebar');
+      const backdrop = document.getElementById('sidebarBackdrop');
+      const openBtn = document.getElementById('sidebarOpen');
+      const closeBtn = document.getElementById('sidebarClose');
+      function openSidebar() {
+        sidebar.classList.add('open');
+        backdrop.classList.add('visible');
+        openBtn.setAttribute('aria-expanded', 'true');
+      }
+      function closeSidebar() {
+        sidebar.classList.remove('open');
+        backdrop.classList.remove('visible');
+        openBtn.setAttribute('aria-expanded', 'false');
+      }
+      openBtn.addEventListener('click', openSidebar);
+      closeBtn.addEventListener('click', closeSidebar);
+      backdrop.addEventListener('click', closeSidebar);
+    </script>
+  </body>
+</html>

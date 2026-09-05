@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Component · Form Field</title>
+    <link rel="stylesheet" href="../../../colors_and_type.css" />
+    <style>
+      body {
+        background: color-mix(in oklch, var(--fg) 3%, var(--bg));
+        padding: 32px;
+      }
+      .demo-frame {
+        max-width: 340px;
+        border: 1px dashed var(--border);
+        border-radius: var(--radius);
+        padding: 16px;
+      }
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <p class="eyebrow" style="margin-bottom: 12px">COMPONENT · FORM FIELD</p>
+    <div class="demo-frame card">
+      <!-- component-root: form field pair, extracted verbatim from admin-menu.html -->
+      <div id="component-root">
+        <div class="grid-2">
+          <div class="field">
+            <label>Main Dish</label>
+            <input
+              class="field-input"
+              type="text"
+              value="Beef Pho with Fresh Herbs"
+            />
+          </div>
+          <div class="field">
+            <label>Vegetarian Option</label>
+            <input
+              class="field-input"
+              type="text"
+              value="Tofu &amp; Vegetable Pho"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

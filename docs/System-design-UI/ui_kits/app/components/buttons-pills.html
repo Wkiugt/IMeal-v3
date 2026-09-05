@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Component · Buttons &amp; Pills</title>
+    <link rel="stylesheet" href="../../../colors_and_type.css" />
+    <style>
+      body {
+        background: color-mix(in oklch, var(--fg) 3%, var(--bg));
+        padding: 32px;
+      }
+      .demo-frame {
+        max-width: 480px;
+        border: 1px dashed var(--border);
+        border-radius: var(--radius);
+        padding: 16px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <p class="eyebrow" style="margin-bottom: 12px">
+      COMPONENT · BUTTONS &amp; PILLS
+    </p>
+    <div class="demo-frame card">
+      <!-- component-root: button and pill variants, extracted verbatim from admin-*.html -->
+      <div id="component-root">
+        <div class="row" style="margin-bottom: 14px">
+          <button class="btn btn-primary">Publish Menu</button>
+          <button class="btn btn-secondary">Cancel</button>
+          <button class="btn btn-ghost">View details</button>
+          <button class="btn-icon" aria-label="Edit">
+            <svg
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M4 16l1-4L14 3l3 3-9 9-4 1Z" />
+            </svg>
+          </button>
+        </div>
+        <div class="row">
+          <span class="pill pill-good">Confirmed</span>
+          <span class="pill pill-warn">Draft</span>
+          <span class="pill pill-bad">Overdue</span>
+          <span class="pill pill-soft">184 today</span>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

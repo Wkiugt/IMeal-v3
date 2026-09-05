@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meal Admin · Preview — Spacing</title>
+    <link rel="stylesheet" href="../colors_and_type.css" />
+    <style>
+      .wrap {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 40px 24px 64px;
+      }
+      .intro {
+        margin-bottom: 32px;
+      }
+      .intro h1 {
+        font-size: 26px;
+      }
+      .intro p {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 14px;
+        max-width: 640px;
+      }
+      .group {
+        margin-bottom: 36px;
+      }
+      .group h2 {
+        font-size: 15px;
+        margin-bottom: 4px;
+      }
+      .group p.note {
+        color: var(--muted);
+        font-size: 12.5px;
+        margin-bottom: 16px;
+      }
+      .scale-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 10px;
+      }
+      .scale-bar {
+        height: 18px;
+        background: var(--accent-deep);
+        border-radius: 4px;
+      }
+      .scale-label {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--muted);
+        width: 90px;
+        flex: 0 0 auto;
+      }
+      .rhythm-demo {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .rhythm-card {
+        padding: 24px;
+      }
+      .rhythm-card + .rhythm-card {
+        position: relative;
+      }
+      .gutter-demo {
+        display: flex;
+        gap: 18px;
+      }
+      .gutter-box {
+        flex: 1;
+        height: 64px;
+        background: var(--accent-tint);
+        border: 1px dashed var(--accent-soft);
+        border-radius: var(--radius-sm);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap" data-od-id="preview-spacing">
+      <div class="intro">
+        <p class="eyebrow">PREVIEW · SPACING</p>
+        <h1 class="od-title-lg">Spacing</h1>
+        <p>
+          No named spacing tokens exist in source — values are literal px on an
+          approximate 4px rhythm. Card interior padding is a consistent 24px;
+          stacked cards keep 16&ndash;18px between them.
+        </p>
+      </div>
+
+      <div class="group" data-od-id="spacing-scale">
+        <h2>Observed step scale</h2>
+        <p class="note">
+          Every gap/padding value found in source CSS, smallest to largest.
+        </p>
+        <div class="scale-row">
+          <span class="scale-label">2px</span>
+          <div class="scale-bar" style="width: 2px"></div>
+        </div>
+        <div class="scale-row">
+          <span class="scale-label">4px</span>
+          <div class="scale-bar" style="width: 4px"></div>
+        </div>
+        <div class="scale-row">
+          <span class="scale-label">6px</span>
+          <div class="scale-bar" style="width: 6px"></div>
+        </div>
+        <div class="scale-row">
+          <span class="scale-label">8px</span>
+          <div class="scale-bar" style="width: 8px"></div>
+        </div>
+        <div class="scale-row">
+          <span class="scale-label">10px</span>
+          <div class="scale-bar" style="width: 10px"></div>
+        </div>
+        <div class="scale-row">
+          <span class="scale-label">12px</span>
+          <div class="scale-bar" style="width: 12px"></div>
+        </div>
+        <div class="scale-row">
+          <span class="scale-label">14px</span>
+          <div class="scale-bar" style="width: 14px"></div>
+        </div>
+        <div class="scale-row">
+          <span class="scale-label">16px</span>
+          <div class="scale-bar" style="width: 16px"></div>
+        </div>
+        <div class="scale-row">
+          <span class="scale-label">18px</span>
+          <div class="scale-bar" style="width: 18px"></div>
+        </div>
+        <div class="scale-row">
+          <span class="scale-label">20px</span>
+          <div class="scale-bar" style="width: 20px"></div>
+        </div>
+        <div class="scale-row">
+          <span class="scale-label">24px (card pad)</span>
+          <div class="scale-bar" style="width: 24px"></div>
+        </div>
+        <div class="scale-row">
+          <span class="scale-label">28px</span>
+          <div class="scale-bar" style="width: 28px"></div>
+        </div>
+        <div class="scale-row">
+          <span class="scale-label">32px (page gutter)</span>
+          <div class="scale-bar" style="width: 32px"></div>
+        </div>
+      </div>
+
+      <div class="group" data-od-id="card-rhythm">
+        <h2>Card padding &amp; vertical rhythm</h2>
+        <p class="note">
+          24px interior padding; 16&ndash;18px gap between stacked cards.
+        </p>
+        <div class="rhythm-demo">
+          <div class="card rhythm-card">
+            <p class="od-body-sm">
+              24px padding on all sides — this is <code>.card</code>.
+            </p>
+          </div>
+          <div class="card rhythm-card">
+            <p class="od-body-sm">16&ndash;18px gap above, same padding.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="group" data-od-id="page-gutters">
+        <h2>Page gutters by breakpoint</h2>
+        <p class="note">
+          Desktop admin 32px &middot; tablet 20px &middot; mobile 14&ndash;16px.
+        </p>
+        <div class="gutter-demo">
+          <div class="gutter-box"></div>
+          <div class="gutter-box"></div>
+          <div class="gutter-box"></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

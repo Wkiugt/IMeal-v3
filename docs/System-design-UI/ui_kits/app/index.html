@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meal Admin UI Kit · Composed</title>
+    <link rel="stylesheet" href="../../colors_and_type.css" />
+    <style>
+      body {
+        background: color-mix(in oklch, var(--fg) 3%, var(--bg));
+      }
+      .kit-topbar {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 18px 32px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+      .kit-topbar .mark {
+        width: 32px;
+        height: 32px;
+        border-radius: var(--radius);
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+        display: grid;
+        place-items: center;
+      }
+      .kit-topbar .mark img {
+        width: 17px;
+        height: 17px;
+      }
+      .wrap {
+        max-width: 1160px;
+        margin: 0 auto;
+        padding: 36px 32px 64px;
+      }
+      .lede {
+        max-width: 680px;
+        margin-bottom: 32px;
+      }
+      .lede p {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .compose-shell {
+        display: grid;
+        grid-template-columns: 248px 1fr;
+        gap: 24px;
+        align-items: start;
+      }
+      @media (max-width: 860px) {
+        .compose-shell {
+          grid-template-columns: 1fr;
+        }
+      }
+      #mount-sidebar {
+        min-height: 320px;
+      }
+      .compose-main {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .mount-slot {
+        min-height: 60px;
+      }
+      .mount-slot[data-loading]::before {
+        content: attr(data-loading);
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .app-row {
+        display: flex;
+        gap: 28px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+        margin-top: 36px;
+      }
+      .app-row .card {
+        flex: 1 1 320px;
+      }
+      .section-label {
+        margin: 40px 0 14px;
+      }
+      .surface-section {
+        margin-bottom: 34px;
+      }
+      .surface-section h2 {
+        font-size: 15px;
+        margin-bottom: 4px;
+      }
+      .surface-section p.note {
+        color: var(--muted);
+        font-size: 12.5px;
+        margin-bottom: 14px;
+      }
+      .screen-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 14px;
+      }
+      .screen-card {
+        display: block;
+        padding: 18px;
+        text-decoration: none;
+        transition:
+          border-color 0.15s ease,
+          box-shadow 0.15s ease,
+          transform 0.08s ease;
+      }
+      .screen-card:hover {
+        border-color: var(--muted);
+        box-shadow: var(--shadow-md);
+      }
+      .screen-card:active {
+        transform: scale(0.99);
+      }
+      .screen-card .icon-wrap {
+        width: 36px;
+        height: 36px;
+        border-radius: var(--radius);
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+        display: grid;
+        place-items: center;
+        margin-bottom: 12px;
+      }
+      .screen-card .icon-wrap img {
+        width: 18px;
+        height: 18px;
+      }
+      .screen-card .title {
+        font-size: 14.5px;
+        font-weight: 700;
+        color: var(--fg);
+      }
+      .screen-card .sub {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="kit-topbar" data-od-id="kit-topbar">
+      <div class="mark">
+        <img src="../../assets/icons/brand-mark.svg" alt="" />
+      </div>
+      <span class="od-title-sm">Meal Admin UI Kit</span>
+    </header>
+
+    <div class="wrap" data-od-id="kit-overview">
+      <div class="lede">
+        <p class="eyebrow">
+          APPLIED INTERFACE KIT · COMPOSED FROM MODULAR COMPONENTS
+        </p>
+        <h1 class="od-title-lg">Meal Admin</h1>
+        <p>
+          This page fetches each modular file in <code>components/</code> at
+          runtime, extracts its <code>#component-root</code> markup, and mounts
+          it into the layout below — a live composed interface built from the
+          same reusable App shell, Sidebar, and content components used across
+          the real product, not a static screenshot.
+        </p>
+      </div>
+
+      <div class="compose-shell" data-od-id="composed-admin-shell">
+        <aside
+          id="mount-sidebar"
+          class="mount-slot"
+          data-loading="Loading Sidebar component…"
+          data-od-id="mount-sidebar"
+        ></aside>
+        <div class="compose-main">
+          <div
+            id="mount-metric-card"
+            class="mount-slot"
+            data-loading="Loading metric-card component…"
+            data-od-id="mount-metric-card"
+          ></div>
+          <div
+            class="two-col"
+            style="
+              display: grid;
+              grid-template-columns: 1.2fr 1fr;
+              gap: 18px;
+              align-items: start;
+            "
+          >
+            <div
+              id="mount-activity-list"
+              class="mount-slot"
+              data-loading="Loading activity-list component…"
+              data-od-id="mount-activity-list"
+            ></div>
+            <div
+              id="mount-data-table"
+              class="mount-slot"
+              data-loading="Loading data-table component…"
+              data-od-id="mount-data-table"
+            ></div>
+          </div>
+          <div
+            id="mount-buttons-pills"
+            class="mount-slot"
+            data-loading="Loading buttons-pills component…"
+            data-od-id="mount-buttons-pills"
+          ></div>
+          <div
+            id="mount-form-field"
+            class="mount-slot"
+            data-loading="Loading form-field component…"
+            data-od-id="mount-form-field"
+          ></div>
+        </div>
+      </div>
+
+      <div class="app-row" data-od-id="composed-app-shell">
+        <div
+          id="mount-app-shell"
+          class="mount-slot"
+          data-loading="Loading App shell component…"
+          data-od-id="mount-app-shell"
+        ></div>
+        <div class="card" style="max-width: 420px">
+          <p class="eyebrow">COMPONENT · APP SHELL</p>
+          <p class="od-body-sm" style="margin-top: 8px">
+            The mobile <strong>App</strong> shell (device frame, status bar,
+            bottom nav) mounted from <code>components/app-shell.html</code> —
+            the same shell used by <code>employee-meal-app.html</code> and
+            <code>kitchen-staff-app.html</code>.
+          </p>
+        </div>
+      </div>
+
+      <div class="surface-section" data-od-id="surface-full-screens">
+        <p class="eyebrow section-label">FULL SOURCE SCREENS</p>
+        <h2>Open a real preserved screen</h2>
+        <p class="note">
+          Each card below opens the actual preserved source prototype — full
+          interaction included, not a mock.
+        </p>
+        <div class="screen-grid">
+          <a
+            class="card screen-card"
+            href="../../employee-meal-app.html"
+            data-od-id="link-employee-app"
+          >
+            <div class="icon-wrap">
+              <img src="../../assets/icons/nav-dashboard.svg" alt="" />
+            </div>
+            <div class="title">Employee meal registration</div>
+            <div class="sub">employee-meal-app.html</div>
+          </a>
+          <a
+            class="card screen-card"
+            href="../../kitchen-staff-app.html"
+            data-od-id="link-kitchen-app"
+          >
+            <div class="icon-wrap">
+              <img src="../../assets/icons/nav-scanner.svg" alt="" />
+            </div>
+            <div class="title">Kitchen staff check-in</div>
+            <div class="sub">kitchen-staff-app.html</div>
+          </a>
+          <a
+            class="card screen-card"
+            href="../../admin-dashboard.html"
+            data-od-id="link-admin-dashboard"
+          >
+            <div class="icon-wrap">
+              <img src="../../assets/icons/nav-dashboard.svg" alt="" />
+            </div>
+            <div class="title">Admin Dashboard</div>
+            <div class="sub">admin-dashboard.html</div>
+          </a>
+          <a
+            class="card screen-card"
+            href="../../admin-metrics.html"
+            data-od-id="link-admin-metrics"
+          >
+            <div class="icon-wrap">
+              <img src="../../assets/icons/nav-metrics.svg" alt="" />
+            </div>
+            <div class="title">Metrics &amp; Data</div>
+            <div class="sub">admin-metrics.html</div>
+          </a>
+          <a
+            class="card screen-card"
+            href="../../admin-penalties.html"
+            data-od-id="link-admin-penalties"
+          >
+            <div class="icon-wrap">
+              <img src="../../assets/icons/nav-penalties.svg" alt="" />
+            </div>
+            <div class="title">Penalties &amp; Invoicing</div>
+            <div class="sub">admin-penalties.html</div>
+          </a>
+          <a
+            class="card screen-card"
+            href="../../admin-users.html"
+            data-od-id="link-admin-users"
+          >
+            <div class="icon-wrap">
+              <img src="../../assets/icons/nav-users.svg" alt="" />
+            </div>
+            <div class="title">User Management</div>
+            <div class="sub">admin-users.html</div>
+          </a>
+          <a
+            class="card screen-card"
+            href="../../admin-menu.html"
+            data-od-id="link-admin-menu"
+          >
+            <div class="icon-wrap">
+              <img src="../../assets/icons/nav-calendar-menu.svg" alt="" />
+            </div>
+            <div class="title">Weekly Menu</div>
+            <div class="sub">admin-menu.html</div>
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Mount each modular component/*.html file into its slot by fetching the
+      // document and injecting the #component-root markup it exports.
+      const mounts = [
+        ['mount-sidebar', 'components/sidebar.html'],
+        ['mount-app-shell', 'components/app-shell.html'],
+        ['mount-metric-card', 'components/metric-card.html'],
+        ['mount-activity-list', 'components/activity-list.html'],
+        ['mount-data-table', 'components/data-table.html'],
+        ['mount-buttons-pills', 'components/buttons-pills.html'],
+        ['mount-form-field', 'components/form-field.html'],
+      ];
+
+      async function mountComponent(slotId, src) {
+        const slot = document.getElementById(slotId);
+        try {
+          const res = await fetch(src);
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const html = await res.text();
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          const root = doc.getElementById('component-root');
+          if (!root) throw new Error('no #component-root in ' + src);
+          slot.removeAttribute('data-loading');
+          slot.replaceChildren(...root.childNodes);
+        } catch (err) {
+          slot.removeAttribute('data-loading');
+          slot.innerHTML =
+            '<div class="card" style="border-color:var(--status-bad-tint);">' +
+            '<p class="pill pill-bad">Could not load ' +
+            src +
+            '</p>' +
+            '<p class="od-body-sm" style="margin-top:8px;">Open <code>' +
+            src +
+            '</code> directly to view this component standalone.</p>' +
+            '</div>';
+        }
+      }
+
+      mounts.forEach(([slotId, src]) => mountComponent(slotId, src));
+    </script>
+  </body>
+</html>

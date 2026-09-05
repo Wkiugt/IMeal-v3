@@ -1,0 +1,19 @@
+{
+    # Global options
+    auto_https off
+}
+
+:80 {
+    @api path /api/* /auth/* /registrations/* /admin/* /v1/* /internal/*
+    handle @api {
+        reverse_proxy imeal_api:3000
+    }
+
+    handle_path /storage/* {
+        reverse_proxy imeal_minio:9000
+    }
+
+    handle {
+        reverse_proxy imeal_admin_web:80
+    }
+}

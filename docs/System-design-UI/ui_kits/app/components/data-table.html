@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Component · Data Table</title>
+    <link rel="stylesheet" href="../../../colors_and_type.css" />
+    <style>
+      body {
+        background: color-mix(in oklch, var(--fg) 3%, var(--bg));
+        padding: 32px;
+      }
+      .demo-frame {
+        max-width: 480px;
+        border: 1px dashed var(--border);
+        border-radius: var(--radius);
+        padding: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <p class="eyebrow" style="margin-bottom: 12px">COMPONENT · DATA TABLE</p>
+    <div class="demo-frame card">
+      <!-- component-root: data table, extracted verbatim from admin-metrics.html -->
+      <div id="component-root">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Department</th>
+              <th class="num">Meals</th>
+              <th class="num">Waste Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Engineering</td>
+              <td class="num">1,240</td>
+              <td class="num">5.1%</td>
+            </tr>
+            <tr>
+              <td>Sales</td>
+              <td class="num">810</td>
+              <td class="num">7.2%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </body>
+</html>

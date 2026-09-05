@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meal Admin · Preview — Typography</title>
+    <link rel="stylesheet" href="../colors_and_type.css" />
+    <style>
+      .wrap {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 40px 24px 64px;
+      }
+      .intro {
+        margin-bottom: 32px;
+      }
+      .intro h1 {
+        font-size: 26px;
+      }
+      .intro p {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 14px;
+        max-width: 640px;
+      }
+      .row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 18px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .row:last-child {
+        border-bottom: none;
+      }
+      .row .label {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--muted);
+        width: 160px;
+        flex: 0 0 auto;
+      }
+      .row .sample {
+        flex: 1 1 auto;
+      }
+      .stack-block {
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+      .font-card {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 22px 24px;
+        box-shadow: var(--shadow-sm);
+      }
+      .font-card h3 {
+        font-size: 13px;
+        font-family: var(--font-mono);
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+      .font-sample-body {
+        font-family: var(--font-body);
+        font-size: 17px;
+      }
+      .font-sample-display {
+        font-family: var(--font-display);
+        font-size: 22px;
+        font-weight: 700;
+      }
+      .font-sample-mono {
+        font-family: var(--font-mono);
+        font-size: 15px;
+      }
+      .stack-list {
+        margin-top: 10px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap" data-od-id="preview-typography">
+      <div class="intro">
+        <p class="eyebrow">PREVIEW · TYPE</p>
+        <h1 class="od-title-lg">Typography</h1>
+        <p>
+          No webfonts — the product deliberately uses the native OS stack for a
+          platform-native feel and zero load cost. Three roles: display, body,
+          mono.
+        </p>
+      </div>
+
+      <div
+        class="stack-block"
+        data-od-id="font-families"
+        style="margin-bottom: 36px"
+      >
+        <div class="font-card">
+          <h3>--font-display</h3>
+          <div class="font-sample-display">Today&rsquo;s Prep — 184 meals</div>
+          <div class="stack-list">
+            -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI',
+            system-ui, sans-serif
+          </div>
+        </div>
+        <div class="font-card">
+          <h3>--font-body</h3>
+          <div class="font-sample-body">
+            Toggle a day on to register lunch for the week.
+          </div>
+          <div class="stack-list">
+            -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
+            system-ui, sans-serif
+          </div>
+        </div>
+        <div class="font-card">
+          <h3>--font-mono</h3>
+          <div class="font-sample-mono">
+            EMP-04521 &middot; 12:41 PM &middot; 126 / 184
+          </div>
+          <div class="stack-list">
+            ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace
+          </div>
+        </div>
+      </div>
+
+      <div data-od-id="type-scale">
+        <div class="row">
+          <span class="label">.od-display-xl · 52/700</span
+          ><span class="sample od-display-xl">184</span>
+        </div>
+        <div class="row">
+          <span class="label">.od-display-lg · 34/700</span
+          ><span class="sample od-display-lg">$18,420</span>
+        </div>
+        <div class="row">
+          <span class="label">.od-title-lg · 24/700</span
+          ><span class="sample od-title-lg">Hi, Minh Anh</span>
+        </div>
+        <div class="row">
+          <span class="label">.od-title · 20/700</span
+          ><span class="sample od-title">Weekly Menu</span>
+        </div>
+        <div class="row">
+          <span class="label">.od-title-sm · 17/700</span
+          ><span class="sample od-title-sm">Meal Attendance Trend</span>
+        </div>
+        <div class="row">
+          <span class="label">.od-body · 14/400</span
+          ><span class="sample od-body"
+            >Sign in with your work account to register meals.</span
+          >
+        </div>
+        <div class="row">
+          <span class="label">.od-body-sm · 13/400</span
+          ><span class="sample od-body-sm"
+            >Aug 24–28, 2026 &middot; Toggle a day on to register lunch</span
+          >
+        </div>
+        <div class="row">
+          <span class="label">.eyebrow · 12/600 mono</span
+          ><span class="sample eyebrow">DIETARY PREFERENCES</span>
+        </div>
+        <div class="row">
+          <span class="label">.od-caption · 12/400</span
+          ><span class="sample od-caption">Valid until 13:00 today</span>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

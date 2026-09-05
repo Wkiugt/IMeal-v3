@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Component · App Shell</title>
+    <link rel="stylesheet" href="../../../colors_and_type.css" />
+    <style>
+      body {
+        background: color-mix(in oklch, var(--fg) 3%, var(--bg));
+        padding: 32px;
+      }
+      .demo-frame {
+        max-width: 300px;
+        border: 1px dashed var(--border);
+        border-radius: var(--radius);
+        padding: 12px;
+      }
+      .app-shell {
+        width: 260px;
+        background: var(--bg);
+        border-radius: 32px;
+        box-shadow:
+          var(--shadow-lg),
+          0 0 0 8px color-mix(in oklch, var(--fg) 92%, var(--bg));
+        overflow: hidden;
+      }
+      .app-statusbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 18px 4px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--fg);
+      }
+      .app-statusbar .island {
+        width: 64px;
+        height: 16px;
+        background: var(--fg);
+        border-radius: var(--radius-pill);
+      }
+      .app-content {
+        padding: 6px 16px 16px;
+      }
+      .app-bottom-nav {
+        display: flex;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        padding: 6px;
+        gap: 3px;
+        margin: 10px;
+      }
+      .app-nav-item {
+        flex: 1 1 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        padding: 6px 3px;
+        border-radius: var(--radius);
+        color: var(--muted);
+      }
+      .app-nav-item img {
+        width: 16px;
+        height: 16px;
+      }
+      .app-nav-item .nav-label {
+        font-size: 8.5px;
+        font-weight: 600;
+      }
+      .app-nav-item.active {
+        color: var(--accent-deep);
+        background: var(--accent-soft);
+      }
+    </style>
+  </head>
+  <body>
+    <p class="eyebrow" style="margin-bottom: 12px">COMPONENT · APP SHELL</p>
+    <div class="demo-frame">
+      <!-- component-root: the reusable App device shell, extracted from employee-meal-app.html / kitchen-staff-app.html -->
+      <div id="component-root">
+        <div class="app-shell" data-od-id="device-frame">
+          <div class="app-statusbar" aria-hidden="true">
+            <span>9:41</span><span class="island"></span><span>••</span>
+          </div>
+          <div class="app-content">
+            <p class="eyebrow">TUESDAY, AUG 25</p>
+            <h1 class="od-title-lg" style="margin-top: 4px">Hi, Minh Anh</h1>
+            <div class="card" style="margin-top: 14px; padding: 14px">
+              <span class="pill pill-soft">Lunch · 12:00–13:00</span>
+              <p class="od-title-sm" style="margin-top: 10px">
+                Grilled Chicken Rice Bowl
+              </p>
+            </div>
+          </div>
+          <nav class="app-bottom-nav">
+            <a class="app-nav-item active"
+              ><img src="../../../assets/icons/nav-dashboard.svg" alt="" /><span
+                class="nav-label"
+                >Dashboard</span
+              ></a
+            >
+            <a class="app-nav-item"
+              ><img
+                src="../../../assets/icons/nav-calendar-menu.svg"
+                alt=""
+              /><span class="nav-label">Calendar</span></a
+            >
+            <a class="app-nav-item"
+              ><img src="../../../assets/icons/nav-ticket.svg" alt="" /><span
+                class="nav-label"
+                >Ticket</span
+              ></a
+            >
+            <a class="app-nav-item"
+              ><img src="../../../assets/icons/nav-profile.svg" alt="" /><span
+                class="nav-label"
+                >Profile</span
+              ></a
+            >
+          </nav>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

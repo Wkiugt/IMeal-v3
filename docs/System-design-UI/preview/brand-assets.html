@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meal Admin · Preview — Brand Assets</title>
+    <link rel="stylesheet" href="../colors_and_type.css" />
+    <style>
+      .wrap {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 40px 24px 64px;
+      }
+      .intro {
+        margin-bottom: 32px;
+      }
+      .intro h1 {
+        font-size: 26px;
+      }
+      .intro p {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 14px;
+        max-width: 640px;
+      }
+      .group {
+        margin-bottom: 36px;
+      }
+      .group h2 {
+        font-size: 15px;
+        margin-bottom: 4px;
+      }
+      .group p.note {
+        color: var(--muted);
+        font-size: 12.5px;
+        margin-bottom: 16px;
+      }
+      .mark-row {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+      }
+      .mark-badge {
+        width: 56px;
+        height: 56px;
+        border-radius: var(--radius);
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+        display: grid;
+        place-items: center;
+      }
+      .mark-badge img {
+        width: 28px;
+        height: 28px;
+      }
+      .icon-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 14px;
+      }
+      .icon-tile {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 16px;
+        text-align: center;
+        box-shadow: var(--shadow-sm);
+        background: var(--surface);
+      }
+      .icon-tile img {
+        width: 24px;
+        height: 24px;
+        margin: 0 auto 10px;
+        color: var(--accent-deep);
+      }
+      .icon-tile span {
+        display: block;
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap" data-od-id="preview-brand-assets">
+      <div class="intro">
+        <p class="eyebrow">PREVIEW · BRAND ASSETS</p>
+        <h1 class="od-title-lg">Brand Assets</h1>
+        <p>
+          All icons are 1.6&ndash;1.8px stroke-weight line SVGs with rounded
+          joins, extracted verbatim from source HTML into
+          <code>assets/icons/</code> and compiled into a runtime sprite at
+          <code>build/icon-sprite.svg</code>. No emoji, no filled icon style, no
+          separate wordmark asset exists in source.
+        </p>
+      </div>
+
+      <div class="group" data-od-id="brand-mark">
+        <h2>Brand mark</h2>
+        <p class="note">
+          The only brand glyph in source: a fork + steam mark, used at
+          18&ndash;32px inside a circular accent-soft badge (sidebar header,
+          mobile login screen).
+        </p>
+        <div class="mark-row">
+          <div class="mark-badge">
+            <img
+              src="../assets/icons/brand-mark.svg"
+              alt="Meal Admin brand mark"
+            />
+          </div>
+          <span class="od-title-sm" style="font-family: var(--font-display)"
+            >Meal Admin</span
+          >
+        </div>
+      </div>
+
+      <div class="group" data-od-id="nav-icon-set">
+        <h2>Navigation icon set</h2>
+        <p class="note">
+          Shared between the admin sidebar and the mobile bottom nav — same
+          visual weight, same active-state treatment.
+        </p>
+        <div class="icon-grid">
+          <div class="icon-tile">
+            <img src="../assets/icons/nav-dashboard.svg" alt="Dashboard" /><span
+              >dashboard</span
+            >
+          </div>
+          <div class="icon-tile">
+            <img src="../assets/icons/nav-metrics.svg" alt="Metrics" /><span
+              >metrics</span
+            >
+          </div>
+          <div class="icon-tile">
+            <img src="../assets/icons/nav-penalties.svg" alt="Penalties" /><span
+              >penalties</span
+            >
+          </div>
+          <div class="icon-tile">
+            <img src="../assets/icons/nav-users.svg" alt="Users" /><span
+              >users</span
+            >
+          </div>
+          <div class="icon-tile">
+            <img
+              src="../assets/icons/nav-calendar-menu.svg"
+              alt="Calendar / Menu"
+            /><span>calendar/menu</span>
+          </div>
+          <div class="icon-tile">
+            <img src="../assets/icons/nav-ticket.svg" alt="Ticket" /><span
+              >ticket</span
+            >
+          </div>
+          <div class="icon-tile">
+            <img src="../assets/icons/nav-profile.svg" alt="Profile" /><span
+              >profile</span
+            >
+          </div>
+          <div class="icon-tile">
+            <img src="../assets/icons/nav-scanner.svg" alt="Scanner" /><span
+              >scanner</span
+            >
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

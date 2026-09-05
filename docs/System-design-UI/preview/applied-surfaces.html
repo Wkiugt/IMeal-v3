@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meal Admin · Preview — Applied UI Surfaces</title>
+    <link rel="stylesheet" href="../colors_and_type.css" />
+    <style>
+      .wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 40px 24px 64px;
+      }
+      .intro {
+        margin-bottom: 32px;
+      }
+      .intro h1 {
+        font-size: 26px;
+      }
+      .intro p {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 14px;
+        max-width: 680px;
+      }
+      .surface-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 20px;
+      }
+      .surface-card {
+        padding: 0;
+        overflow: hidden;
+      }
+      .surface-card img {
+        width: 100%;
+        height: auto;
+        display: block;
+        border-bottom: 1px solid var(--border);
+        background: #f4f4f5;
+      }
+      .surface-meta {
+        padding: 16px 18px 18px;
+      }
+      .surface-meta h3 {
+        font-size: 14.5px;
+        font-weight: 700;
+      }
+      .surface-meta p {
+        font-size: 12.5px;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .surface-card.wide {
+        grid-column: span 2;
+      }
+      @media (max-width: 720px) {
+        .surface-card.wide {
+          grid-column: span 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap" data-od-id="preview-applied-surfaces">
+      <div class="intro">
+        <p class="eyebrow">PREVIEW · APPLIED UI</p>
+        <h1 class="od-title-lg">Applied UI Surfaces</h1>
+        <p>
+          Real rendered screenshots of the source prototype, preserved in
+          <code>assets/screenshots/</code> — proof of how these tokens and
+          components compose into finished screens, not a redrawn approximation.
+        </p>
+      </div>
+
+      <div class="surface-grid" data-od-id="surface-grid">
+        <div class="card surface-card">
+          <img
+            src="../assets/screenshots/preview-login.png"
+            alt="Employee app — login screen"
+          />
+          <div class="surface-meta">
+            <h3>Employee app · Login</h3>
+            <p>Microsoft SSO entry point, accent icon mark, footnote copy</p>
+          </div>
+        </div>
+        <div class="card surface-card">
+          <img
+            src="../assets/screenshots/preview-dashboard.png"
+            alt="Employee app — dashboard screen"
+          />
+          <div class="surface-meta">
+            <h3>Employee app · Dashboard</h3>
+            <p>Today's meal card, primary Scan QR CTA, bottom nav</p>
+          </div>
+        </div>
+        <div class="card surface-card">
+          <img
+            src="../assets/screenshots/preview-booking.png"
+            alt="Employee app — booking/calendar screen"
+          />
+          <div class="surface-meta">
+            <h3>Employee app · Booking</h3>
+            <p>Monthly calendar + weekly toggle-row registration list</p>
+          </div>
+        </div>
+        <div class="card surface-card">
+          <img
+            src="../assets/screenshots/preview-profile.png"
+            alt="Employee app — profile screen"
+          />
+          <div class="surface-meta">
+            <h3>Employee app · Profile</h3>
+            <p>Identity card, meal stats, dietary preference chip</p>
+          </div>
+        </div>
+        <div class="card surface-card wide">
+          <img
+            src="../assets/screenshots/admin-dashboard-check.png"
+            alt="Admin console — dashboard, full desktop render"
+          />
+          <div class="surface-meta">
+            <h3>Admin console · Dashboard (desktop)</h3>
+            <p>
+              Sidebar shell, gradient metric cards, line chart, activity feed
+            </p>
+          </div>
+        </div>
+        <div class="card surface-card wide">
+          <img
+            src="../assets/screenshots/preview-polish-check.png"
+            alt="Polish / QA pass render"
+          />
+          <div class="surface-meta">
+            <h3>Polish pass render</h3>
+            <p>Preserved QA screenshot from the source project</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

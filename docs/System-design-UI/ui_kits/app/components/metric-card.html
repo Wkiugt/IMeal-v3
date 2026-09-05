@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Component · Metric Card</title>
+    <link rel="stylesheet" href="../../../colors_and_type.css" />
+    <style>
+      body {
+        background: color-mix(in oklch, var(--fg) 3%, var(--bg));
+        padding: 32px;
+      }
+      .demo-frame {
+        max-width: 520px;
+        border: 1px dashed var(--border);
+        border-radius: var(--radius);
+        padding: 16px;
+      }
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+      }
+      .metric-card {
+        background: linear-gradient(
+          150deg,
+          var(--accent-tint),
+          var(--accent-soft)
+        );
+        border: 1px solid var(--accent-soft);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+        padding: 20px 22px;
+      }
+      .metric-icon-wrap {
+        width: 38px;
+        height: 38px;
+        border-radius: var(--radius);
+        background: color-mix(in oklch, var(--surface) 60%, transparent);
+        display: grid;
+        place-items: center;
+        margin-bottom: 12px;
+      }
+      .metric-icon-wrap img {
+        width: 18px;
+        height: 18px;
+      }
+      .metric-label {
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .metric-value {
+        font-family: var(--font-display);
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin-top: 6px;
+      }
+      .metric-delta {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 10px;
+        font-size: 12.5px;
+        color: var(--status-good-deep);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <p class="eyebrow" style="margin-bottom: 12px">COMPONENT · METRIC CARD</p>
+    <div class="demo-frame">
+      <!-- component-root: metric-card grid, extracted verbatim from admin-dashboard.html -->
+      <div id="component-root">
+        <div class="metric-grid">
+          <div class="metric-card">
+            <div class="metric-icon-wrap">
+              <img src="../../../assets/icons/nav-users.svg" alt="" />
+            </div>
+            <p class="metric-label">Total Users</p>
+            <p class="metric-value">248</p>
+            <p class="metric-delta">+12 this month</p>
+          </div>
+          <div class="metric-card">
+            <div class="metric-icon-wrap">
+              <img src="../../../assets/icons/nav-penalties.svg" alt="" />
+            </div>
+            <p class="metric-label">Total Outstanding</p>
+            <p class="metric-value">$126.00</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meal Admin · Preview — Radius &amp; Shadows</title>
+    <link rel="stylesheet" href="../colors_and_type.css" />
+    <style>
+      .wrap {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 40px 24px 64px;
+      }
+      .intro {
+        margin-bottom: 32px;
+      }
+      .intro h1 {
+        font-size: 26px;
+      }
+      .intro p {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 14px;
+        max-width: 640px;
+      }
+      .group {
+        margin-bottom: 36px;
+      }
+      .group h2 {
+        font-size: 15px;
+        margin-bottom: 4px;
+      }
+      .group p.note {
+        color: var(--muted);
+        font-size: 12.5px;
+        margin-bottom: 16px;
+      }
+      .radius-row {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+      }
+      .radius-tile {
+        width: 140px;
+        height: 100px;
+        background: var(--accent-tint);
+        border: 1px solid var(--accent-soft);
+        display: flex;
+        align-items: flex-end;
+        padding: 10px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--accent-deep);
+        font-weight: 700;
+      }
+      .shadow-row {
+        display: flex;
+        gap: 28px;
+        flex-wrap: wrap;
+      }
+      .shadow-tile {
+        width: 160px;
+        height: 110px;
+        background: var(--surface);
+        border-radius: var(--radius);
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding-bottom: 14px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap" data-od-id="preview-radius-shadows">
+      <div class="intro">
+        <p class="eyebrow">PREVIEW · RADIUS &amp; SHADOWS</p>
+        <h1 class="od-title-lg">Radius &amp; Shadows</h1>
+        <p>
+          Four radius steps and three shadow steps, used consistently across
+          both the mobile app and admin console — never an arbitrary value
+          outside this scale.
+        </p>
+      </div>
+
+      <div class="group" data-od-id="radius-scale">
+        <h2>Radius scale</h2>
+        <p class="note">Applied by role, not by component size.</p>
+        <div class="radius-row">
+          <div class="radius-tile" style="border-radius: var(--radius-sm)">
+            --radius-sm · 14px<br />inputs, note boxes
+          </div>
+          <div class="radius-tile" style="border-radius: var(--radius)">
+            --radius · 20px<br />nav items, icon wraps
+          </div>
+          <div class="radius-tile" style="border-radius: var(--radius-lg)">
+            --radius-lg · 28px<br />cards, buttons
+          </div>
+          <div
+            class="radius-tile"
+            style="
+              border-radius: var(--radius-pill);
+              width: 110px;
+              align-items: center;
+              justify-content: center;
+              padding: 0;
+              text-align: center;
+            "
+          >
+            --radius-pill<br />999px
+          </div>
+        </div>
+      </div>
+
+      <div class="group" data-od-id="shadow-scale">
+        <h2>Shadow scale</h2>
+        <p class="note">Shadows tint with <code>--fg</code>, not pure black.</p>
+        <div class="shadow-row">
+          <div class="shadow-tile" style="box-shadow: var(--shadow-sm)">
+            --shadow-sm<br />resting cards
+          </div>
+          <div class="shadow-tile" style="box-shadow: var(--shadow-md)">
+            --shadow-md<br />hover / raised
+          </div>
+          <div class="shadow-tile" style="box-shadow: var(--shadow-lg)">
+            --shadow-lg<br />modals, ticket, drawer
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

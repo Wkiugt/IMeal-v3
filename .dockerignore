@@ -1,0 +1,17 @@
+node_modules
+**/node_modules
+.pnpm-store
+.yarn/cache
+.yarn/unplugged
+.yarn/install-state.gz
+**/dist
+**/.turbo
+.git
+.gitignore
+*.log
+.env
+.env.*
+!/.env.example
+apps/admin-web/penalties-preview.html
+apps/admin-web/preview.html
+**/*.tsbuildinfo

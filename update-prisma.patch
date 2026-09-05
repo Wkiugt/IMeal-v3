@@ -1,0 +1,45 @@
+--- packages/domain/prisma/schema.prisma
++++ packages/domain/prisma/schema.prisma
+@@ -107,8 +107,11 @@
+   userId    String   @map("user_id")
+   mealDate  DateTime @map("meal_date")
+   status    String
+   createdAt DateTime @default(now()) @map("created_at")
++  updatedAt DateTime @updatedAt @default(now()) @map("updated_at")
++  version   Int      @default(1)
+ 
+   user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+   delegations PickupDelegation[]
+   mealServing MealServing?
+ 
+   @@unique([userId, mealDate])
++  @@index([userId, mealDate])
+   @@map("registrations")
+ }
+ 
+@@ -194,5 +197,22 @@
+   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+ 
+   @@map("audit_logs")
+ }
++
++model OutboxEvent {
++  id            String   @id @default(uuid())
++  aggregateType String   @map("aggregate_type")
++  aggregateId   String   @map("aggregate_id")
++  eventType     String   @map("event_type")
++  payload       String
++  status        String   @default("PENDING")
++  createdAt     DateTime @default(now()) @map("created_at")
++
++  @@map("outbox_events")
++}
++
++model AppSetting {
++  key       String   @id
++  value     String
++  version   Int      @default(1)
++  updatedAt DateTime @updatedAt @default(now()) @map("updated_at")
++
++  @@map("app_settings")
++}

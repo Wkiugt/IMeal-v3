@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Component · Sidebar</title>
+    <link rel="stylesheet" href="../../../colors_and_type.css" />
+    <style>
+      body {
+        background: color-mix(in oklch, var(--fg) 3%, var(--bg));
+        padding: 32px;
+      }
+      .demo-frame {
+        max-width: 280px;
+        border: 1px dashed var(--border);
+        border-radius: var(--radius);
+        padding: 12px;
+      }
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 22px 16px;
+        width: 248px;
+      }
+      .sidebar-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 4px 8px 22px;
+      }
+      .brand-mark {
+        width: 34px;
+        height: 34px;
+        border-radius: var(--radius);
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+      }
+      .brand-mark img {
+        width: 18px;
+        height: 18px;
+      }
+      .brand-name {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 15.5px;
+        letter-spacing: -0.005em;
+      }
+      .sidebar-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .sidebar-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 12px;
+        border-radius: var(--radius);
+        color: var(--muted);
+        font-size: 14px;
+        font-weight: 600;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease;
+      }
+      .sidebar-nav-item img {
+        width: 20px;
+        height: 20px;
+        flex: 0 0 auto;
+      }
+      .sidebar-nav-item:hover:not(.active) {
+        color: var(--fg);
+        background: var(--fg-soft);
+      }
+      .sidebar-nav-item.active {
+        color: var(--accent-deep);
+        background: var(--accent-soft);
+      }
+      .sidebar-foot {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px;
+        margin-top: 12px;
+        border-top: 1px solid var(--border);
+        padding-top: 18px;
+      }
+      .sidebar-foot-info {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .sidebar-foot-name {
+        font-size: 13.5px;
+        font-weight: 700;
+      }
+      .sidebar-foot-role {
+        font-size: 12px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <p class="eyebrow" style="margin-bottom: 12px">COMPONENT · SIDEBAR</p>
+    <div class="demo-frame">
+      <!-- component-root: the reusable Sidebar markup, extracted verbatim from admin-dashboard.html -->
+      <div id="component-root">
+        <nav class="sidebar" data-od-id="admin-sidebar">
+          <div class="sidebar-head">
+            <div class="brand-mark" aria-hidden="true">
+              <img src="../../../assets/icons/brand-mark.svg" alt="" />
+            </div>
+            <span class="brand-name">Meal Admin</span>
+          </div>
+          <div class="sidebar-nav">
+            <a
+              class="sidebar-nav-item active"
+              href="../../../admin-dashboard.html"
+              ><img src="../../../assets/icons/nav-dashboard.svg" alt="" /><span
+                >Dashboard</span
+              ></a
+            >
+            <a class="sidebar-nav-item" href="../../../admin-metrics.html"
+              ><img src="../../../assets/icons/nav-metrics.svg" alt="" /><span
+                >Metrics &amp; Data</span
+              ></a
+            >
+            <a class="sidebar-nav-item" href="../../../admin-penalties.html"
+              ><img src="../../../assets/icons/nav-penalties.svg" alt="" /><span
+                >Penalties &amp; Invoicing</span
+              ></a
+            >
+            <a class="sidebar-nav-item" href="../../../admin-users.html"
+              ><img src="../../../assets/icons/nav-users.svg" alt="" /><span
+                >User Management</span
+              ></a
+            >
+            <a class="sidebar-nav-item" href="../../../admin-menu.html"
+              ><img
+                src="../../../assets/icons/nav-calendar-menu.svg"
+                alt=""
+              /><span>Weekly Menu</span></a
+            >
+          </div>
+          <div class="sidebar-foot">
+            <div class="avatar">PQ</div>
+            <div class="sidebar-foot-info">
+              <span class="sidebar-foot-name">Pham Quang</span
+              ><span class="sidebar-foot-role">Admin</span>
+            </div>
+          </div>
+        </nav>
+      </div>
+    </div>
+  </body>
+</html>

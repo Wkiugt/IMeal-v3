@@ -1,0 +1,998 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Meal Admin · Weekly Menu</title>
+    <style>
+      :root {
+        --bg: oklch(100% 0 0);
+        --surface: oklch(100% 0 0);
+        --fg: oklch(27% 0.025 255);
+        --muted: oklch(44% 0.022 255);
+        --border: oklch(92% 0.014 240);
+        --accent: oklch(80% 0.085 250);
+
+        --accent-deep: oklch(42% 0.135 250);
+        --accent-soft: oklch(93% 0.035 250);
+        --accent-tint: oklch(97% 0.016 250);
+        --fg-soft: color-mix(in oklch, var(--fg) 5%, transparent);
+        --shadow-sm: 0 1px 2px color-mix(in oklch, var(--fg) 7%, transparent);
+        --shadow-md: 0 10px 28px color-mix(in oklch, var(--fg) 10%, transparent);
+        --shadow-lg: 0 20px 48px color-mix(in oklch, var(--fg) 14%, transparent);
+
+        --status-good-tint: oklch(94% 0.05 155);
+        --status-good-deep: oklch(38% 0.11 155);
+        --status-warn-tint: oklch(95% 0.05 85);
+        --status-warn-deep: oklch(42% 0.13 85);
+        --status-bad-tint: oklch(94% 0.045 25);
+        --status-bad-deep: oklch(40% 0.15 25);
+
+        --font-body:
+          -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
+          system-ui, sans-serif;
+        --font-display:
+          -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI',
+          system-ui, sans-serif;
+        --font-mono:
+          ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+
+        --radius-sm: 14px;
+        --radius: 20px;
+        --radius-lg: 28px;
+        --radius-pill: 999px;
+
+        --sidebar-w: 248px;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
+      body {
+        margin: 0;
+        background: color-mix(in oklch, var(--fg) 3%, var(--bg));
+        color: var(--fg);
+        font-family: var(--font-body);
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      img,
+      svg {
+        display: block;
+      }
+      button,
+      a {
+        font: inherit;
+        cursor: pointer;
+        color: inherit;
+      }
+      button {
+        background: none;
+        border: none;
+      }
+      a {
+        text-decoration: none;
+      }
+      p {
+        margin: 0;
+        text-wrap: pretty;
+      }
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        text-wrap: balance;
+        font-family: var(--font-display);
+      }
+      input,
+      textarea {
+        font: inherit;
+        color: inherit;
+      }
+      :focus-visible {
+        outline: 2px solid var(--accent-deep);
+        outline-offset: 2px;
+        border-radius: 6px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          transition-duration: 0.001ms !important;
+          animation-duration: 0.001ms !important;
+        }
+      }
+
+      /* ── shared building blocks ─────────────────────────────────────── */
+      .eyebrow {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        letter-spacing: 0.07em;
+        color: var(--muted);
+        margin: 0;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+        padding: 24px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px;
+        border-radius: var(--radius-pill);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        flex: 0 0 auto;
+        transition:
+          background 0.2s ease,
+          color 0.2s ease;
+      }
+      .pill-soft {
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+      }
+      .pill-outline {
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid var(--border);
+      }
+      .pill-good {
+        background: var(--status-good-tint);
+        color: var(--status-good-deep);
+      }
+      .pill-warn {
+        background: var(--status-warn-tint);
+        color: var(--status-warn-deep);
+      }
+      .pill svg {
+        width: 13px;
+        height: 13px;
+        flex: 0 0 auto;
+      }
+      .avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: var(--radius-pill);
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        font-size: 13px;
+        flex: 0 0 auto;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 13px 26px;
+        border-radius: var(--radius-pill);
+        font-size: 15px;
+        font-weight: 700;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease,
+          border-color 0.15s ease,
+          transform 0.08s ease;
+      }
+      .btn svg {
+        width: 17px;
+        height: 17px;
+        flex: 0 0 auto;
+      }
+      .btn-primary {
+        background: var(--accent-deep);
+        color: var(--surface);
+        box-shadow: var(--shadow-md);
+      }
+      .btn-primary:hover {
+        background: color-mix(in oklch, var(--accent-deep) 88%, black);
+        box-shadow: var(--shadow-lg);
+      }
+      .btn-primary:active {
+        transform: scale(0.98);
+      }
+      .btn-primary:disabled {
+        opacity: 0.6;
+        cursor: default;
+        box-shadow: var(--shadow-sm);
+      }
+
+      /* ── admin shell ────────────────────────────────────────────────── */
+      .admin-shell {
+        display: flex;
+        min-height: 100vh;
+      }
+      .sidebar-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: color-mix(in oklch, var(--fg) 45%, transparent);
+        z-index: 30;
+      }
+      .sidebar-backdrop.visible {
+        display: block;
+      }
+      .sidebar {
+        position: sticky;
+        top: 0;
+        flex: 0 0 auto;
+        width: var(--sidebar-w);
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        padding: 22px 16px;
+        z-index: 40;
+      }
+      .sidebar-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 4px 8px 22px;
+      }
+      .brand-mark {
+        width: 34px;
+        height: 34px;
+        border-radius: var(--radius);
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+      }
+      .brand-mark svg {
+        width: 18px;
+        height: 18px;
+      }
+      .brand-name {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 15.5px;
+        letter-spacing: -0.005em;
+      }
+      .sidebar-close {
+        display: none;
+        margin-left: auto;
+        width: 32px;
+        height: 32px;
+        border-radius: var(--radius-pill);
+        color: var(--muted);
+      }
+      .sidebar-close svg {
+        width: 18px;
+        height: 18px;
+      }
+      .sidebar-close:hover {
+        color: var(--fg);
+        background: var(--fg-soft);
+      }
+      .sidebar-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        flex: 1 1 auto;
+      }
+      .sidebar-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 12px;
+        border-radius: var(--radius);
+        color: var(--muted);
+        font-size: 14px;
+        font-weight: 600;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease;
+      }
+      .sidebar-nav-item svg {
+        width: 20px;
+        height: 20px;
+        flex: 0 0 auto;
+      }
+      .sidebar-nav-item:hover:not(.active) {
+        color: var(--fg);
+        background: var(--fg-soft);
+      }
+      .sidebar-nav-item.active {
+        color: var(--accent-deep);
+        background: var(--accent-soft);
+      }
+      .sidebar-foot {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px;
+        margin-top: 12px;
+        border-top: 1px solid var(--border);
+        padding-top: 18px;
+      }
+      .sidebar-foot-info {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .sidebar-foot-name {
+        font-size: 13.5px;
+        font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .sidebar-foot-role {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .admin-main-wrap {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .admin-topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 20px 32px;
+        background: color-mix(in oklch, var(--bg) 88%, transparent);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--border);
+      }
+      .topbar-menu-btn {
+        display: none;
+        width: 38px;
+        height: 38px;
+        border-radius: var(--radius-pill);
+        color: var(--fg);
+        flex: 0 0 auto;
+      }
+      .topbar-menu-btn svg {
+        width: 20px;
+        height: 20px;
+      }
+      .topbar-menu-btn:hover {
+        background: var(--fg-soft);
+      }
+      .topbar-titles {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .topbar-titles h1 {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin-top: 3px;
+      }
+      .topbar-profile {
+        flex: 0 0 auto;
+      }
+      .admin-main {
+        flex: 1 1 auto;
+        padding: 28px 32px 56px;
+        max-width: 1180px;
+        width: 100%;
+        margin: 0 auto;
+      }
+
+      @media (max-width: 900px) {
+        .sidebar {
+          position: fixed;
+          left: 0;
+          top: 0;
+          transform: translateX(-100%);
+          box-shadow: var(--shadow-lg);
+          transition: transform 0.22s ease;
+        }
+        .sidebar.open {
+          transform: translateX(0);
+        }
+        .sidebar-close {
+          display: grid;
+          place-items: center;
+        }
+        .topbar-menu-btn {
+          display: grid;
+          place-items: center;
+        }
+        .admin-topbar {
+          padding: 16px 20px;
+        }
+        .admin-main {
+          padding: 20px 20px 48px;
+        }
+      }
+      @media (max-width: 560px) {
+        .topbar-titles h1 {
+          font-size: 19px;
+        }
+        .admin-main {
+          padding: 16px 14px 40px;
+        }
+      }
+
+      /* ── weekly menu page ───────────────────────────────────────────── */
+      .week-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 22px;
+        flex-wrap: wrap;
+      }
+      .week-header-left {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .week-nav {
+        display: flex;
+        gap: 8px;
+      }
+      .week-nav-btn {
+        width: 38px;
+        height: 38px;
+        border-radius: var(--radius-pill);
+        background: var(--accent-tint);
+        display: grid;
+        place-items: center;
+        transition: background 0.15s ease;
+      }
+      .week-nav-btn:hover {
+        background: var(--accent-soft);
+      }
+      .week-nav-btn svg {
+        width: 17px;
+        height: 17px;
+        color: var(--accent-deep);
+      }
+      .week-label-block h2 {
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: -0.005em;
+      }
+      .week-label-block p {
+        font-size: 12.5px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+
+      .menu-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+        gap: 16px;
+        margin-bottom: 26px;
+      }
+      .menu-day-card {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .menu-day-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+      }
+      .menu-day-name {
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .menu-day-date {
+        font-size: 12px;
+        color: var(--muted);
+        font-family: var(--font-mono);
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .field label {
+        font-size: 11.5px;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+      .field-input {
+        width: 100%;
+        padding: 11px 13px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        background: var(--accent-tint);
+        font-size: 13.5px;
+        color: var(--fg);
+        transition:
+          border-color 0.15s ease,
+          box-shadow 0.15s ease,
+          background 0.15s ease;
+      }
+      .field-input::placeholder {
+        color: var(--muted);
+      }
+      .field-input:focus {
+        outline: none;
+        border-color: var(--accent-deep);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+        background: var(--surface);
+      }
+
+      .publish-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        padding: 22px 26px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+      }
+      .publish-bar-info p.title {
+        font-weight: 700;
+        font-size: 14.5px;
+      }
+      .publish-bar-info p.sub {
+        color: var(--muted);
+        font-size: 12.5px;
+        margin-top: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="admin-shell" data-od-id="admin-shell">
+      <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+      <aside class="sidebar" id="sidebar" data-od-id="admin-sidebar">
+        <div class="sidebar-head">
+          <div class="brand-mark" aria-hidden="true">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M6 3v9a3 3 0 0 0 6 0V3M9 8.5V3" />
+              <path d="M17.5 3c-1.4 1.4-2 3-2 5.2 0 1.8.9 2.8 2 3.3V21" />
+            </svg>
+          </div>
+          <span class="brand-name">Meal Admin</span>
+          <button
+            class="sidebar-close"
+            id="sidebarClose"
+            aria-label="Close menu"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            >
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+
+        <nav class="sidebar-nav" data-od-id="admin-nav">
+          <a
+            class="sidebar-nav-item"
+            href="admin-dashboard.html"
+            data-od-id="nav-admin-dashboard"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M4 11.5 12 4l8 7.5" />
+              <path d="M6 10v8.5a1 1 0 0 0 1 1h3v-6h4v6h3a1 1 0 0 0 1-1V10" />
+            </svg>
+            <span>Dashboard</span>
+          </a>
+          <a
+            class="sidebar-nav-item"
+            href="admin-metrics.html"
+            data-od-id="nav-admin-metrics"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M5 20V11" />
+              <path d="M12.5 20V4" />
+              <path d="M20 20v-8.5" />
+            </svg>
+            <span>Metrics &amp; Data</span>
+          </a>
+          <a
+            class="sidebar-nav-item"
+            href="admin-penalties.html"
+            data-od-id="nav-admin-penalties"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="5" y="3" width="14" height="18" rx="2.4" />
+              <path d="M9 8.5h6M9 12h6M9 15.5h3.5" />
+            </svg>
+            <span>Penalties &amp; Invoicing</span>
+          </a>
+          <a
+            class="sidebar-nav-item"
+            href="admin-users.html"
+            data-od-id="nav-admin-users"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="9.5" cy="8" r="3.2" />
+              <path d="M3.8 20c0-3.3 2.5-5.8 5.7-5.8s5.7 2.5 5.7 5.8" />
+              <circle cx="17.3" cy="8.7" r="2.4" />
+              <path d="M15.8 14.5c2.3.4 4 2.4 4 5.5" />
+            </svg>
+            <span>User Management</span>
+          </a>
+          <a
+            class="sidebar-nav-item active"
+            href="admin-menu.html"
+            data-od-id="nav-admin-menu"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
+              <path d="M3.5 9.5h17M8 3v3.5M16 3v3.5" />
+            </svg>
+            <span>Weekly Menu</span>
+          </a>
+        </nav>
+
+        <div class="sidebar-foot" data-od-id="admin-identity">
+          <div class="avatar">PQ</div>
+          <div class="sidebar-foot-info">
+            <span class="sidebar-foot-name">Pham Quang</span>
+            <span class="sidebar-foot-role">Admin</span>
+          </div>
+        </div>
+      </aside>
+
+      <div class="admin-main-wrap">
+        <header class="admin-topbar" data-od-id="admin-topbar">
+          <button
+            class="topbar-menu-btn"
+            id="sidebarOpen"
+            aria-label="Open menu"
+            aria-expanded="false"
+            aria-controls="sidebar"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            >
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+          </button>
+          <div class="topbar-titles">
+            <p class="eyebrow">ADMIN · MENU PLANNING</p>
+            <h1>Weekly Menu</h1>
+          </div>
+          <div class="topbar-profile"><div class="avatar">PQ</div></div>
+        </header>
+
+        <main class="admin-main" data-od-id="admin-menu-content">
+          <div class="week-header" data-od-id="week-selector">
+            <div class="week-header-left">
+              <div class="week-nav">
+                <button
+                  class="week-nav-btn"
+                  id="weekPrev"
+                  aria-label="Previous week"
+                >
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M12.5 4.5 7 10l5.5 5.5" />
+                  </svg>
+                </button>
+                <button
+                  class="week-nav-btn"
+                  id="weekNext"
+                  aria-label="Next week"
+                >
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M7.5 4.5 13 10l-5.5 5.5" />
+                  </svg>
+                </button>
+              </div>
+              <div class="week-label-block">
+                <h2 id="weekLabel">Aug 31 – Sep 4, 2026</h2>
+                <p>Set the main dish and vegetarian option for each weekday</p>
+              </div>
+            </div>
+            <span class="pill pill-warn" id="weekStatusPill">Draft</span>
+          </div>
+
+          <div class="menu-grid" id="menuGrid" data-od-id="menu-day-grid"></div>
+
+          <div class="publish-bar" data-od-id="publish-bar">
+            <div class="publish-bar-info">
+              <p class="title">Ready to publish this week's menu?</p>
+              <p class="sub">
+                Employees will see it immediately in the meal app once
+                published.
+              </p>
+            </div>
+            <button class="btn btn-primary" id="publishBtn">
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M10 15.5V4.5" />
+                <path d="M5.5 9 10 4.5 14.5 9" />
+                <path d="M4 15.5v1.8a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1.8" />
+              </svg>
+              <span id="publishBtnLabel">Publish Menu</span>
+            </button>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      const sidebar = document.getElementById('sidebar');
+      const backdrop = document.getElementById('sidebarBackdrop');
+      const openBtn = document.getElementById('sidebarOpen');
+      const closeBtn = document.getElementById('sidebarClose');
+      function openSidebar() {
+        sidebar.classList.add('open');
+        backdrop.classList.add('visible');
+        openBtn.setAttribute('aria-expanded', 'true');
+      }
+      function closeSidebar() {
+        sidebar.classList.remove('open');
+        backdrop.classList.remove('visible');
+        openBtn.setAttribute('aria-expanded', 'false');
+      }
+      openBtn.addEventListener('click', openSidebar);
+      closeBtn.addEventListener('click', closeSidebar);
+      backdrop.addEventListener('click', closeSidebar);
+
+      // ── weekly menu data + week nav ──────────────────────────────────
+      const weeks = [
+        {
+          label: 'Aug 31 – Sep 4, 2026',
+          sub: 'Set the main dish and vegetarian option for each weekday',
+          status: 'draft',
+          days: [
+            {
+              name: 'Monday',
+              date: 'Aug 31',
+              main: 'Beef Pho with Fresh Herbs',
+              veg: 'Tofu & Vegetable Pho',
+            },
+            {
+              name: 'Tuesday',
+              date: 'Sep 1',
+              main: 'Grilled Chicken Rice Bowl',
+              veg: 'Grilled Tempeh Rice Bowl',
+            },
+            {
+              name: 'Wednesday',
+              date: 'Sep 2',
+              main: 'Pan-Seared Salmon, Steamed Greens',
+              veg: 'Pan-Seared Tofu, Steamed Greens',
+            },
+            {
+              name: 'Thursday',
+              date: 'Sep 3',
+              main: 'Stir-Fried Beef with Broccoli',
+              veg: 'Stir-Fried Mushroom with Broccoli',
+            },
+            {
+              name: 'Friday',
+              date: 'Sep 4',
+              main: 'Grilled Pork Chop, Garlic Rice',
+              veg: 'Grilled Eggplant, Garlic Rice',
+            },
+          ],
+        },
+        {
+          label: 'Sep 7 – 11, 2026',
+          sub: 'Not yet planned — add dishes for each weekday',
+          status: 'not-started',
+          days: [
+            { name: 'Monday', date: 'Sep 7', main: '', veg: '' },
+            { name: 'Tuesday', date: 'Sep 8', main: '', veg: '' },
+            { name: 'Wednesday', date: 'Sep 9', main: '', veg: '' },
+            { name: 'Thursday', date: 'Sep 10', main: '', veg: '' },
+            { name: 'Friday', date: 'Sep 11', main: '', veg: '' },
+          ],
+        },
+        {
+          label: 'Sep 14 – 18, 2026',
+          sub: 'Not yet planned — add dishes for each weekday',
+          status: 'not-started',
+          days: [
+            { name: 'Monday', date: 'Sep 14', main: '', veg: '' },
+            { name: 'Tuesday', date: 'Sep 15', main: '', veg: '' },
+            { name: 'Wednesday', date: 'Sep 16', main: '', veg: '' },
+            { name: 'Thursday', date: 'Sep 17', main: '', veg: '' },
+            { name: 'Friday', date: 'Sep 18', main: '', veg: '' },
+          ],
+        },
+      ];
+      let weekIndex = 0;
+
+      const weekLabel = document.getElementById('weekLabel');
+      const weekSub = document.querySelector('.week-label-block p');
+      const weekStatusPill = document.getElementById('weekStatusPill');
+      const menuGrid = document.getElementById('menuGrid');
+      const publishBtn = document.getElementById('publishBtn');
+      const publishBtnLabel = document.getElementById('publishBtnLabel');
+      const weekPrev = document.getElementById('weekPrev');
+      const weekNext = document.getElementById('weekNext');
+
+      function renderStatusPill(status) {
+        weekStatusPill.classList.remove(
+          'pill-warn',
+          'pill-outline',
+          'pill-good',
+        );
+        if (status === 'published') {
+          weekStatusPill.classList.add('pill-good');
+          weekStatusPill.textContent = 'Published';
+        } else if (status === 'draft') {
+          weekStatusPill.classList.add('pill-warn');
+          weekStatusPill.textContent = 'Draft';
+        } else {
+          weekStatusPill.classList.add('pill-outline');
+          weekStatusPill.textContent = 'Not Started';
+        }
+      }
+
+      function renderWeek() {
+        const week = weeks[weekIndex];
+        weekLabel.textContent = week.label;
+        weekSub.textContent = week.sub;
+        renderStatusPill(week.status);
+        publishBtn.disabled = false;
+        publishBtnLabel.textContent = 'Publish Menu';
+
+        menuGrid.innerHTML = '';
+        week.days.forEach((day, i) => {
+          const card = document.createElement('div');
+          card.className = 'card menu-day-card';
+          card.dataset.odId = 'menu-day-' + day.name.toLowerCase();
+
+          const head = document.createElement('div');
+          head.className = 'menu-day-head';
+          const nameEl = document.createElement('span');
+          nameEl.className = 'menu-day-name';
+          nameEl.textContent = day.name;
+          const dateEl = document.createElement('span');
+          dateEl.className = 'menu-day-date';
+          dateEl.textContent = day.date;
+          head.append(nameEl, dateEl);
+
+          function buildField(idPrefix, labelText, placeholder, value) {
+            const field = document.createElement('div');
+            field.className = 'field';
+            const label = document.createElement('label');
+            label.setAttribute('for', idPrefix + '-' + i);
+            label.textContent = labelText;
+            const input = document.createElement('input');
+            input.className = 'field-input';
+            input.type = 'text';
+            input.id = idPrefix + '-' + i;
+            input.placeholder = placeholder;
+            input.value = value;
+            field.append(label, input);
+            return field;
+          }
+
+          card.append(
+            head,
+            buildField(
+              'main',
+              'Main Dish',
+              'e.g. Grilled Chicken Rice Bowl',
+              day.main,
+            ),
+            buildField(
+              'veg',
+              'Vegetarian Option',
+              'e.g. Grilled Tempeh Rice Bowl',
+              day.veg,
+            ),
+          );
+          menuGrid.appendChild(card);
+        });
+      }
+
+      weekPrev.addEventListener('click', () => {
+        weekIndex = Math.max(0, weekIndex - 1);
+        renderWeek();
+      });
+      weekNext.addEventListener('click', () => {
+        weekIndex = Math.min(weeks.length - 1, weekIndex + 1);
+        renderWeek();
+      });
+
+      publishBtn.addEventListener('click', () => {
+        weeks[weekIndex].status = 'published';
+        renderStatusPill('published');
+        publishBtnLabel.textContent = 'Published';
+        publishBtn.disabled = true;
+      });
+
+      renderWeek();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meal Admin · Preview — Colors</title>
+    <link rel="stylesheet" href="../colors_and_type.css" />
+    <style>
+      .wrap {
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: 40px 24px 64px;
+      }
+      .intro {
+        margin-bottom: 32px;
+      }
+      .intro h1 {
+        font-size: 26px;
+      }
+      .intro p {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 14px;
+        max-width: 640px;
+      }
+      .group {
+        margin-bottom: 36px;
+      }
+      .group h2 {
+        font-size: 15px;
+        margin-bottom: 4px;
+      }
+      .group p.note {
+        color: var(--muted);
+        font-size: 12.5px;
+        margin-bottom: 16px;
+      }
+      .swatch-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 14px;
+      }
+      .swatch {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: var(--surface);
+        box-shadow: var(--shadow-sm);
+      }
+      .swatch-fill {
+        height: 72px;
+      }
+      .swatch-meta {
+        padding: 10px 12px;
+      }
+      .swatch-name {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .swatch-value {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        color: var(--muted);
+        margin-top: 3px;
+        word-break: break-all;
+      }
+      .pair-row {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      .pair-card {
+        flex: 1 1 220px;
+        border-radius: var(--radius);
+        overflow: hidden;
+        border: 1px solid var(--border);
+      }
+      .pair-tint {
+        padding: 20px 18px 14px;
+      }
+      .pair-deep {
+        padding: 12px 18px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .shadow-row {
+        display: flex;
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+      .shadow-tile {
+        width: 160px;
+        height: 100px;
+        background: var(--surface);
+        border-radius: var(--radius);
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding-bottom: 12px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap" data-od-id="preview-colors">
+      <div class="intro">
+        <p class="eyebrow">PREVIEW · COLOR</p>
+        <h1 class="od-title-lg">Colors</h1>
+        <p>
+          All values are <code>oklch()</code>, read verbatim from the source
+          prototypes' <code>:root</code> block. One accent hue, three depths,
+          plus three status pairs.
+        </p>
+      </div>
+
+      <div class="group" data-od-id="core-surfaces">
+        <h2>Core surfaces &amp; text</h2>
+        <p class="note">
+          Neutral ground — near-white surface, blue-gray text, hairline borders.
+        </p>
+        <div class="swatch-grid">
+          <div class="swatch">
+            <div
+              class="swatch-fill"
+              style="
+                background: var(--bg);
+                border-bottom: 1px solid var(--border);
+              "
+            ></div>
+            <div class="swatch-meta">
+              <div class="swatch-name">--bg</div>
+              <div class="swatch-value">oklch(100% 0 0)</div>
+            </div>
+          </div>
+          <div class="swatch">
+            <div
+              class="swatch-fill"
+              style="
+                background: var(--surface);
+                border-bottom: 1px solid var(--border);
+              "
+            ></div>
+            <div class="swatch-meta">
+              <div class="swatch-name">--surface</div>
+              <div class="swatch-value">oklch(100% 0 0)</div>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-fill" style="background: var(--fg)"></div>
+            <div class="swatch-meta">
+              <div class="swatch-name">--fg</div>
+              <div class="swatch-value">oklch(27% 0.025 255)</div>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-fill" style="background: var(--muted)"></div>
+            <div class="swatch-meta">
+              <div class="swatch-name">--muted</div>
+              <div class="swatch-value">oklch(44% 0.022 255)</div>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-fill" style="background: var(--border)"></div>
+            <div class="swatch-meta">
+              <div class="swatch-name">--border</div>
+              <div class="swatch-value">oklch(92% 0.014 240)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="group" data-od-id="accent-scale">
+        <h2>Accent (single hue, three depths)</h2>
+        <p class="note">
+          Used for exactly one primary action per view, plus active/selected
+          indicators.
+        </p>
+        <div class="swatch-grid">
+          <div class="swatch">
+            <div
+              class="swatch-fill"
+              style="background: var(--accent-deep)"
+            ></div>
+            <div class="swatch-meta">
+              <div class="swatch-name">--accent-deep</div>
+              <div class="swatch-value">oklch(42% 0.135 250)</div>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-fill" style="background: var(--accent)"></div>
+            <div class="swatch-meta">
+              <div class="swatch-name">--accent</div>
+              <div class="swatch-value">oklch(80% 0.085 250)</div>
+            </div>
+          </div>
+          <div class="swatch">
+            <div
+              class="swatch-fill"
+              style="background: var(--accent-soft)"
+            ></div>
+            <div class="swatch-meta">
+              <div class="swatch-name">--accent-soft</div>
+              <div class="swatch-value">oklch(93% 0.035 250)</div>
+            </div>
+          </div>
+          <div class="swatch">
+            <div
+              class="swatch-fill"
+              style="background: var(--accent-tint)"
+            ></div>
+            <div class="swatch-meta">
+              <div class="swatch-name">--accent-tint</div>
+              <div class="swatch-value">oklch(97% 0.016 250)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="group" data-od-id="status-pairs">
+        <h2>Status pairs</h2>
+        <p class="note">
+          Tint (fill) + deep (text/icon on that fill) always travel together —
+          never mixed across pairs.
+        </p>
+        <div class="pair-row">
+          <div class="pair-card">
+            <div
+              class="pair-tint"
+              style="
+                background: var(--status-good-tint);
+                color: var(--status-good-deep);
+              "
+            >
+              Good / success
+            </div>
+            <div
+              class="pair-deep"
+              style="
+                background: var(--status-good-deep);
+                color: var(--status-good-tint);
+              "
+            >
+              oklch(38% 0.11 155)
+            </div>
+          </div>
+          <div class="pair-card">
+            <div
+              class="pair-tint"
+              style="
+                background: var(--status-warn-tint);
+                color: var(--status-warn-deep);
+              "
+            >
+              Warn / draft
+            </div>
+            <div
+              class="pair-deep"
+              style="
+                background: var(--status-warn-deep);
+                color: var(--status-warn-tint);
+              "
+            >
+              oklch(42% 0.13 85)
+            </div>
+          </div>
+          <div class="pair-card">
+            <div
+              class="pair-tint"
+              style="
+                background: var(--status-bad-tint);
+                color: var(--status-bad-deep);
+              "
+            >
+              Bad / overdue
+            </div>
+            <div
+              class="pair-deep"
+              style="
+                background: var(--status-bad-deep);
+                color: var(--status-bad-tint);
+              "
+            >
+              oklch(40% 0.15 25)
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="group" data-od-id="elevation">
+        <h2>Elevation</h2>
+        <p class="note">
+          Shadows are tinted with <code>--fg</code>, not black — stays
+          warm-neutral on the near-white ground.
+        </p>
+        <div class="shadow-row">
+          <div class="shadow-tile" style="box-shadow: var(--shadow-sm)">
+            --shadow-sm
+          </div>
+          <div class="shadow-tile" style="box-shadow: var(--shadow-md)">
+            --shadow-md
+          </div>
+          <div class="shadow-tile" style="box-shadow: var(--shadow-lg)">
+            --shadow-lg
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

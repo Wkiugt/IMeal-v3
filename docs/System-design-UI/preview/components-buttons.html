@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meal Admin · Preview — Components</title>
+    <link rel="stylesheet" href="../colors_and_type.css" />
+    <style>
+      body {
+        background: color-mix(in oklch, var(--fg) 3%, var(--bg));
+      }
+      .wrap {
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: 40px 24px 64px;
+      }
+      .intro {
+        margin-bottom: 32px;
+      }
+      .intro h1 {
+        font-size: 26px;
+      }
+      .intro p {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 14px;
+        max-width: 640px;
+      }
+      .group {
+        margin-bottom: 32px;
+      }
+      .group h2 {
+        font-size: 15px;
+        margin-bottom: 14px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .bar-row {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-width: 320px;
+      }
+      .bar-row-head {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap" data-od-id="preview-components">
+      <div class="intro">
+        <p class="eyebrow">PREVIEW · COMPONENTS</p>
+        <h1 class="od-title-lg">Components</h1>
+        <p>
+          Every primitive shared between the mobile app and the admin console,
+          rendered live from <code>colors_and_type.css</code>.
+        </p>
+      </div>
+
+      <div class="group card" data-od-id="preview-buttons">
+        <h2>Buttons</h2>
+        <div class="row">
+          <button class="btn btn-primary">
+            <svg
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M10 15.5V4.5" />
+              <path d="M5.5 9 10 4.5 14.5 9" /></svg
+            >Publish Menu
+          </button>
+          <button class="btn btn-secondary">Cancel</button>
+          <button class="btn btn-ghost">View details</button>
+          <button class="btn-icon" aria-label="Edit">
+            <svg
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M4 16l1-4L14 3l3 3-9 9-4 1Z" />
+            </svg>
+          </button>
+          <button class="btn-icon danger" aria-label="Delete">
+            <svg
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M4.5 6h11M8 6V4.5h4V6M6 6l.6 9.5a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9L14 6"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="group card" data-od-id="preview-pills">
+        <h2>Pills / status chips</h2>
+        <div class="row">
+          <span class="pill pill-soft">Lunch · 12:00–13:00</span>
+          <span class="pill pill-outline">Not registered</span>
+          <span class="pill pill-solid">Featured</span>
+          <span class="pill pill-good">Confirmed</span>
+          <span class="pill pill-warn">Draft</span>
+          <span class="pill pill-bad">Overdue</span>
+        </div>
+      </div>
+
+      <div class="group card" data-od-id="preview-avatars">
+        <h2>Avatars</h2>
+        <div class="row">
+          <div class="avatar">MA</div>
+          <div class="avatar-lg avatar">PQ</div>
+        </div>
+      </div>
+
+      <div class="group card" data-od-id="preview-toggle">
+        <h2>Toggle switch</h2>
+        <div class="row">
+          <button class="toggle" role="switch" aria-checked="true">
+            <span class="toggle-thumb"></span>
+          </button>
+          <button class="toggle" role="switch" aria-checked="false">
+            <span class="toggle-thumb"></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="group card" data-od-id="preview-field">
+        <h2>Form field</h2>
+        <div class="field" style="max-width: 320px">
+          <label>Main Dish</label>
+          <input
+            class="field-input"
+            type="text"
+            placeholder="e.g. Grilled Chicken Rice Bowl"
+            value="Beef Pho with Fresh Herbs"
+          />
+        </div>
+      </div>
+
+      <div class="group card" data-od-id="preview-bars">
+        <h2>Bar meter</h2>
+        <div class="bar-row">
+          <div class="bar-row-head">
+            <span style="font-weight: 600">Engineering</span
+            ><span class="od-mono" style="font-weight: 700">1,240</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill" style="width: 100%"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="group card" data-od-id="preview-table">
+        <h2>Data table</h2>
+        <div style="overflow-x: auto">
+          <table class="data-table" style="min-width: 480px">
+            <thead>
+              <tr>
+                <th>Department</th>
+                <th class="num">Meals</th>
+                <th class="num">Waste Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Engineering</td>
+                <td class="num">1,240</td>
+                <td class="num">5.1%</td>
+              </tr>
+              <tr>
+                <td>Sales</td>
+                <td class="num">810</td>
+                <td class="num">7.2%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="group card" data-od-id="preview-card-nested">
+        <h2>Card (this container)</h2>
+        <p class="od-body-sm">
+          White surface, 1px border, 28px radius, sm shadow, 24px padding — the
+          single building block for every content grouping.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

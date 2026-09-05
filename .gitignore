@@ -1,0 +1,27 @@
+node_modules
+dist
+build
+.turbo
+.env
+.env.*
+!.env.example
+coverage
+.next
+.nuxt
+.output
+
+# Temporary agent missions
+draft-mission/
+
+# Agent & IDE caches
+.expo/
+.agents/
+.claude/
+.cursor/
+.devin/
+.worktrees/
+worktrees/
+
+# Yarn runtime artifacts; yarn.lock and .yarnrc.yml stay tracked
+.yarn/
+.pnp.*

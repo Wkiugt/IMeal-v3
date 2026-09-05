@@ -1,0 +1,1418 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Meal Admin · User Management</title>
+    <style>
+      :root {
+        --bg: oklch(100% 0 0);
+        --surface: oklch(100% 0 0);
+        --fg: oklch(27% 0.025 255);
+        --muted: oklch(44% 0.022 255);
+        --border: oklch(92% 0.014 240);
+        --accent: oklch(80% 0.085 250);
+
+        --accent-deep: oklch(42% 0.135 250);
+        --accent-soft: oklch(93% 0.035 250);
+        --accent-tint: oklch(97% 0.016 250);
+        --fg-soft: color-mix(in oklch, var(--fg) 5%, transparent);
+        --shadow-sm: 0 1px 2px color-mix(in oklch, var(--fg) 7%, transparent);
+        --shadow-md: 0 10px 28px color-mix(in oklch, var(--fg) 10%, transparent);
+        --shadow-lg: 0 20px 48px color-mix(in oklch, var(--fg) 14%, transparent);
+
+        --status-good-tint: oklch(94% 0.05 155);
+        --status-good-deep: oklch(38% 0.11 155);
+        --status-warn-tint: oklch(95% 0.05 85);
+        --status-warn-deep: oklch(42% 0.13 85);
+        --status-bad-tint: oklch(94% 0.045 25);
+        --status-bad-deep: oklch(40% 0.15 25);
+
+        --font-body:
+          -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
+          system-ui, sans-serif;
+        --font-display:
+          -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI',
+          system-ui, sans-serif;
+        --font-mono:
+          ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+
+        --radius-sm: 14px;
+        --radius: 20px;
+        --radius-lg: 28px;
+        --radius-pill: 999px;
+
+        --sidebar-w: 248px;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
+      body {
+        margin: 0;
+        background: color-mix(in oklch, var(--fg) 3%, var(--bg));
+        color: var(--fg);
+        font-family: var(--font-body);
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      img,
+      svg {
+        display: block;
+      }
+      button,
+      a {
+        font: inherit;
+        cursor: pointer;
+        color: inherit;
+      }
+      button {
+        background: none;
+        border: none;
+      }
+      a {
+        text-decoration: none;
+      }
+      p {
+        margin: 0;
+        text-wrap: pretty;
+      }
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        text-wrap: balance;
+        font-family: var(--font-display);
+      }
+      input {
+        font: inherit;
+        color: inherit;
+      }
+      :focus-visible {
+        outline: 2px solid var(--accent-deep);
+        outline-offset: 2px;
+        border-radius: 6px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          transition-duration: 0.001ms !important;
+          animation-duration: 0.001ms !important;
+        }
+      }
+
+      /* ── shared building blocks ─────────────────────────────────────── */
+      .eyebrow {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        letter-spacing: 0.07em;
+        color: var(--muted);
+        margin: 0;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+        padding: 24px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px;
+        border-radius: var(--radius-pill);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        flex: 0 0 auto;
+      }
+      .pill-soft {
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+      }
+      .pill-outline {
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid var(--border);
+      }
+      .pill-solid {
+        background: var(--accent-deep);
+        color: var(--surface);
+      }
+      .pill-good {
+        background: var(--status-good-tint);
+        color: var(--status-good-deep);
+      }
+      .pill-warn {
+        background: var(--status-warn-tint);
+        color: var(--status-warn-deep);
+      }
+      .pill-bad {
+        background: var(--status-bad-tint);
+        color: var(--status-bad-deep);
+      }
+      .pill svg {
+        width: 13px;
+        height: 13px;
+        flex: 0 0 auto;
+      }
+      .avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: var(--radius-pill);
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        font-size: 13px;
+        flex: 0 0 auto;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 11px 20px;
+        border-radius: var(--radius-pill);
+        font-size: 14px;
+        font-weight: 600;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease,
+          border-color 0.15s ease,
+          transform 0.08s ease;
+      }
+      .btn svg {
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+      }
+      .btn-primary {
+        background: var(--accent-deep);
+        color: var(--surface);
+        box-shadow: var(--shadow-sm);
+      }
+      .btn-primary:hover {
+        background: color-mix(in oklch, var(--accent-deep) 88%, black);
+        box-shadow: var(--shadow-md);
+      }
+      .btn-primary:active {
+        transform: scale(0.98);
+      }
+      .btn-secondary {
+        background: var(--surface);
+        color: var(--fg);
+        border: 1px solid var(--border);
+      }
+      .btn-secondary:hover {
+        border-color: var(--muted);
+        background: var(--fg-soft);
+      }
+      .btn-secondary:active {
+        transform: scale(0.98);
+      }
+      .btn-icon {
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius-pill);
+        color: var(--muted);
+        border: 1px solid var(--border);
+        transition:
+          background 0.15s ease,
+          color 0.15s ease,
+          border-color 0.15s ease;
+      }
+      .btn-icon svg {
+        width: 16px;
+        height: 16px;
+      }
+      .btn-icon:hover {
+        color: var(--fg);
+        border-color: var(--muted);
+        background: var(--fg-soft);
+      }
+      .btn-icon.danger:hover {
+        color: var(--status-bad-deep);
+        border-color: color-mix(
+          in oklch,
+          var(--status-bad-deep) 35%,
+          var(--border)
+        );
+        background: var(--status-bad-tint);
+      }
+
+      /* ── admin shell ────────────────────────────────────────────────── */
+      .admin-shell {
+        display: flex;
+        min-height: 100vh;
+      }
+      .sidebar-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: color-mix(in oklch, var(--fg) 45%, transparent);
+        z-index: 30;
+      }
+      .sidebar-backdrop.visible {
+        display: block;
+      }
+      .sidebar {
+        position: sticky;
+        top: 0;
+        flex: 0 0 auto;
+        width: var(--sidebar-w);
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        padding: 22px 16px;
+        z-index: 40;
+      }
+      .sidebar-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 4px 8px 22px;
+      }
+      .brand-mark {
+        width: 34px;
+        height: 34px;
+        border-radius: var(--radius);
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+      }
+      .brand-mark svg {
+        width: 18px;
+        height: 18px;
+      }
+      .brand-name {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 15.5px;
+        letter-spacing: -0.005em;
+      }
+      .sidebar-close {
+        display: none;
+        margin-left: auto;
+        width: 32px;
+        height: 32px;
+        border-radius: var(--radius-pill);
+        color: var(--muted);
+      }
+      .sidebar-close svg {
+        width: 18px;
+        height: 18px;
+      }
+      .sidebar-close:hover {
+        color: var(--fg);
+        background: var(--fg-soft);
+      }
+      .sidebar-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        flex: 1 1 auto;
+      }
+      .sidebar-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 12px;
+        border-radius: var(--radius);
+        color: var(--muted);
+        font-size: 14px;
+        font-weight: 600;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease;
+      }
+      .sidebar-nav-item svg {
+        width: 20px;
+        height: 20px;
+        flex: 0 0 auto;
+      }
+      .sidebar-nav-item:hover:not(.active) {
+        color: var(--fg);
+        background: var(--fg-soft);
+      }
+      .sidebar-nav-item.active {
+        color: var(--accent-deep);
+        background: var(--accent-soft);
+      }
+      .sidebar-foot {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px;
+        margin-top: 12px;
+        border-top: 1px solid var(--border);
+        padding-top: 18px;
+      }
+      .sidebar-foot-info {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .sidebar-foot-name {
+        font-size: 13.5px;
+        font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .sidebar-foot-role {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .admin-main-wrap {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .admin-topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 20px 32px;
+        background: color-mix(in oklch, var(--bg) 88%, transparent);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--border);
+      }
+      .topbar-menu-btn {
+        display: none;
+        width: 38px;
+        height: 38px;
+        border-radius: var(--radius-pill);
+        color: var(--fg);
+        flex: 0 0 auto;
+      }
+      .topbar-menu-btn svg {
+        width: 20px;
+        height: 20px;
+      }
+      .topbar-menu-btn:hover {
+        background: var(--fg-soft);
+      }
+      .topbar-titles {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .topbar-titles h1 {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin-top: 3px;
+      }
+      .topbar-profile {
+        flex: 0 0 auto;
+      }
+      .admin-main {
+        flex: 1 1 auto;
+        padding: 28px 32px 56px;
+        max-width: 1120px;
+        width: 100%;
+        margin: 0 auto;
+      }
+
+      @media (max-width: 900px) {
+        .sidebar {
+          position: fixed;
+          left: 0;
+          top: 0;
+          transform: translateX(-100%);
+          box-shadow: var(--shadow-lg);
+          transition: transform 0.22s ease;
+        }
+        .sidebar.open {
+          transform: translateX(0);
+        }
+        .sidebar-close {
+          display: grid;
+          place-items: center;
+        }
+        .topbar-menu-btn {
+          display: grid;
+          place-items: center;
+        }
+        .admin-topbar {
+          padding: 16px 20px;
+        }
+        .admin-main {
+          padding: 20px 20px 48px;
+        }
+      }
+      @media (max-width: 560px) {
+        .topbar-titles h1 {
+          font-size: 19px;
+        }
+        .admin-main {
+          padding: 16px 14px 40px;
+        }
+      }
+
+      /* ── users page ─────────────────────────────────────────────────── */
+      .users-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+      }
+      .search-field {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 11px 16px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-pill);
+        box-shadow: var(--shadow-sm);
+        flex: 1 1 280px;
+        max-width: 360px;
+        transition:
+          border-color 0.15s ease,
+          box-shadow 0.15s ease;
+      }
+      .search-field:focus-within {
+        border-color: var(--accent-deep);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+      .search-field svg {
+        width: 16px;
+        height: 16px;
+        color: var(--muted);
+        flex: 0 0 auto;
+      }
+      .search-field input {
+        flex: 1 1 auto;
+        min-width: 0;
+        border: none;
+        outline: none;
+        background: none;
+        font-size: 14px;
+        color: var(--fg);
+      }
+      .search-field input::placeholder {
+        color: var(--muted);
+      }
+
+      .user-list-card {
+        padding: 8px 24px;
+      }
+      .user-list-head {
+        display: grid;
+        grid-template-columns: 2.2fr 1.6fr 1fr 96px;
+        gap: 14px;
+        padding: 14px 4px 10px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .user-row {
+        display: grid;
+        grid-template-columns: 2.2fr 1.6fr 1fr 96px;
+        align-items: center;
+        gap: 14px;
+        padding: 13px 4px;
+        border-top: 1px solid var(--border);
+      }
+      .user-identity {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+      .user-name-block {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .user-name {
+        font-weight: 700;
+        font-size: 14.5px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .user-id {
+        font-size: 11.5px;
+        color: var(--muted);
+        font-family: var(--font-mono);
+      }
+      .user-dept {
+        font-size: 13.5px;
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .user-role {
+        min-width: 0;
+      }
+      .user-actions {
+        display: flex;
+        gap: 8px;
+        justify-self: end;
+      }
+
+      .users-empty {
+        display: none;
+        padding: 48px 12px;
+        text-align: center;
+      }
+      .users-empty.visible {
+        display: block;
+      }
+      .users-empty-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: var(--radius-pill);
+        background: var(--accent-tint);
+        color: var(--accent-deep);
+        display: grid;
+        place-items: center;
+        margin: 0 auto 14px;
+      }
+      .users-empty-icon svg {
+        width: 20px;
+        height: 20px;
+      }
+      .users-empty h3 {
+        font-size: 15px;
+        font-weight: 700;
+      }
+      .users-empty p {
+        color: var(--muted);
+        font-size: 13px;
+        margin-top: 5px;
+      }
+
+      @media (max-width: 720px) {
+        .user-list-head {
+          display: none;
+        }
+        .user-list-card {
+          padding: 6px 16px;
+        }
+        .user-row {
+          grid-template-columns: 1fr auto;
+          grid-template-areas: 'identity actions' 'dept dept' 'role role';
+          row-gap: 8px;
+          padding: 14px 2px;
+        }
+        .user-identity {
+          grid-area: identity;
+        }
+        .user-actions {
+          grid-area: actions;
+        }
+        .user-dept {
+          grid-area: dept;
+        }
+        .user-role {
+          grid-area: role;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="admin-shell" data-od-id="admin-shell">
+      <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+      <aside class="sidebar" id="sidebar" data-od-id="admin-sidebar">
+        <div class="sidebar-head">
+          <div class="brand-mark" aria-hidden="true">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M6 3v9a3 3 0 0 0 6 0V3M9 8.5V3" />
+              <path d="M17.5 3c-1.4 1.4-2 3-2 5.2 0 1.8.9 2.8 2 3.3V21" />
+            </svg>
+          </div>
+          <span class="brand-name">Meal Admin</span>
+          <button
+            class="sidebar-close"
+            id="sidebarClose"
+            aria-label="Close menu"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            >
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+
+        <nav class="sidebar-nav" data-od-id="admin-nav">
+          <a
+            class="sidebar-nav-item"
+            href="admin-dashboard.html"
+            data-od-id="nav-admin-dashboard"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M4 11.5 12 4l8 7.5" />
+              <path d="M6 10v8.5a1 1 0 0 0 1 1h3v-6h4v6h3a1 1 0 0 0 1-1V10" />
+            </svg>
+            <span>Dashboard</span>
+          </a>
+          <a
+            class="sidebar-nav-item"
+            href="admin-metrics.html"
+            data-od-id="nav-admin-metrics"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M5 20V11" />
+              <path d="M12.5 20V4" />
+              <path d="M20 20v-8.5" />
+            </svg>
+            <span>Metrics &amp; Data</span>
+          </a>
+          <a
+            class="sidebar-nav-item"
+            href="admin-penalties.html"
+            data-od-id="nav-admin-penalties"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="5" y="3" width="14" height="18" rx="2.4" />
+              <path d="M9 8.5h6M9 12h6M9 15.5h3.5" />
+            </svg>
+            <span>Penalties &amp; Invoicing</span>
+          </a>
+          <a
+            class="sidebar-nav-item active"
+            href="admin-users.html"
+            data-od-id="nav-admin-users"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="9.5" cy="8" r="3.2" />
+              <path d="M3.8 20c0-3.3 2.5-5.8 5.7-5.8s5.7 2.5 5.7 5.8" />
+              <circle cx="17.3" cy="8.7" r="2.4" />
+              <path d="M15.8 14.5c2.3.4 4 2.4 4 5.5" />
+            </svg>
+            <span>User Management</span>
+          </a>
+          <a
+            class="sidebar-nav-item"
+            href="admin-menu.html"
+            data-od-id="nav-admin-menu"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
+              <path d="M3.5 9.5h17M8 3v3.5M16 3v3.5" />
+            </svg>
+            <span>Weekly Menu</span>
+          </a>
+        </nav>
+
+        <div class="sidebar-foot" data-od-id="admin-identity">
+          <div class="avatar">PQ</div>
+          <div class="sidebar-foot-info">
+            <span class="sidebar-foot-name">Pham Quang</span>
+            <span class="sidebar-foot-role">Admin</span>
+          </div>
+        </div>
+      </aside>
+
+      <div class="admin-main-wrap">
+        <header class="admin-topbar" data-od-id="admin-topbar">
+          <button
+            class="topbar-menu-btn"
+            id="sidebarOpen"
+            aria-label="Open menu"
+            aria-expanded="false"
+            aria-controls="sidebar"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            >
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+          </button>
+          <div class="topbar-titles">
+            <p class="eyebrow">ADMIN · PEOPLE</p>
+            <h1>User Management</h1>
+          </div>
+          <div class="topbar-profile"><div class="avatar">PQ</div></div>
+        </header>
+
+        <main class="admin-main" data-od-id="admin-users-content">
+          <div class="users-toolbar">
+            <div class="search-field">
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="9" cy="9" r="6" />
+                <path d="M17.5 17.5 13.5 13.5" />
+              </svg>
+              <input
+                type="text"
+                id="userSearch"
+                placeholder="Search by name or department"
+                aria-label="Search users by name or department"
+              />
+            </div>
+            <span class="pill pill-soft" id="userCountPill">10 employees</span>
+          </div>
+
+          <div class="card user-list-card" data-od-id="user-list-card">
+            <div class="user-list-head">
+              <span>Employee</span>
+              <span>Department</span>
+              <span>Role</span>
+              <span></span>
+            </div>
+
+            <div id="userRows">
+              <div
+                class="user-row"
+                data-name="minh anh"
+                data-dept="product engineering"
+              >
+                <div class="user-identity">
+                  <div class="avatar">MA</div>
+                  <div class="user-name-block">
+                    <span class="user-name">Minh Anh</span
+                    ><span class="user-id">EMP-04521</span>
+                  </div>
+                </div>
+                <span class="user-dept">Product Engineering</span>
+                <span class="user-role"
+                  ><span class="pill pill-outline">Employee</span></span
+                >
+                <div class="user-actions">
+                  <button
+                    class="btn-icon"
+                    aria-label="Edit Minh Anh"
+                    title="Edit"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M11.5 4 16 8.5 6.5 18H2v-4.5Z" />
+                      <path d="M9.5 6 14 10.5" />
+                    </svg>
+                  </button>
+                  <button
+                    class="btn-icon danger"
+                    aria-label="Suspend Minh Anh"
+                    title="Suspend"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="10" cy="10" r="7" />
+                      <path d="M5.5 5.5l9 9" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="user-row" data-name="thu le" data-dept="design">
+                <div class="user-identity">
+                  <div class="avatar">TL</div>
+                  <div class="user-name-block">
+                    <span class="user-name">Thu Le</span
+                    ><span class="user-id">EMP-03187</span>
+                  </div>
+                </div>
+                <span class="user-dept">Design</span>
+                <span class="user-role"
+                  ><span class="pill pill-outline">Employee</span></span
+                >
+                <div class="user-actions">
+                  <button
+                    class="btn-icon"
+                    aria-label="Edit Thu Le"
+                    title="Edit"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M11.5 4 16 8.5 6.5 18H2v-4.5Z" />
+                      <path d="M9.5 6 14 10.5" />
+                    </svg>
+                  </button>
+                  <button
+                    class="btn-icon danger"
+                    aria-label="Suspend Thu Le"
+                    title="Suspend"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="10" cy="10" r="7" />
+                      <path d="M5.5 5.5l9 9" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div
+                class="user-row"
+                data-name="duc huy"
+                data-dept="product engineering"
+              >
+                <div class="user-identity">
+                  <div class="avatar">DH</div>
+                  <div class="user-name-block">
+                    <span class="user-name">Duc Huy</span
+                    ><span class="user-id">EMP-02940</span>
+                  </div>
+                </div>
+                <span class="user-dept">Product Engineering</span>
+                <span class="user-role"
+                  ><span class="pill pill-outline">Employee</span></span
+                >
+                <div class="user-actions">
+                  <button
+                    class="btn-icon"
+                    aria-label="Edit Duc Huy"
+                    title="Edit"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M11.5 4 16 8.5 6.5 18H2v-4.5Z" />
+                      <path d="M9.5 6 14 10.5" />
+                    </svg>
+                  </button>
+                  <button
+                    class="btn-icon danger"
+                    aria-label="Suspend Duc Huy"
+                    title="Suspend"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="10" cy="10" r="7" />
+                      <path d="M5.5 5.5l9 9" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div
+                class="user-row"
+                data-name="ngoc phuong"
+                data-dept="customer support"
+              >
+                <div class="user-identity">
+                  <div class="avatar">NP</div>
+                  <div class="user-name-block">
+                    <span class="user-name">Ngoc Phuong</span
+                    ><span class="user-id">EMP-05512</span>
+                  </div>
+                </div>
+                <span class="user-dept">Customer Support</span>
+                <span class="user-role"
+                  ><span class="pill pill-outline">Employee</span></span
+                >
+                <div class="user-actions">
+                  <button
+                    class="btn-icon"
+                    aria-label="Edit Ngoc Phuong"
+                    title="Edit"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M11.5 4 16 8.5 6.5 18H2v-4.5Z" />
+                      <path d="M9.5 6 14 10.5" />
+                    </svg>
+                  </button>
+                  <button
+                    class="btn-icon danger"
+                    aria-label="Suspend Ngoc Phuong"
+                    title="Suspend"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="10" cy="10" r="7" />
+                      <path d="M5.5 5.5l9 9" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="user-row" data-name="van anh" data-dept="operations">
+                <div class="user-identity">
+                  <div class="avatar">VA</div>
+                  <div class="user-name-block">
+                    <span class="user-name">Van Anh</span
+                    ><span class="user-id">EMP-06210</span>
+                  </div>
+                </div>
+                <span class="user-dept">Operations</span>
+                <span class="user-role"
+                  ><span class="pill pill-outline">Employee</span></span
+                >
+                <div class="user-actions">
+                  <button
+                    class="btn-icon"
+                    aria-label="Edit Van Anh"
+                    title="Edit"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M11.5 4 16 8.5 6.5 18H2v-4.5Z" />
+                      <path d="M9.5 6 14 10.5" />
+                    </svg>
+                  </button>
+                  <button
+                    class="btn-icon danger"
+                    aria-label="Suspend Van Anh"
+                    title="Suspend"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="10" cy="10" r="7" />
+                      <path d="M5.5 5.5l9 9" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="user-row" data-name="hoang nam" data-dept="sales">
+                <div class="user-identity">
+                  <div class="avatar">HN</div>
+                  <div class="user-name-block">
+                    <span class="user-name">Hoang Nam</span
+                    ><span class="user-id">EMP-06788</span>
+                  </div>
+                </div>
+                <span class="user-dept">Sales</span>
+                <span class="user-role"
+                  ><span class="pill pill-outline">Employee</span></span
+                >
+                <div class="user-actions">
+                  <button
+                    class="btn-icon"
+                    aria-label="Edit Hoang Nam"
+                    title="Edit"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M11.5 4 16 8.5 6.5 18H2v-4.5Z" />
+                      <path d="M9.5 6 14 10.5" />
+                    </svg>
+                  </button>
+                  <button
+                    class="btn-icon danger"
+                    aria-label="Suspend Hoang Nam"
+                    title="Suspend"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="10" cy="10" r="7" />
+                      <path d="M5.5 5.5l9 9" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="user-row" data-name="tran my" data-dept="design">
+                <div class="user-identity">
+                  <div class="avatar">TM</div>
+                  <div class="user-name-block">
+                    <span class="user-name">Tran My</span
+                    ><span class="user-id">EMP-07345</span>
+                  </div>
+                </div>
+                <span class="user-dept">Design</span>
+                <span class="user-role"
+                  ><span class="pill pill-outline">Employee</span></span
+                >
+                <div class="user-actions">
+                  <button
+                    class="btn-icon"
+                    aria-label="Edit Tran My"
+                    title="Edit"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M11.5 4 16 8.5 6.5 18H2v-4.5Z" />
+                      <path d="M9.5 6 14 10.5" />
+                    </svg>
+                  </button>
+                  <button
+                    class="btn-icon danger"
+                    aria-label="Suspend Tran My"
+                    title="Suspend"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="10" cy="10" r="7" />
+                      <path d="M5.5 5.5l9 9" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div
+                class="user-row"
+                data-name="le trang"
+                data-dept="kitchen staff"
+              >
+                <div class="user-identity">
+                  <div class="avatar">LT</div>
+                  <div class="user-name-block">
+                    <span class="user-name">Le Trang</span
+                    ><span class="user-id">EMP-07011</span>
+                  </div>
+                </div>
+                <span class="user-dept">Kitchen Staff</span>
+                <span class="user-role"
+                  ><span class="pill pill-soft">Kitchen</span></span
+                >
+                <div class="user-actions">
+                  <button
+                    class="btn-icon"
+                    aria-label="Edit Le Trang"
+                    title="Edit"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M11.5 4 16 8.5 6.5 18H2v-4.5Z" />
+                      <path d="M9.5 6 14 10.5" />
+                    </svg>
+                  </button>
+                  <button
+                    class="btn-icon danger"
+                    aria-label="Suspend Le Trang"
+                    title="Suspend"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="10" cy="10" r="7" />
+                      <path d="M5.5 5.5l9 9" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div
+                class="user-row"
+                data-name="bui anh kiet"
+                data-dept="kitchen staff"
+              >
+                <div class="user-identity">
+                  <div class="avatar">BK</div>
+                  <div class="user-name-block">
+                    <span class="user-name">Bui Anh Kiet</span
+                    ><span class="user-id">EMP-07452</span>
+                  </div>
+                </div>
+                <span class="user-dept">Kitchen Staff</span>
+                <span class="user-role"
+                  ><span class="pill pill-soft">Kitchen</span></span
+                >
+                <div class="user-actions">
+                  <button
+                    class="btn-icon"
+                    aria-label="Edit Bui Anh Kiet"
+                    title="Edit"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M11.5 4 16 8.5 6.5 18H2v-4.5Z" />
+                      <path d="M9.5 6 14 10.5" />
+                    </svg>
+                  </button>
+                  <button
+                    class="btn-icon danger"
+                    aria-label="Suspend Bui Anh Kiet"
+                    title="Suspend"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="10" cy="10" r="7" />
+                      <path d="M5.5 5.5l9 9" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div
+                class="user-row"
+                data-name="pham quang"
+                data-dept="it &amp; admin"
+              >
+                <div class="user-identity">
+                  <div class="avatar">PQ</div>
+                  <div class="user-name-block">
+                    <span class="user-name">Pham Quang (You)</span
+                    ><span class="user-id">EMP-00110</span>
+                  </div>
+                </div>
+                <span class="user-dept">IT &amp; Admin</span>
+                <span class="user-role"
+                  ><span class="pill pill-solid">Admin</span></span
+                >
+                <div class="user-actions">
+                  <button
+                    class="btn-icon"
+                    aria-label="Edit Pham Quang"
+                    title="Edit"
+                  >
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M11.5 4 16 8.5 6.5 18H2v-4.5Z" />
+                      <path d="M9.5 6 14 10.5" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="users-empty" id="usersEmpty">
+              <div class="users-empty-icon">
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="9" cy="9" r="6" />
+                  <path d="M17.5 17.5 13.5 13.5" />
+                </svg>
+              </div>
+              <h3>No matching users</h3>
+              <p>Try a different name or department.</p>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      const sidebar = document.getElementById('sidebar');
+      const backdrop = document.getElementById('sidebarBackdrop');
+      const openBtn = document.getElementById('sidebarOpen');
+      const closeBtn = document.getElementById('sidebarClose');
+      function openSidebar() {
+        sidebar.classList.add('open');
+        backdrop.classList.add('visible');
+        openBtn.setAttribute('aria-expanded', 'true');
+      }
+      function closeSidebar() {
+        sidebar.classList.remove('open');
+        backdrop.classList.remove('visible');
+        openBtn.setAttribute('aria-expanded', 'false');
+      }
+      openBtn.addEventListener('click', openSidebar);
+      closeBtn.addEventListener('click', closeSidebar);
+      backdrop.addEventListener('click', closeSidebar);
+
+      // ── live search filter ──────────────────────────────────────────
+      const searchInput = document.getElementById('userSearch');
+      const userRows = Array.from(document.querySelectorAll('.user-row'));
+      const usersEmpty = document.getElementById('usersEmpty');
+      const userCountPill = document.getElementById('userCountPill');
+
+      searchInput.addEventListener('input', () => {
+        const q = searchInput.value.trim().toLowerCase();
+        let visibleCount = 0;
+        userRows.forEach((row) => {
+          const match =
+            !q || row.dataset.name.includes(q) || row.dataset.dept.includes(q);
+          row.style.display = match ? '' : 'none';
+          if (match) visibleCount++;
+        });
+        usersEmpty.classList.toggle('visible', visibleCount === 0);
+        userCountPill.textContent =
+          visibleCount + (visibleCount === 1 ? ' employee' : ' employees');
+      });
+    </script>
+  </body>
+</html>
