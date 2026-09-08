@@ -50,7 +50,11 @@ export function DelegationScreen({ navigation }: Props) {
   }, [loadDelegations, tab]);
 
   const selectTab = (nextTab: Tab) => {
+    if (nextTab === activeTabRef.current) return;
     activeTabRef.current = nextTab;
+    setDelegations([]);
+    setLoadError(null);
+    setLoading(true);
     setTab(nextTab);
   };
 
@@ -76,10 +80,10 @@ export function DelegationScreen({ navigation }: Props) {
       <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => navigation.goBack()} style={styles.back}><ArrowLeft size={20} color={theme.colors.fg} /></Pressable><View style={styles.headerCopy}><PrototypeSectionTitle title="Delegations" subtitle="Manage meal pickup permissions" /></View></View>
       <View style={styles.tabs}><Pressable onPress={() => selectTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>My Requests</Text></Pressable><Pressable onPress={() => selectTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>Incoming</Text></Pressable></View>
       {tab === 'OUTGOING' && <PrototypeField icon={Search} placeholder="Search employee by name/ID..." value={searchQuery} onChangeText={setSearchQuery} style={styles.search} />}
-      <StateTransition stateKey={loading ? 'loading' : loadError ? 'error' : visible.length === 0 ? 'empty' : 'list'}>
+      <StateTransition stateKey={loading ? 'loading' : loadError && delegations.length === 0 ? 'error' : visible.length === 0 ? 'empty' : 'list'}>
         {loading ? (
           <BrandLoader label="Loading delegations…" />
-        ) : loadError ? (
+        ) : loadError && delegations.length === 0 ? (
           <PrototypeCard style={styles.errorCard}>
             <Text style={styles.errorTitle}>Delegations unavailable</Text>
             <Text style={styles.errorText}>{loadError}</Text>

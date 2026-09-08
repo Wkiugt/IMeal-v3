@@ -165,3 +165,27 @@ Result: exit code 0.
 - The repository has no focused React Native screen harness, so reordered-response and focus-transition behavior was not runtime-driven in this slice; verification is limited to the scoped mobile TypeScript compilation and source-level lifecycle guards.
 - Native camera permission, QR scanning, polling, pull-to-refresh, and animation visuals require the Expo/device runtime and backend prerequisites described by the parent plan; they were not available as a narrow automated screen check here.
 - The worktree contained unrelated modified/untracked files before this task. They were left untouched and are excluded from this task’s commit.
+
+## Important Review Fix
+
+### Delegation retained-data rendering
+
+- The standalone load-error card now renders only when the accepted request has no delegations to retain; a failed refresh returns to the prior known-good list while the existing notice reports the failure.
+- Tab selection clears data, error, and loading state before changing tabs, so retained data from one tab cannot render under the other tab. Re-selecting the active tab is a no-op.
+- Request-generation guards, explicit tab authority, loading behavior, and the no-data retry surface remain unchanged.
+
+### Verification
+
+Command:
+
+```text
+corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
+```
+
+Output:
+
+```text
+(no output)
+```
+
+Status: PASS — exit code 0, completed in 3.16 seconds.
