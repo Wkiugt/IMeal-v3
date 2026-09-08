@@ -11,7 +11,6 @@ export type ShowNoticeInput = {
   title: string;
   message: string;
   tone?: NoticeTone;
-  durationMs?: number;
 };
 
 type NoticeContextValue = {
@@ -28,42 +27,75 @@ const toneStyles: Record<NoticeTone, { tint: string; deep: string; icon: typeof 
   error: { tint: theme.colors.statusBadTint, deep: theme.colors.statusBadDeep, icon: XCircle },
 };
 
+const noticeTimeoutMs: Record<NoticeTone, number> = {
+  info: 4000,
+  success: 4000,
+  warning: 6000,
+  error: 6000,
+};
+
+type CurrentNotice = {
+  input: ShowNoticeInput;
+  generation: number;
+};
+
 export function NoticeProvider({ children }: { children: React.ReactNode }) {
-  const [notice, setNotice] = useState<ShowNoticeInput | null>(null);
+  const [notice, setNotice] = useState<CurrentNotice | null>(null);
   const [visibleNotice, setVisibleNotice] = useState<ShowNoticeInput | null>(null);
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-8)).current;
   const reduceMotion = useReducedMotion();
-  const dismissTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const reduceMotionRef = useRef(reduceMotion);
+  const dismissTimer = useRef<NodeJS.Timeout | undefined>(undefined);
+  const noticeGeneration = useRef(0);
+  reduceMotionRef.current = reduceMotion;
 
-  const dismissNotice = useCallback(() => {
+  const stopAnimations = useCallback(() => {
+    opacity.stopAnimation();
+    translateY.stopAnimation();
+  }, [opacity, translateY]);
+
+  const dismissGeneration = useCallback((generation: number) => {
     clearTimeout(dismissTimer.current);
-    if (!visibleNotice) return;
-    if (reduceMotion) {
+    stopAnimations();
+    if (generation !== noticeGeneration.current) return;
+
+    if (reduceMotionRef.current) {
       setNotice(null);
       setVisibleNotice(null);
       return;
     }
+
     Animated.parallel([
       Animated.timing(opacity, { toValue: 0, duration: 200, useNativeDriver: true }),
       Animated.timing(translateY, { toValue: -8, duration: 200, useNativeDriver: true }),
     ]).start(({ finished }) => {
-      if (finished) {
+      if (finished && generation === noticeGeneration.current) {
         setNotice(null);
         setVisibleNotice(null);
       }
     });
-  }, [opacity, reduceMotion, translateY, visibleNotice]);
+  }, [opacity, stopAnimations, translateY]);
+
+  const dismissNotice = useCallback(() => {
+    if (notice) dismissGeneration(notice.generation);
+  }, [dismissGeneration, notice]);
 
   const showNotice = useCallback((input: ShowNoticeInput) => {
+    const generation = noticeGeneration.current + 1;
+    noticeGeneration.current = generation;
     clearTimeout(dismissTimer.current);
-    setNotice(input);
+    stopAnimations();
+    setNotice({ input, generation });
     setVisibleNotice(input);
-  }, []);
+  }, [stopAnimations]);
 
   useEffect(() => {
     if (!notice) return;
-    if (reduceMotion) {
+    const { input, generation } = notice;
+
+    stopAnimations();
+    if (reduceMotionRef.current) {
       opacity.setValue(1);
       translateY.setValue(0);
     } else {
@@ -75,15 +107,15 @@ export function NoticeProvider({ children }: { children: React.ReactNode }) {
       ]).start();
     }
 
-    void AccessibilityInfo.announceForAccessibility(`${notice.title}. ${notice.message}`);
-    const duration = notice.durationMs ?? (notice.tone === 'warning' || notice.tone === 'error' ? 0 : 4000);
-    if (duration > 0) {
-      dismissTimer.current = setTimeout(dismissNotice, duration);
-    }
+    void AccessibilityInfo.announceForAccessibility(`${input.title}. ${input.message}`);
+    const tone = input.tone ?? 'info';
+    dismissTimer.current = setTimeout(() => dismissGeneration(generation), noticeTimeoutMs[tone]);
+
     return () => {
       clearTimeout(dismissTimer.current);
+      stopAnimations();
     };
-  }, [dismissNotice, notice, opacity, reduceMotion, translateY]);
+  }, [dismissGeneration, notice, opacity, stopAnimations, translateY]);
 
   const tone = visibleNotice?.tone || 'info';
   const palette = toneStyles[tone];
