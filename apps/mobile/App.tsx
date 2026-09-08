@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import * as Linking from 'expo-linking';
 import {
   NavigationContainer,
@@ -11,7 +11,6 @@ import {
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Utensils } from 'lucide-react-native';
 import { SessionProvider, useSession } from './src/auth/session';
 import { DelegationScreen } from './src/screens/delegation/DelegationScreen';
 import { EmployeeCalendarScreen } from './src/screens/employee/EmployeeCalendarScreen';
@@ -34,6 +33,7 @@ import {
   PrototypeTabBar,
 } from './src/ui/PrototypeShell';
 import { NoticeProvider } from './src/ui/BrandNotice';
+import { BrandLoader, BrandMark, StateTransition } from './src/ui/BrandMotion';
 import { theme } from './src/theme';
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -65,81 +65,74 @@ function AuthScreen({ navigation }: AuthScreenProps) {
     }
   }, [canUseEmployee, canUseKitchen, navigation, profile, token]);
 
-  if (isRestoring) {
-    return (
-      <View style={styles.loading}>
-        <ActivityIndicator color={theme.colors.accentDeep} />
-      </View>
-    );
-  }
-  if (token && profile && !canUseEmployee && !canUseKitchen) {
-    return (
-      <View style={styles.authCanvas}>
-        <View style={styles.authCard}>
-          <View style={styles.loginMark}>
-            <Utensils
-              size={28}
-              color={theme.colors.accentDeep}
-              strokeWidth={1.6}
-            />
-          </View>
-          <Text style={styles.title}>Welcome</Text>
-          <Text style={styles.subtitle}>
-            No mobile access is assigned to this account.
-          </Text>
-          <PrototypeButton variant="secondary" onPress={() => void logout()}>
-            Log out
-          </PrototypeButton>
-        </View>
-      </View>
-    );
-  }
+  const noMobileAccess =
+    Boolean(token && profile) && !canUseEmployee && !canUseKitchen;
+  const authState = isRestoring
+    ? 'restoring'
+    : noMobileAccess
+      ? 'no-access'
+      : 'sign-in';
 
   return (
-    <View style={styles.authCanvas}>
-      <View style={styles.authCard}>
-        <View style={styles.loginMark}>
-          <Utensils
-            size={28}
-            color={theme.colors.accentDeep}
-            strokeWidth={1.6}
-          />
+    <StateTransition stateKey={authState} style={styles.screen}>
+      {isRestoring ? (
+        <View style={styles.loading}>
+          <BrandLoader label="Restoring your session…" />
         </View>
-        <Text style={styles.title}>Welcome</Text>
-        <Text style={styles.subtitle}>
-          Sign in with a local staff or kitchen account.
-        </Text>
-        <PrototypeField
-          label="Username"
-          value={username}
-          onChangeText={setUsername}
-          autoCapitalize="none"
-          autoCorrect={false}
-          autoComplete="username"
-          style={styles.field}
-        />
-        <PrototypeField
-          label="Password"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          autoCapitalize="none"
-          autoComplete="password"
-          style={styles.field}
-        />
-        <PrototypeButton
-          disabled={isSigningIn || !username || !password}
-          onPress={() => void signIn(username, password)}
-          style={styles.loginButton}
-        >
-          {isSigningIn ? 'Signing in…' : 'Sign in'}
-        </PrototypeButton>
-        <Text style={styles.footnote}>
-          Credentials are loaded from the backend local .env configuration.
-        </Text>
-        {authError && <Text style={styles.error}>{authError}</Text>}
-      </View>
-    </View>
+      ) : noMobileAccess ? (
+        <View style={styles.authCanvas}>
+          <View style={styles.authCard}>
+            <BrandMark style={styles.authMark} />
+            <Text style={styles.title}>Welcome</Text>
+            <Text style={styles.subtitle}>
+              No mobile access is assigned to this account.
+            </Text>
+            <PrototypeButton variant="secondary" onPress={() => void logout()}>
+              Log out
+            </PrototypeButton>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.authCanvas}>
+          <View style={styles.authCard}>
+            <BrandMark style={styles.authMark} />
+            <Text style={styles.title}>Welcome</Text>
+            <Text style={styles.subtitle}>
+              Sign in with a local staff or kitchen account.
+            </Text>
+            <PrototypeField
+              label="Username"
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="username"
+              style={styles.field}
+            />
+            <PrototypeField
+              label="Password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoComplete="password"
+              style={styles.field}
+            />
+            <PrototypeButton
+              disabled={isSigningIn || !username || !password}
+              onPress={() => void signIn(username, password)}
+              style={styles.loginButton}
+            >
+              {isSigningIn ? 'Signing in…' : 'Sign in'}
+            </PrototypeButton>
+            <Text style={styles.footnote}>
+              Credentials are loaded from the backend local .env configuration.
+            </Text>
+            {authError && <Text style={styles.error}>{authError}</Text>}
+          </View>
+        </View>
+      )}
+    </StateTransition>
   );
 }
 
@@ -157,7 +150,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (isRestoring || !token) {
     return (
       <View style={styles.loading}>
-        <ActivityIndicator color={theme.colors.accentDeep} />
+        <BrandLoader label="Restoring your session…" />
       </View>
     );
   }
@@ -240,7 +233,9 @@ export default function App() {
     <SessionProvider>
       <NoticeProvider>
         <NavigationContainer linking={linkingConfig()}>
-          <RootStack.Navigator screenOptions={{ headerShown: false }}>
+          <RootStack.Navigator
+            screenOptions={{ headerShown: false, animation: 'none' }}
+          >
             <RootStack.Screen name="Auth" component={AuthScreen} />
             <RootStack.Screen name="AppTabs">
               {() => (
@@ -257,6 +252,9 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
   loading: {
     flex: 1,
     alignItems: 'center',
@@ -280,14 +278,8 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.surface,
     ...theme.shadows.sm,
   },
-  loginMark: {
-    width: 58,
-    height: 58,
+  authMark: {
     alignSelf: 'center',
-    borderRadius: theme.radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.colors.accentSoft,
     marginBottom: 18,
   },
   title: {

@@ -11,9 +11,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CalendarDays, Home, QrCode, ScanLine, UserRound } from 'lucide-react-native';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { useIsFocused } from '@react-navigation/native';
 import { theme } from '../theme';
 import type { AppTabParamList } from '../navigation';
 import type { PrototypeIcon } from './PrototypePrimitives';
+import { ScreenEntrance } from './BrandMotion';
 
 export type PrototypeNavItem = {
   label: string;
@@ -96,34 +98,47 @@ export function PrototypeFrame({
   bottomClearance = 120,
   scroll = true,
   scrollProps,
+  animateEntrance = true,
 }: {
   children: React.ReactNode;
   bottomClearance?: number;
   scroll?: boolean;
   scrollProps?: Omit<ScrollViewProps, 'contentContainerStyle'>;
+  animateEntrance?: boolean;
 }) {
   const { width } = useWindowDimensions();
+  const isFocused = useIsFocused();
   const deviceStyle = width > 480 ? styles.deviceWide : styles.device;
+  const device = (
+    <View style={deviceStyle}>
+      {scroll ? (
+        <ScrollView
+          {...scrollProps}
+          style={styles.body}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: bottomClearance },
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          {children}
+        </ScrollView>
+      ) : (
+        <View style={styles.body}>{children}</View>
+      )}
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <View style={styles.canvas}>
-        <View style={deviceStyle}>
-          {scroll ? (
-            <ScrollView
-              {...scrollProps}
-              style={styles.body}
-              contentContainerStyle={[
-                styles.scrollContent,
-                { paddingBottom: bottomClearance },
-              ]}
-              showsVerticalScrollIndicator={false}
-            >
-              {children}
-            </ScrollView>
-          ) : (
-            <View style={styles.body}>{children}</View>
-          )}
-        </View>
+        {animateEntrance ? (
+          <ScreenEntrance active={isFocused} style={styles.screenEntrance}>
+            {device}
+          </ScreenEntrance>
+        ) : (
+          device
+        )}
       </View>
     </SafeAreaView>
   );
@@ -149,6 +164,7 @@ export const prototypeStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: theme.colors.canvas },
   canvas: { flex: 1, width: '100%', alignItems: 'center', backgroundColor: theme.colors.canvas },
+  screenEntrance: { flex: 1, width: '100%', alignItems: 'center' },
   device: { flex: 1, width: '100%', backgroundColor: theme.colors.bg, overflow: 'hidden' },
   deviceWide: { flex: 1, width: 390, maxWidth: '100%', backgroundColor: theme.colors.bg, overflow: 'hidden', borderRadius: 52 },
   body: { flex: 1 },
