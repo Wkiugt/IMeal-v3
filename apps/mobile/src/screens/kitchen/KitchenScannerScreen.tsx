@@ -1,21 +1,23 @@
 import React, { useEffect, useState } from 'react';
-import { AccessibilityInfo, ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useIsFocused } from '@react-navigation/native';
 import { CheckCircle2, ChevronLeft, Clock3, ScanLine, XCircle } from 'lucide-react-native';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../../navigation';
+import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { servingAPI, type ResolveServingResponse } from '../../api/servingAPI';
-import { PrototypeFrame, hybridEmployeeNav, kitchenNav } from '../../ui/PrototypeShell';
+import { PrototypeFrame } from '../../ui/PrototypeShell';
 import { Pill, PillText } from '../../ui/PrototypePrimitives';
+import { useNotice } from '../../ui/BrandNotice';
+import { useReducedMotion } from '../../ui/useReducedMotion';
 import { theme } from '../../theme';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'KitchenScanner'>;
+type Props = AppTabScreenProps<'KitchenScanner'>;
 const EXPIRED_MESSAGE = 'Pickup session has expired';
 
 export function KitchenScannerScreen({ navigation }: Props) {
   const { token, canUseEmployee } = useSession();
+  const { showNotice } = useNotice();
   const isFocused = useIsFocused();
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
@@ -23,14 +25,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
   const [servingIntent, setServingIntent] = useState<ResolveServingResponse | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
-  const [reduceMotion, setReduceMotion] = useState(false);
-  const navItems = canUseEmployee ? hybridEmployeeNav : kitchenNav;
-
-  useEffect(() => {
-    void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
-    const listener = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
-    return () => listener.remove();
-  }, []);
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     if (!expiresAt) return;
@@ -58,7 +53,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
       setServingIntent(response);
       setExpiresAt(Number.isFinite(expiry) ? expiry : Date.now() + 30_000);
     } catch (error: unknown) {
-      Alert.alert('Error resolving serving', error instanceof Error ? error.message : 'Unable to resolve serving');
+      showNotice({ title: 'Error resolving serving', message: error instanceof Error ? error.message : 'Unable to resolve serving', tone: 'error' });
       setScanned(false);
     } finally {
       setLoading(false);
@@ -76,15 +71,16 @@ export function KitchenScannerScreen({ navigation }: Props) {
     setLoading(true);
     try {
       await servingAPI.confirmServing({ pickupSessionToken: servingIntent.pickupSessionToken }, token);
-      Alert.alert('Success', 'Serving confirmed successfully!', [{ text: 'OK', onPress: resetScan }]);
+      resetScan();
+      showNotice({ title: 'Success', message: 'Serving confirmed successfully!', tone: 'success' });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unable to confirm serving';
       if (message === EXPIRED_MESSAGE) {
         setExpiresAt(Date.now());
         setSecondsLeft(0);
-        Alert.alert('Confirmation expired', EXPIRED_MESSAGE);
+        showNotice({ title: 'Confirmation expired', message: EXPIRED_MESSAGE, tone: 'warning' });
       } else {
-        Alert.alert('Confirmation error', message);
+        showNotice({ title: 'Confirmation error', message, tone: 'error' });
       }
     } finally {
       setLoading(false);
@@ -92,16 +88,16 @@ export function KitchenScannerScreen({ navigation }: Props) {
   };
 
   const goBack = () => {
-    if (navigation.canGoBack()) navigation.goBack(); else navigation.navigate('KitchenDashboard');
+    navigation.navigate(canUseEmployee ? 'EmployeeDashboard' : 'KitchenDashboard');
   };
 
   if (!permission) return <View style={styles.loadingScreen}><ActivityIndicator color={theme.colors.accentDeep} /></View>;
   if (!permission.granted) {
-    return <PrototypeFrame activeRoute="KitchenScanner" navItems={navItems} onNavigate={(route) => navigation.navigate(route as never)}><View style={styles.permission}><ScanLine size={40} color={theme.colors.accentDeep} /><Text style={styles.permissionTitle}>Camera access required</Text><Text style={styles.permissionText}>Allow camera access to scan employee meal tickets.</Text><Pressable onPress={requestPermission} style={styles.primaryButton}><Text style={styles.primaryButtonText}>Grant permission</Text></Pressable></View></PrototypeFrame>;
+    return <PrototypeFrame><View style={styles.permission}><ScanLine size={40} color={theme.colors.accentDeep} /><Text style={styles.permissionTitle}>Camera access required</Text><Text style={styles.permissionText}>Allow camera access to scan employee meal tickets.</Text><Pressable onPress={requestPermission} style={styles.primaryButton}><Text style={styles.primaryButtonText}>Grant permission</Text></Pressable></View></PrototypeFrame>;
   }
 
   return (
-    <PrototypeFrame activeRoute="KitchenScanner" navItems={navItems} onNavigate={(route) => navigation.navigate(route as never)} scroll={false} bottomClearance={130}>
+    <PrototypeFrame scroll={false} bottomClearance={130}>
       <View style={styles.scannerScreen}>
         {isFocused && !servingIntent && <CameraView style={StyleSheet.absoluteFillObject} facing="back" onBarcodeScanned={scanned ? undefined : handleBarCodeScanned} barcodeScannerSettings={{ barcodeTypes: ['qr'] }} />}
         <View style={styles.scrim} />

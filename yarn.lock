@@ -62,22 +62,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@azure/msal-browser@npm:^5.21.0":
-  version: 5.21.0
-  resolution: "@azure/msal-browser@npm:5.21.0"
-  dependencies:
-    "@azure/msal-common": "npm:16.14.0"
-  checksum: 10c0/1150dce82dae9e0b8740f3ce58f1478a086ebcba5531b20a0a9a7aac73b93c9503d28dab38ad1957c80312629ee2d8ca093b77f7f552a81b9474a7b933b5d7a8
-  languageName: node
-  linkType: hard
-
-"@azure/msal-common@npm:16.14.0":
-  version: 16.14.0
-  resolution: "@azure/msal-common@npm:16.14.0"
-  checksum: 10c0/72f9786b23f727e730d24afc57fa69998be89464ed734153c36ccd0893eef4945b840a0ed0b325295fd497b633625217cebe60392b42f0bad7ad183f8bfa6bfe
-  languageName: node
-  linkType: hard
-
 "@babel/code-frame@npm:^7.0.0, @babel/code-frame@npm:^7.12.13, @babel/code-frame@npm:^7.20.0, @babel/code-frame@npm:^7.29.7":
   version: 7.29.7
   resolution: "@babel/code-frame@npm:7.29.7"
@@ -1832,10 +1816,8 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@imeal/admin-web@workspace:apps/admin-web"
   dependencies:
-    "@azure/msal-browser": "npm:^5.21.0"
     typescript: "npm:^5.9.3"
     vite: "npm:^8.2.2"
-    zod: "npm:^3.25.76"
   languageName: unknown
   linkType: soft
 
@@ -1913,18 +1895,17 @@ __metadata:
     "@babel/core": "npm:^7.20.0"
     "@babel/runtime": "npm:^7.20.0"
     "@expo/metro-runtime": "npm:~3.2.3"
+    "@react-navigation/bottom-tabs": "npm:^6.6.1"
     "@react-navigation/native": "npm:^6.1.18"
     "@react-navigation/native-stack": "npm:^6.11.0"
     "@types/node": "npm:^26.4.0"
     "@types/react": "npm:~18.2.45"
     expo: "npm:~51.0.28"
-    expo-auth-session: "npm:~5.5.2"
     expo-camera: "npm:~15.0.16"
     expo-crypto: "npm:~13.0.2"
     expo-linking: "npm:~6.3.1"
     expo-secure-store: "npm:~13.0.2"
     expo-status-bar: "npm:~1.12.1"
-    expo-web-browser: "npm:~13.0.3"
     lucide-react-native: "npm:^1.37.0"
     react: "npm:18.2.0"
     react-dom: "npm:18.2.0"
@@ -3331,6 +3312,23 @@ __metadata:
     "@types/react":
       optional: true
   checksum: 10c0/0082a658efb2369f2c2bf052a8e842fd22b6895e1f25dfaae8220819aee1df4cd466c0b521bdd0cc5f6f1e505c6c1a56f97b998521e49898badf7e06b5da1907
+  languageName: node
+  linkType: hard
+
+"@react-navigation/bottom-tabs@npm:^6.6.1":
+  version: 6.6.1
+  resolution: "@react-navigation/bottom-tabs@npm:6.6.1"
+  dependencies:
+    "@react-navigation/elements": "npm:^1.3.31"
+    color: "npm:^4.2.3"
+    warn-once: "npm:^0.1.0"
+  peerDependencies:
+    "@react-navigation/native": ^6.0.0
+    react: "*"
+    react-native: "*"
+    react-native-safe-area-context: ">= 3.0.0"
+    react-native-screens: ">= 3.0.0"
+  checksum: 10c0/871bd824f8aa210718d8bfdc875cc840dbaeec86da67846cd34de8bbccfff837c7d825e257d2b0b5762b38f01ea785f95c54001e08e086fe7ea9234fefaec21f
   languageName: node
   linkType: hard
 
@@ -5591,10 +5589,30 @@ __metadata:
   languageName: node
   linkType: hard
 
-"color-name@npm:~1.1.4":
+"color-name@npm:^1.0.0, color-name@npm:~1.1.4":
   version: 1.1.4
   resolution: "color-name@npm:1.1.4"
   checksum: 10c0/a1a3f914156960902f46f7f56bc62effc6c94e84b2cae157a526b1c1f74b677a47ec602bf68a61abfa2b42d15b7c5651c6dbe72a43af720bc588dff885b10f95
+  languageName: node
+  linkType: hard
+
+"color-string@npm:^1.9.0":
+  version: 1.9.1
+  resolution: "color-string@npm:1.9.1"
+  dependencies:
+    color-name: "npm:^1.0.0"
+    simple-swizzle: "npm:^0.2.2"
+  checksum: 10c0/b0bfd74c03b1f837f543898b512f5ea353f71630ccdd0d66f83028d1f0924a7d4272deb278b9aef376cacf1289b522ac3fb175e99895283645a2dc3a33af2404
+  languageName: node
+  linkType: hard
+
+"color@npm:^4.2.3":
+  version: 4.2.3
+  resolution: "color@npm:4.2.3"
+  dependencies:
+    color-convert: "npm:^2.0.1"
+    color-string: "npm:^1.9.0"
+  checksum: 10c0/7fbe7cfb811054c808349de19fb380252e5e34e61d7d168ec3353e9e9aacb1802674bddc657682e4e9730c2786592a4de6f8283e7e0d3870b829bb0b7b2f6118
   languageName: node
   linkType: hard
 
@@ -6918,15 +6936,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"expo-application@npm:~5.9.0":
-  version: 5.9.1
-  resolution: "expo-application@npm:5.9.1"
-  peerDependencies:
-    expo: "*"
-  checksum: 10c0/3768c1d241edfe4dfa355dd09ba3f1155e6ad5e12d180c46e3cad6fba81dcf8ebb4d73f9c4490cbb93c195505f694b0967b0285167706da548aa13f10b08a2f1
-  languageName: node
-  linkType: hard
-
 "expo-asset@npm:~10.0.10":
   version: 10.0.10
   resolution: "expo-asset@npm:10.0.10"
@@ -6937,20 +6946,6 @@ __metadata:
   peerDependencies:
     expo: "*"
   checksum: 10c0/aed3164cee4483e47fa56c8898384769d60ebb3f94553f7ad2a33a8902d73a1379aee3fc51833c8f0a4a59979ed842ba079e52c8e1903104b1ad312ad90fe1d1
-  languageName: node
-  linkType: hard
-
-"expo-auth-session@npm:~5.5.2":
-  version: 5.5.2
-  resolution: "expo-auth-session@npm:5.5.2"
-  dependencies:
-    expo-application: "npm:~5.9.0"
-    expo-constants: "npm:~16.0.0"
-    expo-crypto: "npm:~13.0.0"
-    expo-linking: "npm:~6.3.0"
-    expo-web-browser: "npm:~13.0.0"
-    invariant: "npm:^2.2.4"
-  checksum: 10c0/d6cd84ccd50a804b5667902857b5f03a61bb1a8afe9a50d8483d3be9892cfce06980fa6c6ea14c7353f40590a1c3ed4eb91853592e3e8d41d9af394c3cdf4cf7
   languageName: node
   linkType: hard
 
@@ -6977,7 +6972,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"expo-crypto@npm:~13.0.0, expo-crypto@npm:~13.0.2":
+"expo-crypto@npm:~13.0.2":
   version: 13.0.2
   resolution: "expo-crypto@npm:13.0.2"
   dependencies:
@@ -7017,7 +7012,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"expo-linking@npm:~6.3.0, expo-linking@npm:~6.3.1":
+"expo-linking@npm:~6.3.1":
   version: 6.3.1
   resolution: "expo-linking@npm:6.3.1"
   dependencies:
@@ -7077,15 +7072,6 @@ __metadata:
   version: 1.12.1
   resolution: "expo-status-bar@npm:1.12.1"
   checksum: 10c0/fecd1c1843ef1fadf3007f54e1c778d06cbbe396c9ba7cbbfde88a1eb215847ab39e68b1f32d0d46a906a1abcb8821aa33eefed66d0c4a858a5faf6b6e556416
-  languageName: node
-  linkType: hard
-
-"expo-web-browser@npm:~13.0.0, expo-web-browser@npm:~13.0.3":
-  version: 13.0.3
-  resolution: "expo-web-browser@npm:13.0.3"
-  peerDependencies:
-    expo: "*"
-  checksum: 10c0/b1c28a80c90c2bec8a3b95330d5c7c3d22235492189dab4f27f747c33f492c87c1ced7b19963c8ed8655621ef1d4b3bcd10753aea96b89cb744835ee3319f51c
   languageName: node
   linkType: hard
 
@@ -8396,6 +8382,13 @@ __metadata:
   version: 0.2.1
   resolution: "is-arrayish@npm:0.2.1"
   checksum: 10c0/e7fb686a739068bb70f860b39b67afc62acc62e36bb61c5f965768abce1873b379c563e61dd2adad96ebb7edf6651111b385e490cf508378959b0ed4cac4e729
+  languageName: node
+  linkType: hard
+
+"is-arrayish@npm:^0.3.1":
+  version: 0.3.4
+  resolution: "is-arrayish@npm:0.3.4"
+  checksum: 10c0/1fa672a2f0bedb74154440310f616c0b6e53a95cf0625522ae050f06626d1cabd1a3d8085c882dc45c61ad0e7df2529aff122810b3b4a552880bf170d6df94e0
   languageName: node
   linkType: hard
 
@@ -13007,6 +13000,15 @@ __metadata:
     bplist-parser: "npm:0.3.2"
     plist: "npm:^3.0.5"
   checksum: 10c0/226c283492d8518d715e4133d94bdbd15c0619561bcde583b4807b36cde106c0078c615b9b4e25c0e8758a4ae4e79ed5dd76e57cd528d8b7001ecab5ad35e343
+  languageName: node
+  linkType: hard
+
+"simple-swizzle@npm:^0.2.2":
+  version: 0.2.4
+  resolution: "simple-swizzle@npm:0.2.4"
+  dependencies:
+    is-arrayish: "npm:^0.3.1"
+  checksum: 10c0/846c3fdd1325318d5c71295cfbb99bfc9edc4c8dffdda5e6e9efe30482bbcd32cf360fc2806f46ac43ff7d09bcfaff20337bb79f826f0e6a8e366efd3cdd7868
   languageName: node
   linkType: hard
 

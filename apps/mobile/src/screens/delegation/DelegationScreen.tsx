@@ -1,19 +1,19 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ArrowLeft, CheckCircle, Clock, Search, XCircle } from 'lucide-react-native';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../../navigation';
+import type { ProfileStackScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { delegationAPI, type DelegationResponse } from '../../api/delegationAPI';
 import { PrototypeCard, PrototypeField, Pill, PillText } from '../../ui/PrototypePrimitives';
-import { PrototypeFrame, employeeNav, hybridEmployeeNav, PrototypeSectionTitle } from '../../ui/PrototypeShell';
+import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
+import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
 
 type Tab = 'OUTGOING' | 'INCOMING';
-type Props = NativeStackScreenProps<RootStackParamList, 'Delegation'>;
-
+type Props = ProfileStackScreenProps<'Delegation'>;
 export function DelegationScreen({ navigation }: Props) {
-  const { token, canUseKitchen } = useSession();
+  const { token } = useSession();
+  const { showNotice } = useNotice();
   const [tab, setTab] = useState<Tab>('OUTGOING');
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -26,7 +26,7 @@ export function DelegationScreen({ navigation }: Props) {
       const data = await delegationAPI.getDelegations(token, tab === 'INCOMING' ? 'incoming' : 'outgoing');
       setDelegations(data);
     } catch (error: unknown) {
-      Alert.alert('Delegations unavailable', error instanceof Error ? error.message : 'Unable to load delegations');
+      showNotice({ title: 'Delegations unavailable', message: error instanceof Error ? error.message : 'Unable to load delegations', tone: 'error' });
     } finally {
       setLoading(false);
     }
@@ -43,18 +43,16 @@ export function DelegationScreen({ navigation }: Props) {
       if (action === 'revoke') await delegationAPI.revokeDelegation(id, token);
       await loadDelegations();
     } catch (error: unknown) {
-      Alert.alert('Action failed', error instanceof Error ? error.message : 'The delegation state has changed.');
+      showNotice({ title: 'Action failed', message: error instanceof Error ? error.message : 'The delegation state has changed.', tone: 'error' });
     } finally {
       setLoading(false);
     }
   };
 
-  const navItems = canUseKitchen ? hybridEmployeeNav : employeeNav;
-  const go = (route: keyof RootStackParamList) => navigation.navigate(route as never);
   const visible = delegations.filter((delegation) => tab === 'INCOMING' || delegation.delegateUserId.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
-    <PrototypeFrame activeRoute="EmployeeProfile" navItems={navItems} onNavigate={go}>
+    <PrototypeFrame>
       <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => navigation.goBack()} style={styles.back}><ArrowLeft size={20} color={theme.colors.fg} /></Pressable><View style={styles.headerCopy}><PrototypeSectionTitle title="Delegations" subtitle="Manage meal pickup permissions" /></View></View>
       <View style={styles.tabs}><Pressable onPress={() => setTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>My Requests</Text></Pressable><Pressable onPress={() => setTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>Incoming</Text></Pressable></View>
       {tab === 'OUTGOING' && <PrototypeField icon={Search} placeholder="Search employee by name/ID..." value={searchQuery} onChangeText={setSearchQuery} style={styles.search} />}

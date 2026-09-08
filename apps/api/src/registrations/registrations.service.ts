@@ -5,7 +5,11 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { getCutoffInstant, parseMealDate } from '../common/business-time.js';
+import {
+  BUSINESS_TIME_ZONE,
+  getCutoffInstant,
+  parseMealDate,
+} from '../common/business-time.js';
 
 @Injectable()
 export class RegistrationsService {
@@ -13,15 +17,31 @@ export class RegistrationsService {
   private menuCache = new Map<string, { data: any; expiry: number }>();
 
   async getWeekData(userId: string, weekStart: string) {
-    const startDate = new Date(weekStart);
-    if (isNaN(startDate.getTime())) {
+    let startDate: Date;
+    try {
+      startDate = parseMealDate(weekStart);
+    } catch {
       throw new HttpException(
         'Invalid week start date',
         HttpStatus.BAD_REQUEST,
       );
     }
     const endDate = new Date(startDate);
-    endDate.setDate(startDate.getDate() + 6);
+    endDate.setUTCDate(startDate.getUTCDate() + 6);
+
+    const cutoffSetting = await this.getCutoffTime();
+    const serverNow = new Date();
+    const days = Array.from({ length: 7 }, (_, index) => {
+      const mealDate = new Date(startDate);
+      mealDate.setUTCDate(startDate.getUTCDate() + index);
+      const mealDateKey = mealDate.toISOString().slice(0, 10);
+      const cutoffAt = getCutoffInstant(mealDateKey, cutoffSetting.time);
+      return {
+        mealDate: mealDateKey,
+        cutoffAt: cutoffAt.toISOString(),
+        editable: serverNow < cutoffAt,
+      };
+    });
 
     // 1. Traffic smoothing: Cache the weekly menu to reduce DB queries on Mon morning.
     // Jitter caching: TTL between 15s to 25s
@@ -57,6 +77,11 @@ export class RegistrationsService {
     return {
       menu: menuData,
       registrations,
+      registrationWindow: {
+        serverNow: serverNow.toISOString(),
+        timeZone: BUSINESS_TIME_ZONE,
+        days,
+      },
     };
   }
 

@@ -1,21 +1,21 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { Check, Clock3, Square } from 'lucide-react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../../navigation';
+import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { pickupAPI, type PickupOption } from '../../api/pickupAPI';
 import { initials } from '../../businessDate';
 import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
-import { PrototypeFrame, employeeNav, hybridEmployeeNav, PrototypeSectionTitle } from '../../ui/PrototypeShell';
+import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
+import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
+type Props = AppTabScreenProps<'PickupIntent'>;
 
-type Props = NativeStackScreenProps<RootStackParamList, 'PickupIntent'>;
-
-export function PickupIntentScreen({ navigation }: Props) {
-  const { token, profile, canUseKitchen } = useSession();
+export function PickupIntentScreen(_props: Props) {
+  const { token, profile } = useSession();
+  const { showNotice } = useNotice();
   const [loading, setLoading] = useState(true);
   const [options, setOptions] = useState<PickupOption[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -33,8 +33,7 @@ export function PickupIntentScreen({ navigation }: Props) {
       setOptions(response.options);
       setSelectedIds((current) => current.size > 0 ? new Set([...current].filter((id) => response.options.some((option) => option.registrationId === id))) : new Set(response.options[0] ? [response.options[0].registrationId] : []));
     } catch (error: unknown) {
-      Alert.alert('Pickup unavailable', error instanceof Error ? error.message : 'Unable to load pickup options');
-    } finally {
+      showNotice({ title: 'Pickup unavailable', message: error instanceof Error ? error.message : 'Unable to load pickup options', tone: 'error' });
       setLoading(false);
     }
   }, [token]);
@@ -65,8 +64,7 @@ export function PickupIntentScreen({ navigation }: Props) {
         refreshTimer = setTimeout(() => { void refresh(); }, ttl * 1000);
       } catch (error: unknown) {
         if (!cancelled) {
-          Alert.alert('QR unavailable', error instanceof Error ? error.message : 'Unable to generate QR code');
-          setIsGenerating(false);
+          showNotice({ title: 'QR unavailable', message: error instanceof Error ? error.message : 'Unable to generate QR code', tone: 'error' });
         }
       } finally {
         if (!cancelled) setQrLoading(false);
@@ -90,12 +88,10 @@ export function PickupIntentScreen({ navigation }: Props) {
     });
   };
 
-  const navItems = canUseKitchen ? hybridEmployeeNav : employeeNav;
-  const go = (route: keyof RootStackParamList) => navigation.navigate(route as never);
   const displayName = profile?.name || profile?.email.split('@')[0] || 'Employee';
 
   return (
-    <PrototypeFrame activeRoute="PickupIntent" navItems={navItems} onNavigate={go}>
+    <PrototypeFrame>
       <PrototypeSectionTitle title="Meal Ticket" subtitle="Show this dynamic QR code to the kitchen staff" />
       {loading ? <ActivityIndicator color={theme.colors.accentDeep} style={styles.loader} /> : options.length === 0 ? (
         <PrototypeCard style={styles.emptyCard}><Text style={styles.emptyTitle}>No meals ready to pick up</Text><Text style={styles.emptyText}>Register a meal in Calendar before generating a ticket.</Text></PrototypeCard>

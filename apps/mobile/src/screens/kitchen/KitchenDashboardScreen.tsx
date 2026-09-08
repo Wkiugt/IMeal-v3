@@ -1,21 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, PanResponder, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Animated, PanResponder, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { CheckCircle2, ChevronRight, Clock3, Radio, Search, Users, UserX, Utensils } from 'lucide-react-native';
 import { useIsFocused } from '@react-navigation/native';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../../navigation';
+import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { kitchenAPI, type KitchenDashboardSnapshot, type KitchenRegistrationItem, type ServingLogItem } from '../../api/kitchenAPI';
 import { initials } from '../../businessDate';
 import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
-import { PrototypeFrame, kitchenNav } from '../../ui/PrototypeShell';
+import { PrototypeFrame } from '../../ui/PrototypeShell';
+import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
-
 type TabType = 'pending' | 'served' | 'all' | 'noshow' | 'logs';
-type Props = NativeStackScreenProps<RootStackParamList, 'KitchenDashboard'>;
+type Props = AppTabScreenProps<'KitchenDashboard'>;
 
 export function KitchenDashboardScreen({ navigation }: Props) {
   const { token, profile } = useSession();
+  const { showNotice } = useNotice();
   const isFocused = useIsFocused();
   const [snapshot, setSnapshot] = useState<KitchenDashboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -31,8 +31,7 @@ export function KitchenDashboardScreen({ navigation }: Props) {
     try {
       setSnapshot(await kitchenAPI.getDashboardSnapshot(undefined, token));
     } catch (error: unknown) {
-      if (!snapshot) Alert.alert('Dashboard unavailable', error instanceof Error ? error.message : 'Unable to load kitchen dashboard');
-    } finally {
+      if (!snapshot) showNotice({ title: 'Dashboard unavailable', message: error instanceof Error ? error.message : 'Unable to load kitchen dashboard', tone: 'error' });
       setLoading(false);
       setRefreshing(false);
     }
@@ -57,8 +56,7 @@ export function KitchenDashboardScreen({ navigation }: Props) {
       const response = await kitchenAPI.toggleServingSignal(next, undefined, token);
       setSnapshot((current) => current ? { ...current, isServingReady: response.isServingReady } : current);
     } catch (error: unknown) {
-      Alert.alert('Serving signal unavailable', error instanceof Error ? error.message : 'Unable to update serving signal');
-      settleSlider(active ? maxX : 0);
+      showNotice({ title: 'Serving signal unavailable', message: error instanceof Error ? error.message : 'Unable to update serving signal', tone: 'error' });
     } finally {
       setTogglingSignal(false);
     }
@@ -94,11 +92,8 @@ export function KitchenDashboardScreen({ navigation }: Props) {
   };
   const selectedItems = activeTab === 'logs' ? [] : lists[activeTab];
   const logs = activeTab === 'logs' ? filterLogs(snapshot?.recentLogs || []) : [];
-  const go = (route: keyof RootStackParamList) => navigation.navigate(route as never);
-
   return (
-    <PrototypeFrame activeRoute="KitchenDashboard" navItems={kitchenNav} onNavigate={go} scrollProps={{ refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void fetchDashboard(); }} /> }} bottomClearance={130}>
-      <View style={styles.greeting}><View><Eyebrow>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }).toUpperCase()} · KITCHEN</Eyebrow><Text style={styles.greetingName}>Today's Prep</Text></View><Avatar initials={initials(profile?.name, 'KS')} /></View>
+    <PrototypeFrame scrollProps={{ refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void fetchDashboard(); }} /> }} bottomClearance={130}>
       <PrototypeCard style={[styles.servingCard, active && styles.servingActive]}><View style={styles.servingInfo}><Text style={styles.servingTitle}>{active ? 'Serving is live' : 'Ready to Serve?'}</Text><Text style={styles.servingSub}>{active ? 'Kitchen is ready to scan tickets' : 'Slide to begin scanning tickets'}</Text></View><View onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)} style={styles.sliderTrack} {...panResponder.panHandlers}><Animated.View style={[styles.sliderFill, active && styles.sliderFillActive, { width: sliderX.interpolate({ inputRange: [0, Math.max(1, maxX)], outputRange: ['0%', '100%'] }) }]} /><Animated.View style={[styles.sliderThumb, { transform: [{ translateX: sliderX }] }]}><ChevronRight size={20} color={active ? theme.colors.fg : theme.colors.accentDeep} /></Animated.View><Text style={[styles.sliderHint, active && styles.sliderHintActive]}>{active ? 'Slide to stop' : 'Slide to start'}</Text></View></PrototypeCard>
       <PrototypeCard style={styles.totalCard}><Eyebrow>TOTAL MEALS ORDERED TODAY</Eyebrow><View style={styles.totalRow}><Text style={styles.totalNumber}>{counters.totalRegistered}</Text><Text style={styles.totalUnit}>meals</Text></View><View style={styles.totalMeta}><Utensils size={16} color={theme.colors.accentDeep} /><Text style={styles.totalMetaText}>Lunch service · Canteen A, 12:00–13:00</Text></View></PrototypeCard>
       <PrototypeCard style={styles.dietCard}><Eyebrow>DIETARY PREFERENCES</Eyebrow><View style={styles.dietBar}><View style={styles.regularSegment} /><View style={styles.vegSegment} /></View><View style={styles.dietLegend}><View style={styles.legendItem}><View style={[styles.legendDot, styles.regularDot]} /><View><Text style={styles.legendLabel}>Regular</Text><Text style={styles.legendNumber}>{Math.round(counters.totalRegistered * 0.72)}</Text></View></View><View style={styles.legendItem}><View style={[styles.legendDot, styles.vegDot]} /><View><Text style={styles.legendLabel}>Vegetarian</Text><Text style={styles.legendNumber}>{counters.totalRegistered - Math.round(counters.totalRegistered * 0.72)}</Text></View></View></View></PrototypeCard>
