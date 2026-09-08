@@ -56,9 +56,9 @@ export function NoticeProvider({ children }: { children: React.ReactNode }) {
   }, [opacity, translateY]);
 
   const dismissGeneration = useCallback((generation: number) => {
+    if (generation !== noticeGeneration.current) return;
     clearTimeout(dismissTimer.current);
     stopAnimations();
-    if (generation !== noticeGeneration.current) return;
 
     if (reduceMotionRef.current) {
       setNotice(null);

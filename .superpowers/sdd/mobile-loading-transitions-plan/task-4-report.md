@@ -38,3 +38,19 @@ Result: TypeScript completed successfully with no diagnostics.
 ## Concerns
 
 - Timer thresholds, replacement races, and Reduce Motion dismissal were not exercised in a runtime UI harness because this workspace has no focused React Native component test setup for `BrandNotice`; verification for this slice is compile-time only.
+
+## Review fix — stale dismissal isolation
+
+- Moved the generation check ahead of timer clearing and animation stopping in `dismissGeneration`.
+- A queued callback from an older notice now returns without touching the current notice's timeout or entrance animation. Current-generation automatic and manual dismissal retain the existing timer clear and exit behavior.
+
+Verification:
+
+```text
+$ corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
+(no stdout)
+exit code: 0
+wall time: 2.94 seconds
+```
+
+Status: PASS — TypeScript completed successfully with no diagnostics.
