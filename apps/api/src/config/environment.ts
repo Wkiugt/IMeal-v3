@@ -1,9 +1,8 @@
-const REQUIRED_API_ENV = [
-  'DATABASE_URL',
-  'ENTRA_TENANT_ID',
-  'ENTRA_CLIENT_ID',
-  'QR_SIGNING_SECRET',
-] as const;
+const REQUIRED_API_ENV = ['DATABASE_URL', 'QR_SIGNING_SECRET'] as const;
+
+export function isLocalAuthEnabled(): boolean {
+  return (process.env.AUTH_MODE ?? 'entra').toLowerCase() === 'local';
+}
 
 export function isTestAuthBypassEnabled(): boolean {
   return (
@@ -12,12 +11,12 @@ export function isTestAuthBypassEnabled(): boolean {
 }
 
 export function validateApiEnvironment(): void {
-  if (isTestAuthBypassEnabled()) {
-    return;
-  }
+  if (isTestAuthBypassEnabled()) return;
 
-  if (process.env.REQUIRE_AUTH === 'false') {
-    throw new Error('REQUIRE_AUTH=false is only allowed when NODE_ENV=test');
+  if (process.env.REQUIRE_AUTH === 'false' && !isLocalAuthEnabled()) {
+    throw new Error(
+      'REQUIRE_AUTH=false is only allowed with AUTH_MODE=local or in tests',
+    );
   }
 
   const missing = REQUIRED_API_ENV.filter((name) => !process.env[name]?.trim());
@@ -25,6 +24,28 @@ export function validateApiEnvironment(): void {
     throw new Error(
       `Missing required API environment variables: ${missing.join(', ')}`,
     );
+  }
+
+  if (isLocalAuthEnabled()) {
+    if (!process.env.LOCAL_AUTH_JWT_SECRET?.trim()) {
+      throw new Error(
+        'Missing required API environment variables: LOCAL_AUTH_JWT_SECRET',
+      );
+    }
+    if (!process.env.LOCAL_AUTH_USERS?.trim()) {
+      throw new Error(
+        'Missing required API environment variables: LOCAL_AUTH_USERS',
+      );
+    }
+  } else {
+    const missingEntra = ['ENTRA_TENANT_ID', 'ENTRA_CLIENT_ID'].filter(
+      (name) => !process.env[name]?.trim(),
+    );
+    if (missingEntra.length > 0) {
+      throw new Error(
+        `Missing required API environment variables: ${missingEntra.join(', ')}`,
+      );
+    }
   }
 
   if (process.env.QR_SIGNING_SECRET!.length < 32) {

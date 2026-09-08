@@ -1,8 +1,3 @@
-import {
-  InteractionRequiredAuthError,
-  PublicClientApplication,
-  type AccountInfo,
-} from '@azure/msal-browser';
 import { z } from 'zod';
 import './styles.css';
 
@@ -54,44 +49,21 @@ const ErrorResponseSchema = z.object({ message: z.string() });
 
 type ViewName = 'menus' | 'penalties';
 
-function requiredConfig(name: string, value: string | undefined): string {
-  if (!value) {
-    throw new Error(`${name} is required`);
-  }
-  return value.replace(/\/$/, '');
-}
-
 const API_URL = (
   import.meta.env.VITE_API_URL || window.location.origin
 ).replace(/\/$/, '');
-const TENANT_ID = requiredConfig(
-  'VITE_ENTRA_TENANT_ID',
-  import.meta.env.VITE_ENTRA_TENANT_ID,
-);
-const CLIENT_ID = requiredConfig(
-  'VITE_ENTRA_CLIENT_ID',
-  import.meta.env.VITE_ENTRA_CLIENT_ID,
-);
-const API_SCOPE = requiredConfig(
-  'VITE_ENTRA_API_SCOPE',
-  import.meta.env.VITE_ENTRA_API_SCOPE,
-);
+const SESSION_KEY = 'imeal.local.access-token';
+const LocalLoginSchema = z.object({
+  accessToken: z.string(),
+  user: UserProfileSchema,
+});
 const appRoot = document.querySelector<HTMLElement>('#app');
 if (!appRoot) {
   throw new Error('Admin Web root element is missing');
 }
 const app = appRoot;
 
-const msal = new PublicClientApplication({
-  auth: {
-    clientId: CLIENT_ID,
-    authority: `https://login.microsoftonline.com/${TENANT_ID}`,
-    redirectUri: window.location.origin,
-  },
-  cache: { cacheLocation: 'sessionStorage' },
-});
-
-let account: AccountInfo | null = null;
+let localToken: string | null = null;
 let profile: UserProfile | null = null;
 let currentView: ViewName = 'menus';
 
@@ -130,21 +102,8 @@ function showError(error: unknown): void {
 }
 
 async function accessToken(): Promise<string> {
-  if (!account) throw new Error('Sign in is required');
-  try {
-    const result = await msal.acquireTokenSilent({
-      account,
-      scopes: [API_SCOPE],
-    });
-    return result.accessToken;
-  } catch (error: unknown) {
-    if (!(error instanceof InteractionRequiredAuthError)) throw error;
-    const result = await msal.acquireTokenPopup({
-      account,
-      scopes: [API_SCOPE],
-    });
-    return result.accessToken;
-  }
+  if (!localToken) throw new Error('Sign in is required');
+  return localToken;
 }
 
 async function api(path: string, init?: RequestInit): Promise<unknown> {
@@ -443,10 +402,25 @@ async function renderPenalties(): Promise<void> {
   await load().catch(showError);
 }
 
-async function signIn(): Promise<void> {
-  const result = await msal.loginPopup({ scopes: [API_SCOPE] });
-  account = result.account;
-  profile = UserProfileSchema.parse(await api('/auth/me'));
+async function signIn(username: string, password: string): Promise<void> {
+  const response = await fetch(`${API_URL}/auth/local-login`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsedError = ErrorResponseSchema.safeParse(payload);
+    throw new Error(
+      parsedError.success
+        ? parsedError.data.message
+        : `Sign-in failed with status ${response.status}`,
+    );
+  }
+  const login = LocalLoginSchema.parse(payload);
+  localToken = login.accessToken;
+  profile = login.user;
+  sessionStorage.setItem(SESSION_KEY, localToken);
   const defaultView = profile.permissions.includes('menu.manage')
     ? 'menus'
     : 'penalties';
@@ -454,27 +428,49 @@ async function signIn(): Promise<void> {
   else await renderPenalties();
 }
 
-async function signOut(): Promise<void> {
-  const currentAccount = account;
-  account = null;
+function signOut(error?: unknown): void {
+  localToken = null;
   profile = null;
-  await msal.logoutPopup({ account: currentAccount });
-  renderLogin();
+  sessionStorage.removeItem(SESSION_KEY);
+  renderLogin(error);
 }
 
 function renderLogin(error?: unknown): void {
   const login = element('div', 'login');
   const card = element('section', 'card');
+  const form = element('form');
+  const username = element('input');
+  username.type = 'text';
+  username.name = 'username';
+  username.placeholder = 'Username';
+  username.autocomplete = 'username';
+  username.required = true;
+  const password = element('input');
+  password.type = 'password';
+  password.name = 'password';
+  password.placeholder = 'Password';
+  password.autocomplete = 'current-password';
+  password.required = true;
+  const submit = actionButton('Sign in', () => undefined);
+  submit.type = 'submit';
+  form.append(username, password, submit);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    void signIn(username.value, password.value)
+      .catch((signInError) => renderLogin(signInError))
+      .finally(() => {
+        submit.disabled = false;
+      });
+  });
   card.append(
     element('h1', '', 'IMeal Administration'),
     element(
       'p',
       'muted',
-      'Sign in with your organization account. Access is granted by server-side permissions.',
+      'Use the local admin credentials configured in .env.',
     ),
-    actionButton('Sign in with Microsoft Entra', () => {
-      void signIn().catch(renderLogin);
-    }),
+    form,
   );
   if (error) {
     card.append(
@@ -490,21 +486,22 @@ function renderLogin(error?: unknown): void {
 }
 
 async function bootstrap(): Promise<void> {
-  await msal.initialize();
-  const redirect = await msal.handleRedirectPromise();
-  account = redirect?.account ?? msal.getAllAccounts()[0] ?? null;
-  if (!account) {
+  const savedToken = sessionStorage.getItem(SESSION_KEY);
+  if (!savedToken) {
     renderLogin();
     return;
   }
+  localToken = savedToken;
   try {
     profile = UserProfileSchema.parse(await api('/auth/me'));
     if (profile.permissions.includes('menu.manage')) await renderMenus();
-    else if (profile.permissions.includes('penalty.read'))
+    else if (profile.permissions.includes('penalty.read')) {
       await renderPenalties();
-    else throw new Error('Your account has no administration permissions');
+    } else {
+      throw new Error('Your account has no administration permissions');
+    }
   } catch (error: unknown) {
-    renderLogin(error);
+    signOut(error);
   }
 }
 
