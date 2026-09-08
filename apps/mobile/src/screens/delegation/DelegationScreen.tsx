@@ -1,64 +1,100 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ArrowLeft, CheckCircle, Clock, Search, XCircle } from 'lucide-react-native';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../../navigation';
+import type { ProfileStackScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { delegationAPI, type DelegationResponse } from '../../api/delegationAPI';
-import { PrototypeCard, PrototypeField, Pill, PillText } from '../../ui/PrototypePrimitives';
-import { PrototypeFrame, employeeNav, hybridEmployeeNav, PrototypeSectionTitle } from '../../ui/PrototypeShell';
+import { PrototypeButton, PrototypeCard, PrototypeField, Pill, PillText } from '../../ui/PrototypePrimitives';
+import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
+import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
 
 type Tab = 'OUTGOING' | 'INCOMING';
-type Props = NativeStackScreenProps<RootStackParamList, 'Delegation'>;
-
+type Props = ProfileStackScreenProps<'Delegation'>;
 export function DelegationScreen({ navigation }: Props) {
-  const { token, canUseKitchen } = useSession();
+  const { token } = useSession();
+  const { showNotice } = useNotice();
   const [tab, setTab] = useState<Tab>('OUTGOING');
   const [searchQuery, setSearchQuery] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [delegations, setDelegations] = useState<DelegationResponse[]>([]);
+  const delegationRequestId = useRef(0);
+  const activeTabRef = useRef<Tab>('OUTGOING');
 
-  const loadDelegations = useCallback(async () => {
-    if (!token) return;
+  const loadDelegations = useCallback(async (targetTab: Tab) => {
+    if (!token || activeTabRef.current !== targetTab) return;
+    const requestId = ++delegationRequestId.current;
+    setLoadError(null);
     setLoading(true);
     try {
-      const data = await delegationAPI.getDelegations(token, tab === 'INCOMING' ? 'incoming' : 'outgoing');
+      const data = await delegationAPI.getDelegations(token, targetTab === 'INCOMING' ? 'incoming' : 'outgoing');
+      if (requestId !== delegationRequestId.current || activeTabRef.current !== targetTab) return;
       setDelegations(data);
     } catch (error: unknown) {
-      Alert.alert('Delegations unavailable', error instanceof Error ? error.message : 'Unable to load delegations');
+      if (requestId !== delegationRequestId.current || activeTabRef.current !== targetTab) return;
+      const message = error instanceof Error ? error.message : 'Unable to load delegations';
+      setLoadError(message);
+      showNotice({ title: 'Delegations unavailable', message, tone: 'error' });
     } finally {
-      setLoading(false);
+      if (requestId === delegationRequestId.current && activeTabRef.current === targetTab) setLoading(false);
     }
-  }, [tab, token]);
+  }, [showNotice, token]);
 
-  useEffect(() => { void loadDelegations(); }, [loadDelegations]);
+  useEffect(() => {
+    void loadDelegations(tab);
+    return () => {
+      delegationRequestId.current += 1;
+    };
+  }, [loadDelegations, tab]);
+
+  const selectTab = (nextTab: Tab) => {
+    if (nextTab === activeTabRef.current) return;
+    activeTabRef.current = nextTab;
+    setDelegations([]);
+    setLoadError(null);
+    setLoading(true);
+    setTab(nextTab);
+  };
 
   const handleAction = async (action: 'accept' | 'decline' | 'revoke', id: string) => {
     if (!token) return;
+    const startingTab = activeTabRef.current;
     setLoading(true);
     try {
       if (action === 'accept') await delegationAPI.acceptDelegation(id, token);
       if (action === 'decline') await delegationAPI.declineDelegation(id, token);
       if (action === 'revoke') await delegationAPI.revokeDelegation(id, token);
-      await loadDelegations();
+      if (activeTabRef.current === startingTab) await loadDelegations(startingTab);
     } catch (error: unknown) {
-      Alert.alert('Action failed', error instanceof Error ? error.message : 'The delegation state has changed.');
-    } finally {
-      setLoading(false);
+      if (activeTabRef.current === startingTab) setLoading(false);
+      showNotice({ title: 'Action failed', message: error instanceof Error ? error.message : 'The delegation state has changed.', tone: 'error' });
     }
   };
 
-  const navItems = canUseKitchen ? hybridEmployeeNav : employeeNav;
-  const go = (route: keyof RootStackParamList) => navigation.navigate(route as never);
   const visible = delegations.filter((delegation) => tab === 'INCOMING' || delegation.delegateUserId.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
-    <PrototypeFrame activeRoute="EmployeeProfile" navItems={navItems} onNavigate={go}>
+    <PrototypeFrame>
       <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => navigation.goBack()} style={styles.back}><ArrowLeft size={20} color={theme.colors.fg} /></Pressable><View style={styles.headerCopy}><PrototypeSectionTitle title="Delegations" subtitle="Manage meal pickup permissions" /></View></View>
-      <View style={styles.tabs}><Pressable onPress={() => setTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>My Requests</Text></Pressable><Pressable onPress={() => setTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>Incoming</Text></Pressable></View>
+      <View style={styles.tabs}><Pressable onPress={() => selectTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>My Requests</Text></Pressable><Pressable onPress={() => selectTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>Incoming</Text></Pressable></View>
       {tab === 'OUTGOING' && <PrototypeField icon={Search} placeholder="Search employee by name/ID..." value={searchQuery} onChangeText={setSearchQuery} style={styles.search} />}
-      {loading ? <ActivityIndicator color={theme.colors.accentDeep} style={styles.loader} /> : visible.length === 0 ? <Text style={styles.empty}>No delegations found.</Text> : <View style={styles.list}>{visible.map((item) => <PrototypeCard key={item.id} style={styles.card}><View style={styles.cardHeader}><Text style={styles.cardTitle}>{tab === 'OUTGOING' ? `To: ${item.delegateUserId}` : `From: ${item.delegateUserId}`}</Text><Status status={item.status} /></View><Text style={styles.cardDate}>Created: {new Date(item.createdAt).toLocaleDateString()}</Text>{item.status === 'PENDING' && <View style={styles.actions}>{tab === 'INCOMING' ? <><Pressable onPress={() => void handleAction('decline', item.id)} style={styles.secondaryAction}><Text style={styles.secondaryText}>Decline</Text></Pressable><Pressable onPress={() => void handleAction('accept', item.id)} style={styles.primaryAction}><Text style={styles.primaryText}>Accept</Text></Pressable></> : <Pressable onPress={() => void handleAction('revoke', item.id)} style={styles.dangerAction}><Text style={styles.dangerText}>Revoke</Text></Pressable>}</View>}</PrototypeCard>)}</View>}
+      <StateTransition stateKey={loading ? 'loading' : loadError && delegations.length === 0 ? 'error' : visible.length === 0 ? 'empty' : 'list'}>
+        {loading ? (
+          <BrandLoader label="Loading delegations…" />
+        ) : loadError && delegations.length === 0 ? (
+          <PrototypeCard style={styles.errorCard}>
+            <Text style={styles.errorTitle}>Delegations unavailable</Text>
+            <Text style={styles.errorText}>{loadError}</Text>
+            <PrototypeButton variant="secondary" onPress={() => void loadDelegations(activeTabRef.current)} style={styles.retryButton}>Retry</PrototypeButton>
+          </PrototypeCard>
+        ) : visible.length === 0 ? (
+          <Text style={styles.empty}>No delegations found.</Text>
+        ) : (
+          <View style={styles.list}>{visible.map((item) => <PrototypeCard key={item.id} style={styles.card}><View style={styles.cardHeader}><Text style={styles.cardTitle}>{tab === 'OUTGOING' ? `To: ${item.delegateUserId}` : `From: ${item.delegateUserId}`}</Text><Status status={item.status} /></View><Text style={styles.cardDate}>Created: {new Date(item.createdAt).toLocaleDateString()}</Text>{item.status === 'PENDING' && <View style={styles.actions}>{tab === 'INCOMING' ? <><Pressable onPress={() => void handleAction('decline', item.id)} style={styles.secondaryAction}><Text style={styles.secondaryText}>Decline</Text></Pressable><Pressable onPress={() => void handleAction('accept', item.id)} style={styles.primaryAction}><Text style={styles.primaryText}>Accept</Text></Pressable></> : <Pressable onPress={() => void handleAction('revoke', item.id)} style={styles.dangerAction}><Text style={styles.dangerText}>Revoke</Text></Pressable>}</View>}</PrototypeCard>)}</View>
+        )}
+      </StateTransition>
     </PrototypeFrame>
   );
 }
@@ -82,8 +118,11 @@ const styles = StyleSheet.create({
   tabText: { color: theme.colors.muted, fontSize: 14, fontWeight: '500' },
   activeTabText: { color: theme.colors.accentDeep, fontWeight: '700' },
   search: { marginVertical: 16 },
-  loader: { marginTop: 40 },
   empty: { color: theme.colors.muted, textAlign: 'center', marginTop: 24 },
+  errorCard: { marginTop: 20 },
+  errorTitle: { color: theme.colors.fg, fontSize: 17, fontWeight: '700' },
+  errorText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },
+  retryButton: { marginTop: 16 },
   list: { gap: 12, paddingVertical: 8 },
   card: { padding: 16 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 8 },

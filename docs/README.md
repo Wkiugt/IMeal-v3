@@ -40,6 +40,7 @@ IMeal v2 là một re-platforming so với hệ thống web Firebase/Firestore h
 | [05 — Backend Structure](./05-backend-structure.md)           | PostgreSQL schema, constraints, transactions, authz, idempotency và data flows         |
 | [06 — Execution Plan](./06-execution-plan.md)                 | Kế hoạch clean-slate re-platform và rollout IMeal v2                                   |
 | [07 — Architecture Decisions](./07-architecture-decisions.md) | Quyết định kiến trúc, đánh giá rủi ro (Risk Assessment) và Trade-offs                  |
+| [Local Role Testing Guide](./local-role-testing.md)                  | Local Docker, API, mobile, Admin Web setup and role smoke checklist      |
 
 ## Thuật ngữ canonical
 

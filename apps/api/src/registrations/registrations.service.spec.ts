@@ -3,6 +3,8 @@ import { RegistrationsService } from './registrations.service.js';
 
 const prismaMock = {
   appSetting: { findUnique: vi.fn() },
+  weeklyMenu: { findFirst: vi.fn() },
+  registration: { findMany: vi.fn() },
   $transaction: vi.fn(),
 };
 
@@ -19,6 +21,8 @@ describe('RegistrationsService', () => {
     vi.useFakeTimers();
     vi.resetAllMocks();
     prismaMock.appSetting.findUnique.mockResolvedValue({ value: '14:00' });
+    prismaMock.weeklyMenu.findFirst.mockResolvedValue(null);
+    prismaMock.registration.findMany.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -41,5 +45,32 @@ describe('RegistrationsService', () => {
       },
     ]);
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('returns server-authoritative editability for each day of the week', async () => {
+    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    const service = new RegistrationsService();
+
+    const response = await service.getWeekData('user-1', '2026-09-05');
+
+    expect(response.registrationWindow.timeZone).toBe('Asia/Ho_Chi_Minh');
+    expect(response.registrationWindow.serverNow).toBe(
+      '2026-09-04T07:00:00.000Z',
+    );
+    expect(response.registrationWindow.days).toHaveLength(7);
+    expect(response.registrationWindow.days[0]).toMatchObject({
+      mealDate: '2026-09-05',
+      cutoffAt: '2026-09-04T07:00:00.000Z',
+      editable: false,
+    });
+    expect(response.registrationWindow.days[1]).toMatchObject({
+      mealDate: '2026-09-06',
+      editable: true,
+    });
+    expect(
+      response.registrationWindow.days.every(
+        (day) => day.cutoffAt.endsWith('.000Z'),
+      ),
+    ).toBe(true);
   });
 });

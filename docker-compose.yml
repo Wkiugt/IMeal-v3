@@ -109,9 +109,10 @@ services:
       MINIO_PORT: 9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-admin}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-password123}
-      REQUIRE_AUTH: 'true'
-      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?ENTRA_TENANT_ID is required}
-      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:?ENTRA_CLIENT_ID is required}
+      AUTH_MODE: ${AUTH_MODE:-local}
+      REQUIRE_AUTH: ${REQUIRE_AUTH:-true}
+      LOCAL_AUTH_JWT_SECRET: ${LOCAL_AUTH_JWT_SECRET:?LOCAL_AUTH_JWT_SECRET is required}
+      LOCAL_AUTH_USERS: ${LOCAL_AUTH_USERS:?LOCAL_AUTH_USERS is required}
       QR_SIGNING_SECRET: ${QR_SIGNING_SECRET:?QR_SIGNING_SECRET is required}
     depends_on:
       pgbouncer:
@@ -167,11 +168,6 @@ services:
   admin-web:
     build:
       context: .
-      dockerfile: apps/admin-web/Dockerfile
-      args:
-        VITE_ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?ENTRA_TENANT_ID is required}
-        VITE_ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:?ENTRA_CLIENT_ID is required}
-        VITE_ENTRA_API_SCOPE: ${ENTRA_API_SCOPE:?ENTRA_API_SCOPE is required}
     container_name: imeal_admin_web
     restart: unless-stopped
     healthcheck:

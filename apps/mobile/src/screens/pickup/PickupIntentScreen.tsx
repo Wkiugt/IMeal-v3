@@ -1,22 +1,24 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { Check, Clock3, Square } from 'lucide-react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../../navigation';
+import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { pickupAPI, type PickupOption } from '../../api/pickupAPI';
 import { initials } from '../../businessDate';
-import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
-import { PrototypeFrame, employeeNav, hybridEmployeeNav, PrototypeSectionTitle } from '../../ui/PrototypeShell';
+import { Avatar, Eyebrow, PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
+import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
+import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
+type Props = AppTabScreenProps<'PickupIntent'>;
 
-type Props = NativeStackScreenProps<RootStackParamList, 'PickupIntent'>;
-
-export function PickupIntentScreen({ navigation }: Props) {
-  const { token, profile, canUseKitchen } = useSession();
+export function PickupIntentScreen(_props: Props) {
+  const { token, profile } = useSession();
+  const { showNotice } = useNotice();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [options, setOptions] = useState<PickupOption[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [qrValue, setQrValue] = useState<string | null>(null);
@@ -24,22 +26,34 @@ export function PickupIntentScreen({ navigation }: Props) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const progressAnim = useRef(new Animated.Value(1)).current;
+  const optionsRequestId = useRef(0);
 
   const fetchOptions = useCallback(async () => {
     if (!token) return;
+    const requestId = ++optionsRequestId.current;
+    setLoadError(null);
     setLoading(true);
     try {
       const response = await pickupAPI.getPickupOptions(token);
+      if (requestId !== optionsRequestId.current) return;
       setOptions(response.options);
       setSelectedIds((current) => current.size > 0 ? new Set([...current].filter((id) => response.options.some((option) => option.registrationId === id))) : new Set(response.options[0] ? [response.options[0].registrationId] : []));
     } catch (error: unknown) {
-      Alert.alert('Pickup unavailable', error instanceof Error ? error.message : 'Unable to load pickup options');
+      if (requestId !== optionsRequestId.current) return;
+      const message = error instanceof Error ? error.message : 'Unable to load pickup options';
+      setLoadError(message);
+      showNotice({ title: 'Pickup unavailable', message, tone: 'error' });
     } finally {
-      setLoading(false);
+      if (requestId === optionsRequestId.current) setLoading(false);
     }
-  }, [token]);
+  }, [showNotice, token]);
 
-  useFocusEffect(useCallback(() => { void fetchOptions(); }, [fetchOptions]));
+  useFocusEffect(useCallback(() => {
+    void fetchOptions();
+    return () => {
+      optionsRequestId.current += 1;
+    };
+  }, [fetchOptions]));
 
   useEffect(() => {
     if (!isGenerating || !token) {
@@ -65,8 +79,7 @@ export function PickupIntentScreen({ navigation }: Props) {
         refreshTimer = setTimeout(() => { void refresh(); }, ttl * 1000);
       } catch (error: unknown) {
         if (!cancelled) {
-          Alert.alert('QR unavailable', error instanceof Error ? error.message : 'Unable to generate QR code');
-          setIsGenerating(false);
+          showNotice({ title: 'QR unavailable', message: error instanceof Error ? error.message : 'Unable to generate QR code', tone: 'error' });
         }
       } finally {
         if (!cancelled) setQrLoading(false);
@@ -90,44 +103,52 @@ export function PickupIntentScreen({ navigation }: Props) {
     });
   };
 
-  const navItems = canUseKitchen ? hybridEmployeeNav : employeeNav;
-  const go = (route: keyof RootStackParamList) => navigation.navigate(route as never);
   const displayName = profile?.name || profile?.email.split('@')[0] || 'Employee';
 
   return (
-    <PrototypeFrame activeRoute="PickupIntent" navItems={navItems} onNavigate={go}>
+    <PrototypeFrame>
       <PrototypeSectionTitle title="Meal Ticket" subtitle="Show this dynamic QR code to the kitchen staff" />
-      {loading ? <ActivityIndicator color={theme.colors.accentDeep} style={styles.loader} /> : options.length === 0 ? (
-        <PrototypeCard style={styles.emptyCard}><Text style={styles.emptyTitle}>No meals ready to pick up</Text><Text style={styles.emptyText}>Register a meal in Calendar before generating a ticket.</Text></PrototypeCard>
-      ) : (
-        <>
-          <PrototypeCard style={styles.selectionCard}>
-            <View style={styles.selectionHeader}><Eyebrow>MEALS TO PICK UP</Eyebrow><Text style={styles.selectionHint}>Select one or more</Text></View>
-            {options.map((option) => {
-              const selected = selectedIds.has(option.registrationId);
-              return <Pressable key={option.registrationId} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => toggleSelection(option.registrationId)} style={[styles.optionRow, selected && styles.optionSelected]}>{selected ? <Check size={20} color={theme.colors.accentDeep} /> : <Square size={20} color={theme.colors.muted} />}<View style={styles.optionCopy}><Text style={styles.optionTitle}>{option.type === 'OWN' ? 'My meal' : 'Delegated meal'}</Text><Text style={styles.optionDate}>{option.mealDate.slice(0, 10)}{option.owner ? ` · From ${option.owner.name}` : ''}</Text></View></Pressable>;
-            })}
+      <StateTransition stateKey={loading ? 'loading' : loadError ? 'error' : options.length === 0 ? 'empty' : 'ready'}>
+        {loading ? (
+          <BrandLoader label="Loading pickup options…" />
+        ) : loadError ? (
+          <PrototypeCard style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>Pickup unavailable</Text>
+            <Text style={styles.emptyText}>{loadError}</Text>
+            <PrototypeButton variant="secondary" onPress={() => void fetchOptions()} style={styles.retryButton}>Retry</PrototypeButton>
           </PrototypeCard>
-          <PrototypeCard style={styles.ticketCard}>
-            <View style={styles.ticketTop}>
-              {qrValue ? <QRCode value={qrValue} size={200} color={theme.colors.fg} backgroundColor={theme.colors.surface} /> : <View style={styles.qrPlaceholder}><ActivityIndicator color={theme.colors.accentDeep} /></View>}
-              <Avatar initials={initials(profile?.name, 'ME')} />
-              <Text style={styles.ticketName}>{displayName}</Text>
-              <Text style={styles.ticketId}>{profile?.userId || profile?.id || '—'}</Text>
-            </View>
-            <View style={styles.perforation} />
-            <View style={styles.progressTrack}><Animated.View style={[styles.progressFill, { transform: [{ scaleX: progressAnim }] }]} /></View>
-            <View style={styles.ticketBottom}><View style={styles.ticketRow}><Text style={styles.ticketKey}>Meal</Text><Text style={styles.ticketValue}>Lunch</Text></View><View style={styles.ticketRow}><Text style={styles.ticketKey}>Selected</Text><Text style={styles.ticketValue}>{selectedIds.size} meal{selectedIds.size === 1 ? '' : 's'}</Text></View><View style={styles.ticketNote}><Clock3 size={15} color={theme.colors.accentDeep} /><Text style={styles.ticketNoteText}>{qrLoading ? 'Refreshing code…' : `Code refreshes in ${timeLeft}s`}</Text></View></View>
-          </PrototypeCard>
-          <Pressable accessibilityRole="button" disabled={selectedIds.size === 0} onPress={() => setIsGenerating((current) => !current)} style={[styles.generateButton, selectedIds.size === 0 && styles.disabled]}><Text style={styles.generateText}>{isGenerating ? 'Pause ticket' : 'Generate ticket'}</Text></Pressable>
-        </>
-      )}
+        ) : options.length === 0 ? (
+          <PrototypeCard style={styles.emptyCard}><Text style={styles.emptyTitle}>No meals ready to pick up</Text><Text style={styles.emptyText}>Register a meal in Calendar before generating a ticket.</Text></PrototypeCard>
+        ) : (
+          <>
+            <PrototypeCard style={styles.selectionCard}>
+              <View style={styles.selectionHeader}><Eyebrow>MEALS TO PICK UP</Eyebrow><Text style={styles.selectionHint}>Select one or more</Text></View>
+              {options.map((option) => {
+                const selected = selectedIds.has(option.registrationId);
+                return <Pressable key={option.registrationId} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => toggleSelection(option.registrationId)} style={[styles.optionRow, selected && styles.optionSelected]}>{selected ? <Check size={20} color={theme.colors.accentDeep} /> : <Square size={20} color={theme.colors.muted} />}<View style={styles.optionCopy}><Text style={styles.optionTitle}>{option.type === 'OWN' ? 'My meal' : 'Delegated meal'}</Text><Text style={styles.optionDate}>{option.mealDate.slice(0, 10)}{option.owner ? ` · From ${option.owner.name}` : ''}</Text></View></Pressable>;
+              })}
+            </PrototypeCard>
+            <PrototypeCard style={styles.ticketCard}>
+              <View style={styles.ticketTop}>
+                {qrValue ? <QRCode value={qrValue} size={200} color={theme.colors.fg} backgroundColor={theme.colors.surface} /> : <View style={styles.qrPlaceholder}><BrandLoader compact label="Generating QR code…" /></View>}
+                <Avatar initials={initials(profile?.name, 'ME')} />
+                <Text style={styles.ticketName}>{displayName}</Text>
+                <Text style={styles.ticketId}>{profile?.userId || profile?.id || '—'}</Text>
+              </View>
+              <View style={styles.perforation} />
+              <View style={styles.progressTrack}><Animated.View style={[styles.progressFill, { transform: [{ scaleX: progressAnim }] }]} /></View>
+              <View style={styles.ticketBottom}><View style={styles.ticketRow}><Text style={styles.ticketKey}>Meal</Text><Text style={styles.ticketValue}>Lunch</Text></View><View style={styles.ticketRow}><Text style={styles.ticketKey}>Selected</Text><Text style={styles.ticketValue}>{selectedIds.size} meal{selectedIds.size === 1 ? '' : 's'}</Text></View><View style={styles.ticketNote}><Clock3 size={15} color={theme.colors.accentDeep} /><Text style={styles.ticketNoteText}>{qrLoading ? 'Refreshing code…' : `Code refreshes in ${timeLeft}s`}</Text></View></View>
+            </PrototypeCard>
+            <Pressable accessibilityRole="button" disabled={selectedIds.size === 0} onPress={() => setIsGenerating((current) => !current)} style={[styles.generateButton, selectedIds.size === 0 && styles.disabled]}><Text style={styles.generateText}>{isGenerating ? 'Pause ticket' : 'Generate ticket'}</Text></Pressable>
+          </>
+        )}
+      </StateTransition>
     </PrototypeFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  loader: { marginVertical: 44 },
+  retryButton: { marginTop: 16 },
   emptyCard: { marginTop: 20 },
   emptyTitle: { color: theme.colors.fg, fontSize: 17, fontWeight: '700' },
   emptyText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },

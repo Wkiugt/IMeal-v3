@@ -1,48 +1,68 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, PanResponder, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
-import { CheckCircle2, ChevronRight, Clock3, Radio, Search, Users, UserX, Utensils } from 'lucide-react-native';
+import { Animated, PanResponder, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ChevronRight, Radio, Search, Utensils } from 'lucide-react-native';
 import { useIsFocused } from '@react-navigation/native';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../../navigation';
+import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { kitchenAPI, type KitchenDashboardSnapshot, type KitchenRegistrationItem, type ServingLogItem } from '../../api/kitchenAPI';
 import { initials } from '../../businessDate';
-import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
-import { PrototypeFrame, kitchenNav } from '../../ui/PrototypeShell';
+import { Eyebrow, Pill, PillText, PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
+import { PrototypeFrame } from '../../ui/PrototypeShell';
+import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
-
 type TabType = 'pending' | 'served' | 'all' | 'noshow' | 'logs';
-type Props = NativeStackScreenProps<RootStackParamList, 'KitchenDashboard'>;
+type Props = AppTabScreenProps<'KitchenDashboard'>;
 
 export function KitchenDashboardScreen({ navigation }: Props) {
-  const { token, profile } = useSession();
+  const { token } = useSession();
+  const { showNotice } = useNotice();
   const isFocused = useIsFocused();
   const [snapshot, setSnapshot] = useState<KitchenDashboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('pending');
   const [searchQuery, setSearchQuery] = useState('');
   const [togglingSignal, setTogglingSignal] = useState(false);
   const [trackWidth, setTrackWidth] = useState(0);
   const sliderX = useRef(new Animated.Value(0)).current;
+  const dashboardRequestId = useRef(0);
+  const currentSnapshot = useRef<KitchenDashboardSnapshot | null>(null);
 
   const fetchDashboard = useCallback(async () => {
     if (!token) return;
+    const requestId = ++dashboardRequestId.current;
+    setLoading(true);
     try {
-      setSnapshot(await kitchenAPI.getDashboardSnapshot(undefined, token));
+      const nextSnapshot = await kitchenAPI.getDashboardSnapshot(undefined, token);
+      if (requestId !== dashboardRequestId.current) return;
+      currentSnapshot.current = nextSnapshot;
+      setSnapshot(nextSnapshot);
+      setLoadError(null);
     } catch (error: unknown) {
-      if (!snapshot) Alert.alert('Dashboard unavailable', error instanceof Error ? error.message : 'Unable to load kitchen dashboard');
+      if (requestId !== dashboardRequestId.current) return;
+      if (currentSnapshot.current === null) {
+        const message = error instanceof Error ? error.message : 'Unable to load kitchen dashboard.';
+        setLoadError(message);
+        showNotice({ title: 'Dashboard unavailable', message, tone: 'error' });
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === dashboardRequestId.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [snapshot, token]);
+  }, [showNotice, token]);
 
   useEffect(() => {
     if (!isFocused) return;
     void fetchDashboard();
     const interval = setInterval(() => { void fetchDashboard(); }, 5_000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      dashboardRequestId.current += 1;
+    };
   }, [fetchDashboard, isFocused]);
 
   const active = Boolean(snapshot?.isServingReady);
@@ -57,8 +77,7 @@ export function KitchenDashboardScreen({ navigation }: Props) {
       const response = await kitchenAPI.toggleServingSignal(next, undefined, token);
       setSnapshot((current) => current ? { ...current, isServingReady: response.isServingReady } : current);
     } catch (error: unknown) {
-      Alert.alert('Serving signal unavailable', error instanceof Error ? error.message : 'Unable to update serving signal');
-      settleSlider(active ? maxX : 0);
+      showNotice({ title: 'Serving signal unavailable', message: error instanceof Error ? error.message : 'Unable to update serving signal', tone: 'error' });
     } finally {
       setTogglingSignal(false);
     }
@@ -94,17 +113,28 @@ export function KitchenDashboardScreen({ navigation }: Props) {
   };
   const selectedItems = activeTab === 'logs' ? [] : lists[activeTab];
   const logs = activeTab === 'logs' ? filterLogs(snapshot?.recentLogs || []) : [];
-  const go = (route: keyof RootStackParamList) => navigation.navigate(route as never);
-
   return (
-    <PrototypeFrame activeRoute="KitchenDashboard" navItems={kitchenNav} onNavigate={go} scrollProps={{ refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void fetchDashboard(); }} /> }} bottomClearance={130}>
-      <View style={styles.greeting}><View><Eyebrow>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }).toUpperCase()} · KITCHEN</Eyebrow><Text style={styles.greetingName}>Today's Prep</Text></View><Avatar initials={initials(profile?.name, 'KS')} /></View>
-      <PrototypeCard style={[styles.servingCard, active && styles.servingActive]}><View style={styles.servingInfo}><Text style={styles.servingTitle}>{active ? 'Serving is live' : 'Ready to Serve?'}</Text><Text style={styles.servingSub}>{active ? 'Kitchen is ready to scan tickets' : 'Slide to begin scanning tickets'}</Text></View><View onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)} style={styles.sliderTrack} {...panResponder.panHandlers}><Animated.View style={[styles.sliderFill, active && styles.sliderFillActive, { width: sliderX.interpolate({ inputRange: [0, Math.max(1, maxX)], outputRange: ['0%', '100%'] }) }]} /><Animated.View style={[styles.sliderThumb, { transform: [{ translateX: sliderX }] }]}><ChevronRight size={20} color={active ? theme.colors.fg : theme.colors.accentDeep} /></Animated.View><Text style={[styles.sliderHint, active && styles.sliderHintActive]}>{active ? 'Slide to stop' : 'Slide to start'}</Text></View></PrototypeCard>
-      <PrototypeCard style={styles.totalCard}><Eyebrow>TOTAL MEALS ORDERED TODAY</Eyebrow><View style={styles.totalRow}><Text style={styles.totalNumber}>{counters.totalRegistered}</Text><Text style={styles.totalUnit}>meals</Text></View><View style={styles.totalMeta}><Utensils size={16} color={theme.colors.accentDeep} /><Text style={styles.totalMetaText}>Lunch service · Canteen A, 12:00–13:00</Text></View></PrototypeCard>
-      <PrototypeCard style={styles.dietCard}><Eyebrow>DIETARY PREFERENCES</Eyebrow><View style={styles.dietBar}><View style={styles.regularSegment} /><View style={styles.vegSegment} /></View><View style={styles.dietLegend}><View style={styles.legendItem}><View style={[styles.legendDot, styles.regularDot]} /><View><Text style={styles.legendLabel}>Regular</Text><Text style={styles.legendNumber}>{Math.round(counters.totalRegistered * 0.72)}</Text></View></View><View style={styles.legendItem}><View style={[styles.legendDot, styles.vegDot]} /><View><Text style={styles.legendLabel}>Vegetarian</Text><Text style={styles.legendNumber}>{counters.totalRegistered - Math.round(counters.totalRegistered * 0.72)}</Text></View></View></View></PrototypeCard>
-      <PrototypeCard style={styles.checkinCard}><View style={styles.checkinHead}><Eyebrow>CHECK-IN PROGRESS</Eyebrow><Text style={styles.checkinRatio}>{counters.servedTotal} / {counters.totalRegistered}</Text></View><View style={styles.progressTrack}><View style={[styles.progressFill, { transform: [{ scaleX: progress }] }]} /></View><View style={styles.checkinLegend}><Text style={styles.legendText}>Checked-in · {counters.servedTotal}</Text><Text style={styles.legendText}>Pending · {counters.remaining}</Text></View></PrototypeCard>
-      <Pressable onPress={() => navigation.navigate('KitchenScanner')} style={styles.scannerLink}><Radio size={18} color={theme.colors.accentDeep} /><Text style={styles.scannerLinkText}>Open ticket scanner</Text></Pressable>
-      <View style={styles.listSection}><View style={styles.listHeader}><Text style={styles.listTitle}>Today's registrations</Text><Text style={styles.syncText}>{loading ? 'Syncing…' : 'Auto-sync 5s'}</Text></View><View style={styles.searchWrap}><Search size={18} color={theme.colors.muted} /><TextInput value={searchQuery} onChangeText={setSearchQuery} placeholder="Search name or email..." placeholderTextColor={theme.colors.muted} style={styles.searchInput} /></View><View style={styles.tabs}>{(['pending', 'served', 'all', 'noshow', 'logs'] as TabType[]).map((tab) => <Pressable key={tab} onPress={() => setActiveTab(tab)} style={[styles.tab, activeTab === tab && styles.tabActive]}><Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{tab === 'pending' ? `Pending (${snapshot?.lists.pending.length || 0})` : tab === 'served' ? `Served (${snapshot?.lists.served.length || 0})` : tab === 'all' ? `All (${snapshot?.lists.all.length || 0})` : tab === 'noshow' ? `No-show (${snapshot?.lists.noShow?.length || counters.noShowTotal})` : `Logs (${snapshot?.recentLogs.length || 0})`}</Text></Pressable>)}</View>{activeTab === 'logs' ? logs.map((log) => <ListRow key={log.id} initials={initials(log.userName)} name={log.userName} detail={`${new Date(log.servedAt).toLocaleTimeString()} · ${log.userEmail}`} status={log.isProxy ? 'Proxy' : 'Served'} good />) : selectedItems.map((item) => <ListRow key={item.registrationId} initials={initials(item.userName)} name={item.userName} detail={item.isServed && item.servedAt ? new Date(item.servedAt).toLocaleTimeString() : item.userEmail} status={item.isServed ? 'Served' : activeTab === 'noshow' ? 'No-show' : 'Pending'} good={item.isServed} />)}{!loading && selectedItems.length === 0 && logs.length === 0 && <Text style={styles.emptyText}>No matching registrations.</Text>}</View>
+    <PrototypeFrame scrollProps={{ refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void fetchDashboard(); }} /> }} bottomClearance={130}>
+      <StateTransition stateKey={snapshot === null && loading ? 'loading' : snapshot === null ? 'error' : 'ready'}>
+        {snapshot === null && loading ? (
+          <BrandLoader label="Loading kitchen dashboard…" />
+        ) : snapshot === null ? (
+          <PrototypeCard style={styles.errorCard}>
+            <Text style={styles.errorTitle}>Dashboard unavailable</Text>
+            <Text style={styles.errorText}>{loadError ?? 'Unable to load kitchen dashboard.'}</Text>
+            <PrototypeButton variant="secondary" onPress={() => void fetchDashboard()} style={styles.retryButton}>Retry</PrototypeButton>
+          </PrototypeCard>
+        ) : (
+          <>
+            <PrototypeCard style={[styles.servingCard, active && styles.servingActive]}><View style={styles.servingInfo}><Text style={styles.servingTitle}>{active ? 'Serving is live' : 'Ready to Serve?'}</Text><Text style={styles.servingSub}>{active ? 'Kitchen is ready to scan tickets' : 'Slide to begin scanning tickets'}</Text></View><View onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)} style={styles.sliderTrack} {...panResponder.panHandlers}><Animated.View style={[styles.sliderFill, active && styles.sliderFillActive, { width: sliderX.interpolate({ inputRange: [0, Math.max(1, maxX)], outputRange: ['0%', '100%'] }) }]} /><Animated.View style={[styles.sliderThumb, { transform: [{ translateX: sliderX }] }]}><ChevronRight size={20} color={active ? theme.colors.fg : theme.colors.accentDeep} /></Animated.View><Text style={[styles.sliderHint, active && styles.sliderHintActive]}>{active ? 'Slide to stop' : 'Slide to start'}</Text></View></PrototypeCard>
+            <PrototypeCard style={styles.totalCard}><Eyebrow>TOTAL MEALS ORDERED TODAY</Eyebrow><View style={styles.totalRow}><Text style={styles.totalNumber}>{counters.totalRegistered}</Text><Text style={styles.totalUnit}>meals</Text></View><View style={styles.totalMeta}><Utensils size={16} color={theme.colors.accentDeep} /><Text style={styles.totalMetaText}>Lunch service · Canteen A, 12:00–13:00</Text></View></PrototypeCard>
+            <PrototypeCard style={styles.dietCard}><Eyebrow>DIETARY PREFERENCES</Eyebrow><View style={styles.dietBar}><View style={styles.regularSegment} /><View style={styles.vegSegment} /></View><View style={styles.dietLegend}><View style={styles.legendItem}><View style={[styles.legendDot, styles.regularDot]} /><View><Text style={styles.legendLabel}>Regular</Text><Text style={styles.legendNumber}>{Math.round(counters.totalRegistered * 0.72)}</Text></View></View><View style={styles.legendItem}><View style={[styles.legendDot, styles.vegDot]} /><View><Text style={styles.legendLabel}>Vegetarian</Text><Text style={styles.legendNumber}>{counters.totalRegistered - Math.round(counters.totalRegistered * 0.72)}</Text></View></View></View></PrototypeCard>
+            <PrototypeCard style={styles.checkinCard}><View style={styles.checkinHead}><Eyebrow>CHECK-IN PROGRESS</Eyebrow><Text style={styles.checkinRatio}>{counters.servedTotal} / {counters.totalRegistered}</Text></View><View style={styles.progressTrack}><View style={[styles.progressFill, { transform: [{ scaleX: progress }] }]} /></View><View style={styles.checkinLegend}><Text style={styles.legendText}>Checked-in · {counters.servedTotal}</Text><Text style={styles.legendText}>Pending · {counters.remaining}</Text></View></PrototypeCard>
+            <Pressable onPress={() => navigation.navigate('KitchenScanner')} style={styles.scannerLink}><Radio size={18} color={theme.colors.accentDeep} /><Text style={styles.scannerLinkText}>Open ticket scanner</Text></Pressable>
+            <View style={styles.listSection}><View style={styles.listHeader}><Text style={styles.listTitle}>Today's registrations</Text><Text style={styles.syncText}>{loading ? 'Syncing…' : 'Auto-sync 5s'}</Text></View><View style={styles.searchWrap}><Search size={18} color={theme.colors.muted} /><TextInput value={searchQuery} onChangeText={setSearchQuery} placeholder="Search name or email..." placeholderTextColor={theme.colors.muted} style={styles.searchInput} /></View><View style={styles.tabs}>{(['pending', 'served', 'all', 'noshow', 'logs'] as TabType[]).map((tab) => <Pressable key={tab} onPress={() => setActiveTab(tab)} style={[styles.tab, activeTab === tab && styles.tabActive]}><Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{tab === 'pending' ? `Pending (${snapshot.lists.pending.length})` : tab === 'served' ? `Served (${snapshot.lists.served.length})` : tab === 'all' ? `All (${snapshot.lists.all.length})` : tab === 'noshow' ? `No-show (${snapshot.lists.noShow?.length || counters.noShowTotal})` : `Logs (${snapshot.recentLogs.length})`}</Text></Pressable>)}</View>{activeTab === 'logs' ? logs.map((log) => <ListRow key={log.id} initials={initials(log.userName)} name={log.userName} detail={`${new Date(log.servedAt).toLocaleTimeString()} · ${log.userEmail}`} status={log.isProxy ? 'Proxy' : 'Served'} good />) : selectedItems.map((item) => <ListRow key={item.registrationId} initials={initials(item.userName)} name={item.userName} detail={item.isServed && item.servedAt ? new Date(item.servedAt).toLocaleTimeString() : item.userEmail} status={item.isServed ? 'Served' : activeTab === 'noshow' ? 'No-show' : 'Pending'} good={item.isServed} />)}{!loading && selectedItems.length === 0 && logs.length === 0 && <Text style={styles.emptyText}>No matching registrations.</Text>}</View>
+          </>
+        )}
+      </StateTransition>
     </PrototypeFrame>
   );
 }
@@ -114,8 +144,10 @@ function ListRow({ initials: avatarInitials, name, detail, status, good }: { ini
 }
 
 const styles = StyleSheet.create({
-  greeting: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingTop: 18, paddingBottom: 26 },
-  greetingName: { marginTop: 6, color: theme.colors.fg, fontSize: 24, fontWeight: '700' },
+  errorCard: { marginTop: 20 },
+  errorTitle: { color: theme.colors.fg, fontSize: 17, fontWeight: '700' },
+  errorText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },
+  retryButton: { marginTop: 16 },
   servingCard: { marginBottom: 16 },
   servingActive: { backgroundColor: theme.colors.accentTint, borderColor: theme.colors.accentSoft },
   servingInfo: { marginBottom: 20 },

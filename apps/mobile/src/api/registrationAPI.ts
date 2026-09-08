@@ -15,9 +15,22 @@ export interface DailyMenuRecord {
   mealDays?: Array<{ mealType: string; isServingReady: boolean }>;
 }
 
+export interface RegistrationWindowDay {
+  mealDate: string;
+  cutoffAt: string;
+  editable: boolean;
+}
+
+export interface RegistrationWindow {
+  serverNow: string;
+  timeZone: 'Asia/Ho_Chi_Minh';
+  days: RegistrationWindowDay[];
+}
+
 export interface WeekRegistrationResponse {
   menu: { dailyMenus: DailyMenuRecord[] } | null;
   registrations: RegistrationRecord[];
+  registrationWindow: RegistrationWindow;
 }
 
 export interface BatchRegistrationResult {

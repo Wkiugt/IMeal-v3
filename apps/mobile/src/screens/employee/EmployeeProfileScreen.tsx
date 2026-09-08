@@ -1,21 +1,18 @@
 import React, { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { ChevronRight, LogOut, UsersRound } from 'lucide-react-native';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../../navigation';
+import type { ProfileStackScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { initials } from '../../businessDate';
 import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, employeeNav, hybridEmployeeNav } from '../../ui/PrototypeShell';
 import { theme } from '../../theme';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'EmployeeProfile'>;
+type Props = ProfileStackScreenProps<'ProfileHome'>;
 
 export function EmployeeProfileScreen({ navigation }: Props) {
-  const { profile, canUseKitchen, logout } = useSession();
+  const { profile, logout } = useSession();
   const [reminders, setReminders] = useState(true);
-  const navItems = canUseKitchen ? hybridEmployeeNav : employeeNav;
-  const go = (route: keyof RootStackParamList) => navigation.navigate(route as never);
   const displayName = profile?.name || profile?.email.split('@')[0] || 'Employee';
   const userCode = profile?.userId || profile?.id || '—';
 
@@ -27,7 +24,7 @@ export function EmployeeProfileScreen({ navigation }: Props) {
   };
 
   return (
-    <PrototypeFrame activeRoute="EmployeeProfile" navItems={navItems} onNavigate={go}>
+    <PrototypeFrame>
       <View style={styles.title}><Text style={styles.heading}>Profile</Text><Text style={styles.subtitle}>Your identity, meal activity, and preferences</Text></View>
       <PrototypeCard style={styles.identityCard}>
         <Avatar initials={initials(profile?.name, 'ME')} large />

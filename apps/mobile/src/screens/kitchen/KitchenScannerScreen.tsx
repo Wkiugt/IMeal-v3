@@ -1,21 +1,24 @@
 import React, { useEffect, useState } from 'react';
-import { AccessibilityInfo, ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useIsFocused } from '@react-navigation/native';
 import { CheckCircle2, ChevronLeft, Clock3, ScanLine, XCircle } from 'lucide-react-native';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../../navigation';
+import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { servingAPI, type ResolveServingResponse } from '../../api/servingAPI';
-import { PrototypeFrame, hybridEmployeeNav, kitchenNav } from '../../ui/PrototypeShell';
+import { PrototypeFrame } from '../../ui/PrototypeShell';
+import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
 import { Pill, PillText } from '../../ui/PrototypePrimitives';
+import { useNotice } from '../../ui/BrandNotice';
+import { useReducedMotion } from '../../ui/useReducedMotion';
 import { theme } from '../../theme';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'KitchenScanner'>;
+type Props = AppTabScreenProps<'KitchenScanner'>;
 const EXPIRED_MESSAGE = 'Pickup session has expired';
 
 export function KitchenScannerScreen({ navigation }: Props) {
   const { token, canUseEmployee } = useSession();
+  const { showNotice } = useNotice();
   const isFocused = useIsFocused();
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
@@ -23,14 +26,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
   const [servingIntent, setServingIntent] = useState<ResolveServingResponse | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
-  const [reduceMotion, setReduceMotion] = useState(false);
-  const navItems = canUseEmployee ? hybridEmployeeNav : kitchenNav;
-
-  useEffect(() => {
-    void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
-    const listener = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
-    return () => listener.remove();
-  }, []);
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     if (!expiresAt) return;
@@ -58,7 +54,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
       setServingIntent(response);
       setExpiresAt(Number.isFinite(expiry) ? expiry : Date.now() + 30_000);
     } catch (error: unknown) {
-      Alert.alert('Error resolving serving', error instanceof Error ? error.message : 'Unable to resolve serving');
+      showNotice({ title: 'Error resolving serving', message: error instanceof Error ? error.message : 'Unable to resolve serving', tone: 'error' });
       setScanned(false);
     } finally {
       setLoading(false);
@@ -76,15 +72,16 @@ export function KitchenScannerScreen({ navigation }: Props) {
     setLoading(true);
     try {
       await servingAPI.confirmServing({ pickupSessionToken: servingIntent.pickupSessionToken }, token);
-      Alert.alert('Success', 'Serving confirmed successfully!', [{ text: 'OK', onPress: resetScan }]);
+      resetScan();
+      showNotice({ title: 'Success', message: 'Serving confirmed successfully!', tone: 'success' });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unable to confirm serving';
       if (message === EXPIRED_MESSAGE) {
         setExpiresAt(Date.now());
         setSecondsLeft(0);
-        Alert.alert('Confirmation expired', EXPIRED_MESSAGE);
+        showNotice({ title: 'Confirmation expired', message: EXPIRED_MESSAGE, tone: 'warning' });
       } else {
-        Alert.alert('Confirmation error', message);
+        showNotice({ title: 'Confirmation error', message, tone: 'error' });
       }
     } finally {
       setLoading(false);
@@ -92,34 +89,41 @@ export function KitchenScannerScreen({ navigation }: Props) {
   };
 
   const goBack = () => {
-    if (navigation.canGoBack()) navigation.goBack(); else navigation.navigate('KitchenDashboard');
+    navigation.navigate(canUseEmployee ? 'EmployeeDashboard' : 'KitchenDashboard');
   };
 
-  if (!permission) return <View style={styles.loadingScreen}><ActivityIndicator color={theme.colors.accentDeep} /></View>;
-  if (!permission.granted) {
-    return <PrototypeFrame activeRoute="KitchenScanner" navItems={navItems} onNavigate={(route) => navigation.navigate(route as never)}><View style={styles.permission}><ScanLine size={40} color={theme.colors.accentDeep} /><Text style={styles.permissionTitle}>Camera access required</Text><Text style={styles.permissionText}>Allow camera access to scan employee meal tickets.</Text><Pressable onPress={requestPermission} style={styles.primaryButton}><Text style={styles.primaryButtonText}>Grant permission</Text></Pressable></View></PrototypeFrame>;
-  }
-
   return (
-    <PrototypeFrame activeRoute="KitchenScanner" navItems={navItems} onNavigate={(route) => navigation.navigate(route as never)} scroll={false} bottomClearance={130}>
-      <View style={styles.scannerScreen}>
-        {isFocused && !servingIntent && <CameraView style={StyleSheet.absoluteFillObject} facing="back" onBarcodeScanned={scanned ? undefined : handleBarCodeScanned} barcodeScannerSettings={{ barcodeTypes: ['qr'] }} />}
-        <View style={styles.scrim} />
-        <View style={styles.scannerContent}>
-          <Pressable accessibilityLabel="Back to dashboard" onPress={goBack} style={styles.backButton}><ChevronLeft size={20} color={theme.colors.surface} /><Text style={styles.backText}>Dashboard</Text></Pressable>
-          <View style={styles.scannerHead}><Text style={styles.scannerTitle}>Scan Employee Ticket</Text><Text style={styles.scannerSubtitle}>Align the dynamic QR code within the frame to verify TOTP</Text></View>
-          <View style={styles.viewfinder}><View style={[styles.bracket, styles.topLeft]} /><View style={[styles.bracket, styles.topRight]} /><View style={[styles.bracket, styles.bottomLeft]} /><View style={[styles.bracket, styles.bottomRight]} />{!reduceMotion && <View style={styles.scanLine} />}<View style={styles.viewfinderHint}><Text style={styles.hintPrimary}>Camera preview</Text><Text style={styles.hintSecondary}>{loading ? 'Resolving ticket…' : scanned ? 'Ticket detected' : 'Align QR code within frame'}</Text></View></View>
-          {scanned && !servingIntent && <Text style={styles.resolving}>{loading ? 'Resolving employee ticket…' : 'Scan another ticket'}</Text>}
-        </View>
-      </View>
-      <Modal visible={Boolean(servingIntent)} animationType="slide" transparent onRequestClose={resetScan}>
-        <View style={styles.modalBackdrop}><View style={styles.modalCard}><View style={styles.modalHeader}><View><Text style={styles.modalTitle}>Serving Confirmation</Text><Text style={styles.modalSubtitle}>{servingIntent?.intent.totalCount} item{servingIntent?.intent.totalCount === 1 ? '' : 's'} to serve</Text></View><Clock3 size={22} color={expired ? theme.colors.statusBadDeep : theme.colors.accentDeep} /></View>{servingIntent?.intent.isProxy && <Pill tone="warn"><PillText>Proxy pickup</PillText></Pill>}{servingIntent?.intent.items.map((item) => <View key={item.id} style={styles.itemRow}><Text style={styles.itemName}>{item.itemName}</Text><Text style={styles.itemQuantity}>×{item.quantity}</Text></View>)}<View style={[styles.expiry, expired && styles.expiryExpired]}>{expired ? <XCircle size={17} color={theme.colors.statusBadDeep} /> : <CheckCircle2 size={17} color={theme.colors.statusGoodDeep} />}<Text style={[styles.expiryText, expired && styles.expiryTextExpired]}>{expired ? EXPIRED_MESSAGE : `Session expires in ${secondsLeft}s`}</Text></View><Pressable disabled={loading || expired} onPress={() => void confirmServing()} style={[styles.confirmButton, (loading || expired) && styles.disabled]}><Text style={styles.confirmText}>{loading ? 'Processing…' : 'Confirm serving'}</Text></Pressable><Pressable onPress={resetScan} style={styles.cancelButton}><Text style={styles.cancelText}>Cancel and scan again</Text></Pressable></View></View>
-      </Modal>
-    </PrototypeFrame>
+    <StateTransition
+      stateKey={!permission ? 'permission-loading' : !permission.granted ? 'permission-denied' : 'scanner-ready'}
+      style={styles.screenTransition}
+    >
+      {!permission ? (
+        <View style={styles.loadingScreen}><BrandLoader label="Preparing camera…" /></View>
+      ) : !permission.granted ? (
+        <PrototypeFrame animateEntrance={false}><View style={styles.permission}><ScanLine size={40} color={theme.colors.accentDeep} /><Text style={styles.permissionTitle}>Camera access required</Text><Text style={styles.permissionText}>Allow camera access to scan employee meal tickets.</Text><Pressable onPress={requestPermission} style={styles.primaryButton}><Text style={styles.primaryButtonText}>Grant permission</Text></Pressable></View></PrototypeFrame>
+      ) : (
+        <PrototypeFrame animateEntrance={false} scroll={false} bottomClearance={130}>
+          <View style={styles.scannerScreen}>
+            {isFocused && !servingIntent && <CameraView style={StyleSheet.absoluteFillObject} facing="back" onBarcodeScanned={scanned ? undefined : handleBarCodeScanned} barcodeScannerSettings={{ barcodeTypes: ['qr'] }} />}
+            <View style={styles.scrim} />
+            <View style={styles.scannerContent}>
+              <Pressable accessibilityLabel="Back to dashboard" onPress={goBack} style={styles.backButton}><ChevronLeft size={20} color={theme.colors.surface} /><Text style={styles.backText}>Dashboard</Text></Pressable>
+              <View style={styles.scannerHead}><Text style={styles.scannerTitle}>Scan Employee Ticket</Text><Text style={styles.scannerSubtitle}>Align the dynamic QR code within the frame to verify TOTP</Text></View>
+              <View style={styles.viewfinder}><View style={[styles.bracket, styles.topLeft]} /><View style={[styles.bracket, styles.topRight]} /><View style={[styles.bracket, styles.bottomLeft]} /><View style={[styles.bracket, styles.bottomRight]} />{!reduceMotion && <View style={styles.scanLine} />}<View style={styles.viewfinderHint}><Text style={styles.hintPrimary}>Camera preview</Text><Text style={styles.hintSecondary}>{loading ? 'Resolving ticket…' : scanned ? 'Ticket detected' : 'Align QR code within frame'}</Text></View></View>
+              {scanned && !servingIntent && <Text style={styles.resolving}>{loading ? 'Resolving employee ticket…' : 'Scan another ticket'}</Text>}
+            </View>
+          </View>
+          <Modal visible={Boolean(servingIntent)} animationType="slide" transparent onRequestClose={resetScan}>
+            <View style={styles.modalBackdrop}><View style={styles.modalCard}><View style={styles.modalHeader}><View><Text style={styles.modalTitle}>Serving Confirmation</Text><Text style={styles.modalSubtitle}>{servingIntent?.intent.totalCount} item{servingIntent?.intent.totalCount === 1 ? '' : 's'} to serve</Text></View><Clock3 size={22} color={expired ? theme.colors.statusBadDeep : theme.colors.accentDeep} /></View>{servingIntent?.intent.isProxy && <Pill tone="warn"><PillText>Proxy pickup</PillText></Pill>}{servingIntent?.intent.items.map((item) => <View key={item.id} style={styles.itemRow}><Text style={styles.itemName}>{item.itemName}</Text><Text style={styles.itemQuantity}>×{item.quantity}</Text></View>)}<View style={[styles.expiry, expired && styles.expiryExpired]}>{expired ? <XCircle size={17} color={theme.colors.statusBadDeep} /> : <CheckCircle2 size={17} color={theme.colors.statusGoodDeep} />}<Text style={[styles.expiryText, expired && styles.expiryTextExpired]}>{expired ? EXPIRED_MESSAGE : `Session expires in ${secondsLeft}s`}</Text></View><Pressable disabled={loading || expired} onPress={() => void confirmServing()} style={[styles.confirmButton, (loading || expired) && styles.disabled]}><Text style={styles.confirmText}>{loading ? 'Processing…' : 'Confirm serving'}</Text></Pressable><Pressable onPress={resetScan} style={styles.cancelButton}><Text style={styles.cancelText}>Cancel and scan again</Text></Pressable></View></View>
+          </Modal>
+        </PrototypeFrame>
+      )}
+    </StateTransition>
   );
 }
 
 const styles = StyleSheet.create({
+  screenTransition: { flex: 1 },
   loadingScreen: { flex: 1, backgroundColor: theme.colors.bg, alignItems: 'center', justifyContent: 'center' },
   permission: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 20 },
   permissionTitle: { color: theme.colors.fg, fontSize: 20, fontWeight: '700' },
