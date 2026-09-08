@@ -189,3 +189,47 @@ Output:
 ```
 
 Status: PASS — exit code 0, completed in 3.16 seconds.
+
+## Final Review Fix — Calendar Initial Focus Loading
+
+### Fix details
+
+- Split the calendar's combined pending state into independently owned `monthLoading` and `weekLoading` state, while retaining the existing derived `loading` branch and its exact loading/error/ready precedence.
+- `loadMonth` starts both domains. Its `finally` clears month loading only while its captured month request remains current, and clears week loading only while its pre-captured week request remains current.
+- `refreshCurrentWeek` now clears week loading from a guarded `finally`, so the initial focused refresh—not the superseded week phase inside `loadMonth`—owns removal of `Loading meal calendar…`.
+- A month response that settles before the authoritative focused week request can no longer expose empty, locked rows. If the week request settles first, month loading remains authoritative until the month request settles.
+- Standalone focus/cutoff refreshes do not start week loading after a snapshot exists, preserving ready rows and a valid `windowSnapshot` during later refreshes and failures. Monotonic month/week request IDs, stale-response guards, month changes, cutoff refreshes, and snapshot retention remain unchanged.
+
+### Targeted request-order verification
+
+A temporary hook harness transpiled and exercised the actual `EmployeeCalendarScreen.tsx` implementation with controlled month/week promises. It covered month-first initial focus, later refresh failure with a valid snapshot, and week-first overlap during a month change.
+
+Command:
+
+```text
+node C:/Users/KHOING~1/AppData/Local/Temp/calendar-loading-repro.cjs
+```
+
+Output:
+
+```text
+PASS: request-order scenarios preserve initial loading, ready snapshot retention, and month/week ownership
+```
+
+Result: exit code 0.
+
+### Required TypeScript verification
+
+Command:
+
+```text
+corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
+```
+
+Output:
+
+```text
+(no output)
+```
+
+Result: exit code 0, completed in 4.33 seconds.

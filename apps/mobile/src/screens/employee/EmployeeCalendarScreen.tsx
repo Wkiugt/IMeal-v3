@@ -50,7 +50,9 @@ export function EmployeeCalendarScreen(_props: Props) {
   const [monthRegistrations, setMonthRegistrations] = useState<Set<string>>(new Set());
   const [windowSnapshot, setWindowSnapshot] = useState<WindowSnapshot | null>(null);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [monthLoading, setMonthLoading] = useState(true);
+  const [weekLoading, setWeekLoading] = useState(true);
+  const loading = monthLoading || weekLoading;
   const [savingDate, setSavingDate] = useState<string | null>(null);
   const cutoffWarnings = useRef(new Set<string>());
   const monthRequestId = useRef(0);
@@ -84,6 +86,8 @@ export function EmployeeCalendarScreen(_props: Props) {
       const message = error instanceof Error ? error.message : 'Unable to load meal registrations';
       setAvailabilityError(message);
       showNotice({ title: 'Calendar unavailable', message, tone: 'error' });
+    } finally {
+      if (requestId === weekRequestId.current) setWeekLoading(false);
     }
   }, [applyCurrentWeek, showNotice, token, weekStart]);
 
@@ -92,7 +96,8 @@ export function EmployeeCalendarScreen(_props: Props) {
     const currentMonthRequestId = ++monthRequestId.current;
     const currentWeekRequestId = ++weekRequestId.current;
     let phase: 'month' | 'week' = 'month';
-    setLoading(true);
+    setMonthLoading(true);
+    setWeekLoading(true);
     try {
       const firstWeek = startOfWeek(month);
       const lastDay = new Date(month.getFullYear(), month.getMonth() + 1, 0);
@@ -120,7 +125,8 @@ export function EmployeeCalendarScreen(_props: Props) {
       setAvailabilityError(message);
       showNotice({ title: 'Calendar unavailable', message, tone: 'error' });
     } finally {
-      if (currentMonthRequestId === monthRequestId.current) setLoading(false);
+      if (currentMonthRequestId === monthRequestId.current) setMonthLoading(false);
+      if (currentWeekRequestId === weekRequestId.current) setWeekLoading(false);
     }
   }, [applyCurrentWeek, month, showNotice, token, weekStart]);
 
