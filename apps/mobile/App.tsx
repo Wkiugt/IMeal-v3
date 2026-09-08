@@ -11,6 +11,7 @@ import {
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { SessionProvider, useSession } from './src/auth/session';
 import { DelegationScreen } from './src/screens/delegation/DelegationScreen';
 import { EmployeeCalendarScreen } from './src/screens/employee/EmployeeCalendarScreen';
@@ -230,24 +231,26 @@ function linkingConfig(): LinkingOptions<RootStackParamList> {
 
 export default function App() {
   return (
-    <SessionProvider>
-      <NoticeProvider>
-        <NavigationContainer linking={linkingConfig()}>
-          <RootStack.Navigator
-            screenOptions={{ headerShown: false, animation: 'none' }}
-          >
-            <RootStack.Screen name="Auth" component={AuthScreen} />
-            <RootStack.Screen name="AppTabs">
-              {() => (
-                <ProtectedRoute>
-                  <AppTabsNavigator />
-                </ProtectedRoute>
-              )}
-            </RootStack.Screen>
-          </RootStack.Navigator>
-        </NavigationContainer>
-      </NoticeProvider>
-    </SessionProvider>
+    <SafeAreaProvider>
+      <SessionProvider>
+        <NoticeProvider>
+          <NavigationContainer linking={linkingConfig()}>
+            <RootStack.Navigator
+              screenOptions={{ headerShown: false, animation: 'none' }}
+            >
+              <RootStack.Screen name="Auth" component={AuthScreen} />
+              <RootStack.Screen name="AppTabs">
+                {() => (
+                  <ProtectedRoute>
+                    <AppTabsNavigator />
+                  </ProtectedRoute>
+                )}
+              </RootStack.Screen>
+            </RootStack.Navigator>
+          </NavigationContainer>
+        </NoticeProvider>
+      </SessionProvider>
+    </SafeAreaProvider>
   );
 }
 
