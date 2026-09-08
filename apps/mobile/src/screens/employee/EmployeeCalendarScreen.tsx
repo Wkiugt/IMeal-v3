@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { AppTabScreenProps } from '../../navigation';
@@ -8,6 +8,7 @@ import { registrationAPI, type RegistrationRecord, type WeekRegistrationResponse
 import { addDays, formatDay, formatMonth, formatShortDate, startOfWeek, toDateKey } from '../../businessDate';
 import { PrototypeCard, Pill, PillText } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
+import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
 import { useNotice } from '../../ui/BrandNotice';
 import { useReducedMotion } from '../../ui/useReducedMotion';
 import { theme } from '../../theme';
@@ -52,6 +53,8 @@ export function EmployeeCalendarScreen(_props: Props) {
   const [loading, setLoading] = useState(true);
   const [savingDate, setSavingDate] = useState<string | null>(null);
   const cutoffWarnings = useRef(new Set<string>());
+  const monthRequestId = useRef(0);
+  const weekRequestId = useRef(0);
   const weekStart = useMemo(() => startOfWeek(new Date()), []);
 
   const applyCurrentWeek = useCallback((response: WeekRegistrationResponse, receiptAt: number) => {
@@ -68,13 +71,16 @@ export function EmployeeCalendarScreen(_props: Props) {
 
   const refreshCurrentWeek = useCallback(async () => {
     if (!token) return;
+    const requestId = ++weekRequestId.current;
     try {
       const receiptAt = Date.now();
       const response = await registrationAPI.getWeek(toDateKey(weekStart), token);
+      if (requestId !== weekRequestId.current) return;
       if (!applyCurrentWeek(response, receiptAt)) {
         showNotice({ title: 'Calendar unavailable', message: 'Cutoff availability could not be loaded.', tone: 'error' });
       }
     } catch (error: unknown) {
+      if (requestId !== weekRequestId.current) return;
       const message = error instanceof Error ? error.message : 'Unable to load meal registrations';
       setAvailabilityError(message);
       showNotice({ title: 'Calendar unavailable', message, tone: 'error' });
@@ -83,6 +89,9 @@ export function EmployeeCalendarScreen(_props: Props) {
 
   const loadMonth = useCallback(async () => {
     if (!token) return;
+    const currentMonthRequestId = ++monthRequestId.current;
+    const currentWeekRequestId = ++weekRequestId.current;
+    let phase: 'month' | 'week' = 'month';
     setLoading(true);
     try {
       const firstWeek = startOfWeek(month);
@@ -90,24 +99,44 @@ export function EmployeeCalendarScreen(_props: Props) {
       const starts: string[] = [];
       for (let cursor = firstWeek; cursor <= lastDay; cursor = addDays(cursor, 7)) starts.push(toDateKey(cursor));
       const responses = await Promise.all(starts.map((startDate) => registrationAPI.getWeek(startDate, token)));
+      if (currentMonthRequestId !== monthRequestId.current) return;
       const registrations: RegistrationRecord[] = responses.flatMap((response) => response.registrations);
       setMonthRegistrations(new Set(registrations.filter((registration) => registration.status === 'ACTIVE').map((registration) => registration.mealDate.slice(0, 10))));
+
+      if (currentWeekRequestId !== weekRequestId.current) return;
+      phase = 'week';
       const receiptAt = Date.now();
       const currentWeekResponse = await registrationAPI.getWeek(toDateKey(weekStart), token);
+      if (currentWeekRequestId !== weekRequestId.current) return;
       if (!applyCurrentWeek(currentWeekResponse, receiptAt)) {
         showNotice({ title: 'Calendar unavailable', message: 'Cutoff availability could not be loaded.', tone: 'error' });
       }
     } catch (error: unknown) {
+      const requestIsCurrent = phase === 'month'
+        ? currentMonthRequestId === monthRequestId.current
+        : currentWeekRequestId === weekRequestId.current;
+      if (!requestIsCurrent) return;
       const message = error instanceof Error ? error.message : 'Unable to load meal registrations';
       setAvailabilityError(message);
       showNotice({ title: 'Calendar unavailable', message, tone: 'error' });
     } finally {
-      setLoading(false);
+      if (currentMonthRequestId === monthRequestId.current) setLoading(false);
     }
   }, [applyCurrentWeek, month, showNotice, token, weekStart]);
 
-  useEffect(() => { void loadMonth(); }, [loadMonth]);
-  useFocusEffect(useCallback(() => { void refreshCurrentWeek(); }, [refreshCurrentWeek]));
+  useEffect(() => {
+    void loadMonth();
+    return () => {
+      monthRequestId.current += 1;
+      weekRequestId.current += 1;
+    };
+  }, [loadMonth]);
+  useFocusEffect(useCallback(() => {
+    void refreshCurrentWeek();
+    return () => {
+      weekRequestId.current += 1;
+    };
+  }, [refreshCurrentWeek]));
 
   useEffect(() => {
     if (!windowSnapshot) return;
@@ -189,8 +218,44 @@ export function EmployeeCalendarScreen(_props: Props) {
       </PrototypeCard>
       <View style={styles.legend}><View style={styles.legendItem}><View style={[styles.swatch, styles.bookedSwatch]} /><Text style={styles.legendText}>Booked</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.todaySwatch]} /><Text style={styles.legendText}>Today</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.availableSwatch]} /><Text style={styles.legendText}>Available</Text></View></View>
       <View style={styles.weekHeader}><PrototypeSectionTitle title="Weekly Meal Registration" subtitle={`${formatShortDate(weekStart)}–${formatShortDate(addDays(weekStart, 6))} · Toggle a day on to register lunch`} /></View>
-      {availabilityError && !windowSnapshot && <Pressable accessibilityRole="button" onPress={() => void loadMonth()} style={styles.retry}><Text style={styles.retryText}>{availabilityError}</Text><Text style={styles.retryAction}>Retry</Text></Pressable>}
-      {loading ? <ActivityIndicator color={theme.colors.accentDeep} style={styles.loader} /> : Array.from({ length: 7 }, (_, index) => { const date = addDays(weekStart, index); const dateKey = toDateKey(date); const active = Boolean(weekState[dateKey]); const editable = windowSnapshot?.days[dateKey]?.editable === true; const locked = !editable; const disabled = savingDate !== null || locked; return <View key={dateKey} style={[styles.weekRow, dateKey === todayKey && styles.todayRow]}><View style={styles.weekInfo}><View style={styles.weekDayLine}><Text style={styles.weekDay}>{formatDay(date)}</Text>{dateKey === todayKey && <Pill><PillText>Today</PillText></Pill>}{locked && <Pill tone="warn"><Text style={styles.lockedLabel}>Locked</Text></Pill>}</View><Text style={styles.weekDate}>{formatShortDate(date)}</Text></View><AnimatedMealToggle value={active} disabled={disabled} saving={savingDate === dateKey} accessibilityLabel={`Toggle lunch registration for ${formatDay(date)}${locked ? ', locked after cutoff' : ''}`} onPress={() => void toggleRegistration(dateKey)} /></View>; })}
+      <StateTransition stateKey={loading ? 'loading' : availabilityError && !windowSnapshot ? 'error' : 'ready'}>
+        {loading ? (
+          <BrandLoader label="Loading meal calendar…" />
+        ) : availabilityError && !windowSnapshot ? (
+          <Pressable accessibilityRole="button" onPress={() => void loadMonth()} style={styles.retry}>
+            <Text style={styles.retryText}>{availabilityError}</Text>
+            <Text style={styles.retryAction}>Retry</Text>
+          </Pressable>
+        ) : (
+          Array.from({ length: 7 }, (_, index) => {
+            const date = addDays(weekStart, index);
+            const dateKey = toDateKey(date);
+            const active = Boolean(weekState[dateKey]);
+            const editable = windowSnapshot?.days[dateKey]?.editable === true;
+            const locked = !editable;
+            const disabled = savingDate !== null || locked;
+            return (
+              <View key={dateKey} style={[styles.weekRow, dateKey === todayKey && styles.todayRow]}>
+                <View style={styles.weekInfo}>
+                  <View style={styles.weekDayLine}>
+                    <Text style={styles.weekDay}>{formatDay(date)}</Text>
+                    {dateKey === todayKey && <Pill><PillText>Today</PillText></Pill>}
+                    {locked && <Pill tone="warn"><Text style={styles.lockedLabel}>Locked</Text></Pill>}
+                  </View>
+                  <Text style={styles.weekDate}>{formatShortDate(date)}</Text>
+                </View>
+                <AnimatedMealToggle
+                  value={active}
+                  disabled={disabled}
+                  saving={savingDate === dateKey}
+                  accessibilityLabel={`Toggle lunch registration for ${formatDay(date)}${locked ? ', locked after cutoff' : ''}`}
+                  onPress={() => void toggleRegistration(dateKey)}
+                />
+              </View>
+            );
+          })
+        )}
+      </StateTransition>
     </PrototypeFrame>
   );
 }
@@ -229,7 +294,6 @@ const styles = StyleSheet.create({
   availableSwatch: { backgroundColor: theme.colors.border },
   legendText: { color: theme.colors.muted, fontSize: 12 },
   weekHeader: { borderTopWidth: 1, borderTopColor: theme.colors.border },
-  loader: { marginVertical: 24 },
   retry: { padding: 14, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.statusBadDeep, borderRadius: theme.radii.md, backgroundColor: theme.colors.statusBadTint, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   retryText: { flex: 1, color: theme.colors.statusBadDeep, fontSize: 13, lineHeight: 19 },
   retryAction: { color: theme.colors.statusBadDeep, fontSize: 13, fontWeight: '700' },
