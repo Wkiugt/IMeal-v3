@@ -1,11 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+import { ExecutionContext, INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { Server } from 'node:http';
 import { AppModule } from './../src/app.module.js';
 
 import { vi } from 'vitest';
+import { InternalPickupController } from './../src/pickup/internal-pickup.controller.js';
 import { PickupService } from './../src/pickup/pickup.service.js';
+import { JwtAuthGuard } from './../src/auth/jwt-auth.guard.js';
+import { PermissionsGuard } from './../src/auth/permissions.guard.js';
 
 describe('PickupController (e2e)', () => {
   let app: INestApplication<Server>;
@@ -126,5 +129,70 @@ describe('PickupController (e2e)', () => {
 
     expect(res.status).toBe(201);
     expect(res.body).toEqual({ success: true, servedCount: 1, servings: [] });
+  });
+
+  it('allows a Kitchen caller to resolve pickup from a public source IP', async () => {
+    const originalRequireAuth = process.env.REQUIRE_AUTH;
+    process.env.REQUIRE_AUTH = 'true';
+    let testApp: INestApplication<Server> | undefined;
+
+    try {
+      const testingModule = await Test.createTestingModule({
+        controllers: [InternalPickupController],
+        providers: [
+          {
+            provide: PickupService,
+            useValue: {
+              resolvePickup: vi.fn().mockResolvedValue({
+                session: { id: 'public-source-session' },
+                items: [],
+              }),
+            },
+          },
+        ],
+      })
+        .overrideGuard(JwtAuthGuard)
+        .useValue({
+          canActivate(context: ExecutionContext) {
+            const request = context.switchToHttp().getRequest();
+            request.user = {
+              id: 'kitchen-1',
+              userId: 'kitchen-1',
+              email: 'kitchen@example.com',
+              roles: ['kitchen'],
+              permissions: ['kitchen.serve'],
+            };
+            return true;
+          },
+        })
+        .overrideGuard(PermissionsGuard)
+        .useValue({ canActivate: () => true })
+        .compile();
+
+      testApp = testingModule.createNestApplication();
+      testApp
+        .getHttpAdapter()
+        .getInstance()
+        .set('trust proxy', true);
+      await testApp.init();
+
+      const res = await request(testApp.getHttpServer())
+        .post('/api/serving/resolve')
+        .set('X-Forwarded-For', '203.0.113.10')
+        .send({ qrPayload: 'PUBLIC_SOURCE_QR' });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toEqual({
+        session: { id: 'public-source-session' },
+        items: [],
+      });
+    } finally {
+      await testApp?.close();
+      if (originalRequireAuth === undefined) {
+        delete process.env.REQUIRE_AUTH;
+      } else {
+        process.env.REQUIRE_AUTH = originalRequireAuth;
+      }
+    }
   });
 });
