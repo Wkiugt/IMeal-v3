@@ -47,11 +47,6 @@ export const servingAPI = {
     });
 
     if (!res.ok) {
-      if (res.status === 403) {
-        throw new Error(
-          'Access Denied. Ensure you are on the internal LAN and have Kitchen permissions.',
-        );
-      }
       const err = await res.json().catch(() => ({}));
       throw new Error(err.message || 'Failed to resolve serving');
     }
