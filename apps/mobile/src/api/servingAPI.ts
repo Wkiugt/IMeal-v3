@@ -1,4 +1,4 @@
-const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
+import { API_BASE } from './apiConfig';
 
 export interface ResolveServingRequest {
   qrPayload: string;
