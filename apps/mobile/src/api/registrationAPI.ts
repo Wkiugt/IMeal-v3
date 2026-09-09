@@ -1,4 +1,4 @@
-const API_ROOT = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api').replace(/\/api\/?$/, '');
+import { API_ROOT } from './apiConfig';
 
 export type RegistrationStatus = 'ACTIVE' | 'CANCELLED';
 

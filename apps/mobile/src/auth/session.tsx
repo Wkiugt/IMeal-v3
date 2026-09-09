@@ -7,11 +7,9 @@ import React, {
 } from 'react';
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import { API_ROOT } from '../api/apiConfig';
 
 const SESSION_KEY = 'imeal.local.access-token';
-const API_ROOT = (
-  process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api'
-).replace(/\/api\/?$/, '');
 
 export interface MobileProfile {
   id: string;

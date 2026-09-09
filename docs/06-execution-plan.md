@@ -13,7 +13,7 @@
 - First Entra login auto-provisions `staff` only.
 - Kitchen/Admin role manually assigned.
 - QR TTL 5 seconds, clock skew 2 seconds, pickup session TTL 30 seconds.
-- Serving/check-in only from trusted IEC internal network + Kitchen auth.
+- Serving/check-in requires authenticated Kitchen role/permission and server-side pickup validation.
 - No mandatory check-out in core v2.
 - PostgreSQL is business source of truth; mobile never writes DB directly.
 - Every no-show creates one 50,000 VND penalty; exceptions use audited waive.
@@ -34,7 +34,7 @@
 | 3     | Microsoft Entra auth + auto provisioning/RBAC                  | P0              |
 | 4     | Weekly menu + weekly registration                              | P0              |
 | 5     | Delegation + notifications                                     | P0              |
-| 6     | Dynamic QR + internal Kitchen serving + realtime dashboard     | P0              |
+| 6     | Dynamic QR + Kitchen serving + realtime dashboard              | P0              |
 | 7     | No-show/penalty/admin/audit/jobs                               | P0/P1           |
 | 8     | Clean-slate qualification + security/load/UAT                  | P0 release gate |
 | 9     | Production rollout + mobile distribution + operations          | P0 release gate |
@@ -73,16 +73,12 @@ Coordinate with Microsoft Entra administrator. Concrete tenant/client/scope/redi
 
 ## Task 0.3 — Network/DNS/TLS topology
 
-- [ ] Define public API hostname for Staff features outside IEC.
-- [ ] Define separate internal-only serving hostname/listener.
-- [ ] Configure internal DNS/routing/firewall to serving path.
+- [ ] Define public API hostname for Staff and Kitchen features.
 - [ ] Configure HTTPS certificate trusted by target iOS/Android devices.
-- [ ] Deny public access to serving mutation path.
 - [ ] Deny public/general LAN access to PostgreSQL port.
 - [ ] Allow API outbound HTTPS to Microsoft identity endpoints and chosen push/image providers.
-- [ ] Allowlist the only trusted reverse proxy and ignore forwarded headers from all other sources.
 
-**Exit:** network design supports remote registration but LAN-only serving.
+**Exit:** HTTPS API reachability, authentication/permission boundaries and PostgreSQL isolation are documented and testable.
 
 ## Task 0.4 — Retire Firebase legacy at re-development kickoff
 
@@ -338,7 +334,7 @@ Add constraints:
 
 ---
 
-# Phase 6 — QR, internal serving and Kitchen realtime dashboard
+# Phase 6 — QR, Kitchen serving and realtime dashboard
 
 ## Task 6.1 — Dynamic QR + Staff pickup intent
 
@@ -353,7 +349,7 @@ Add constraints:
 
 ## Task 6.2 — Pickup resolve API
 
-Internal network + Kitchen role required.
+Authenticated Kitchen role/permission required.
 
 - [ ] Verify QR TTL/signature.
 - [ ] Load presenter own active registration + accepted proxy registrations.
@@ -395,22 +391,14 @@ Internal network + Kitchen role required.
 - [ ] Two+ Kitchen devices stay consistent.
 - [ ] Reconnect re-fetches snapshot.
 
-## Task 6.6 — Internal network enforcement
-
-- [ ] Public route to serving confirm is unreachable/denied.
-- [ ] Separate internal hostname/listener works only on trusted IEC network.
-- [ ] Network restriction + Entra token + Kitchen role all required.
-- [ ] Off-LAN mobile shows explicit internal-network requirement.
-- [ ] Untrusted forwarded headers cannot spoof LAN source.
-
-## Task 6.7 — Serving finality
+## Task 6.6 — Serving finality
 
 - [ ] Kitchen confirms only the server-revalidated Staff-selected set.
 - [ ] Confirm CTA explains the displayed count and is enabled only while the pickup session is valid.
 - [ ] Successful confirm is immutable/final; no Kitchen/Admin reversal endpoint or UI exists.
 - [ ] Operational guidance requires Kitchen to complete any temporarily missing trays physically rather than rewriting serving history.
 
-**Exit Phase 6:** concurrent/retried confirm creates at most one immutable final serving, and all serving is LAN-only/realtime-visible.
+**Exit Phase 6:** concurrent/retried confirm creates at most one immutable final serving, and all serving is authenticated, permission-protected and realtime-visible.
 
 ---
 
@@ -501,13 +489,12 @@ Internal network + Kitchen role required.
 - [ ] Wrong tenant denied.
 - [ ] Staff cannot self-grant Kitchen/Admin.
 - [ ] Staff cannot call Kitchen serving mutation.
-- [ ] Kitchen serving outside LAN denied.
+- [ ] Kitchen serving requires authenticated Kitchen role/permission and all server-side pickup invariants.
 - [ ] Forged/expired QR denied.
 - [ ] Delegation cannot be accepted by wrong user.
 - [ ] Stale pickup session cannot bypass revoke/already-served state.
 - [ ] API rate/input validation tested.
 - [ ] Disabled account denied across the API authorization matrix.
-- [ ] Untrusted forwarded-header spoofing cannot reach internal serving.
 - [ ] Permission boundaries for Admin, independent Staff/Kitchen roles and penalties tested; no reversal endpoint exists.
 
 ## Task 8.4 — UAT
@@ -533,7 +520,7 @@ Kitchen:
 - [ ] Unselected eligible registrations are never served; pre-confirm changes use the secondary edit action.
 - [ ] Duplicate scan.
 - [ ] Two-device realtime dashboard.
-- [ ] Off-LAN serving blocked.
+- [ ] Serving resolve/confirm works for valid Kitchen callers regardless of client network location.
 
 Admin:
 
@@ -575,7 +562,6 @@ Linux LTS
 - [ ] Docker Compose services.
 - [ ] Reverse proxy/TLS.
 - [ ] Public/general API routing.
-- [ ] Internal-only serving routing.
 - [ ] PostgreSQL not exposed publicly.
 - [ ] Centralized server logging, health monitoring and alerting for API, worker/jobs and PostgreSQL.
 - [ ] Finalize log retention and alert destination before rollout.
@@ -609,7 +595,7 @@ The project has not yet selected package/bundle IDs, signing ownership, minimum 
 - [ ] Release mobile to pilot cohort, then staged organization rollout.
 - [ ] Verify Entra login and auto provisioning.
 - [ ] Verify one tagged synthetic weekly registration.
-- [ ] Verify tagged synthetic self/proxy final serving on internal network and audited synthetic cleanup.
+- [ ] Verify tagged synthetic self/proxy final serving and audited synthetic cleanup.
 - [ ] Verify realtime dashboard.
 - [ ] Verify no-show job on controlled staging/production-safe target.
 - [ ] Monitor first complete meal lifecycle.
@@ -628,7 +614,7 @@ Do not go live if any condition remains:
 - Duplicate registration/serving reproduced under concurrency.
 - QR scan directly marks serving without Kitchen confirmation.
 - Delegation can be used without delegate acceptance.
-- Public Internet can reach serving mutation path.
+- Serving authorization can be bypassed without authenticated Kitchen permission and server-side business validation.
 - Realtime dashboard can permanently diverge from DB without recovery.
 - No-show/penalty retry can duplicate financial state.
 - PostgreSQL backup exists but restore has never been tested.

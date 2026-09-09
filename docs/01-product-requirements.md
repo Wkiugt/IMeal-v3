@@ -37,7 +37,7 @@ V2 chuyển trọng tâm từ web “đăng ký ngày mai + chọn món” sang 
 1. Staff có thể hoàn tất đăng ký cả tuần trong dưới một phút với thao tác tick/untick.
 2. Kitchen có menu tuần rõ ràng và tổng số suất từng ngày sau cutoff.
 3. Một registration không thể bị duplicate hoặc serve hai lần dưới concurrency.
-4. Serving/check-in chỉ được xác nhận bởi Kitchen tại điểm giao suất và qua mạng nội bộ.
+4. Serving/check-in chỉ được xác nhận bởi Kitchen tại điểm giao suất và sau khi server kiểm tra authentication/authorization.
 5. QR động TTL 5 giây làm giảm replay/screenshot reuse.
 6. Nhận hộ có consent hai phía và audit; không cần chia sẻ QR của owner.
 7. Kitchen dashboard cập nhật realtime số đã giao, còn lại và log serving.
@@ -155,12 +155,12 @@ Trong UI Kitchen có thể tiếp tục gọi thao tác là **Check-in**, nhưng
 - Không có mandatory check-out trong core flow.
 - `SERVED` là bằng chứng một suất đã rời Kitchen để giao cho receiver.
 - Check-out/exit canteen không được dùng để xác định no-show hoặc penalty.
-- Kitchen serving endpoint chỉ hợp lệ từ trusted internal network path.
+- Kitchen serving endpoint yêu cầu Kitchen authentication và permission; server-side pickup rules remain authoritative.
 - Serving chỉ hợp lệ trong window mặc định **10:30–13:30** của meal date.
 - Happy path Kitchen không tick từng item: scan → xem presenter + danh sách/số suất Staff đã chọn → confirm giao.
 - Kitchen không được thêm/bớt item; nếu Staff đổi ý, Staff cập nhật pickup intent trên mobile và đưa QR mới trước khi Kitchen resolve/confirm.
 - Multi-item confirmation là all-or-nothing; conflict ở một item rollback toàn batch và Kitchen phải resolve lại.
-- Employee-code recovery được phép trên internal path với Kitchen confirmation, reason, audit và rate limit.
+- Employee-code recovery được phép với Kitchen confirmation, reason, audit và rate limit.
 
 ## 9. Pickup delegation / nhận hộ
 
@@ -242,28 +242,11 @@ No-show worker bắt đầu lúc **13:45** và retry/recovery phải idempotent.
 - Nếu quầy đang thiếu khay so với số suất đã confirm, Kitchen giao bổ sung đủ khay thay vì sửa ngược dữ liệu.
 - Serving evidence không bị sửa/xóa trong retention window.
 
-## 13. Network policy
+## 13. Pickup serving authorization policy
 
-### Public/general app path
+Pickup resolve/confirm authorization does not depend on client network location. Requests still require an active authenticated Kitchen principal with kitchen.serve permission and all QR, pickup-session, serving-window, and database eligibility checks. A replacement pickup user-verification mechanism will be specified separately.
 
-Có thể dùng ngoài mạng nội bộ:
-
-- Microsoft login.
-- Load/publish-visible menu.
-- Weekly registration.
-- Lịch sử/penalty.
-- Delegation request/accept/revoke.
-- Notification inbox.
-
-### Internal-only path
-
-Chỉ trusted IEC network:
-
-- Resolve Kitchen QR pickup.
-- Confirm serving/check-in.
-- Serving confirm và employee-code recovery operational mutations.
-
-Serving dùng internal hostname/listener riêng, firewall/private routing và trusted reverse-proxy allowlist. Không tin `X-Forwarded-For` từ proxy không được allowlist. Network location không thay authentication; request vẫn cần valid Entra token, active account và Kitchen permission.
+Serving/check-in and employee-code recovery remain subject to Kitchen confirmation, reason/audit requirements where applicable, rate limiting, HTTPS, and all server-side business rules. Login, menu, registration, history, penalty, delegation and notification flows use the normal API path and retain their existing authentication and authorization requirements.
 
 ## 14. Notifications
 
@@ -302,7 +285,7 @@ Khuyến nghị giữ **Admin Web** cho workflow bảng/bulk/report; mobile tậ
 | Duplicate registration             | 0                                                                                                    |
 | Double-serving cùng registration   | 0                                                                                                    |
 | Kitchen serving API availability   | ≥99.9% trong serving window 10:30–13:30, đo theo tháng                                               |
-| Serving response P95 trong LAN     | <1 giây                                                                                              |
+| Serving response P95                  | <1 giây                                                                                              |
 | QR expired/replay tạo serving sai  | 0                                                                                                    |
 | No-show/penalty duplicate          | 0                                                                                                    |
 | Kitchen realtime count drift       | 0 sau snapshot/reconciliation; reconnect phải hội tụ ≤5 giây                                         |
@@ -326,7 +309,7 @@ Khuyến nghị giữ **Admin Web** cho workflow bảng/bulk/report; mobile tậ
 | Serving/no-show       | Serving 10:30–13:30; no-show worker bắt đầu 13:45 VN                                     |
 | QR/pickup session     | QR TTL 5s; skew 2s; pickup session TTL 30s                                               |
 | Push provider         | Persisted inbox + Expo Push delivery                                                     |
-| Employee-code serving | Internal recovery; confirm + reason + audit + rate limit                                 |
+| Employee-code serving | Recovery; confirm + reason + audit + rate limit                                 |
 | Pickup intent         | Staff chọn trước các suất sẽ lấy; Kitchen happy path scan + confirm, không tick item     |
 | Serving finality      | Confirm là cuối cùng; Kitchen chỉ confirm khi đủ khay và giao bổ sung nếu thiếu          |
 | Batch serving         | All-or-nothing transaction                                                               |

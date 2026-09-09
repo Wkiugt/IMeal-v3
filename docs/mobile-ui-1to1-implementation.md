@@ -29,7 +29,8 @@ The employee registration client uses the existing API controller paths:
 - `GET /registrations/week?startDate=YYYY-MM-DD`
 - `PUT /registrations/batch`
 
-The mobile API base strips a trailing `/api` for registration, auth, and direct controller paths. Pickup and serving endpoints retain the `/api` path supplied by `EXPO_PUBLIC_API_URL`.
+The mobile API base strips a trailing `/api` for registration, auth, and direct controller paths. Pickup and serving endpoints use the shared API origin. In Expo development, the host is derived from the Metro session as `http://<Metro-host>:3000/api`; every connected device uses that endpoint.
+Serving authorization no longer depends on an internal LAN source IP; a valid bearer token with `kitchen.serve` permission is required.
 
 ## Run
 
@@ -41,28 +42,26 @@ corepack prepare yarn@4.18.0 --activate
 corepack yarn install --immutable
 ```
 
-Create `apps/mobile/.env` with the public API and Entra values:
+Create `apps/mobile/.env` only with the Entra values needed by the selected auth configuration:
 
 ```env
-EXPO_PUBLIC_API_URL=http://localhost:3000/api
 EXPO_PUBLIC_ENTRA_TENANT_ID=...
 EXPO_PUBLIC_ENTRA_CLIENT_ID=...
 EXPO_PUBLIC_ENTRA_API_SCOPE=...
 ```
 
-Run web:
+Run local Expo targets without setting an API IP value:
 
 ```powershell
 corepack yarn workspace @imeal/mobile web
+corepack yarn workspace @imeal/mobile android
+corepack yarn workspace @imeal/mobile ios
+corepack yarn workspace @imeal/mobile start --lan
 ```
 
-Run native Expo:
+The phone and development machine must be on the same LAN. The API listens on `0.0.0.0:3000`; allow inbound TCP port `3000` and Metro port `8081` in the firewall.
 
-```powershell
-corepack yarn workspace @imeal/mobile start
-```
-
-For Docker Compose's reverse proxy, use `EXPO_PUBLIC_API_URL=http://localhost/api`. A physical device must use the development machine's LAN IP instead of `localhost`.
+`EXPO_PUBLIC_API_URL` is required for production and is an optional exact override for an Expo tunnel, reverse proxy, or non-default API port. For a reverse proxy, set it to the operator-provided API URL reachable by every target device.
 
 ## Verification
 

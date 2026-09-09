@@ -9,8 +9,8 @@ Tài liệu này định nghĩa kiến trúc kỹ thuật đích cho IMeal v2 sa
 ```mermaid
 flowchart LR
     M[React Native / Expo Mobile] --> EN[Microsoft Entra ID]
-    M -->|HTTPS public APIs| RP[Reverse Proxy]
-    K[Kitchen device on IEC LAN] -->|HTTPS internal serving APIs| RP
+    M -->|HTTPS API| RP[Reverse Proxy]
+    K[Kitchen device] -->|HTTPS API| RP
     AW[Admin Web] -->|HTTPS| RP
     RP --> API[NestJS API]
     API --> PG[(PostgreSQL)]
@@ -103,7 +103,7 @@ On first successful API-authenticated login:
 - Every protected API resolves latest roles/account status server-side.
 - Mobile navigation is UX only, never security boundary.
 - `staff`: own data/delegation/registration.
-- `kitchen`: menu + internal serving operations only; it does not inherit `staff` capabilities.
+- `kitchen`: menu + serving operations protected by explicit permissions; it does not inherit `staff` capabilities.
 - `admin`: user/account + `staff`/`kitchen` role management, penalty/audit/jobs; Admin-role lifecycle is outside Admin Web.
 - Sensitive capabilities are explicit permissions: at minimum `penalty.read`, `penalty.resolve`.
 - `admin` does not imply Kitchen serving permission; callers need the exact role/permission required by each operation.
@@ -112,12 +112,12 @@ On first successful API-authenticated login:
 
 ## 7. Network topology
 
-### 7.1 Public/general API
+### 7.1 Normal API path
 
-Needed so Staff can register while outside IEC:
+Staff, Kitchen, and Admin Web clients use the normal HTTPS API path:
 
 ```text
-Internet
+Client
   ↓ HTTPS 443
 api.imeal.<org-domain>
   ↓
@@ -126,35 +126,23 @@ Reverse proxy
 NestJS
 ```
 
-### 7.2 Internal serving API
-
-Serving/check-in endpoints must only be routable/accepted from IEC internal network.
-
-Recommended:
-
-```text
-attendance.imeal.<org-domain>
-  → internal DNS / trusted gateway / firewall
-  → NestJS internal serving routes
-```
+The API remains reachable through its configured HTTPS entry point, while authentication, explicit permissions, and server-side business validation protect every operation.
 
 Requirements:
 
-- Public Internet → internal serving route: deny.
-- IEC LAN → serving route: allow HTTPS.
 - PostgreSQL port 5432: not publicly exposed and preferably not exposed to general LAN.
 - API server → Microsoft Entra endpoints: outbound HTTPS allowed.
 - Mobile → Microsoft Entra: Internet access required for login/token renewal.
-- Internal-network check does not replace valid Entra token + Kitchen role.
-- Internal serving uses a separate hostname/listener and firewall/private routing; no public fallback route exists.
-- Application trusts forwarded client/network headers only from an allowlisted reverse proxy. Direct or untrusted `X-Forwarded-For` is ignored.
-- Kitchen menu management and Admin Web may use public HTTPS but always require their explicit server-side role/permission checks.
+- Kitchen menu management and Admin Web always require their explicit server-side role/permission checks.
+- Pickup resolve/confirm always require an active authenticated Kitchen principal with `kitchen.serve` permission plus QR, pickup-session, serving-window, and database eligibility validation.
+
+The retained /v1/internal/pickup route name does not imply client network-location authorization.
 
 ## 8. Core API catalog
 
 Canonical v2 endpoint semantics:
 
-| Method     | Path                                        | Role/network           | Purpose                                                                                                                                             |
+| Method     | Path                                        | Role/permission         | Purpose                                                                                                                                             |
 | ---------- | ------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET        | `/v1/me`                                    | signed-in              | Profile/roles/account state                                                                                                                         |
 | GET        | `/v1/menu/weeks/:weekStart`                 | signed-in              | Published menu + registration state                                                                                                                 |
@@ -172,8 +160,8 @@ Canonical v2 endpoint semantics:
 | POST       | `/v1/delegations/:id/revoke`                | owner                  | Revoke before serving                                                                                                                               |
 | GET/PUT    | `/v1/kitchen/menu/weeks/:weekStart`         | kitchen                | Draft/edit weekly menu                                                                                                                              |
 | POST       | `/v1/kitchen/menu/weeks/:weekStart/publish` | kitchen                | Publish weekly menu                                                                                                                                 |
-| POST       | `/v1/internal/pickup/resolve`               | kitchen + LAN          | Verify 5s QR and resolve eligible pickup items                                                                                                      |
-| POST       | `/v1/internal/pickup/confirm`               | kitchen + LAN          | Confirm one/more actual servings transactionally                                                                                                    |
+| POST       | `/v1/internal/pickup/resolve`               | kitchen               | Verify 5s QR and resolve eligible pickup items                                                                                                      |
+| POST       | `/v1/internal/pickup/confirm`               | kitchen               | Confirm one/more actual servings transactionally                                                                                                    |
 | GET        | `/v1/kitchen/days/:date/dashboard`          | kitchen                | Total/served/remaining/list snapshot                                                                                                                |
 | GET/WS     | `/v1/kitchen/days/:date/events`             | kitchen                | Realtime serving log/update                                                                                                                         |
 | POST/PATCH | `/v1/admin/users/*`                         | admin                  | Independent Staff/Kitchen roles + account lifecycle; disable requires preview and confirmed future-commitment cleanup; no Admin-role grant endpoint |
@@ -188,7 +176,7 @@ Exact path spelling may change only with the shared API contract. Mobile, Admin 
 - JSON error envelope: `{ error: { code, message, details? }, requestId }`; clients branch on stable `code`, never localized `message`.
 - Every request receives/returns `X-Request-Id`; server replaces malformed/untrusted values.
 - Mutations requiring retry safety use `Idempotency-Key`; the same caller/key/body returns the original result, while key reuse with a different body returns `IDEMPOTENCY_CONFLICT`. Multi-item confirm persists one request-level record; successful servings and success result commit atomically, while deterministic rejection commits zero servings plus its result.
-- Canonical conflict codes include `CUTOFF_PASSED`, `ACCOUNT_DISABLED`, `REGISTRATION_CONFLICT`, `DELEGATION_CONFLICT`, `PICKUP_SESSION_EXPIRED`, `PICKUP_STATE_CHANGED`, `ALREADY_SERVED`, `REQUEST_IN_PROGRESS`, `OUTSIDE_SERVING_WINDOW` and `INTERNAL_NETWORK_REQUIRED`.
+- Canonical conflict codes include `CUTOFF_PASSED`, `ACCOUNT_DISABLED`, `REGISTRATION_CONFLICT`, `DELEGATION_CONFLICT`, `PICKUP_SESSION_EXPIRED`, `PICKUP_STATE_CHANGED`, `ALREADY_SERVED`, `REQUEST_IN_PROGRESS` and `OUTSIDE_SERVING_WINDOW`.
 - List APIs use cursor pagination with a bounded server maximum; no unbounded Admin export endpoint.
 - Realtime events carry `{ eventId, eventType, mealDate, occurredAt, requestId, payload }`; clients deduplicate by `eventId` and re-fetch snapshot after reconnect.
 
@@ -356,10 +344,10 @@ Do not add Kubernetes, Kafka or Redis solely for the baseline 200–300 users.
 
 ## 18. Security requirements
 
-- HTTPS everywhere, including LAN serving path.
+- HTTPS everywhere.
 - No Microsoft client secret in mobile binary.
 - Rate limit/auth abuse protection for public APIs.
-- Serving endpoints protected by network + token + role + DB invariants.
+- Serving endpoints protected by token + explicit permission + DB invariants.
 - Disabled account is rejected after authoritative server-side status lookup on every protected API.
 - Log no access/refresh tokens, QR secrets or full sensitive token payload.
 - Audit role changes, delegation lifecycle, serving and penalty resolution.
@@ -373,7 +361,7 @@ Baseline scale: 200–300 users, <= ~1,500 weekday registration choices/week and
 Targets:
 
 - Weekly registration P95 API <1s under expected load.
-- Internal serving confirm P95 <1s under expected LAN conditions.
+- Serving confirm P95 <1s under expected load.
 - Zero duplicate serving under concurrency tests.
 - Realtime dashboard converges to DB state after reconnect.
 - No-show/penalty job idempotent under retry.

@@ -309,17 +309,7 @@ VỪA CHECK-IN
 12:08:25 Nguyễn Văn B · Nhận hộ A
 ```
 
-### 11.2 Network state
-
-Outside internal network:
-
-```text
-Check-in cần mạng nội bộ IEC
-
-Thiết bị hiện không thể truy cập hệ thống giao suất.
-```
-
-Scanner/confirm controls disabled, but do not hide the reason.
+### 11.2 Serving window state
 
 Outside the 10:30–13:30 serving window, use a distinct time state—not a network error—and keep dashboard/menu readable.
 
@@ -499,6 +489,6 @@ Staff Account includes read-only meal history and penalty list/detail; mutation 
 - Exact 14:00 cutoff, 10:30/13:30 serving boundaries and 30s pickup-session expiry are understandable and testable.
 - Staff can find meal history and penalty details from Account without Admin controls.
 - Admin disable preview and mandatory no-penalty future-commitment cleanup form one confirmed workflow.
-- Network-outside-LAN state clearly explains why serving is disabled.
+- Kitchen serving authorization is enforced by authentication, `kitchen.serve` permission, and server-side pickup validation.
 - Realtime dashboard updates across two Kitchen devices.
 - Screen reader/large-text/reduced-motion paths remain functional.
