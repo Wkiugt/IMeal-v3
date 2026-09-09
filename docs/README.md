@@ -22,8 +22,7 @@ IMeal v2 là một re-platforming so với hệ thống web Firebase/Firestore h
 - QR clock skew tối đa **2 giây**; pickup session TTL **30 giây**.
 - Serving/check-in: chỉ Kitchen xác nhận tại điểm giao suất; không có mandatory check-out trong core flow.
 - Nhận hộ: owner gửi yêu cầu cho delegate trong app; delegate phải accept trước khi có quyền nhận.
-- Kitchen serving/check-in API: chỉ truy cập qua **mạng nội bộ IEC**.
-- Các tính năng khác như login, đăng ký tuần, lịch sử, delegation và notification có thể dùng ngoài mạng nội bộ thông qua public HTTPS API.
+- All clients use the normal HTTPS API path; Kitchen serving/check-in requires an authenticated Kitchen identity with the appropriate permission, and server-side pickup rules remain authoritative.
 - Linux production baseline khuyến nghị: **4 vCPU, 8 GB RAM, 100 GB SSD, 1 Gbps LAN**, Docker Compose; minimum target 2 vCPU/4 GB RAM cho workload hiện tại. Production requires centralized logs/monitoring/alerting.
 - Mobile package/bundle IDs, signing ownership, minimum OS and distribution channel are intentionally TBD until the production-release phase.
 - Dữ liệu meal lifecycle/business audit của v2 được giữ **1 năm** rồi purge theo retention policy; active identity/config không bị xóa chỉ vì quá 1 năm.
@@ -87,7 +86,7 @@ Nếu implementation và docs v2 khác nhau, thay đổi phải cập nhật c�
 - Nếu presenter có nhiều suất hợp lệ, Staff chọn trước các suất dự định lấy trên mobile; Kitchen happy path chỉ scan, kiểm tra số suất/tên và confirm, không phải tick từng item.
 - Delegation không chia sẻ QR của owner; delegate dùng QR của chính mình sau khi đã accept delegation.
 - Role/authorization nằm trong PostgreSQL; Microsoft Entra trả lời “user là ai”, IMeal trả lời “user được phép làm gì”.
-- Check-in/serving chỉ hợp lệ từ trusted internal network path.
+- Kitchen identity/permission and server-side pickup rules remain authoritative for serving/check-in.
 - Multi-item serving confirmation là **all-or-nothing**; một item conflict làm rollback toàn batch và yêu cầu resolve lại.
 - Kitchen chỉ xác nhận sau khi đã đối chiếu presenter, danh sách suất và số khay chuẩn bị giao. Sau confirm, serving là kết quả cuối cùng; thiếu khay được xử lý bằng giao bổ sung tại quầy, không sửa ngược dữ liệu.
 - Lịch sử nghiệp vụ/audit của meal lifecycle được giữ **1 năm**; trong retention window serving/audit là append-oriented/immutable, sau đó được purge theo retention job/policy.

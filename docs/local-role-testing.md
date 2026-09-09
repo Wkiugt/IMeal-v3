@@ -117,23 +117,25 @@ Calling a protected endpoint without a Bearer token must also return `401`.
 
 ## 5. Test the mobile app
 
-### Same development machine or emulator
+### Same development machine, emulator, or phone
+
+Start Expo without setting an API IP value:
 
 ```powershell
-$env:EXPO_PUBLIC_API_URL = "http://localhost:3000/api"
-corepack yarn workspace @imeal/mobile start
+corepack yarn workspace @imeal/mobile start --lan
 ```
 
-### Physical phone
+Expo derives `http://<Metro-host>:3000/api` once from the Metro session; every connected device uses that endpoint. The phone and development machine must be on the same network, the API must listen on `0.0.0.0:3000`, and Windows Firewall must allow inbound TCP port `3000` plus Metro port `8081`.
 
-Find the development machine LAN address, then start Expo with that address:
+For web, Android, or iOS targets, use the corresponding Expo command:
 
 ```powershell
-$env:EXPO_PUBLIC_API_URL = "http://192.168.1.100:3000/api"
-corepack yarn workspace @imeal/mobile start
+corepack yarn workspace @imeal/mobile web
+corepack yarn workspace @imeal/mobile android
+corepack yarn workspace @imeal/mobile ios
 ```
 
-Replace `192.168.1.100` with the actual development machine IP. The phone and development machine must be on the same network, and Windows Firewall must allow inbound TCP port `3000`.
+Set `EXPO_PUBLIC_API_URL` only for production or when using an Expo tunnel, reverse proxy, or non-default API port.
 
 ### Staff checklist
 
@@ -270,10 +272,9 @@ Then restart the API.
 
 ### Mobile phone cannot reach the API
 
-- Do not use `localhost` on a physical phone.
-- Use the development machine LAN IP.
-- Confirm Windows Firewall allows port `3000`.
-- Confirm the API is listening on `0.0.0.0`.
+- Start Expo with `corepack yarn workspace @imeal/mobile start --lan`; no API IP value is required.
+- Expo derives `http://<Metro-host>:3000/api` once for every connected device.
+- Confirm the phone and development machine share a LAN, Windows Firewall allows port `3000`, and the API listens on `0.0.0.0`.
 
 ### Login returns `401`
 

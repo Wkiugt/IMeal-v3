@@ -379,17 +379,7 @@ VỪA CHECK-IN
 12:08:13  Lê Văn C       Chính chủ
 ```
 
-### 8.2 Internal network requirement
-
-If device is authenticated as Kitchen but not on trusted internal serving network:
-
-```text
-Tính năng Check-in chỉ hoạt động trong mạng nội bộ IEC.
-
-Bạn vẫn có thể xem menu và các chức năng không yêu cầu serving.
-```
-
-Do not attempt serving through a public fallback endpoint.
+### 8.2 Serving state
 
 Before 10:30 or at/after 13:30, scanner/confirm is disabled with `Ngoài khung giờ phục vụ 10:30–13:30`; menu/dashboard remain readable.
 
@@ -399,12 +389,12 @@ Before 10:30 or at/after 13:30, scanner/confirm is disabled with `Ngoài khung g
 sequenceDiagram
     actor K as Kitchen
     participant SC as Scanner
-    participant API as Internal API
+    participant API as API
     participant DB as PostgreSQL
 
     K->>SC: Scan QR của B
     SC->>API: /pickup/resolve raw QR + signed pickup intent
-    API->>API: Verify Kitchen role + LAN + QR signature + 5s expiry
+    API->>API: Verify Kitchen role + permission + QR signature + 5s expiry
     API->>DB: Revalidate every registration in B's pickup intent
     DB-->>API: Validated intended pickup items
     API-->>SC: 30s pickup session + intended items
@@ -445,7 +435,7 @@ Kitchen cannot add/remove items. If the employee changes intent, they update the
 sequenceDiagram
     actor K as Kitchen
     participant UI as Kitchen UI
-    participant API as Internal API
+    participant API as API
     participant DB as PostgreSQL
     participant RT as Realtime
 
@@ -591,7 +581,7 @@ Served: 12:08:31
 | Success                | State server-confirmed, include date/person/outcome                           |
 | Error                  | Safe message + concrete retry/recovery                                        |
 | Expired QR             | Visually invalid; refresh/retry                                               |
-| Offline                | Distinguish Entra/login/API/internal-network failure                          |
+| Offline                | Distinguish Entra/login/API connectivity failure                             |
 | Destructive            | Revoke/role/waive/account-disable cleanup confirm where appropriate           |
 | Realtime reconnect     | Re-fetch authoritative snapshot                                               |
 | Account disabled       | Block protected actions and explain that Admin controls account state         |
@@ -616,7 +606,7 @@ Served: 12:08:31
 - Menu revision preserves registration, sends persisted notification and cannot unpublish a registered day.
 - Successful serving confirm is final; Kitchen verifies intended items/count before confirm and completes any missing physical handover without rewriting history.
 - Realtime dashboard converges across multiple devices.
-- Internal serving endpoint denied outside IEC network even with Kitchen token.
+- A valid authenticated Kitchen caller with `kitchen.serve` can resolve and confirm regardless of client network location; QR, pickup-session, serving-window and database eligibility checks still apply.
 - Public weekly/delegation APIs work outside IEC network with valid auth.
 - No-show job skips served registrations and does not duplicate penalty.
 - No-show starts 13:45, creates exactly one 50,000 VND penalty and never reopens paid/waived state.

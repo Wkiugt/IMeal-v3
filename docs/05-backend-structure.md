@@ -8,7 +8,7 @@ IMeal v2 dùng backend server-authoritative:
 - NestJS xác thực token và enforce business rules.
 - PostgreSQL là source of truth duy nhất cho business data.
 - Mobile/Admin Web không ghi database trực tiếp.
-- Serving/check-in mutation chỉ đi qua internal-network Kitchen APIs.
+- Serving/check-in mutations go through the authenticated Kitchen API path.
 - WebSocket/SSE phục vụ realtime dashboard sau database commit.
 
 ```mermaid
@@ -351,7 +351,7 @@ TTL 5 seconds; allowed clock skew at most 2 seconds. Refresh reissues the QR for
 
 On resolve:
 
-- Validate Kitchen caller + internal network.
+- Validate Kitchen caller and required `kitchen.serve` permission.
 - Verify signature/expiry/date.
 - Load presenting user.
 - Load all currently eligible pickup items for the presenter (own active unserved registration + accepted unserved delegations).
@@ -677,7 +677,7 @@ Canonical history retention is **1 year** for meal lifecycle/business audit data
 ## 23. Security invariants
 
 - Mobile cannot set `served_at`, role, penalty status or audit actor.
-- Kitchen cannot serve outside internal serving network path.
+- Kitchen can serve only with the required `kitchen.serve` permission and all server-side pickup validation.
 - Kitchen token without `kitchen` role cannot call serving API.
 - Public user cannot create accepted delegation on behalf of B; B must call accept.
 - Owner cannot delegate someone else's registration.
@@ -686,7 +686,7 @@ Canonical history retention is **1 year** for meal lifecycle/business audit data
 - No serving if DB no longer considers owner/receiver eligible.
 - Every protected API rejects `status=disabled` after server-side lookup.
 - Multi-item serving never partially commits; successful confirm is final and no reversal endpoint exists.
-- Public routing cannot reach resolve or confirm mutations.
+- Resolve and confirm always enforce authentication, permission, QR/session, serving-window and database invariants.
 - Worker has no independent business-write path; scheduled work calls authenticated internal job APIs/application services governed by the same domain invariants.
 
 ## 24. Clean-slate provisioning
@@ -712,7 +712,7 @@ Canonical history retention is **1 year** for meal lifecycle/business audit data
 - Serving confirm is final and immutable; Kitchen has no item-edit or reversal operation.
 - Disabled account is denied on every protected API.
 - Realtime dashboard reconciles to DB.
-- Internal serving route denied off-LAN.
+- Serving resolve/confirm authorization remains network-neutral while enforcing Kitchen permission and all QR/session/window/database invariants.
 - No-show/penalty retry is idempotent.
 - One-year retention cleanup is dependency-safe/idempotent and does not mutate retained audit evidence.
 - Backup/restore, application/schema rollback and clean-slate provisioning tested before production.
