@@ -1,0 +1,71 @@
+# Review package: ca2792f..e0f1bfd
+
+## Commits
+e0f1bfd fix(mobile): isolate stale notice dismissal
+
+## Files changed
+ .../sdd/mobile-loading-transitions-plan/task-4-report.md | 16 ++++++++++++++++
+ apps/mobile/src/ui/BrandNotice.tsx                       |  2 +-
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/.superpowers/sdd/mobile-loading-transitions-plan/task-4-report.md b/.superpowers/sdd/mobile-loading-transitions-plan/task-4-report.md
+index 6ae886f..d36b839 100644
+--- a/.superpowers/sdd/mobile-loading-transitions-plan/task-4-report.md
++++ b/.superpowers/sdd/mobile-loading-transitions-plan/task-4-report.md
+@@ -31,10 +31,26 @@ $ corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
+ (no stdout)
+ exit code: 0
+ wall time: 2.69 seconds
+ ```
+ 
+ Result: TypeScript completed successfully with no diagnostics.
+ 
+ ## Concerns
+ 
+ - Timer thresholds, replacement races, and Reduce Motion dismissal were not exercised in a runtime UI harness because this workspace has no focused React Native component test setup for `BrandNotice`; verification for this slice is compile-time only.
++
++## Review fix — stale dismissal isolation
++
++- Moved the generation check ahead of timer clearing and animation stopping in `dismissGeneration`.
++- A queued callback from an older notice now returns without touching the current notice's timeout or entrance animation. Current-generation automatic and manual dismissal retain the existing timer clear and exit behavior.
++
++Verification:
++
++```text
++$ corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
++(no stdout)
++exit code: 0
++wall time: 2.94 seconds
++```
++
++Status: PASS — TypeScript completed successfully with no diagnostics.
+diff --git a/apps/mobile/src/ui/BrandNotice.tsx b/apps/mobile/src/ui/BrandNotice.tsx
+index 5821c98..44f3c23 100644
+--- a/apps/mobile/src/ui/BrandNotice.tsx
++++ b/apps/mobile/src/ui/BrandNotice.tsx
+@@ -49,23 +49,23 @@ export function NoticeProvider({ children }: { children: React.ReactNode }) {
+   const dismissTimer = useRef<NodeJS.Timeout | undefined>(undefined);
+   const noticeGeneration = useRef(0);
+   reduceMotionRef.current = reduceMotion;
+ 
+   const stopAnimations = useCallback(() => {
+     opacity.stopAnimation();
+     translateY.stopAnimation();
+   }, [opacity, translateY]);
+ 
+   const dismissGeneration = useCallback((generation: number) => {
++    if (generation !== noticeGeneration.current) return;
+     clearTimeout(dismissTimer.current);
+     stopAnimations();
+-    if (generation !== noticeGeneration.current) return;
+ 
+     if (reduceMotionRef.current) {
+       setNotice(null);
+       setVisibleNotice(null);
+       return;
+     }
+ 
+     Animated.parallel([
+       Animated.timing(opacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+       Animated.timing(translateY, { toValue: -8, duration: 200, useNativeDriver: true }),

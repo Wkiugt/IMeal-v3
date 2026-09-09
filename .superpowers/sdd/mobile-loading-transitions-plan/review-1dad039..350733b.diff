@@ -1,0 +1,107 @@
+# Review package: 1dad039..350733b
+
+## Commits
+350733b fix(mobile): retain delegations after refresh errors
+
+## Files changed
+ .../task-3-report.md                               | 24 ++++++++++++++++++++++
+ .../src/screens/delegation/DelegationScreen.tsx    |  8 ++++++--
+ 2 files changed, 30 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/mobile-loading-transitions-plan/task-3-report.md b/.superpowers/sdd/mobile-loading-transitions-plan/task-3-report.md
+index 1d805e3..c24d4c5 100644
+--- a/.superpowers/sdd/mobile-loading-transitions-plan/task-3-report.md
++++ b/.superpowers/sdd/mobile-loading-transitions-plan/task-3-report.md
+@@ -158,10 +158,34 @@ Output:
+ (no output)
+ ```
+ 
+ Result: exit code 0.
+ 
+ ## Concerns
+ 
+ - The repository has no focused React Native screen harness, so reordered-response and focus-transition behavior was not runtime-driven in this slice; verification is limited to the scoped mobile TypeScript compilation and source-level lifecycle guards.
+ - Native camera permission, QR scanning, polling, pull-to-refresh, and animation visuals require the Expo/device runtime and backend prerequisites described by the parent plan; they were not available as a narrow automated screen check here.
+ - The worktree contained unrelated modified/untracked files before this task. They were left untouched and are excluded from this task’s commit.
++
++## Important Review Fix
++
++### Delegation retained-data rendering
++
++- The standalone load-error card now renders only when the accepted request has no delegations to retain; a failed refresh returns to the prior known-good list while the existing notice reports the failure.
++- Tab selection clears data, error, and loading state before changing tabs, so retained data from one tab cannot render under the other tab. Re-selecting the active tab is a no-op.
++- Request-generation guards, explicit tab authority, loading behavior, and the no-data retry surface remain unchanged.
++
++### Verification
++
++Command:
++
++```text
++corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
++```
++
++Output:
++
++```text
++(no output)
++```
++
++Status: PASS — exit code 0, completed in 3.16 seconds.
+diff --git a/apps/mobile/src/screens/delegation/DelegationScreen.tsx b/apps/mobile/src/screens/delegation/DelegationScreen.tsx
+index 09ff7be..2de3bf0 100644
+--- a/apps/mobile/src/screens/delegation/DelegationScreen.tsx
++++ b/apps/mobile/src/screens/delegation/DelegationScreen.tsx
+@@ -43,21 +43,25 @@ export function DelegationScreen({ navigation }: Props) {
+   }, [showNotice, token]);
+ 
+   useEffect(() => {
+     void loadDelegations(tab);
+     return () => {
+       delegationRequestId.current += 1;
+     };
+   }, [loadDelegations, tab]);
+ 
+   const selectTab = (nextTab: Tab) => {
++    if (nextTab === activeTabRef.current) return;
+     activeTabRef.current = nextTab;
++    setDelegations([]);
++    setLoadError(null);
++    setLoading(true);
+     setTab(nextTab);
+   };
+ 
+   const handleAction = async (action: 'accept' | 'decline' | 'revoke', id: string) => {
+     if (!token) return;
+     const startingTab = activeTabRef.current;
+     setLoading(true);
+     try {
+       if (action === 'accept') await delegationAPI.acceptDelegation(id, token);
+       if (action === 'decline') await delegationAPI.declineDelegation(id, token);
+@@ -69,24 +73,24 @@ export function DelegationScreen({ navigation }: Props) {
+     }
+   };
+ 
+   const visible = delegations.filter((delegation) => tab === 'INCOMING' || delegation.delegateUserId.toLowerCase().includes(searchQuery.toLowerCase()));
+ 
+   return (
+     <PrototypeFrame>
+       <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => navigation.goBack()} style={styles.back}><ArrowLeft size={20} color={theme.colors.fg} /></Pressable><View style={styles.headerCopy}><PrototypeSectionTitle title="Delegations" subtitle="Manage meal pickup permissions" /></View></View>
+       <View style={styles.tabs}><Pressable onPress={() => selectTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>My Requests</Text></Pressable><Pressable onPress={() => selectTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>Incoming</Text></Pressable></View>
+       {tab === 'OUTGOING' && <PrototypeField icon={Search} placeholder="Search employee by name/ID..." value={searchQuery} onChangeText={setSearchQuery} style={styles.search} />}
+-      <StateTransition stateKey={loading ? 'loading' : loadError ? 'error' : visible.length === 0 ? 'empty' : 'list'}>
++      <StateTransition stateKey={loading ? 'loading' : loadError && delegations.length === 0 ? 'error' : visible.length === 0 ? 'empty' : 'list'}>
+         {loading ? (
+           <BrandLoader label="Loading delegations…" />
+-        ) : loadError ? (
++        ) : loadError && delegations.length === 0 ? (
+           <PrototypeCard style={styles.errorCard}>
+             <Text style={styles.errorTitle}>Delegations unavailable</Text>
+             <Text style={styles.errorText}>{loadError}</Text>
+             <PrototypeButton variant="secondary" onPress={() => void loadDelegations(activeTabRef.current)} style={styles.retryButton}>Retry</PrototypeButton>
+           </PrototypeCard>
+         ) : visible.length === 0 ? (
+           <Text style={styles.empty}>No delegations found.</Text>
+         ) : (
+           <View style={styles.list}>{visible.map((item) => <PrototypeCard key={item.id} style={styles.card}><View style={styles.cardHeader}><Text style={styles.cardTitle}>{tab === 'OUTGOING' ? `To: ${item.delegateUserId}` : `From: ${item.delegateUserId}`}</Text><Status status={item.status} /></View><Text style={styles.cardDate}>Created: {new Date(item.createdAt).toLocaleDateString()}</Text>{item.status === 'PENDING' && <View style={styles.actions}>{tab === 'INCOMING' ? <><Pressable onPress={() => void handleAction('decline', item.id)} style={styles.secondaryAction}><Text style={styles.secondaryText}>Decline</Text></Pressable><Pressable onPress={() => void handleAction('accept', item.id)} style={styles.primaryAction}><Text style={styles.primaryText}>Accept</Text></Pressable></> : <Pressable onPress={() => void handleAction('revoke', item.id)} style={styles.dangerAction}><Text style={styles.dangerText}>Revoke</Text></Pressable>}</View>}</PrototypeCard>)}</View>
+         )}

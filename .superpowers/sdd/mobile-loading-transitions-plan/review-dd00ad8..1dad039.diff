@@ -1,0 +1,1091 @@
+# Review package: dd00ad8..1dad039
+
+## Commits
+1dad039 feat(mobile): transition async screen states
+
+## Files changed
+ .../task-3-report.md                               | 167 +++++++++++++++++++++
+ .../src/screens/delegation/DelegationScreen.tsx    |  71 ++++++---
+ .../screens/employee/EmployeeCalendarScreen.tsx    |  78 +++++++++-
+ .../screens/employee/EmployeeDashboardScreen.tsx   |  23 ++-
+ .../src/screens/kitchen/KitchenDashboardScreen.tsx |  73 ++++++---
+ .../src/screens/kitchen/KitchenScannerScreen.tsx   |  50 +++---
+ .../src/screens/pickup/PickupIntentScreen.tsx      |  87 +++++++----
+ 7 files changed, 448 insertions(+), 101 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/mobile-loading-transitions-plan/task-3-report.md b/.superpowers/sdd/mobile-loading-transitions-plan/task-3-report.md
+new file mode 100644
+index 0000000..1d805e3
+--- /dev/null
++++ b/.superpowers/sdd/mobile-loading-transitions-plan/task-3-report.md
+@@ -0,0 +1,167 @@
++# Task 3 — Asynchronous Mobile Screens Report
++
++## Scope
++
++Updated only the six assigned mobile screen implementations:
++
++- `apps/mobile/src/screens/employee/EmployeeDashboardScreen.tsx`
++- `apps/mobile/src/screens/employee/EmployeeCalendarScreen.tsx`
++- `apps/mobile/src/screens/pickup/PickupIntentScreen.tsx`
++- `apps/mobile/src/screens/delegation/DelegationScreen.tsx`
++- `apps/mobile/src/screens/kitchen/KitchenDashboardScreen.tsx`
++- `apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx`
++
++No dependency, `App.tsx`, `PrototypeShell.tsx`, or `BrandNotice.tsx` changes were made. Existing notice calls, refresh controls, QR timers/progress, calendar cutoff logic, kitchen serving logic, and scanner confirmation flow were retained.
++
++## Employee Dashboard
++
++### Changes
++
++- Added request-specific `loading`, initialized to `true`, independently of the nullable registration result.
++- Sets loading when the token-driven weekly registration request starts and clears it from guarded `finally` handling.
++- Derives the status exactly as:
++  - loading: `Loading…`, soft tone
++  - registered: `Confirmed`, soft tone
++  - not registered: `Not registered`, warning tone
++  - unavailable: `Unavailable`, warning tone
++- Replaced the previous spinner row with a compact `BrandLoader` labeled `Loading today’s registration…` inside a keyed `StateTransition`.
++- Removed the `ActivityIndicator` import and obsolete loader styles.
++
++### Lifecycle invariants
++
++- A pending request cannot display `Confirmed`; confirmation is shown only for `todayRegistered === true` after loading completes.
++- The effect-local mounted guard prevents completion, failure, and `finally` callbacks from updating state after token replacement or unmount.
++- Loaded false and unavailable null remain distinguishable states.
++
++## Employee Calendar
++
++### Changes
++
++- Added independent monotonic `monthRequestId` and `weekRequestId` refs.
++- `loadMonth` captures both IDs before awaiting; the month response is guarded by the month ID and its explicit current-week phase keeps the pre-captured week ID.
++- `refreshCurrentWeek` captures a new week ID and guards success, error, and notice emission.
++- Month-effect cleanup invalidates both request domains; focus cleanup invalidates the week domain.
++- Replaced the weekly `ActivityIndicator` with `BrandLoader` labeled `Loading meal calendar…`.
++- Consolidated weekly loading/error/ready rendering under one `StateTransition` with precedence `loading`, then error only without a valid snapshot, then ready.
++- Removed the obsolete loader style and `ActivityIndicator` import.
++
++### Lifecycle invariants
++
++- Only the current month request updates month registrations or clears month loading.
++- Only the current week request calls `applyCurrentWeek`, changes current-week availability state, or emits current-week load notices.
++- A later focus/cutoff refresh invalidates the week phase pre-captured by an older month load; the older load cannot reclaim week ownership after its month fetch resolves.
++- Cleanup invalidation prevents responses from an obsolete month, focus period, or unmounted screen from writing.
++- A later current-week refresh failure retains an existing valid `windowSnapshot`; the ready rows remain rendered while the error is recorded and noticed.
++- Cutoff scheduling, optimistic registration changes, cutoff warnings, and the 180 ms toggle animation are unchanged.
++
++## Pickup Intent
++
++### Changes
++
++- Added `loadError` and monotonic `optionsRequestId` state/ref ownership.
++- `fetchOptions` clears its prior error, starts loading, and guards success, failure, notice emission, and `finally` by request ID.
++- Focus cleanup increments the request ID so a prior-focus response cannot update the next focus period.
++- Successful requests now leave initial loading through guarded `finally`; the previous success path could remain loading indefinitely.
++- Added keyed loading/error/empty/ready transitions.
++- Added `BrandLoader` labeled `Loading pickup options…`, a captured-error retry card, and a compact QR placeholder loader labeled `Generating QR code…`.
++- Removed the `ActivityIndicator` import and obsolete loader style.
++
++### Lifecycle invariants
++
++- A stale options response, error, or `finally` cannot overwrite or stop a newer request.
++- Error rendering uses the accepted request’s captured message and retains the existing `Pickup unavailable` notice.
++- Retry starts a fresh owned request.
++- QR generation cancellation, server TTL handling, refresh timeout, one-second countdown, and progress animation cleanup are unchanged.
++
++## Delegations
++
++### Changes
++
++- Initialized loading to `true` and added `loadError`, `delegationRequestId`, and `activeTabRef`.
++- Added `selectTab`, which updates the authoritative tab ref before React tab state.
++- `loadDelegations(targetTab)` now captures an explicit target and request ID; all state writes and request completion are guarded by both current ID and current tab.
++- The loading effect invalidates its request ID during cleanup.
++- `handleAction` captures its starting tab and reloads only if that tab is still active after the mutation.
++- Added a keyed loading/error/empty/list transition, `BrandLoader` labeled `Loading delegations…`, and a captured-error retry card.
++- Removed the `ActivityIndicator` import and obsolete loader style.
++
++### Lifecycle invariants
++
++- Results for OUTGOING cannot render under INCOMING, or vice versa.
++- Tab selection changes authority synchronously before React schedules the next render/effect.
++- An action completed after a tab change cannot launch an old-tab reload or clear the new tab’s loading state.
++- Accepted load failures preserve existing data, store the inline error before emitting `Delegations unavailable`, and expose retry.
++- Action failures preserve data and continue to emit `Action failed`.
++
++## Kitchen Dashboard
++
++### Changes
++
++- Added `loadError`, monotonic `dashboardRequestId`, and `currentSnapshot`.
++- Every token-backed dashboard fetch marks loading and guards success, failure, notice emission, refresh completion, and loading completion by request ID.
++- Accepted success stores `currentSnapshot` before React state and clears the load error.
++- Accepted initial failure stores a load error and preserves the existing `Dashboard unavailable` notice; failures after a usable snapshot do not replace that snapshot with an error surface.
++- Focused polling cleanup clears the interval and invalidates the active request.
++- Added exactly one keyed loading/error/ready `StateTransition`, a `BrandLoader` labeled `Loading kitchen dashboard…`, and a retry card.
++- Removed unused loading/icon imports and pre-existing unused profile/avatar remnants.
++
++### Lifecycle invariants
++
++- A stale poll, pull-to-refresh, or off-screen request cannot update the snapshot or clear the latest request’s loading/refresh state.
++- Null snapshots never render the dashboard’s zero-value cards; they render only loading or the unavailable retry surface.
++- A fetched snapshot stays visible during polling and pull-to-refresh.
++- `Syncing…` appears only while the latest accepted request is active; `Auto-sync 5s` appears only in the non-null snapshot branch.
++- Five-second polling, pull-to-refresh, serving-signal toggle behavior, and dashboard filtering remain intact.
++
++## Kitchen Scanner
++
++### Changes
++
++- Replaced the camera permission spinner with `BrandLoader` labeled `Preparing camera…`.
++- Consolidated permission-loading, permission-denied, and scanner-ready branches under one outer `StateTransition` with the required state keys and `flex: 1`.
++- Disabled `PrototypeFrame` entrance animation in denied and ready branches so the outer transition is the sole entrance owner.
++- Removed the `ActivityIndicator` import.
++
++### Lifecycle invariants
++
++- Permission transitions animate as one mutually exclusive state surface.
++- Camera rendering remains focus-gated and suppressed while a serving intent is open.
++- QR resolve/confirm copy and state, serving confirmation modal, server-expiry countdown, reduced-motion scan line behavior, and scan reset behavior are unchanged.
++
++## Verification
++
++No focused mobile screen test harness exists under `apps/mobile`; per the assignment, no permanent test scaffolding was added.
++
++Command:
++
++```text
++corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
++```
++
++Output:
++
++```text
++(no output)
++```
++
++Result: exit code 0, completed in 2.90 seconds.
++
++Additional patch integrity command:
++
++```text
++git diff --check -- apps/mobile/src/screens/employee/EmployeeDashboardScreen.tsx apps/mobile/src/screens/employee/EmployeeCalendarScreen.tsx apps/mobile/src/screens/pickup/PickupIntentScreen.tsx apps/mobile/src/screens/delegation/DelegationScreen.tsx apps/mobile/src/screens/kitchen/KitchenDashboardScreen.tsx apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx
++```
++
++Output:
++
++```text
++(no output)
++```
++
++Result: exit code 0.
++
++## Concerns
++
++- The repository has no focused React Native screen harness, so reordered-response and focus-transition behavior was not runtime-driven in this slice; verification is limited to the scoped mobile TypeScript compilation and source-level lifecycle guards.
++- Native camera permission, QR scanning, polling, pull-to-refresh, and animation visuals require the Expo/device runtime and backend prerequisites described by the parent plan; they were not available as a narrow automated screen check here.
++- The worktree contained unrelated modified/untracked files before this task. They were left untouched and are excluded from this task’s commit.
+diff --git a/apps/mobile/src/screens/delegation/DelegationScreen.tsx b/apps/mobile/src/screens/delegation/DelegationScreen.tsx
+index 9c9d77f..09ff7be 100644
+--- a/apps/mobile/src/screens/delegation/DelegationScreen.tsx
++++ b/apps/mobile/src/screens/delegation/DelegationScreen.tsx
+@@ -1,69 +1,103 @@
+-import React, { useCallback, useEffect, useState } from 'react';
+-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
++import React, { useCallback, useEffect, useRef, useState } from 'react';
++import { Pressable, StyleSheet, Text, View } from 'react-native';
+ import { ArrowLeft, CheckCircle, Clock, Search, XCircle } from 'lucide-react-native';
+ import type { ProfileStackScreenProps } from '../../navigation';
+ import { useSession } from '../../auth/session';
+ import { delegationAPI, type DelegationResponse } from '../../api/delegationAPI';
+-import { PrototypeCard, PrototypeField, Pill, PillText } from '../../ui/PrototypePrimitives';
++import { PrototypeButton, PrototypeCard, PrototypeField, Pill, PillText } from '../../ui/PrototypePrimitives';
+ import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
++import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+ import { useNotice } from '../../ui/BrandNotice';
+ import { theme } from '../../theme';
+ 
+ type Tab = 'OUTGOING' | 'INCOMING';
+ type Props = ProfileStackScreenProps<'Delegation'>;
+ export function DelegationScreen({ navigation }: Props) {
+   const { token } = useSession();
+   const { showNotice } = useNotice();
+   const [tab, setTab] = useState<Tab>('OUTGOING');
+   const [searchQuery, setSearchQuery] = useState('');
+-  const [loading, setLoading] = useState(false);
++  const [loading, setLoading] = useState(true);
++  const [loadError, setLoadError] = useState<string | null>(null);
+   const [delegations, setDelegations] = useState<DelegationResponse[]>([]);
++  const delegationRequestId = useRef(0);
++  const activeTabRef = useRef<Tab>('OUTGOING');
+ 
+-  const loadDelegations = useCallback(async () => {
+-    if (!token) return;
++  const loadDelegations = useCallback(async (targetTab: Tab) => {
++    if (!token || activeTabRef.current !== targetTab) return;
++    const requestId = ++delegationRequestId.current;
++    setLoadError(null);
+     setLoading(true);
+     try {
+-      const data = await delegationAPI.getDelegations(token, tab === 'INCOMING' ? 'incoming' : 'outgoing');
++      const data = await delegationAPI.getDelegations(token, targetTab === 'INCOMING' ? 'incoming' : 'outgoing');
++      if (requestId !== delegationRequestId.current || activeTabRef.current !== targetTab) return;
+       setDelegations(data);
+     } catch (error: unknown) {
+-      showNotice({ title: 'Delegations unavailable', message: error instanceof Error ? error.message : 'Unable to load delegations', tone: 'error' });
++      if (requestId !== delegationRequestId.current || activeTabRef.current !== targetTab) return;
++      const message = error instanceof Error ? error.message : 'Unable to load delegations';
++      setLoadError(message);
++      showNotice({ title: 'Delegations unavailable', message, tone: 'error' });
+     } finally {
+-      setLoading(false);
++      if (requestId === delegationRequestId.current && activeTabRef.current === targetTab) setLoading(false);
+     }
+-  }, [tab, token]);
++  }, [showNotice, token]);
++
++  useEffect(() => {
++    void loadDelegations(tab);
++    return () => {
++      delegationRequestId.current += 1;
++    };
++  }, [loadDelegations, tab]);
+ 
+-  useEffect(() => { void loadDelegations(); }, [loadDelegations]);
++  const selectTab = (nextTab: Tab) => {
++    activeTabRef.current = nextTab;
++    setTab(nextTab);
++  };
+ 
+   const handleAction = async (action: 'accept' | 'decline' | 'revoke', id: string) => {
+     if (!token) return;
++    const startingTab = activeTabRef.current;
+     setLoading(true);
+     try {
+       if (action === 'accept') await delegationAPI.acceptDelegation(id, token);
+       if (action === 'decline') await delegationAPI.declineDelegation(id, token);
+       if (action === 'revoke') await delegationAPI.revokeDelegation(id, token);
+-      await loadDelegations();
++      if (activeTabRef.current === startingTab) await loadDelegations(startingTab);
+     } catch (error: unknown) {
++      if (activeTabRef.current === startingTab) setLoading(false);
+       showNotice({ title: 'Action failed', message: error instanceof Error ? error.message : 'The delegation state has changed.', tone: 'error' });
+-    } finally {
+-      setLoading(false);
+     }
+   };
+ 
+   const visible = delegations.filter((delegation) => tab === 'INCOMING' || delegation.delegateUserId.toLowerCase().includes(searchQuery.toLowerCase()));
+ 
+   return (
+     <PrototypeFrame>
+       <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => navigation.goBack()} style={styles.back}><ArrowLeft size={20} color={theme.colors.fg} /></Pressable><View style={styles.headerCopy}><PrototypeSectionTitle title="Delegations" subtitle="Manage meal pickup permissions" /></View></View>
+-      <View style={styles.tabs}><Pressable onPress={() => setTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>My Requests</Text></Pressable><Pressable onPress={() => setTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>Incoming</Text></Pressable></View>
++      <View style={styles.tabs}><Pressable onPress={() => selectTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>My Requests</Text></Pressable><Pressable onPress={() => selectTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>Incoming</Text></Pressable></View>
+       {tab === 'OUTGOING' && <PrototypeField icon={Search} placeholder="Search employee by name/ID..." value={searchQuery} onChangeText={setSearchQuery} style={styles.search} />}
+-      {loading ? <ActivityIndicator color={theme.colors.accentDeep} style={styles.loader} /> : visible.length === 0 ? <Text style={styles.empty}>No delegations found.</Text> : <View style={styles.list}>{visible.map((item) => <PrototypeCard key={item.id} style={styles.card}><View style={styles.cardHeader}><Text style={styles.cardTitle}>{tab === 'OUTGOING' ? `To: ${item.delegateUserId}` : `From: ${item.delegateUserId}`}</Text><Status status={item.status} /></View><Text style={styles.cardDate}>Created: {new Date(item.createdAt).toLocaleDateString()}</Text>{item.status === 'PENDING' && <View style={styles.actions}>{tab === 'INCOMING' ? <><Pressable onPress={() => void handleAction('decline', item.id)} style={styles.secondaryAction}><Text style={styles.secondaryText}>Decline</Text></Pressable><Pressable onPress={() => void handleAction('accept', item.id)} style={styles.primaryAction}><Text style={styles.primaryText}>Accept</Text></Pressable></> : <Pressable onPress={() => void handleAction('revoke', item.id)} style={styles.dangerAction}><Text style={styles.dangerText}>Revoke</Text></Pressable>}</View>}</PrototypeCard>)}</View>}
++      <StateTransition stateKey={loading ? 'loading' : loadError ? 'error' : visible.length === 0 ? 'empty' : 'list'}>
++        {loading ? (
++          <BrandLoader label="Loading delegations…" />
++        ) : loadError ? (
++          <PrototypeCard style={styles.errorCard}>
++            <Text style={styles.errorTitle}>Delegations unavailable</Text>
++            <Text style={styles.errorText}>{loadError}</Text>
++            <PrototypeButton variant="secondary" onPress={() => void loadDelegations(activeTabRef.current)} style={styles.retryButton}>Retry</PrototypeButton>
++          </PrototypeCard>
++        ) : visible.length === 0 ? (
++          <Text style={styles.empty}>No delegations found.</Text>
++        ) : (
++          <View style={styles.list}>{visible.map((item) => <PrototypeCard key={item.id} style={styles.card}><View style={styles.cardHeader}><Text style={styles.cardTitle}>{tab === 'OUTGOING' ? `To: ${item.delegateUserId}` : `From: ${item.delegateUserId}`}</Text><Status status={item.status} /></View><Text style={styles.cardDate}>Created: {new Date(item.createdAt).toLocaleDateString()}</Text>{item.status === 'PENDING' && <View style={styles.actions}>{tab === 'INCOMING' ? <><Pressable onPress={() => void handleAction('decline', item.id)} style={styles.secondaryAction}><Text style={styles.secondaryText}>Decline</Text></Pressable><Pressable onPress={() => void handleAction('accept', item.id)} style={styles.primaryAction}><Text style={styles.primaryText}>Accept</Text></Pressable></> : <Pressable onPress={() => void handleAction('revoke', item.id)} style={styles.dangerAction}><Text style={styles.dangerText}>Revoke</Text></Pressable>}</View>}</PrototypeCard>)}</View>
++        )}
++      </StateTransition>
+     </PrototypeFrame>
+   );
+ }
+ 
+ function Status({ status }: { status: DelegationResponse['status'] }) {
+   const pending = status === 'PENDING';
+   const accepted = status === 'ACCEPTED';
+   const tone = pending ? 'warn' : accepted ? 'good' : 'bad';
+   const Icon = pending ? Clock : accepted ? CheckCircle : XCircle;
+   const label = pending ? 'Pending' : accepted ? 'Accepted' : status === 'DECLINED' ? 'Declined' : 'Revoked';
+@@ -73,22 +107,25 @@ function Status({ status }: { status: DelegationResponse['status'] }) {
+ const styles = StyleSheet.create({
+   header: { flexDirection: 'row', alignItems: 'center' },
+   back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+   headerCopy: { flex: 1 },
+   tabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+   tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
+   activeTab: { borderBottomWidth: 2, borderBottomColor: theme.colors.accentDeep },
+   tabText: { color: theme.colors.muted, fontSize: 14, fontWeight: '500' },
+   activeTabText: { color: theme.colors.accentDeep, fontWeight: '700' },
+   search: { marginVertical: 16 },
+-  loader: { marginTop: 40 },
+   empty: { color: theme.colors.muted, textAlign: 'center', marginTop: 24 },
++  errorCard: { marginTop: 20 },
++  errorTitle: { color: theme.colors.fg, fontSize: 17, fontWeight: '700' },
++  errorText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },
++  retryButton: { marginTop: 16 },
+   list: { gap: 12, paddingVertical: 8 },
+   card: { padding: 16 },
+   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 8 },
+   cardTitle: { flex: 1, color: theme.colors.fg, fontSize: 15, fontWeight: '700' },
+   status: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+   cardDate: { color: theme.colors.muted, fontSize: 13, marginBottom: 14 },
+   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 12 },
+   secondaryAction: { minHeight: 40, paddingHorizontal: 16, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.sm, alignItems: 'center', justifyContent: 'center' },
+   secondaryText: { color: theme.colors.fg, fontSize: 13, fontWeight: '600' },
+   primaryAction: { minHeight: 40, paddingHorizontal: 16, borderRadius: theme.radii.sm, backgroundColor: theme.colors.accentDeep, alignItems: 'center', justifyContent: 'center' },
+diff --git a/apps/mobile/src/screens/employee/EmployeeCalendarScreen.tsx b/apps/mobile/src/screens/employee/EmployeeCalendarScreen.tsx
+index 6cceec0..a03bd57 100644
+--- a/apps/mobile/src/screens/employee/EmployeeCalendarScreen.tsx
++++ b/apps/mobile/src/screens/employee/EmployeeCalendarScreen.tsx
+@@ -1,20 +1,21 @@
+ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+-import { ActivityIndicator, Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
++import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+ import { ChevronLeft, ChevronRight } from 'lucide-react-native';
+ import { useFocusEffect } from '@react-navigation/native';
+ import type { AppTabScreenProps } from '../../navigation';
+ import { useSession } from '../../auth/session';
+ import { registrationAPI, type RegistrationRecord, type WeekRegistrationResponse } from '../../api/registrationAPI';
+ import { addDays, formatDay, formatMonth, formatShortDate, startOfWeek, toDateKey } from '../../businessDate';
+ import { PrototypeCard, Pill, PillText } from '../../ui/PrototypePrimitives';
+ import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
++import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+ import { useNotice } from '../../ui/BrandNotice';
+ import { useReducedMotion } from '../../ui/useReducedMotion';
+ import { theme } from '../../theme';
+ 
+ type Props = AppTabScreenProps<'EmployeeCalendar'>;
+ type WeekState = Record<string, boolean>;
+ type WindowDay = { cutoffAt: number; editable: boolean };
+ type WindowSnapshot = { serverNowAt: number; receiptAt: number; days: Record<string, WindowDay> };
+ 
+ function getWindowSnapshot(response: WeekRegistrationResponse, receiptAt: number): WindowSnapshot | null {
+@@ -45,76 +46,104 @@ export function EmployeeCalendarScreen(_props: Props) {
+   const { token } = useSession();
+   const { showNotice } = useNotice();
+   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+   const [weekState, setWeekState] = useState<WeekState>({});
+   const [monthRegistrations, setMonthRegistrations] = useState<Set<string>>(new Set());
+   const [windowSnapshot, setWindowSnapshot] = useState<WindowSnapshot | null>(null);
+   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+   const [loading, setLoading] = useState(true);
+   const [savingDate, setSavingDate] = useState<string | null>(null);
+   const cutoffWarnings = useRef(new Set<string>());
++  const monthRequestId = useRef(0);
++  const weekRequestId = useRef(0);
+   const weekStart = useMemo(() => startOfWeek(new Date()), []);
+ 
+   const applyCurrentWeek = useCallback((response: WeekRegistrationResponse, receiptAt: number) => {
+     setWeekState(registrationsForWeek(response, weekStart));
+     const snapshot = getWindowSnapshot(response, receiptAt);
+     if (!snapshot) {
+       setAvailabilityError('Cutoff availability could not be loaded.');
+       return false;
+     }
+     setWindowSnapshot(snapshot);
+     setAvailabilityError(null);
+     return true;
+   }, [weekStart]);
+ 
+   const refreshCurrentWeek = useCallback(async () => {
+     if (!token) return;
++    const requestId = ++weekRequestId.current;
+     try {
+       const receiptAt = Date.now();
+       const response = await registrationAPI.getWeek(toDateKey(weekStart), token);
++      if (requestId !== weekRequestId.current) return;
+       if (!applyCurrentWeek(response, receiptAt)) {
+         showNotice({ title: 'Calendar unavailable', message: 'Cutoff availability could not be loaded.', tone: 'error' });
+       }
+     } catch (error: unknown) {
++      if (requestId !== weekRequestId.current) return;
+       const message = error instanceof Error ? error.message : 'Unable to load meal registrations';
+       setAvailabilityError(message);
+       showNotice({ title: 'Calendar unavailable', message, tone: 'error' });
+     }
+   }, [applyCurrentWeek, showNotice, token, weekStart]);
+ 
+   const loadMonth = useCallback(async () => {
+     if (!token) return;
++    const currentMonthRequestId = ++monthRequestId.current;
++    const currentWeekRequestId = ++weekRequestId.current;
++    let phase: 'month' | 'week' = 'month';
+     setLoading(true);
+     try {
+       const firstWeek = startOfWeek(month);
+       const lastDay = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+       const starts: string[] = [];
+       for (let cursor = firstWeek; cursor <= lastDay; cursor = addDays(cursor, 7)) starts.push(toDateKey(cursor));
+       const responses = await Promise.all(starts.map((startDate) => registrationAPI.getWeek(startDate, token)));
++      if (currentMonthRequestId !== monthRequestId.current) return;
+       const registrations: RegistrationRecord[] = responses.flatMap((response) => response.registrations);
+       setMonthRegistrations(new Set(registrations.filter((registration) => registration.status === 'ACTIVE').map((registration) => registration.mealDate.slice(0, 10))));
++
++      if (currentWeekRequestId !== weekRequestId.current) return;
++      phase = 'week';
+       const receiptAt = Date.now();
+       const currentWeekResponse = await registrationAPI.getWeek(toDateKey(weekStart), token);
++      if (currentWeekRequestId !== weekRequestId.current) return;
+       if (!applyCurrentWeek(currentWeekResponse, receiptAt)) {
+         showNotice({ title: 'Calendar unavailable', message: 'Cutoff availability could not be loaded.', tone: 'error' });
+       }
+     } catch (error: unknown) {
++      const requestIsCurrent = phase === 'month'
++        ? currentMonthRequestId === monthRequestId.current
++        : currentWeekRequestId === weekRequestId.current;
++      if (!requestIsCurrent) return;
+       const message = error instanceof Error ? error.message : 'Unable to load meal registrations';
+       setAvailabilityError(message);
+       showNotice({ title: 'Calendar unavailable', message, tone: 'error' });
+     } finally {
+-      setLoading(false);
++      if (currentMonthRequestId === monthRequestId.current) setLoading(false);
+     }
+   }, [applyCurrentWeek, month, showNotice, token, weekStart]);
+ 
+-  useEffect(() => { void loadMonth(); }, [loadMonth]);
+-  useFocusEffect(useCallback(() => { void refreshCurrentWeek(); }, [refreshCurrentWeek]));
++  useEffect(() => {
++    void loadMonth();
++    return () => {
++      monthRequestId.current += 1;
++      weekRequestId.current += 1;
++    };
++  }, [loadMonth]);
++  useFocusEffect(useCallback(() => {
++    void refreshCurrentWeek();
++    return () => {
++      weekRequestId.current += 1;
++    };
++  }, [refreshCurrentWeek]));
+ 
+   useEffect(() => {
+     if (!windowSnapshot) return;
+     const futureDays = Object.values(windowSnapshot.days).filter((day) => day.editable);
+     if (futureDays.length === 0) return;
+     const nextCutoffAt = Math.min(...futureDays.map((day) => day.cutoffAt));
+     const remaining = nextCutoffAt - windowSnapshot.serverNowAt - (Date.now() - windowSnapshot.receiptAt);
+     const timer = setTimeout(() => { void refreshCurrentWeek(); }, Math.max(0, remaining));
+     return () => clearTimeout(timer);
+   }, [refreshCurrentWeek, windowSnapshot]);
+@@ -182,22 +211,58 @@ export function EmployeeCalendarScreen(_props: Props) {
+           <Pressable accessibilityLabel="Previous month" onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))} style={styles.monthButton}><ChevronLeft size={16} color={theme.colors.accentDeep} /></Pressable>
+           <Pressable accessibilityLabel="Next month" onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))} style={styles.monthButton}><ChevronRight size={16} color={theme.colors.accentDeep} /></Pressable>
+         </View>
+       </View>
+       <PrototypeCard style={styles.calendarCard}>
+         <View style={styles.weekdayRow}>{['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((day) => <Text key={day} style={styles.weekday}>{day}</Text>)}</View>
+         <View style={styles.dayGrid}>{days.map((day, index) => { if (!day) return <View key={`empty-${index}`} style={styles.dayCell} />; const key = toDateKey(day); const booked = monthRegistrations.has(key); const today = key === todayKey; return <View key={key} style={[styles.dayCell, booked && styles.bookedDay, today && styles.todayDay]}><Text style={[styles.dayNumber, booked && styles.bookedText]}>{day.getDate()}</Text>{booked && <View style={styles.dot} />}</View>; })}</View>
+       </PrototypeCard>
+       <View style={styles.legend}><View style={styles.legendItem}><View style={[styles.swatch, styles.bookedSwatch]} /><Text style={styles.legendText}>Booked</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.todaySwatch]} /><Text style={styles.legendText}>Today</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.availableSwatch]} /><Text style={styles.legendText}>Available</Text></View></View>
+       <View style={styles.weekHeader}><PrototypeSectionTitle title="Weekly Meal Registration" subtitle={`${formatShortDate(weekStart)}–${formatShortDate(addDays(weekStart, 6))} · Toggle a day on to register lunch`} /></View>
+-      {availabilityError && !windowSnapshot && <Pressable accessibilityRole="button" onPress={() => void loadMonth()} style={styles.retry}><Text style={styles.retryText}>{availabilityError}</Text><Text style={styles.retryAction}>Retry</Text></Pressable>}
+-      {loading ? <ActivityIndicator color={theme.colors.accentDeep} style={styles.loader} /> : Array.from({ length: 7 }, (_, index) => { const date = addDays(weekStart, index); const dateKey = toDateKey(date); const active = Boolean(weekState[dateKey]); const editable = windowSnapshot?.days[dateKey]?.editable === true; const locked = !editable; const disabled = savingDate !== null || locked; return <View key={dateKey} style={[styles.weekRow, dateKey === todayKey && styles.todayRow]}><View style={styles.weekInfo}><View style={styles.weekDayLine}><Text style={styles.weekDay}>{formatDay(date)}</Text>{dateKey === todayKey && <Pill><PillText>Today</PillText></Pill>}{locked && <Pill tone="warn"><Text style={styles.lockedLabel}>Locked</Text></Pill>}</View><Text style={styles.weekDate}>{formatShortDate(date)}</Text></View><AnimatedMealToggle value={active} disabled={disabled} saving={savingDate === dateKey} accessibilityLabel={`Toggle lunch registration for ${formatDay(date)}${locked ? ', locked after cutoff' : ''}`} onPress={() => void toggleRegistration(dateKey)} /></View>; })}
++      <StateTransition stateKey={loading ? 'loading' : availabilityError && !windowSnapshot ? 'error' : 'ready'}>
++        {loading ? (
++          <BrandLoader label="Loading meal calendar…" />
++        ) : availabilityError && !windowSnapshot ? (
++          <Pressable accessibilityRole="button" onPress={() => void loadMonth()} style={styles.retry}>
++            <Text style={styles.retryText}>{availabilityError}</Text>
++            <Text style={styles.retryAction}>Retry</Text>
++          </Pressable>
++        ) : (
++          Array.from({ length: 7 }, (_, index) => {
++            const date = addDays(weekStart, index);
++            const dateKey = toDateKey(date);
++            const active = Boolean(weekState[dateKey]);
++            const editable = windowSnapshot?.days[dateKey]?.editable === true;
++            const locked = !editable;
++            const disabled = savingDate !== null || locked;
++            return (
++              <View key={dateKey} style={[styles.weekRow, dateKey === todayKey && styles.todayRow]}>
++                <View style={styles.weekInfo}>
++                  <View style={styles.weekDayLine}>
++                    <Text style={styles.weekDay}>{formatDay(date)}</Text>
++                    {dateKey === todayKey && <Pill><PillText>Today</PillText></Pill>}
++                    {locked && <Pill tone="warn"><Text style={styles.lockedLabel}>Locked</Text></Pill>}
++                  </View>
++                  <Text style={styles.weekDate}>{formatShortDate(date)}</Text>
++                </View>
++                <AnimatedMealToggle
++                  value={active}
++                  disabled={disabled}
++                  saving={savingDate === dateKey}
++                  accessibilityLabel={`Toggle lunch registration for ${formatDay(date)}${locked ? ', locked after cutoff' : ''}`}
++                  onPress={() => void toggleRegistration(dateKey)}
++                />
++              </View>
++            );
++          })
++        )}
++      </StateTransition>
+     </PrototypeFrame>
+   );
+ }
+ 
+ function AnimatedMealToggle({ value, disabled, saving, accessibilityLabel, onPress }: { value: boolean; disabled: boolean; saving: boolean; accessibilityLabel: string; onPress: () => void }) {
+   const reducedMotion = useReducedMotion();
+   const progress = useRef(new Animated.Value(value ? 1 : 0)).current;
+   useEffect(() => {
+     const toValue = value ? 1 : 0;
+     if (reducedMotion) { progress.setValue(toValue); return; }
+@@ -222,21 +287,20 @@ const styles = StyleSheet.create({
+   bookedText: { color: theme.colors.accentDeep, fontWeight: '700' },
+   dot: { width: 4, height: 4, borderRadius: 2, backgroundColor: theme.colors.accentDeep, marginTop: 3 },
+   legend: { flexDirection: 'row', gap: 18, paddingHorizontal: 4, paddingBottom: 28 },
+   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+   swatch: { width: 10, height: 10, borderRadius: 5 },
+   bookedSwatch: { backgroundColor: theme.colors.accentSoft, borderWidth: 1.5, borderColor: theme.colors.accentDeep },
+   todaySwatch: { borderWidth: 1.5, borderColor: theme.colors.accentDeep },
+   availableSwatch: { backgroundColor: theme.colors.border },
+   legendText: { color: theme.colors.muted, fontSize: 12 },
+   weekHeader: { borderTopWidth: 1, borderTopColor: theme.colors.border },
+-  loader: { marginVertical: 24 },
+   retry: { padding: 14, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.statusBadDeep, borderRadius: theme.radii.md, backgroundColor: theme.colors.statusBadTint, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+   retryText: { flex: 1, color: theme.colors.statusBadDeep, fontSize: 13, lineHeight: 19 },
+   retryAction: { color: theme.colors.statusBadDeep, fontSize: 13, fontWeight: '700' },
+   weekRow: { minHeight: 64, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+   todayRow: { backgroundColor: theme.colors.accentTint, marginHorizontal: -theme.spacing.gutter, paddingHorizontal: theme.spacing.gutter },
+   weekInfo: { flex: 1, gap: 5 },
+   weekDayLine: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+   weekDay: { color: theme.colors.fg, fontSize: 14, fontWeight: '700' },
+   weekDate: { color: theme.colors.muted, fontSize: 13 },
+   lockedLabel: { color: theme.colors.statusWarnDeep, fontSize: 12, fontWeight: '700' },
+diff --git a/apps/mobile/src/screens/employee/EmployeeDashboardScreen.tsx b/apps/mobile/src/screens/employee/EmployeeDashboardScreen.tsx
+index a3da8f1..b8fcc5a 100644
+--- a/apps/mobile/src/screens/employee/EmployeeDashboardScreen.tsx
++++ b/apps/mobile/src/screens/employee/EmployeeDashboardScreen.tsx
+@@ -1,97 +1,106 @@
+ import React, { useEffect, useState } from 'react';
+-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
++import { Pressable, StyleSheet, Text, View } from 'react-native';
+ import { ArrowRight, CalendarDays, MapPin, QrCode } from 'lucide-react-native';
+ import type { AppTabScreenProps } from '../../navigation';
+ import { useSession } from '../../auth/session';
+ import { registrationAPI } from '../../api/registrationAPI';
+ import { startOfWeek, toDateKey, initials } from '../../businessDate';
+ import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
+ import { PrototypeFrame } from '../../ui/PrototypeShell';
++import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+ import { theme } from '../../theme';
+ 
+ type Props = AppTabScreenProps<'EmployeeDashboard'>;
+ 
+ export function EmployeeDashboardScreen({ navigation }: Props) {
+   const { token, profile } = useSession();
+   const [todayRegistered, setTodayRegistered] = useState<boolean | null>(null);
++  const [loading, setLoading] = useState(true);
+ 
+   useEffect(() => {
+     if (!token) return;
+     let mounted = true;
++    setLoading(true);
+     void registrationAPI.getWeek(toDateKey(startOfWeek(new Date())), token)
+       .then(({ registrations }) => {
+         if (mounted) {
+           const today = toDateKey(new Date());
+           setTodayRegistered(registrations.some((registration) => registration.mealDate.slice(0, 10) === today && registration.status === 'ACTIVE'));
+         }
+       })
+-      .catch(() => { if (mounted) setTodayRegistered(null); });
++      .catch(() => {
++        if (mounted) setTodayRegistered(null);
++      })
++      .finally(() => {
++        if (mounted) setLoading(false);
++      });
+     return () => { mounted = false; };
+   }, [token]);
+ 
+   const greetingName = profile?.name || profile?.email.split('@')[0] || 'there';
+-  const status = todayRegistered === false ? 'Not registered' : 'Confirmed';
++  const status = loading ? 'Loading…' : todayRegistered === true ? 'Confirmed' : todayRegistered === false ? 'Not registered' : 'Unavailable';
++  const statusTone = loading || todayRegistered === true ? 'soft' : 'warn';
+   const today = new Date();
+   return (
+     <PrototypeFrame>
+       <View style={styles.greeting}>
+         <View>
+           <Eyebrow>{today.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }).toUpperCase()}</Eyebrow>
+           <Text style={styles.greetingName}>Hi, {greetingName}</Text>
+         </View>
+         <Pressable
+           accessibilityRole="button"
+           accessibilityLabel="Open profile"
+           onPress={() => navigation.navigate('EmployeeProfile')}
+           style={({ pressed }) => [styles.avatarButton, pressed && styles.avatarPressed]}
+         >
+           <Avatar initials={initials(profile?.name, 'ME')} />
+         </Pressable>
+       </View>
+       <PrototypeCard style={styles.mealCard}>
+         <View style={styles.topRow}>
+           <Pill><PillText>Lunch · 12:00–13:00</PillText></Pill>
+-          <Pill tone={todayRegistered === false ? 'warn' : 'soft'}><PillText>{status}</PillText></Pill>
++          <StateTransition stateKey={loading ? 'loading' : todayRegistered === null ? 'unavailable' : 'loaded'} style={styles.statusTransition}>
++            {loading ? <BrandLoader compact label="Loading today’s registration…" /> : <Pill tone={statusTone}><PillText>{status}</PillText></Pill>}
++          </StateTransition>
+         </View>
+         <Text style={styles.mealTitle}>Grilled Chicken Rice Bowl</Text>
+         <Text style={styles.mealSub}>Steamed rice, grilled chicken thigh, stir-fried greens</Text>
+         <View style={styles.divider} />
+         <View style={styles.metaRow}><MapPin size={16} color={theme.colors.accentDeep} strokeWidth={1.6} /><Text style={styles.metaText}>Canteen A · Counter 2</Text></View>
+       </PrototypeCard>
+ 
+       <Pressable accessibilityRole="button" onPress={() => navigation.navigate('PickupIntent')} style={styles.scanCta}>
+         <View style={styles.scanIcon}><QrCode size={24} color={theme.colors.surface} strokeWidth={1.6} /></View>
+         <View style={styles.scanCopy}><Text style={styles.scanTitle}>Open meal ticket</Text><Text style={styles.scanSub}>Show your dynamic QR at the canteen</Text></View>
+         <ArrowRight size={18} color={theme.colors.surface} strokeWidth={1.6} />
+       </Pressable>
+ 
+-      {todayRegistered === null && <View style={styles.loading}><ActivityIndicator color={theme.colors.accentDeep} /><Text style={styles.loadingText}>Loading today's registration</Text></View>}
+       <Pressable onPress={() => navigation.navigate('EmployeeCalendar')} style={styles.calendarLink}>
+         <CalendarDays size={16} color={theme.colors.accentDeep} /><Text style={styles.calendarLinkText}>Manage weekly registration</Text>
+       </Pressable>
+     </PrototypeFrame>
+   );
+ }
+ 
+ const styles = StyleSheet.create({
+   greeting: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingTop: 18, paddingBottom: 26 },
+   avatarButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radii.pill },
+   avatarPressed: { opacity: 0.7 },
+   greetingName: { marginTop: 6, color: theme.colors.fg, fontSize: 24, fontWeight: '700', letterSpacing: -0.25 },
+   mealCard: { marginBottom: 16 },
+   topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 18 },
++  statusTransition: { alignItems: 'flex-end' },
+   mealTitle: { color: theme.colors.fg, fontSize: 21, fontWeight: '700', lineHeight: 27, letterSpacing: -0.2 },
+   mealSub: { marginTop: 6, color: theme.colors.muted, fontSize: 14, lineHeight: 20 },
+   divider: { height: 1, backgroundColor: theme.colors.border, marginVertical: 20 },
+   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+   metaText: { color: theme.colors.muted, fontSize: 13 },
+   scanCta: { minHeight: 86, paddingHorizontal: 22, paddingVertical: 20, borderRadius: theme.radii.md, backgroundColor: theme.colors.accentDeep, flexDirection: 'row', alignItems: 'center', gap: 16, ...theme.shadows.md },
+   scanIcon: { width: 46, height: 46, borderRadius: theme.radii.sm, backgroundColor: 'rgba(255,255,255,0.22)', alignItems: 'center', justifyContent: 'center' },
+   scanCopy: { flex: 1 },
+   scanTitle: { color: theme.colors.surface, fontSize: 16, fontWeight: '700' },
+   scanSub: { marginTop: 2, color: 'rgba(255,255,255,0.78)', fontSize: 13 },
+-  loading: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 18 },
+-  loadingText: { color: theme.colors.muted, fontSize: 12 },
+   calendarLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 22 },
+   calendarLinkText: { color: theme.colors.accentDeep, fontSize: 13, fontWeight: '700' },
+ });
+diff --git a/apps/mobile/src/screens/kitchen/KitchenDashboardScreen.tsx b/apps/mobile/src/screens/kitchen/KitchenDashboardScreen.tsx
+index eb13b3a..612632a 100644
+--- a/apps/mobile/src/screens/kitchen/KitchenDashboardScreen.tsx
++++ b/apps/mobile/src/screens/kitchen/KitchenDashboardScreen.tsx
+@@ -1,54 +1,75 @@
+ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+-import { ActivityIndicator, Animated, PanResponder, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+-import { CheckCircle2, ChevronRight, Clock3, Radio, Search, Users, UserX, Utensils } from 'lucide-react-native';
++import { Animated, PanResponder, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
++import { ChevronRight, Radio, Search, Utensils } from 'lucide-react-native';
+ import { useIsFocused } from '@react-navigation/native';
+ import type { AppTabScreenProps } from '../../navigation';
+ import { useSession } from '../../auth/session';
+ import { kitchenAPI, type KitchenDashboardSnapshot, type KitchenRegistrationItem, type ServingLogItem } from '../../api/kitchenAPI';
+ import { initials } from '../../businessDate';
+-import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
++import { Eyebrow, Pill, PillText, PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
+ import { PrototypeFrame } from '../../ui/PrototypeShell';
++import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+ import { useNotice } from '../../ui/BrandNotice';
+ import { theme } from '../../theme';
+ type TabType = 'pending' | 'served' | 'all' | 'noshow' | 'logs';
+ type Props = AppTabScreenProps<'KitchenDashboard'>;
+ 
+ export function KitchenDashboardScreen({ navigation }: Props) {
+-  const { token, profile } = useSession();
++  const { token } = useSession();
+   const { showNotice } = useNotice();
+   const isFocused = useIsFocused();
+   const [snapshot, setSnapshot] = useState<KitchenDashboardSnapshot | null>(null);
+   const [loading, setLoading] = useState(true);
++  const [loadError, setLoadError] = useState<string | null>(null);
+   const [refreshing, setRefreshing] = useState(false);
+   const [activeTab, setActiveTab] = useState<TabType>('pending');
+   const [searchQuery, setSearchQuery] = useState('');
+   const [togglingSignal, setTogglingSignal] = useState(false);
+   const [trackWidth, setTrackWidth] = useState(0);
+   const sliderX = useRef(new Animated.Value(0)).current;
++  const dashboardRequestId = useRef(0);
++  const currentSnapshot = useRef<KitchenDashboardSnapshot | null>(null);
+ 
+   const fetchDashboard = useCallback(async () => {
+     if (!token) return;
++    const requestId = ++dashboardRequestId.current;
++    setLoading(true);
+     try {
+-      setSnapshot(await kitchenAPI.getDashboardSnapshot(undefined, token));
++      const nextSnapshot = await kitchenAPI.getDashboardSnapshot(undefined, token);
++      if (requestId !== dashboardRequestId.current) return;
++      currentSnapshot.current = nextSnapshot;
++      setSnapshot(nextSnapshot);
++      setLoadError(null);
+     } catch (error: unknown) {
+-      if (!snapshot) showNotice({ title: 'Dashboard unavailable', message: error instanceof Error ? error.message : 'Unable to load kitchen dashboard', tone: 'error' });
+-      setLoading(false);
+-      setRefreshing(false);
++      if (requestId !== dashboardRequestId.current) return;
++      if (currentSnapshot.current === null) {
++        const message = error instanceof Error ? error.message : 'Unable to load kitchen dashboard.';
++        setLoadError(message);
++        showNotice({ title: 'Dashboard unavailable', message, tone: 'error' });
++      }
++    } finally {
++      if (requestId === dashboardRequestId.current) {
++        setLoading(false);
++        setRefreshing(false);
++      }
+     }
+-  }, [snapshot, token]);
++  }, [showNotice, token]);
+ 
+   useEffect(() => {
+     if (!isFocused) return;
+     void fetchDashboard();
+     const interval = setInterval(() => { void fetchDashboard(); }, 5_000);
+-    return () => clearInterval(interval);
++    return () => {
++      clearInterval(interval);
++      dashboardRequestId.current += 1;
++    };
+   }, [fetchDashboard, isFocused]);
+ 
+   const active = Boolean(snapshot?.isServingReady);
+   const maxX = Math.max(0, trackWidth - 52);
+   const settleSlider = (value: number) => Animated.spring(sliderX, { toValue: value, useNativeDriver: true, bounciness: 0 }).start();
+   useEffect(() => { settleSlider(active ? maxX : 0); }, [active, maxX]);
+ 
+   const toggleSignal = async (next: boolean) => {
+     if (!token || togglingSignal) return;
+     setTogglingSignal(true);
+@@ -87,37 +108,53 @@ export function KitchenDashboardScreen({ navigation }: Props) {
+   const lists: Record<'pending' | 'served' | 'all' | 'noshow', KitchenRegistrationItem[]> = {
+     pending: filterItems(snapshot?.lists.pending || []),
+     served: filterItems(snapshot?.lists.served || []),
+     all: filterItems(snapshot?.lists.all || []),
+     noshow: filterItems(snapshot?.lists.noShow || []),
+   };
+   const selectedItems = activeTab === 'logs' ? [] : lists[activeTab];
+   const logs = activeTab === 'logs' ? filterLogs(snapshot?.recentLogs || []) : [];
+   return (
+     <PrototypeFrame scrollProps={{ refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void fetchDashboard(); }} /> }} bottomClearance={130}>
+-      <PrototypeCard style={[styles.servingCard, active && styles.servingActive]}><View style={styles.servingInfo}><Text style={styles.servingTitle}>{active ? 'Serving is live' : 'Ready to Serve?'}</Text><Text style={styles.servingSub}>{active ? 'Kitchen is ready to scan tickets' : 'Slide to begin scanning tickets'}</Text></View><View onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)} style={styles.sliderTrack} {...panResponder.panHandlers}><Animated.View style={[styles.sliderFill, active && styles.sliderFillActive, { width: sliderX.interpolate({ inputRange: [0, Math.max(1, maxX)], outputRange: ['0%', '100%'] }) }]} /><Animated.View style={[styles.sliderThumb, { transform: [{ translateX: sliderX }] }]}><ChevronRight size={20} color={active ? theme.colors.fg : theme.colors.accentDeep} /></Animated.View><Text style={[styles.sliderHint, active && styles.sliderHintActive]}>{active ? 'Slide to stop' : 'Slide to start'}</Text></View></PrototypeCard>
+-      <PrototypeCard style={styles.totalCard}><Eyebrow>TOTAL MEALS ORDERED TODAY</Eyebrow><View style={styles.totalRow}><Text style={styles.totalNumber}>{counters.totalRegistered}</Text><Text style={styles.totalUnit}>meals</Text></View><View style={styles.totalMeta}><Utensils size={16} color={theme.colors.accentDeep} /><Text style={styles.totalMetaText}>Lunch service · Canteen A, 12:00–13:00</Text></View></PrototypeCard>
+-      <PrototypeCard style={styles.dietCard}><Eyebrow>DIETARY PREFERENCES</Eyebrow><View style={styles.dietBar}><View style={styles.regularSegment} /><View style={styles.vegSegment} /></View><View style={styles.dietLegend}><View style={styles.legendItem}><View style={[styles.legendDot, styles.regularDot]} /><View><Text style={styles.legendLabel}>Regular</Text><Text style={styles.legendNumber}>{Math.round(counters.totalRegistered * 0.72)}</Text></View></View><View style={styles.legendItem}><View style={[styles.legendDot, styles.vegDot]} /><View><Text style={styles.legendLabel}>Vegetarian</Text><Text style={styles.legendNumber}>{counters.totalRegistered - Math.round(counters.totalRegistered * 0.72)}</Text></View></View></View></PrototypeCard>
+-      <PrototypeCard style={styles.checkinCard}><View style={styles.checkinHead}><Eyebrow>CHECK-IN PROGRESS</Eyebrow><Text style={styles.checkinRatio}>{counters.servedTotal} / {counters.totalRegistered}</Text></View><View style={styles.progressTrack}><View style={[styles.progressFill, { transform: [{ scaleX: progress }] }]} /></View><View style={styles.checkinLegend}><Text style={styles.legendText}>Checked-in · {counters.servedTotal}</Text><Text style={styles.legendText}>Pending · {counters.remaining}</Text></View></PrototypeCard>
+-      <Pressable onPress={() => navigation.navigate('KitchenScanner')} style={styles.scannerLink}><Radio size={18} color={theme.colors.accentDeep} /><Text style={styles.scannerLinkText}>Open ticket scanner</Text></Pressable>
+-      <View style={styles.listSection}><View style={styles.listHeader}><Text style={styles.listTitle}>Today's registrations</Text><Text style={styles.syncText}>{loading ? 'Syncing…' : 'Auto-sync 5s'}</Text></View><View style={styles.searchWrap}><Search size={18} color={theme.colors.muted} /><TextInput value={searchQuery} onChangeText={setSearchQuery} placeholder="Search name or email..." placeholderTextColor={theme.colors.muted} style={styles.searchInput} /></View><View style={styles.tabs}>{(['pending', 'served', 'all', 'noshow', 'logs'] as TabType[]).map((tab) => <Pressable key={tab} onPress={() => setActiveTab(tab)} style={[styles.tab, activeTab === tab && styles.tabActive]}><Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{tab === 'pending' ? `Pending (${snapshot?.lists.pending.length || 0})` : tab === 'served' ? `Served (${snapshot?.lists.served.length || 0})` : tab === 'all' ? `All (${snapshot?.lists.all.length || 0})` : tab === 'noshow' ? `No-show (${snapshot?.lists.noShow?.length || counters.noShowTotal})` : `Logs (${snapshot?.recentLogs.length || 0})`}</Text></Pressable>)}</View>{activeTab === 'logs' ? logs.map((log) => <ListRow key={log.id} initials={initials(log.userName)} name={log.userName} detail={`${new Date(log.servedAt).toLocaleTimeString()} · ${log.userEmail}`} status={log.isProxy ? 'Proxy' : 'Served'} good />) : selectedItems.map((item) => <ListRow key={item.registrationId} initials={initials(item.userName)} name={item.userName} detail={item.isServed && item.servedAt ? new Date(item.servedAt).toLocaleTimeString() : item.userEmail} status={item.isServed ? 'Served' : activeTab === 'noshow' ? 'No-show' : 'Pending'} good={item.isServed} />)}{!loading && selectedItems.length === 0 && logs.length === 0 && <Text style={styles.emptyText}>No matching registrations.</Text>}</View>
++      <StateTransition stateKey={snapshot === null && loading ? 'loading' : snapshot === null ? 'error' : 'ready'}>
++        {snapshot === null && loading ? (
++          <BrandLoader label="Loading kitchen dashboard…" />
++        ) : snapshot === null ? (
++          <PrototypeCard style={styles.errorCard}>
++            <Text style={styles.errorTitle}>Dashboard unavailable</Text>
++            <Text style={styles.errorText}>{loadError ?? 'Unable to load kitchen dashboard.'}</Text>
++            <PrototypeButton variant="secondary" onPress={() => void fetchDashboard()} style={styles.retryButton}>Retry</PrototypeButton>
++          </PrototypeCard>
++        ) : (
++          <>
++            <PrototypeCard style={[styles.servingCard, active && styles.servingActive]}><View style={styles.servingInfo}><Text style={styles.servingTitle}>{active ? 'Serving is live' : 'Ready to Serve?'}</Text><Text style={styles.servingSub}>{active ? 'Kitchen is ready to scan tickets' : 'Slide to begin scanning tickets'}</Text></View><View onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)} style={styles.sliderTrack} {...panResponder.panHandlers}><Animated.View style={[styles.sliderFill, active && styles.sliderFillActive, { width: sliderX.interpolate({ inputRange: [0, Math.max(1, maxX)], outputRange: ['0%', '100%'] }) }]} /><Animated.View style={[styles.sliderThumb, { transform: [{ translateX: sliderX }] }]}><ChevronRight size={20} color={active ? theme.colors.fg : theme.colors.accentDeep} /></Animated.View><Text style={[styles.sliderHint, active && styles.sliderHintActive]}>{active ? 'Slide to stop' : 'Slide to start'}</Text></View></PrototypeCard>
++            <PrototypeCard style={styles.totalCard}><Eyebrow>TOTAL MEALS ORDERED TODAY</Eyebrow><View style={styles.totalRow}><Text style={styles.totalNumber}>{counters.totalRegistered}</Text><Text style={styles.totalUnit}>meals</Text></View><View style={styles.totalMeta}><Utensils size={16} color={theme.colors.accentDeep} /><Text style={styles.totalMetaText}>Lunch service · Canteen A, 12:00–13:00</Text></View></PrototypeCard>
++            <PrototypeCard style={styles.dietCard}><Eyebrow>DIETARY PREFERENCES</Eyebrow><View style={styles.dietBar}><View style={styles.regularSegment} /><View style={styles.vegSegment} /></View><View style={styles.dietLegend}><View style={styles.legendItem}><View style={[styles.legendDot, styles.regularDot]} /><View><Text style={styles.legendLabel}>Regular</Text><Text style={styles.legendNumber}>{Math.round(counters.totalRegistered * 0.72)}</Text></View></View><View style={styles.legendItem}><View style={[styles.legendDot, styles.vegDot]} /><View><Text style={styles.legendLabel}>Vegetarian</Text><Text style={styles.legendNumber}>{counters.totalRegistered - Math.round(counters.totalRegistered * 0.72)}</Text></View></View></View></PrototypeCard>
++            <PrototypeCard style={styles.checkinCard}><View style={styles.checkinHead}><Eyebrow>CHECK-IN PROGRESS</Eyebrow><Text style={styles.checkinRatio}>{counters.servedTotal} / {counters.totalRegistered}</Text></View><View style={styles.progressTrack}><View style={[styles.progressFill, { transform: [{ scaleX: progress }] }]} /></View><View style={styles.checkinLegend}><Text style={styles.legendText}>Checked-in · {counters.servedTotal}</Text><Text style={styles.legendText}>Pending · {counters.remaining}</Text></View></PrototypeCard>
++            <Pressable onPress={() => navigation.navigate('KitchenScanner')} style={styles.scannerLink}><Radio size={18} color={theme.colors.accentDeep} /><Text style={styles.scannerLinkText}>Open ticket scanner</Text></Pressable>
++            <View style={styles.listSection}><View style={styles.listHeader}><Text style={styles.listTitle}>Today's registrations</Text><Text style={styles.syncText}>{loading ? 'Syncing…' : 'Auto-sync 5s'}</Text></View><View style={styles.searchWrap}><Search size={18} color={theme.colors.muted} /><TextInput value={searchQuery} onChangeText={setSearchQuery} placeholder="Search name or email..." placeholderTextColor={theme.colors.muted} style={styles.searchInput} /></View><View style={styles.tabs}>{(['pending', 'served', 'all', 'noshow', 'logs'] as TabType[]).map((tab) => <Pressable key={tab} onPress={() => setActiveTab(tab)} style={[styles.tab, activeTab === tab && styles.tabActive]}><Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{tab === 'pending' ? `Pending (${snapshot.lists.pending.length})` : tab === 'served' ? `Served (${snapshot.lists.served.length})` : tab === 'all' ? `All (${snapshot.lists.all.length})` : tab === 'noshow' ? `No-show (${snapshot.lists.noShow?.length || counters.noShowTotal})` : `Logs (${snapshot.recentLogs.length})`}</Text></Pressable>)}</View>{activeTab === 'logs' ? logs.map((log) => <ListRow key={log.id} initials={initials(log.userName)} name={log.userName} detail={`${new Date(log.servedAt).toLocaleTimeString()} · ${log.userEmail}`} status={log.isProxy ? 'Proxy' : 'Served'} good />) : selectedItems.map((item) => <ListRow key={item.registrationId} initials={initials(item.userName)} name={item.userName} detail={item.isServed && item.servedAt ? new Date(item.servedAt).toLocaleTimeString() : item.userEmail} status={item.isServed ? 'Served' : activeTab === 'noshow' ? 'No-show' : 'Pending'} good={item.isServed} />)}{!loading && selectedItems.length === 0 && logs.length === 0 && <Text style={styles.emptyText}>No matching registrations.</Text>}</View>
++          </>
++        )}
++      </StateTransition>
+     </PrototypeFrame>
+   );
+ }
+ 
+ function ListRow({ initials: avatarInitials, name, detail, status, good }: { initials: string; name: string; detail: string; status: string; good: boolean }) {
+   return <View style={styles.listRow}><View style={[styles.listAvatar, good && styles.listAvatarGood]}><Text style={[styles.listAvatarText, good && styles.listAvatarTextGood]}>{avatarInitials}</Text></View><View style={styles.listCopy}><Text style={styles.listName}>{name}</Text><Text style={styles.listDetail}>{detail}</Text></View><Pill tone={good ? 'good' : status === 'No-show' ? 'bad' : 'soft'}><PillText>{status}</PillText></Pill></View>;
+ }
+ 
+ const styles = StyleSheet.create({
+-  greeting: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingTop: 18, paddingBottom: 26 },
+-  greetingName: { marginTop: 6, color: theme.colors.fg, fontSize: 24, fontWeight: '700' },
++  errorCard: { marginTop: 20 },
++  errorTitle: { color: theme.colors.fg, fontSize: 17, fontWeight: '700' },
++  errorText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },
++  retryButton: { marginTop: 16 },
+   servingCard: { marginBottom: 16 },
+   servingActive: { backgroundColor: theme.colors.accentTint, borderColor: theme.colors.accentSoft },
+   servingInfo: { marginBottom: 20 },
+   servingTitle: { color: theme.colors.fg, fontSize: 21, fontWeight: '700' },
+   servingSub: { color: theme.colors.muted, fontSize: 14, marginTop: 4 },
+   sliderTrack: { height: 52, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.pill, backgroundColor: theme.colors.canvas, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+   sliderFill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: theme.colors.accentSoft },
+   sliderFillActive: { backgroundColor: theme.colors.accentDeep },
+   sliderThumb: { position: 'absolute', left: 4, top: 4, width: 44, height: 44, borderRadius: theme.radii.pill, backgroundColor: theme.colors.surface, alignItems: 'center', justifyContent: 'center', ...theme.shadows.sm },
+   sliderHint: { color: theme.colors.muted, fontSize: 14, fontWeight: '600' },
+diff --git a/apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx b/apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx
+index 4774e4e..6d9b6ef 100644
+--- a/apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx
++++ b/apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx
+@@ -1,19 +1,20 @@
+ import React, { useEffect, useState } from 'react';
+-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
++import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+ import { CameraView, useCameraPermissions } from 'expo-camera';
+ import { useIsFocused } from '@react-navigation/native';
+ import { CheckCircle2, ChevronLeft, Clock3, ScanLine, XCircle } from 'lucide-react-native';
+ import type { AppTabScreenProps } from '../../navigation';
+ import { useSession } from '../../auth/session';
+ import { servingAPI, type ResolveServingResponse } from '../../api/servingAPI';
+ import { PrototypeFrame } from '../../ui/PrototypeShell';
++import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+ import { Pill, PillText } from '../../ui/PrototypePrimitives';
+ import { useNotice } from '../../ui/BrandNotice';
+ import { useReducedMotion } from '../../ui/useReducedMotion';
+ import { theme } from '../../theme';
+ 
+ type Props = AppTabScreenProps<'KitchenScanner'>;
+ const EXPIRED_MESSAGE = 'Pickup session has expired';
+ 
+ export function KitchenScannerScreen({ navigation }: Props) {
+   const { token, canUseEmployee } = useSession();
+@@ -84,45 +85,52 @@ export function KitchenScannerScreen({ navigation }: Props) {
+       }
+     } finally {
+       setLoading(false);
+     }
+   };
+ 
+   const goBack = () => {
+     navigation.navigate(canUseEmployee ? 'EmployeeDashboard' : 'KitchenDashboard');
+   };
+ 
+-  if (!permission) return <View style={styles.loadingScreen}><ActivityIndicator color={theme.colors.accentDeep} /></View>;
+-  if (!permission.granted) {
+-    return <PrototypeFrame><View style={styles.permission}><ScanLine size={40} color={theme.colors.accentDeep} /><Text style={styles.permissionTitle}>Camera access required</Text><Text style={styles.permissionText}>Allow camera access to scan employee meal tickets.</Text><Pressable onPress={requestPermission} style={styles.primaryButton}><Text style={styles.primaryButtonText}>Grant permission</Text></Pressable></View></PrototypeFrame>;
+-  }
+-
+   return (
+-    <PrototypeFrame scroll={false} bottomClearance={130}>
+-      <View style={styles.scannerScreen}>
+-        {isFocused && !servingIntent && <CameraView style={StyleSheet.absoluteFillObject} facing="back" onBarcodeScanned={scanned ? undefined : handleBarCodeScanned} barcodeScannerSettings={{ barcodeTypes: ['qr'] }} />}
+-        <View style={styles.scrim} />
+-        <View style={styles.scannerContent}>
+-          <Pressable accessibilityLabel="Back to dashboard" onPress={goBack} style={styles.backButton}><ChevronLeft size={20} color={theme.colors.surface} /><Text style={styles.backText}>Dashboard</Text></Pressable>
+-          <View style={styles.scannerHead}><Text style={styles.scannerTitle}>Scan Employee Ticket</Text><Text style={styles.scannerSubtitle}>Align the dynamic QR code within the frame to verify TOTP</Text></View>
+-          <View style={styles.viewfinder}><View style={[styles.bracket, styles.topLeft]} /><View style={[styles.bracket, styles.topRight]} /><View style={[styles.bracket, styles.bottomLeft]} /><View style={[styles.bracket, styles.bottomRight]} />{!reduceMotion && <View style={styles.scanLine} />}<View style={styles.viewfinderHint}><Text style={styles.hintPrimary}>Camera preview</Text><Text style={styles.hintSecondary}>{loading ? 'Resolving ticket…' : scanned ? 'Ticket detected' : 'Align QR code within frame'}</Text></View></View>
+-          {scanned && !servingIntent && <Text style={styles.resolving}>{loading ? 'Resolving employee ticket…' : 'Scan another ticket'}</Text>}
+-        </View>
+-      </View>
+-      <Modal visible={Boolean(servingIntent)} animationType="slide" transparent onRequestClose={resetScan}>
+-        <View style={styles.modalBackdrop}><View style={styles.modalCard}><View style={styles.modalHeader}><View><Text style={styles.modalTitle}>Serving Confirmation</Text><Text style={styles.modalSubtitle}>{servingIntent?.intent.totalCount} item{servingIntent?.intent.totalCount === 1 ? '' : 's'} to serve</Text></View><Clock3 size={22} color={expired ? theme.colors.statusBadDeep : theme.colors.accentDeep} /></View>{servingIntent?.intent.isProxy && <Pill tone="warn"><PillText>Proxy pickup</PillText></Pill>}{servingIntent?.intent.items.map((item) => <View key={item.id} style={styles.itemRow}><Text style={styles.itemName}>{item.itemName}</Text><Text style={styles.itemQuantity}>×{item.quantity}</Text></View>)}<View style={[styles.expiry, expired && styles.expiryExpired]}>{expired ? <XCircle size={17} color={theme.colors.statusBadDeep} /> : <CheckCircle2 size={17} color={theme.colors.statusGoodDeep} />}<Text style={[styles.expiryText, expired && styles.expiryTextExpired]}>{expired ? EXPIRED_MESSAGE : `Session expires in ${secondsLeft}s`}</Text></View><Pressable disabled={loading || expired} onPress={() => void confirmServing()} style={[styles.confirmButton, (loading || expired) && styles.disabled]}><Text style={styles.confirmText}>{loading ? 'Processing…' : 'Confirm serving'}</Text></Pressable><Pressable onPress={resetScan} style={styles.cancelButton}><Text style={styles.cancelText}>Cancel and scan again</Text></Pressable></View></View>
+-      </Modal>
+-    </PrototypeFrame>
++    <StateTransition
++      stateKey={!permission ? 'permission-loading' : !permission.granted ? 'permission-denied' : 'scanner-ready'}
++      style={styles.screenTransition}
++    >
++      {!permission ? (
++        <View style={styles.loadingScreen}><BrandLoader label="Preparing camera…" /></View>
++      ) : !permission.granted ? (
++        <PrototypeFrame animateEntrance={false}><View style={styles.permission}><ScanLine size={40} color={theme.colors.accentDeep} /><Text style={styles.permissionTitle}>Camera access required</Text><Text style={styles.permissionText}>Allow camera access to scan employee meal tickets.</Text><Pressable onPress={requestPermission} style={styles.primaryButton}><Text style={styles.primaryButtonText}>Grant permission</Text></Pressable></View></PrototypeFrame>
++      ) : (
++        <PrototypeFrame animateEntrance={false} scroll={false} bottomClearance={130}>
++          <View style={styles.scannerScreen}>
++            {isFocused && !servingIntent && <CameraView style={StyleSheet.absoluteFillObject} facing="back" onBarcodeScanned={scanned ? undefined : handleBarCodeScanned} barcodeScannerSettings={{ barcodeTypes: ['qr'] }} />}
++            <View style={styles.scrim} />
++            <View style={styles.scannerContent}>
++              <Pressable accessibilityLabel="Back to dashboard" onPress={goBack} style={styles.backButton}><ChevronLeft size={20} color={theme.colors.surface} /><Text style={styles.backText}>Dashboard</Text></Pressable>
++              <View style={styles.scannerHead}><Text style={styles.scannerTitle}>Scan Employee Ticket</Text><Text style={styles.scannerSubtitle}>Align the dynamic QR code within the frame to verify TOTP</Text></View>
++              <View style={styles.viewfinder}><View style={[styles.bracket, styles.topLeft]} /><View style={[styles.bracket, styles.topRight]} /><View style={[styles.bracket, styles.bottomLeft]} /><View style={[styles.bracket, styles.bottomRight]} />{!reduceMotion && <View style={styles.scanLine} />}<View style={styles.viewfinderHint}><Text style={styles.hintPrimary}>Camera preview</Text><Text style={styles.hintSecondary}>{loading ? 'Resolving ticket…' : scanned ? 'Ticket detected' : 'Align QR code within frame'}</Text></View></View>
++              {scanned && !servingIntent && <Text style={styles.resolving}>{loading ? 'Resolving employee ticket…' : 'Scan another ticket'}</Text>}
++            </View>
++          </View>
++          <Modal visible={Boolean(servingIntent)} animationType="slide" transparent onRequestClose={resetScan}>
++            <View style={styles.modalBackdrop}><View style={styles.modalCard}><View style={styles.modalHeader}><View><Text style={styles.modalTitle}>Serving Confirmation</Text><Text style={styles.modalSubtitle}>{servingIntent?.intent.totalCount} item{servingIntent?.intent.totalCount === 1 ? '' : 's'} to serve</Text></View><Clock3 size={22} color={expired ? theme.colors.statusBadDeep : theme.colors.accentDeep} /></View>{servingIntent?.intent.isProxy && <Pill tone="warn"><PillText>Proxy pickup</PillText></Pill>}{servingIntent?.intent.items.map((item) => <View key={item.id} style={styles.itemRow}><Text style={styles.itemName}>{item.itemName}</Text><Text style={styles.itemQuantity}>×{item.quantity}</Text></View>)}<View style={[styles.expiry, expired && styles.expiryExpired]}>{expired ? <XCircle size={17} color={theme.colors.statusBadDeep} /> : <CheckCircle2 size={17} color={theme.colors.statusGoodDeep} />}<Text style={[styles.expiryText, expired && styles.expiryTextExpired]}>{expired ? EXPIRED_MESSAGE : `Session expires in ${secondsLeft}s`}</Text></View><Pressable disabled={loading || expired} onPress={() => void confirmServing()} style={[styles.confirmButton, (loading || expired) && styles.disabled]}><Text style={styles.confirmText}>{loading ? 'Processing…' : 'Confirm serving'}</Text></Pressable><Pressable onPress={resetScan} style={styles.cancelButton}><Text style={styles.cancelText}>Cancel and scan again</Text></Pressable></View></View>
++          </Modal>
++        </PrototypeFrame>
++      )}
++    </StateTransition>
+   );
+ }
+ 
+ const styles = StyleSheet.create({
++  screenTransition: { flex: 1 },
+   loadingScreen: { flex: 1, backgroundColor: theme.colors.bg, alignItems: 'center', justifyContent: 'center' },
+   permission: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 20 },
+   permissionTitle: { color: theme.colors.fg, fontSize: 20, fontWeight: '700' },
+   permissionText: { color: theme.colors.muted, fontSize: 14, textAlign: 'center', lineHeight: 21 },
+   primaryButton: { minHeight: 48, paddingHorizontal: 20, borderRadius: theme.radii.md, backgroundColor: theme.colors.accentDeep, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
+   primaryButtonText: { color: theme.colors.surface, fontSize: 14, fontWeight: '700' },
+   scannerScreen: { flex: 1, overflow: 'hidden', backgroundColor: '#050b16' },
+   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(5,11,22,0.45)' },
+   scannerContent: { flex: 1, alignItems: 'center', paddingHorizontal: 22, paddingTop: 14 },
+   backButton: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 2 },
+diff --git a/apps/mobile/src/screens/pickup/PickupIntentScreen.tsx b/apps/mobile/src/screens/pickup/PickupIntentScreen.tsx
+index ef63198..5d9bb85 100644
+--- a/apps/mobile/src/screens/pickup/PickupIntentScreen.tsx
++++ b/apps/mobile/src/screens/pickup/PickupIntentScreen.tsx
+@@ -1,51 +1,66 @@
+ import React, { useCallback, useEffect, useRef, useState } from 'react';
+-import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
++import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+ import QRCode from 'react-native-qrcode-svg';
+ import { Check, Clock3, Square } from 'lucide-react-native';
+ import { useFocusEffect } from '@react-navigation/native';
+ import type { AppTabScreenProps } from '../../navigation';
+ import { useSession } from '../../auth/session';
+ import { pickupAPI, type PickupOption } from '../../api/pickupAPI';
+ import { initials } from '../../businessDate';
+-import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
++import { Avatar, Eyebrow, PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
+ import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
++import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+ import { useNotice } from '../../ui/BrandNotice';
+ import { theme } from '../../theme';
+ type Props = AppTabScreenProps<'PickupIntent'>;
+ 
+ export function PickupIntentScreen(_props: Props) {
+   const { token, profile } = useSession();
+   const { showNotice } = useNotice();
+   const [loading, setLoading] = useState(true);
++  const [loadError, setLoadError] = useState<string | null>(null);
+   const [options, setOptions] = useState<PickupOption[]>([]);
+   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+   const [qrValue, setQrValue] = useState<string | null>(null);
+   const [qrLoading, setQrLoading] = useState(false);
+   const [isGenerating, setIsGenerating] = useState(false);
+   const [timeLeft, setTimeLeft] = useState(0);
+   const progressAnim = useRef(new Animated.Value(1)).current;
++  const optionsRequestId = useRef(0);
+ 
+   const fetchOptions = useCallback(async () => {
+     if (!token) return;
++    const requestId = ++optionsRequestId.current;
++    setLoadError(null);
+     setLoading(true);
+     try {
+       const response = await pickupAPI.getPickupOptions(token);
++      if (requestId !== optionsRequestId.current) return;
+       setOptions(response.options);
+       setSelectedIds((current) => current.size > 0 ? new Set([...current].filter((id) => response.options.some((option) => option.registrationId === id))) : new Set(response.options[0] ? [response.options[0].registrationId] : []));
+     } catch (error: unknown) {
+-      showNotice({ title: 'Pickup unavailable', message: error instanceof Error ? error.message : 'Unable to load pickup options', tone: 'error' });
+-      setLoading(false);
++      if (requestId !== optionsRequestId.current) return;
++      const message = error instanceof Error ? error.message : 'Unable to load pickup options';
++      setLoadError(message);
++      showNotice({ title: 'Pickup unavailable', message, tone: 'error' });
++    } finally {
++      if (requestId === optionsRequestId.current) setLoading(false);
+     }
+-  }, [token]);
++  }, [showNotice, token]);
+ 
+-  useFocusEffect(useCallback(() => { void fetchOptions(); }, [fetchOptions]));
++  useFocusEffect(useCallback(() => {
++    void fetchOptions();
++    return () => {
++      optionsRequestId.current += 1;
++    };
++  }, [fetchOptions]));
+ 
+   useEffect(() => {
+     if (!isGenerating || !token) {
+       setQrValue(null);
+       return;
+     }
+     let cancelled = false;
+     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+     let countdownTimer: ReturnType<typeof setInterval> | undefined;
+     const refresh = async () => {
+@@ -86,51 +101,61 @@ export function PickupIntentScreen(_props: Props) {
+       if (next.has(registrationId)) next.delete(registrationId); else next.add(registrationId);
+       return next;
+     });
+   };
+ 
+   const displayName = profile?.name || profile?.email.split('@')[0] || 'Employee';
+ 
+   return (
+     <PrototypeFrame>
+       <PrototypeSectionTitle title="Meal Ticket" subtitle="Show this dynamic QR code to the kitchen staff" />
+-      {loading ? <ActivityIndicator color={theme.colors.accentDeep} style={styles.loader} /> : options.length === 0 ? (
+-        <PrototypeCard style={styles.emptyCard}><Text style={styles.emptyTitle}>No meals ready to pick up</Text><Text style={styles.emptyText}>Register a meal in Calendar before generating a ticket.</Text></PrototypeCard>
+-      ) : (
+-        <>
+-          <PrototypeCard style={styles.selectionCard}>
+-            <View style={styles.selectionHeader}><Eyebrow>MEALS TO PICK UP</Eyebrow><Text style={styles.selectionHint}>Select one or more</Text></View>
+-            {options.map((option) => {
+-              const selected = selectedIds.has(option.registrationId);
+-              return <Pressable key={option.registrationId} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => toggleSelection(option.registrationId)} style={[styles.optionRow, selected && styles.optionSelected]}>{selected ? <Check size={20} color={theme.colors.accentDeep} /> : <Square size={20} color={theme.colors.muted} />}<View style={styles.optionCopy}><Text style={styles.optionTitle}>{option.type === 'OWN' ? 'My meal' : 'Delegated meal'}</Text><Text style={styles.optionDate}>{option.mealDate.slice(0, 10)}{option.owner ? ` · From ${option.owner.name}` : ''}</Text></View></Pressable>;
+-            })}
+-          </PrototypeCard>
+-          <PrototypeCard style={styles.ticketCard}>
+-            <View style={styles.ticketTop}>
+-              {qrValue ? <QRCode value={qrValue} size={200} color={theme.colors.fg} backgroundColor={theme.colors.surface} /> : <View style={styles.qrPlaceholder}><ActivityIndicator color={theme.colors.accentDeep} /></View>}
+-              <Avatar initials={initials(profile?.name, 'ME')} />
+-              <Text style={styles.ticketName}>{displayName}</Text>
+-              <Text style={styles.ticketId}>{profile?.userId || profile?.id || '—'}</Text>
+-            </View>
+-            <View style={styles.perforation} />
+-            <View style={styles.progressTrack}><Animated.View style={[styles.progressFill, { transform: [{ scaleX: progressAnim }] }]} /></View>
+-            <View style={styles.ticketBottom}><View style={styles.ticketRow}><Text style={styles.ticketKey}>Meal</Text><Text style={styles.ticketValue}>Lunch</Text></View><View style={styles.ticketRow}><Text style={styles.ticketKey}>Selected</Text><Text style={styles.ticketValue}>{selectedIds.size} meal{selectedIds.size === 1 ? '' : 's'}</Text></View><View style={styles.ticketNote}><Clock3 size={15} color={theme.colors.accentDeep} /><Text style={styles.ticketNoteText}>{qrLoading ? 'Refreshing code…' : `Code refreshes in ${timeLeft}s`}</Text></View></View>
++      <StateTransition stateKey={loading ? 'loading' : loadError ? 'error' : options.length === 0 ? 'empty' : 'ready'}>
++        {loading ? (
++          <BrandLoader label="Loading pickup options…" />
++        ) : loadError ? (
++          <PrototypeCard style={styles.emptyCard}>
++            <Text style={styles.emptyTitle}>Pickup unavailable</Text>
++            <Text style={styles.emptyText}>{loadError}</Text>
++            <PrototypeButton variant="secondary" onPress={() => void fetchOptions()} style={styles.retryButton}>Retry</PrototypeButton>
+           </PrototypeCard>
+-          <Pressable accessibilityRole="button" disabled={selectedIds.size === 0} onPress={() => setIsGenerating((current) => !current)} style={[styles.generateButton, selectedIds.size === 0 && styles.disabled]}><Text style={styles.generateText}>{isGenerating ? 'Pause ticket' : 'Generate ticket'}</Text></Pressable>
+-        </>
+-      )}
++        ) : options.length === 0 ? (
++          <PrototypeCard style={styles.emptyCard}><Text style={styles.emptyTitle}>No meals ready to pick up</Text><Text style={styles.emptyText}>Register a meal in Calendar before generating a ticket.</Text></PrototypeCard>
++        ) : (
++          <>
++            <PrototypeCard style={styles.selectionCard}>
++              <View style={styles.selectionHeader}><Eyebrow>MEALS TO PICK UP</Eyebrow><Text style={styles.selectionHint}>Select one or more</Text></View>
++              {options.map((option) => {
++                const selected = selectedIds.has(option.registrationId);
++                return <Pressable key={option.registrationId} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => toggleSelection(option.registrationId)} style={[styles.optionRow, selected && styles.optionSelected]}>{selected ? <Check size={20} color={theme.colors.accentDeep} /> : <Square size={20} color={theme.colors.muted} />}<View style={styles.optionCopy}><Text style={styles.optionTitle}>{option.type === 'OWN' ? 'My meal' : 'Delegated meal'}</Text><Text style={styles.optionDate}>{option.mealDate.slice(0, 10)}{option.owner ? ` · From ${option.owner.name}` : ''}</Text></View></Pressable>;
++              })}
++            </PrototypeCard>
++            <PrototypeCard style={styles.ticketCard}>
++              <View style={styles.ticketTop}>
++                {qrValue ? <QRCode value={qrValue} size={200} color={theme.colors.fg} backgroundColor={theme.colors.surface} /> : <View style={styles.qrPlaceholder}><BrandLoader compact label="Generating QR code…" /></View>}
++                <Avatar initials={initials(profile?.name, 'ME')} />
++                <Text style={styles.ticketName}>{displayName}</Text>
++                <Text style={styles.ticketId}>{profile?.userId || profile?.id || '—'}</Text>
++              </View>
++              <View style={styles.perforation} />
++              <View style={styles.progressTrack}><Animated.View style={[styles.progressFill, { transform: [{ scaleX: progressAnim }] }]} /></View>
++              <View style={styles.ticketBottom}><View style={styles.ticketRow}><Text style={styles.ticketKey}>Meal</Text><Text style={styles.ticketValue}>Lunch</Text></View><View style={styles.ticketRow}><Text style={styles.ticketKey}>Selected</Text><Text style={styles.ticketValue}>{selectedIds.size} meal{selectedIds.size === 1 ? '' : 's'}</Text></View><View style={styles.ticketNote}><Clock3 size={15} color={theme.colors.accentDeep} /><Text style={styles.ticketNoteText}>{qrLoading ? 'Refreshing code…' : `Code refreshes in ${timeLeft}s`}</Text></View></View>
++            </PrototypeCard>
++            <Pressable accessibilityRole="button" disabled={selectedIds.size === 0} onPress={() => setIsGenerating((current) => !current)} style={[styles.generateButton, selectedIds.size === 0 && styles.disabled]}><Text style={styles.generateText}>{isGenerating ? 'Pause ticket' : 'Generate ticket'}</Text></Pressable>
++          </>
++        )}
++      </StateTransition>
+     </PrototypeFrame>
+   );
+ }
+ 
+ const styles = StyleSheet.create({
+-  loader: { marginVertical: 44 },
++  retryButton: { marginTop: 16 },
+   emptyCard: { marginTop: 20 },
+   emptyTitle: { color: theme.colors.fg, fontSize: 17, fontWeight: '700' },
+   emptyText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },
+   selectionCard: { marginBottom: 16 },
+   selectionHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 },
+   selectionHint: { color: theme.colors.muted, fontSize: 12 },
+   optionRow: { minHeight: 52, paddingVertical: 9, paddingHorizontal: 10, borderRadius: theme.radii.sm, flexDirection: 'row', alignItems: 'center', gap: 10 },
+   optionSelected: { backgroundColor: theme.colors.accentTint },
+   optionCopy: { flex: 1, gap: 3 },
+   optionTitle: { color: theme.colors.fg, fontSize: 14, fontWeight: '700' },

@@ -25,3 +25,4 @@ worktrees/
 # Yarn runtime artifacts; yarn.lock and .yarnrc.yml stay tracked
 .yarn/
 .pnp.*
+**/*.tsbuildinfo

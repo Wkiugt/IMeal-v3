@@ -1,0 +1,380 @@
+# Review package: 4b8e0e534e1f277975473dbc9a43b4abc28400a..85dd1bd
+
+## Commits
+85dd1bd feat(mobile): add shared brand motion surface
+
+## Files changed
+ .../task-1-report.md                               |  69 +++++
+ apps/mobile/src/ui/BrandMotion.tsx                 | 288 +++++++++++++++++++++
+ 2 files changed, 357 insertions(+)
+
+## Diff
+diff --git a/.superpowers/sdd/mobile-loading-transitions-plan/task-1-report.md b/.superpowers/sdd/mobile-loading-transitions-plan/task-1-report.md
+new file mode 100644
+index 0000000..2846d9f
+--- /dev/null
++++ b/.superpowers/sdd/mobile-loading-transitions-plan/task-1-report.md
+@@ -0,0 +1,69 @@
++# Task 1 Report — Shared Brand and Motion Surface
++
++## Status
++
++DONE_WITH_CONCERNS
++
++## Files changed
++
++- `apps/mobile/src/ui/BrandMotion.tsx` — added the shared mobile brand and motion components.
++- `.superpowers/sdd/mobile-loading-transitions-plan/task-1-report.md` — recorded this implementation and its verification evidence.
++
++No app shell, navigation shell, or screen file was edited.
++
++## Implemented behavior
++
++### `BrandMark`
++
++- Exports the requested `size`, `containerSize`, and `style` interface with defaults of 28 px and 56 px.
++- Uses `react-native-svg` with the canonical `0 0 24 24` view box and the exact fork-and-knife path geometry from `docs/System-design-UI/assets/icons/brand-mark.svg`.
++- Uses no fill, the theme accent-deep stroke, 1.6 stroke width, and round line caps/joins.
++- Places the SVG in the existing accent-soft, centered, rounded badge treatment.
++
++### `BrandLoader`
++
++- Exports the requested visible `label` and optional `compact` interface.
++- Exposes a progressbar accessibility role and uses the visible label as its accessibility label.
++- Uses the 56 px badge in centered full/section mode and a proportional 36 px badge in inline compact mode.
++- With normal motion, loops two consecutive 450 ms parallel opacity/scale animations using `Easing.inOut(Easing.cubic)` and the native driver: `0.6 / 0.96` to `1 / 1.04`, then back to `0.6 / 0.96`.
++- With Reduce Motion, starts no loop and renders at opacity/scale 1.
++- Stops the loop and both animated values during cleanup.
++
++### `StateTransition`
++
++- Exports the requested `stateKey`, `children`, and optional `style` interface.
++- On mount and every state-key change, stops prior motion, resets to opacity 0 and an 8 px Y offset, then animates to opacity 1 and zero offset over 200 ms with `Easing.out(Easing.cubic)` and the native driver.
++- Reduce Motion applies the final values synchronously.
++- Cleanup stops the composite entrance and both animated values, preventing stale motion after rapid replacement or unmount.
++
++### `ScreenEntrance`
++
++- Exports the requested `active`, `children`, and optional `style` interface.
++- Active entries use the same 200 ms fade/8 px rise as state transitions.
++- Inactive screens stop motion and remain at the fully visible final values until the next active entry; there is no exit animation or route-state change.
++- Reduce Motion applies final values synchronously.
++- Cleanup stops the composite entrance and both animated values.
++
++No new dependency or production test scaffolding was added.
++
++## Verification
++
++Command run from the repository root:
++
++```text
++corepack yarn workspace @imeal/mobile exec tsc --noEmit --strict --jsx react-native --module ESNext --moduleResolution bundler --target ESNext --esModuleInterop --allowSyntheticDefaultImports --skipLibCheck src/ui/BrandMotion.tsx
++```
++
++Exact output:
++
++```text
++(no output)
++```
++
++Exit code: `0`.
++
++This focused compile validates the new component in strict TypeScript mode against the installed React Native, React, and `react-native-svg` types without compiling concurrently edited app surfaces.
++
++## Concerns
++
++- The mobile package has no configured component test runner, so this task could not exercise animation timing, native-driver behavior, or rendered visuals in isolation. The focused strict TypeScript check passed; runtime and visual verification remains part of the downstream integration task.
+diff --git a/apps/mobile/src/ui/BrandMotion.tsx b/apps/mobile/src/ui/BrandMotion.tsx
+new file mode 100644
+index 0000000..ede3ed0
+--- /dev/null
++++ b/apps/mobile/src/ui/BrandMotion.tsx
+@@ -0,0 +1,288 @@
++import React, { useEffect, useRef } from 'react';
++import {
++  Animated,
++  Easing,
++  StyleSheet,
++  Text,
++  View,
++  type StyleProp,
++  type ViewStyle,
++} from 'react-native';
++import Svg, { Path } from 'react-native-svg';
++import { theme } from '../theme';
++import { useReducedMotion } from './useReducedMotion';
++
++type BrandMarkProps = {
++  size?: number;
++  containerSize?: number;
++  style?: StyleProp<ViewStyle>;
++};
++
++export function BrandMark({
++  size = 28,
++  containerSize = 56,
++  style,
++}: BrandMarkProps) {
++  return (
++    <View
++      style={[
++        styles.brandMark,
++        { width: containerSize, height: containerSize },
++        style,
++      ]}
++    >
++      <Svg
++        width={size}
++        height={size}
++        viewBox="0 0 24 24"
++        fill="none"
++        stroke={theme.colors.accentDeep}
++        strokeWidth={1.6}
++        strokeLinecap="round"
++        strokeLinejoin="round"
++      >
++        <Path d="M6 3v9a3 3 0 0 0 6 0V3M9 8.5V3" />
++        <Path d="M17.5 3c-1.4 1.4-2 3-2 5.2 0 1.8.9 2.8 2 3.3V21" />
++      </Svg>
++    </View>
++  );
++}
++
++type BrandLoaderProps = {
++  label: string;
++  compact?: boolean;
++};
++
++export function BrandLoader({ label, compact = false }: BrandLoaderProps) {
++  const reduceMotion = useReducedMotion();
++  const opacity = useRef(new Animated.Value(0.6)).current;
++  const scale = useRef(new Animated.Value(0.96)).current;
++
++  useEffect(() => {
++    if (reduceMotion) {
++      opacity.setValue(1);
++      scale.setValue(1);
++      return () => {
++        opacity.stopAnimation();
++        scale.stopAnimation();
++      };
++    }
++
++    opacity.setValue(0.6);
++    scale.setValue(0.96);
++    const pulse = Animated.loop(
++      Animated.sequence([
++        Animated.parallel([
++          Animated.timing(opacity, {
++            toValue: 1,
++            duration: 450,
++            easing: Easing.inOut(Easing.cubic),
++            useNativeDriver: true,
++          }),
++          Animated.timing(scale, {
++            toValue: 1.04,
++            duration: 450,
++            easing: Easing.inOut(Easing.cubic),
++            useNativeDriver: true,
++          }),
++        ]),
++        Animated.parallel([
++          Animated.timing(opacity, {
++            toValue: 0.6,
++            duration: 450,
++            easing: Easing.inOut(Easing.cubic),
++            useNativeDriver: true,
++          }),
++          Animated.timing(scale, {
++            toValue: 0.96,
++            duration: 450,
++            easing: Easing.inOut(Easing.cubic),
++            useNativeDriver: true,
++          }),
++        ]),
++      ]),
++    );
++
++    pulse.start();
++    return () => {
++      pulse.stop();
++      opacity.stopAnimation();
++      scale.stopAnimation();
++    };
++  }, [opacity, reduceMotion, scale]);
++
++  return (
++    <View
++      accessibilityRole="progressbar"
++      accessibilityLabel={label}
++      style={[styles.loader, compact && styles.loaderCompact]}
++    >
++      <Animated.View style={{ opacity, transform: [{ scale }] }}>
++        <BrandMark
++          size={compact ? 18 : 28}
++          containerSize={compact ? 36 : 56}
++        />
++      </Animated.View>
++      <Text style={[styles.loaderLabel, compact && styles.loaderLabelCompact]}>
++        {label}
++      </Text>
++    </View>
++  );
++}
++
++type StateTransitionProps = {
++  stateKey: string;
++  children: React.ReactNode;
++  style?: StyleProp<ViewStyle>;
++};
++
++export function StateTransition({
++  stateKey,
++  children,
++  style,
++}: StateTransitionProps) {
++  const reduceMotion = useReducedMotion();
++  const opacity = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
++  const translateY = useRef(new Animated.Value(reduceMotion ? 0 : 8)).current;
++
++  useEffect(() => {
++    opacity.stopAnimation();
++    translateY.stopAnimation();
++
++    if (reduceMotion) {
++      opacity.setValue(1);
++      translateY.setValue(0);
++      return () => {
++        opacity.stopAnimation();
++        translateY.stopAnimation();
++      };
++    }
++
++    opacity.setValue(0);
++    translateY.setValue(8);
++    const entrance = Animated.parallel([
++      Animated.timing(opacity, {
++        toValue: 1,
++        duration: 200,
++        easing: Easing.out(Easing.cubic),
++        useNativeDriver: true,
++      }),
++      Animated.timing(translateY, {
++        toValue: 0,
++        duration: 200,
++        easing: Easing.out(Easing.cubic),
++        useNativeDriver: true,
++      }),
++    ]);
++
++    entrance.start();
++    return () => {
++      entrance.stop();
++      opacity.stopAnimation();
++      translateY.stopAnimation();
++    };
++  }, [opacity, reduceMotion, stateKey, translateY]);
++
++  return (
++    <Animated.View style={[style, { opacity, transform: [{ translateY }] }]}>
++      {children}
++    </Animated.View>
++  );
++}
++
++type ScreenEntranceProps = {
++  active: boolean;
++  children: React.ReactNode;
++  style?: StyleProp<ViewStyle>;
++};
++
++export function ScreenEntrance({
++  active,
++  children,
++  style,
++}: ScreenEntranceProps) {
++  const reduceMotion = useReducedMotion();
++  const opacity = useRef(new Animated.Value(1)).current;
++  const translateY = useRef(new Animated.Value(0)).current;
++
++  useEffect(() => {
++    opacity.stopAnimation();
++    translateY.stopAnimation();
++
++    if (reduceMotion || !active) {
++      opacity.setValue(1);
++      translateY.setValue(0);
++      return () => {
++        opacity.stopAnimation();
++        translateY.stopAnimation();
++      };
++    }
++
++    opacity.setValue(0);
++    translateY.setValue(8);
++    const entrance = Animated.parallel([
++      Animated.timing(opacity, {
++        toValue: 1,
++        duration: 200,
++        easing: Easing.out(Easing.cubic),
++        useNativeDriver: true,
++      }),
++      Animated.timing(translateY, {
++        toValue: 0,
++        duration: 200,
++        easing: Easing.out(Easing.cubic),
++        useNativeDriver: true,
++      }),
++    ]);
++
++    entrance.start();
++    return () => {
++      entrance.stop();
++      opacity.stopAnimation();
++      translateY.stopAnimation();
++    };
++  }, [active, opacity, reduceMotion, translateY]);
++
++  return (
++    <Animated.View style={[style, { opacity, transform: [{ translateY }] }]}>
++      {children}
++    </Animated.View>
++  );
++}
++
++const styles = StyleSheet.create({
++  brandMark: {
++    alignItems: 'center',
++    justifyContent: 'center',
++    borderRadius: theme.radii.md,
++    backgroundColor: theme.colors.accentSoft,
++  },
++  loader: {
++    flex: 1,
++    alignItems: 'center',
++    justifyContent: 'center',
++    gap: 12,
++    paddingVertical: 28,
++    backgroundColor: theme.colors.bg,
++  },
++  loaderCompact: {
++    flex: 0,
++    flexDirection: 'row',
++    justifyContent: 'flex-start',
++    gap: 8,
++    paddingVertical: 0,
++    backgroundColor: 'transparent',
++  },
++  loaderLabel: {
++    color: theme.colors.muted,
++    fontSize: 13,
++    lineHeight: 19,
++    textAlign: 'center',
++  },
++  loaderLabelCompact: {
++    flexShrink: 1,
++    fontSize: 12,
++    lineHeight: 17,
++    textAlign: 'left',
++  },
++});

@@ -1,0 +1,177 @@
+# Review package: e0f1bfd..08c943d06b018d374640a9bd87f0ff4e7ba2d9a1
+
+## Commits
+08c943d fix(mobile): provide safe area context at root
+
+## Files changed
+ .../task-5-report.md                               | 75 ++++++++++++++++++++++
+ apps/mobile/App.tsx                                | 39 +++++------
+ 2 files changed, 96 insertions(+), 18 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/mobile-loading-transitions-plan/task-5-report.md b/.superpowers/sdd/mobile-loading-transitions-plan/task-5-report.md
+new file mode 100644
+index 0000000..c7e423b
+--- /dev/null
++++ b/.superpowers/sdd/mobile-loading-transitions-plan/task-5-report.md
+@@ -0,0 +1,75 @@
++# Task 5 report — root safe-area provider
++
++## Change
++
++Updated `apps/mobile/App.tsx` only:
++
++- Imported `SafeAreaProvider` from the already-installed `react-native-safe-area-context` package.
++- Wrapped the application root with `SafeAreaProvider` above `SessionProvider`.
++- Preserved the existing `SessionProvider` → `NoticeProvider` → `NavigationContainer` ordering and all navigation, authentication, and motion behavior below it.
++
++Resulting provider hierarchy:
++
++```text
++SafeAreaProvider
++└── SessionProvider
++    └── NoticeProvider
++        └── NavigationContainer
++```
++
++## TypeScript verification
++
++Command, run from the repository root:
++
++```text
++corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
++```
++
++Output:
++
++```text
++(no stdout)
++Exit code: 0
++Wall time: 2.79 seconds
++```
++
++## Focused Expo web smoke
++
++Expo web server command:
++
++```text
++corepack yarn workspace @imeal/mobile web --port 8082
++```
++
++Server output relevant to readiness and bundling:
++
++```text
++Web is waiting on http://localhost:8082
++Web Bundled 4560ms .../apps/mobile/index.js (1 module)
++```
++
++Runtime setup and procedure:
++
++- Opened `http://localhost:8082/dashboard` in Chromium at a 390 × 844 viewport using the existing authenticated employee session.
++- Captured browser `console` errors, uncaught page errors, and HTTP responses with status >= 400 throughout the full flow.
++- Waited for each route path and a screen-specific visible label before proceeding:
++  1. Dashboard: `/dashboard`, `Open meal ticket`
++  2. Calendar: `/calendar`, `Weekly Meal Registration`
++  3. Ticket: `/pickup`, `Meal Ticket`
++
++Observed result:
++
++```text
++Dashboard: http://localhost:8082/dashboard — rendered
++Calendar:  http://localhost:8082/calendar  — rendered
++Ticket:    http://localhost:8082/pickup    — rendered
++Missing-safe-area errors: 0
++Other console/page errors: 0
++HTTP responses >= 400: 0
++```
++
++The authenticated Dashboard → Calendar → Ticket flow completed without a blank page and without `No safe area value available`.
++
++## Concerns
++
++None observed in the fresh full-flow smoke run.
+diff --git a/apps/mobile/App.tsx b/apps/mobile/App.tsx
+index 71e9acc..3b424c9 100644
+--- a/apps/mobile/App.tsx
++++ b/apps/mobile/App.tsx
+@@ -4,20 +4,21 @@ import * as Linking from 'expo-linking';
+ import {
+   NavigationContainer,
+   useNavigation,
+   type LinkingOptions,
+ } from '@react-navigation/native';
+ import {
+   createNativeStackNavigator,
+   type NativeStackNavigationProp,
+ } from '@react-navigation/native-stack';
+ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
++import { SafeAreaProvider } from 'react-native-safe-area-context';
+ import { SessionProvider, useSession } from './src/auth/session';
+ import { DelegationScreen } from './src/screens/delegation/DelegationScreen';
+ import { EmployeeCalendarScreen } from './src/screens/employee/EmployeeCalendarScreen';
+ import { EmployeeDashboardScreen } from './src/screens/employee/EmployeeDashboardScreen';
+ import { EmployeeProfileScreen } from './src/screens/employee/EmployeeProfileScreen';
+ import { KitchenScannerScreen } from './src/screens/kitchen/KitchenScannerScreen';
+ import { KitchenDashboardScreen } from './src/screens/kitchen/KitchenDashboardScreen';
+ import { PickupIntentScreen } from './src/screens/pickup/PickupIntentScreen';
+ import type {
+   AppTabParamList,
+@@ -223,38 +224,40 @@ function linkingConfig(): LinkingOptions<RootStackParamList> {
+             KitchenScanner: 'scanner',
+           },
+         },
+       },
+     },
+   };
+ }
+ 
+ export default function App() {
+   return (
+-    <SessionProvider>
+-      <NoticeProvider>
+-        <NavigationContainer linking={linkingConfig()}>
+-          <RootStack.Navigator
+-            screenOptions={{ headerShown: false, animation: 'none' }}
+-          >
+-            <RootStack.Screen name="Auth" component={AuthScreen} />
+-            <RootStack.Screen name="AppTabs">
+-              {() => (
+-                <ProtectedRoute>
+-                  <AppTabsNavigator />
+-                </ProtectedRoute>
+-              )}
+-            </RootStack.Screen>
+-          </RootStack.Navigator>
+-        </NavigationContainer>
+-      </NoticeProvider>
+-    </SessionProvider>
++    <SafeAreaProvider>
++      <SessionProvider>
++        <NoticeProvider>
++          <NavigationContainer linking={linkingConfig()}>
++            <RootStack.Navigator
++              screenOptions={{ headerShown: false, animation: 'none' }}
++            >
++              <RootStack.Screen name="Auth" component={AuthScreen} />
++              <RootStack.Screen name="AppTabs">
++                {() => (
++                  <ProtectedRoute>
++                    <AppTabsNavigator />
++                  </ProtectedRoute>
++                )}
++              </RootStack.Screen>
++            </RootStack.Navigator>
++          </NavigationContainer>
++        </NoticeProvider>
++      </SessionProvider>
++    </SafeAreaProvider>
+   );
+ }
+ 
+ const styles = StyleSheet.create({
+   screen: {
+     flex: 1,
+   },
+   loading: {
+     flex: 1,
+     alignItems: 'center',

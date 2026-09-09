@@ -1,0 +1,204 @@
+# Review package: 350733b..ca2792f
+
+## Commits
+ca2792f fix(mobile): bound transient notice lifecycle
+
+## Files changed
+ .../task-4-report.md                               | 40 +++++++++++++
+ apps/mobile/src/ui/BrandNotice.tsx                 | 66 ++++++++++++++++------
+ 2 files changed, 89 insertions(+), 17 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/mobile-loading-transitions-plan/task-4-report.md b/.superpowers/sdd/mobile-loading-transitions-plan/task-4-report.md
+new file mode 100644
+index 0000000..6ae886f
+--- /dev/null
++++ b/.superpowers/sdd/mobile-loading-transitions-plan/task-4-report.md
+@@ -0,0 +1,40 @@
++# Task 4 — Transient notice lifecycle report
++
++## Files
++
++- `apps/mobile/src/ui/BrandNotice.tsx`
++  - Removed the caller-controlled `durationMs` field from `ShowNoticeInput`.
++  - Added the internal tone timeout policy and generation-safe notice replacement/dismissal lifecycle.
++- `.superpowers/sdd/mobile-loading-transitions-plan/task-4-report.md`
++  - Records implementation and verification evidence for this task.
++
++No screen callsites were changed; they continue to use `showNotice`.
++
++## Lifecycle behavior
++
++- `info` and `success` notices begin dismissal after exactly `4000` ms.
++- `warning` and `error` notices begin dismissal after exactly `6000` ms.
++- With normal motion, dismissal retains the existing 200 ms opacity/translate exit, so removal completes at approximately 4.2 or 6.2 seconds.
++- With Reduce Motion enabled, the notice is removed immediately when its 4- or 6-second threshold is reached.
++- Every `showNotice` call increments a monotonic generation before clearing the prior timer and stopping both animated values. The replacement receives a fresh full timeout.
++- Timer callbacks and animated exit completion callbacks carry the notice generation and may clear state only while that generation remains current, preventing an older notice from removing a replacement.
++- Manual dismissal targets the current notice generation, clears its timeout, stops in-flight motion, and uses the same Reduce Motion-aware exit path.
++- Notice-effect cleanup clears the timer and stops both opacity and translation animation values during replacement, removal, and provider unmount.
++- Existing overlay placement, tones, accessibility alert/live-region behavior, accessibility announcement, and dismiss button remain unchanged.
++
++## Verification
++
++No focused `BrandNotice` test harness exists in the mobile workspace, so no permanent test scaffolding was added. The narrowest available TypeScript validation for the mobile package was run from the repository root:
++
++```text
++$ corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
++(no stdout)
++exit code: 0
++wall time: 2.69 seconds
++```
++
++Result: TypeScript completed successfully with no diagnostics.
++
++## Concerns
++
++- Timer thresholds, replacement races, and Reduce Motion dismissal were not exercised in a runtime UI harness because this workspace has no focused React Native component test setup for `BrandNotice`; verification for this slice is compile-time only.
+diff --git a/apps/mobile/src/ui/BrandNotice.tsx b/apps/mobile/src/ui/BrandNotice.tsx
+index 377a25e..5821c98 100644
+--- a/apps/mobile/src/ui/BrandNotice.tsx
++++ b/apps/mobile/src/ui/BrandNotice.tsx
+@@ -4,93 +4,125 @@ import { SafeAreaView } from 'react-native-safe-area-context';
+ import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react-native';
+ import { theme } from '../theme';
+ import { useReducedMotion } from './useReducedMotion';
+ 
+ export type NoticeTone = 'info' | 'success' | 'warning' | 'error';
+ 
+ export type ShowNoticeInput = {
+   title: string;
+   message: string;
+   tone?: NoticeTone;
+-  durationMs?: number;
+ };
+ 
+ type NoticeContextValue = {
+   showNotice: (input: ShowNoticeInput) => void;
+   dismissNotice: () => void;
+ };
+ 
+ const NoticeContext = createContext<NoticeContextValue | null>(null);
+ 
+ const toneStyles: Record<NoticeTone, { tint: string; deep: string; icon: typeof Info }> = {
+   info: { tint: theme.colors.accentTint, deep: theme.colors.accentDeep, icon: Info },
+   success: { tint: theme.colors.statusGoodTint, deep: theme.colors.statusGoodDeep, icon: CheckCircle2 },
+   warning: { tint: theme.colors.statusWarnTint, deep: theme.colors.statusWarnDeep, icon: AlertTriangle },
+   error: { tint: theme.colors.statusBadTint, deep: theme.colors.statusBadDeep, icon: XCircle },
+ };
+ 
++const noticeTimeoutMs: Record<NoticeTone, number> = {
++  info: 4000,
++  success: 4000,
++  warning: 6000,
++  error: 6000,
++};
++
++type CurrentNotice = {
++  input: ShowNoticeInput;
++  generation: number;
++};
++
+ export function NoticeProvider({ children }: { children: React.ReactNode }) {
+-  const [notice, setNotice] = useState<ShowNoticeInput | null>(null);
++  const [notice, setNotice] = useState<CurrentNotice | null>(null);
+   const [visibleNotice, setVisibleNotice] = useState<ShowNoticeInput | null>(null);
+   const opacity = useRef(new Animated.Value(0)).current;
+   const translateY = useRef(new Animated.Value(-8)).current;
+   const reduceMotion = useReducedMotion();
+-  const dismissTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
++  const reduceMotionRef = useRef(reduceMotion);
++  const dismissTimer = useRef<NodeJS.Timeout | undefined>(undefined);
++  const noticeGeneration = useRef(0);
++  reduceMotionRef.current = reduceMotion;
+ 
+-  const dismissNotice = useCallback(() => {
++  const stopAnimations = useCallback(() => {
++    opacity.stopAnimation();
++    translateY.stopAnimation();
++  }, [opacity, translateY]);
++
++  const dismissGeneration = useCallback((generation: number) => {
+     clearTimeout(dismissTimer.current);
+-    if (!visibleNotice) return;
+-    if (reduceMotion) {
++    stopAnimations();
++    if (generation !== noticeGeneration.current) return;
++
++    if (reduceMotionRef.current) {
+       setNotice(null);
+       setVisibleNotice(null);
+       return;
+     }
++
+     Animated.parallel([
+       Animated.timing(opacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+       Animated.timing(translateY, { toValue: -8, duration: 200, useNativeDriver: true }),
+     ]).start(({ finished }) => {
+-      if (finished) {
++      if (finished && generation === noticeGeneration.current) {
+         setNotice(null);
+         setVisibleNotice(null);
+       }
+     });
+-  }, [opacity, reduceMotion, translateY, visibleNotice]);
++  }, [opacity, stopAnimations, translateY]);
++
++  const dismissNotice = useCallback(() => {
++    if (notice) dismissGeneration(notice.generation);
++  }, [dismissGeneration, notice]);
+ 
+   const showNotice = useCallback((input: ShowNoticeInput) => {
++    const generation = noticeGeneration.current + 1;
++    noticeGeneration.current = generation;
+     clearTimeout(dismissTimer.current);
+-    setNotice(input);
++    stopAnimations();
++    setNotice({ input, generation });
+     setVisibleNotice(input);
+-  }, []);
++  }, [stopAnimations]);
+ 
+   useEffect(() => {
+     if (!notice) return;
+-    if (reduceMotion) {
++    const { input, generation } = notice;
++
++    stopAnimations();
++    if (reduceMotionRef.current) {
+       opacity.setValue(1);
+       translateY.setValue(0);
+     } else {
+       opacity.setValue(0);
+       translateY.setValue(-8);
+       Animated.parallel([
+         Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+         Animated.timing(translateY, { toValue: 0, duration: 200, useNativeDriver: true }),
+       ]).start();
+     }
+ 
+-    void AccessibilityInfo.announceForAccessibility(`${notice.title}. ${notice.message}`);
+-    const duration = notice.durationMs ?? (notice.tone === 'warning' || notice.tone === 'error' ? 0 : 4000);
+-    if (duration > 0) {
+-      dismissTimer.current = setTimeout(dismissNotice, duration);
+-    }
++    void AccessibilityInfo.announceForAccessibility(`${input.title}. ${input.message}`);
++    const tone = input.tone ?? 'info';
++    dismissTimer.current = setTimeout(() => dismissGeneration(generation), noticeTimeoutMs[tone]);
++
+     return () => {
+       clearTimeout(dismissTimer.current);
++      stopAnimations();
+     };
+-  }, [dismissNotice, notice, opacity, reduceMotion, translateY]);
++  }, [dismissGeneration, notice, opacity, stopAnimations, translateY]);
+ 
+   const tone = visibleNotice?.tone || 'info';
+   const palette = toneStyles[tone];
+   const Icon = palette.icon;
+   const value = React.useMemo(() => ({ showNotice, dismissNotice }), [dismissNotice, showNotice]);
+ 
+   return (
+     <NoticeContext.Provider value={value}>
+       {children}
+       {visibleNotice && (
