@@ -252,6 +252,8 @@ corepack yarn workspace @imeal/worker start:dev
 ```
 
 API bind `0.0.0.0:3000`, nên cùng endpoint có thể phục vụ browser local, Android Emulator alias và điện thoại trong LAN khi firewall cho phép.
+Các endpoint serving không còn yêu cầu request đến từ mạng LAN nội bộ; bearer token hợp lệ với quyền `kitchen.serve` mới là điều kiện ủy quyền.
+
 
 ### Vận hành stack
 

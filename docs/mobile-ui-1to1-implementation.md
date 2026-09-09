@@ -30,6 +30,7 @@ The employee registration client uses the existing API controller paths:
 - `PUT /registrations/batch`
 
 The mobile API base strips a trailing `/api` for registration, auth, and direct controller paths. Pickup and serving endpoints use the shared API origin. In Expo development, the host is derived from the Metro session as `http://<Metro-host>:3000/api`; every connected device uses that endpoint.
+Serving authorization no longer depends on an internal LAN source IP; a valid bearer token with `kitchen.serve` permission is required.
 
 ## Run
 

@@ -201,6 +201,9 @@ The Admin Web uses API URL `http://localhost:3000` and does not require any `VIT
 | `GET /auth/me` | Yes | Yes | Yes |
 | Employee registration flow | Yes | No, unless also assigned `staff` | No |
 | Kitchen dashboard and serving flow | No | Yes | Only with `kitchen.serve` permission |
+
+Serving authorization no longer depends on an internal LAN source IP; a valid bearer token with `kitchen.serve` permission is required.
+
 | Weekly menu administration | No | Yes, according to current migration permissions | Yes |
 | Penalty administration | No | No | Yes |
 
