@@ -303,29 +303,26 @@ yarn workspace @imeal/admin-web build
 
 ### Mobile Expo
 
-Tạo `apps/mobile/.env`:
+Tạo `apps/mobile/.env` chỉ với các giá trị Entra cần cho cấu hình auth:
 
 ```dotenv
-EXPO_PUBLIC_API_URL=http://<host-ip>:3000/api
 EXPO_PUBLIC_ENTRA_TENANT_ID=<entra-tenant-id>
 EXPO_PUBLIC_ENTRA_CLIENT_ID=<entra-client-id>
 EXPO_PUBLIC_ENTRA_API_SCOPE=api://<entra-client-id>/access_as_user
 ```
 
-Chạy Expo:
+Chạy Expo local mà không cần gán API IP:
 
 ```bash
-yarn workspace @imeal/mobile start
-yarn workspace @imeal/mobile android
-yarn workspace @imeal/mobile ios
-yarn workspace @imeal/mobile web
+corepack yarn workspace @imeal/mobile web
+corepack yarn workspace @imeal/mobile android
+corepack yarn workspace @imeal/mobile ios
+corepack yarn workspace @imeal/mobile start --lan
 ```
 
-- iOS Simulator có thể dùng `http://localhost:3000/api`.
-- Android Emulator thường dùng `http://10.0.2.2:3000/api` để truy cập host.
-- Điện thoại thật phải dùng IP LAN của máy chạy API, ví dụ `http://192.168.1.10:3000/api`, và firewall phải cho phép port đó.
+Expo tự suy ra `http://<Metro-host>:3000/api` một lần từ Metro session; mọi thiết bị kết nối dùng chung endpoint này. Điện thoại và máy development phải cùng LAN, API bind `0.0.0.0:3000`, firewall cho phép port `3000` và Metro `8081`. Android Emulator phải được boot trước khi chạy lệnh `android`.
 
-Mobile hiện không có Dockerfile và không nằm trong `docker-compose.yml`; chạy qua Expo là flow phát triển chính thức. Khi dùng server Docker, đổi `EXPO_PUBLIC_API_URL` thành địa chỉ server, ví dụ `http://imeal.example.com/api`.
+`EXPO_PUBLIC_API_URL` chỉ bắt buộc trong production; đây là override tùy chọn cho Expo tunnel, reverse proxy hoặc API port khác mặc định. Mobile không có Dockerfile và không nằm trong `docker-compose.yml`; chạy qua Expo là flow phát triển chính thức.
 
 ## Triển khai server Linux
 
