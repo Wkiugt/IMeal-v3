@@ -1902,6 +1902,7 @@ __metadata:
     "@types/react": "npm:~18.2.45"
     expo: "npm:~51.0.28"
     expo-camera: "npm:~15.0.16"
+    expo-constants: "npm:~16.0.2"
     expo-crypto: "npm:~13.0.2"
     expo-linking: "npm:~6.3.1"
     expo-secure-store: "npm:~13.0.2"
@@ -6960,7 +6961,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"expo-constants@npm:~16.0.0":
+"expo-constants@npm:~16.0.0, expo-constants@npm:~16.0.2":
   version: 16.0.2
   resolution: "expo-constants@npm:16.0.2"
   dependencies:
