@@ -155,10 +155,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   useEffect(() => {
-    if (!isRestoring && !token) {
+    if (!visibleRestoring && !token) {
       navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
     }
-  }, [isRestoring, navigation, token]);
+  }, [navigation, token, visibleRestoring]);
 
   if (visibleRestoring || !token) {
     return (
@@ -296,6 +296,7 @@ const styles = StyleSheet.create({
   authMark: {
     alignSelf: 'center',
     marginBottom: 18,
+    borderRadius: theme.radii.pill,
   },
   title: {
     color: theme.colors.fg,

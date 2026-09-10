@@ -40,3 +40,13 @@
 ## Concerns
 
 - The mobile package has no configured unit-test runner or `react-test-renderer`; verification was limited to the focused package TypeScript check and changed-file whitespace check. Actual timing and visual transitions still warrant the planned Expo/Chromium verification.
+
+## Post-review fixes
+
+- Added `borderRadius: theme.radii.pill` to the shared `authMark` style used by both 72 px auth badges, making the login/no-access mark circular.
+- Changed `ProtectedRoute`'s reset effect to gate on `visibleRestoring`, so direct AppTabs entry retains the restoration loader through the complete 450 ms presentation floor before redirecting to Auth.
+
+### Covering check
+
+- `corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json`
+  - Passed with no output after both fixes.
