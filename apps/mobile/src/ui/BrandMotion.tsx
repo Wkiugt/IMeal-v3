@@ -12,6 +12,8 @@ import Svg, { Path } from 'react-native-svg';
 import { theme } from '../theme';
 import { useReducedMotion } from './useReducedMotion';
 
+const MOTION_DURATION_MS = 260;
+
 type BrandMarkProps = {
   size?: number;
   containerSize?: number;
@@ -163,13 +165,13 @@ export function StateTransition({
     const entrance = Animated.parallel([
       Animated.timing(opacity, {
         toValue: 1,
-        duration: 200,
+        duration: MOTION_DURATION_MS,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
       Animated.timing(translateY, {
         toValue: 0,
-        duration: 200,
+        duration: MOTION_DURATION_MS,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
@@ -223,13 +225,13 @@ export function ScreenEntrance({
     const entrance = Animated.parallel([
       Animated.timing(opacity, {
         toValue: 1,
-        duration: 200,
+        duration: MOTION_DURATION_MS,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
       Animated.timing(translateY, {
         toValue: 0,
-        duration: 200,
+        duration: MOTION_DURATION_MS,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),

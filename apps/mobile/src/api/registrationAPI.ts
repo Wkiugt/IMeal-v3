@@ -1,6 +1,7 @@
-import { API_ROOT } from './apiConfig';
+import { v1 } from '@imeal/contracts';
+import { API_BASE } from './apiConfig';
 
-export type RegistrationStatus = 'ACTIVE' | 'CANCELLED';
+export type RegistrationStatus = v1.RegistrationStatus;
 
 export interface RegistrationRecord {
   id: string;
@@ -33,15 +34,11 @@ export interface WeekRegistrationResponse {
   registrationWindow: RegistrationWindow;
 }
 
-export interface BatchRegistrationResult {
-  date: string;
-  success: boolean;
-  reason?: string;
-}
+export type BatchRegistrationResult = v1.BatchRegistrationResult;
 
 export const registrationAPI = {
   getWeek: async (startDate: string, token: string): Promise<WeekRegistrationResponse> => {
-    const response = await fetch(`${API_ROOT}/registrations/week?startDate=${encodeURIComponent(startDate)}`, {
+    const response = await fetch(`${API_BASE}/registrations/week?startDate=${encodeURIComponent(startDate)}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
@@ -55,7 +52,7 @@ export const registrationAPI = {
     registrations: Array<{ mealDate: string; status: RegistrationStatus }>,
     token: string,
   ): Promise<BatchRegistrationResult[]> => {
-    const response = await fetch(`${API_ROOT}/registrations/batch`, {
+    const response = await fetch(`${API_BASE}/registrations/batch`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ registrations }),
@@ -64,6 +61,12 @@ export const registrationAPI = {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.message || 'Failed to update meal registrations');
     }
-    return response.json();
+
+    const payload: unknown = await response.json().catch(() => null);
+    const parsed = v1.BatchRegistrationResponseSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new Error('The registration response is invalid');
+    }
+    return parsed.data;
   },
 };

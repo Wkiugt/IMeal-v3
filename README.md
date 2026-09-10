@@ -349,6 +349,14 @@ corepack yarn workspace @imeal/mobile start --lan
 
 Expo tự suy ra `http://<Metro-host>:3000/api` một lần từ Metro session để mọi thiết bị đã kết nối dùng chung. Mở app bằng Expo client tương thích Expo SDK `~51.0.28`. Cho phép inbound TCP `3000` và Metro port `8081` trong firewall. API phải bind `0.0.0.0:3000`.
 
+Nếu điện thoại không cùng LAN hoặc QR LAN hiển thị `127.0.0.1`, dùng Expo tunnel:
+
+```powershell
+corepack yarn workspace @imeal/mobile start:tunnel
+```
+
+Tunnel cần Internet ở cả máy development và điện thoại. `@expo/ngrok` đã được khai báo trong mobile workspace, nên không cần cài global. Tunnel URL chỉ tải JavaScript bundle; `EXPO_PUBLIC_API_URL` vẫn phải trỏ tới API public mà điện thoại truy cập được (không dùng Expo Metro URL làm API URL).
+
 ### iOS
 
 **iOS Simulator** chỉ chạy trên macOS có Xcode:

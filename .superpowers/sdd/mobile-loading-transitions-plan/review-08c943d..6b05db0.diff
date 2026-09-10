@@ -1,0 +1,157 @@
+# Review package: 08c943d06b018d374640a9bd87f0ff4e7ba2d9a1..6b05db0
+
+## Commits
+6b05db0 fix(mobile): retain calendar loader through initial week
+
+## Files changed
+ .../task-3-report.md                               | 44 ++++++++++++++++++++++
+ .../screens/employee/EmployeeCalendarScreen.tsx    | 12 ++++--
+ 2 files changed, 53 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/mobile-loading-transitions-plan/task-3-report.md b/.superpowers/sdd/mobile-loading-transitions-plan/task-3-report.md
+index c24d4c5..a3966ff 100644
+--- a/.superpowers/sdd/mobile-loading-transitions-plan/task-3-report.md
++++ b/.superpowers/sdd/mobile-loading-transitions-plan/task-3-report.md
+@@ -182,10 +182,54 @@ Command:
+ corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
+ ```
+ 
+ Output:
+ 
+ ```text
+ (no output)
+ ```
+ 
+ Status: PASS — exit code 0, completed in 3.16 seconds.
++
++## Final Review Fix — Calendar Initial Focus Loading
++
++### Fix details
++
++- Split the calendar's combined pending state into independently owned `monthLoading` and `weekLoading` state, while retaining the existing derived `loading` branch and its exact loading/error/ready precedence.
++- `loadMonth` starts both domains. Its `finally` clears month loading only while its captured month request remains current, and clears week loading only while its pre-captured week request remains current.
++- `refreshCurrentWeek` now clears week loading from a guarded `finally`, so the initial focused refresh—not the superseded week phase inside `loadMonth`—owns removal of `Loading meal calendar…`.
++- A month response that settles before the authoritative focused week request can no longer expose empty, locked rows. If the week request settles first, month loading remains authoritative until the month request settles.
++- Standalone focus/cutoff refreshes do not start week loading after a snapshot exists, preserving ready rows and a valid `windowSnapshot` during later refreshes and failures. Monotonic month/week request IDs, stale-response guards, month changes, cutoff refreshes, and snapshot retention remain unchanged.
++
++### Targeted request-order verification
++
++A temporary hook harness transpiled and exercised the actual `EmployeeCalendarScreen.tsx` implementation with controlled month/week promises. It covered month-first initial focus, later refresh failure with a valid snapshot, and week-first overlap during a month change.
++
++Command:
++
++```text
++node C:/Users/KHOING~1/AppData/Local/Temp/calendar-loading-repro.cjs
++```
++
++Output:
++
++```text
++PASS: request-order scenarios preserve initial loading, ready snapshot retention, and month/week ownership
++```
++
++Result: exit code 0.
++
++### Required TypeScript verification
++
++Command:
++
++```text
++corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
++```
++
++Output:
++
++```text
++(no output)
++```
++
++Result: exit code 0, completed in 4.33 seconds.
+diff --git a/apps/mobile/src/screens/employee/EmployeeCalendarScreen.tsx b/apps/mobile/src/screens/employee/EmployeeCalendarScreen.tsx
+index a03bd57..dd979a4 100644
+--- a/apps/mobile/src/screens/employee/EmployeeCalendarScreen.tsx
++++ b/apps/mobile/src/screens/employee/EmployeeCalendarScreen.tsx
+@@ -43,21 +43,23 @@ function registrationsForWeek(response: WeekRegistrationResponse, weekStart: Dat
+ }
+ 
+ export function EmployeeCalendarScreen(_props: Props) {
+   const { token } = useSession();
+   const { showNotice } = useNotice();
+   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+   const [weekState, setWeekState] = useState<WeekState>({});
+   const [monthRegistrations, setMonthRegistrations] = useState<Set<string>>(new Set());
+   const [windowSnapshot, setWindowSnapshot] = useState<WindowSnapshot | null>(null);
+   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+-  const [loading, setLoading] = useState(true);
++  const [monthLoading, setMonthLoading] = useState(true);
++  const [weekLoading, setWeekLoading] = useState(true);
++  const loading = monthLoading || weekLoading;
+   const [savingDate, setSavingDate] = useState<string | null>(null);
+   const cutoffWarnings = useRef(new Set<string>());
+   const monthRequestId = useRef(0);
+   const weekRequestId = useRef(0);
+   const weekStart = useMemo(() => startOfWeek(new Date()), []);
+ 
+   const applyCurrentWeek = useCallback((response: WeekRegistrationResponse, receiptAt: number) => {
+     setWeekState(registrationsForWeek(response, weekStart));
+     const snapshot = getWindowSnapshot(response, receiptAt);
+     if (!snapshot) {
+@@ -77,29 +79,32 @@ export function EmployeeCalendarScreen(_props: Props) {
+       const response = await registrationAPI.getWeek(toDateKey(weekStart), token);
+       if (requestId !== weekRequestId.current) return;
+       if (!applyCurrentWeek(response, receiptAt)) {
+         showNotice({ title: 'Calendar unavailable', message: 'Cutoff availability could not be loaded.', tone: 'error' });
+       }
+     } catch (error: unknown) {
+       if (requestId !== weekRequestId.current) return;
+       const message = error instanceof Error ? error.message : 'Unable to load meal registrations';
+       setAvailabilityError(message);
+       showNotice({ title: 'Calendar unavailable', message, tone: 'error' });
++    } finally {
++      if (requestId === weekRequestId.current) setWeekLoading(false);
+     }
+   }, [applyCurrentWeek, showNotice, token, weekStart]);
+ 
+   const loadMonth = useCallback(async () => {
+     if (!token) return;
+     const currentMonthRequestId = ++monthRequestId.current;
+     const currentWeekRequestId = ++weekRequestId.current;
+     let phase: 'month' | 'week' = 'month';
+-    setLoading(true);
++    setMonthLoading(true);
++    setWeekLoading(true);
+     try {
+       const firstWeek = startOfWeek(month);
+       const lastDay = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+       const starts: string[] = [];
+       for (let cursor = firstWeek; cursor <= lastDay; cursor = addDays(cursor, 7)) starts.push(toDateKey(cursor));
+       const responses = await Promise.all(starts.map((startDate) => registrationAPI.getWeek(startDate, token)));
+       if (currentMonthRequestId !== monthRequestId.current) return;
+       const registrations: RegistrationRecord[] = responses.flatMap((response) => response.registrations);
+       setMonthRegistrations(new Set(registrations.filter((registration) => registration.status === 'ACTIVE').map((registration) => registration.mealDate.slice(0, 10))));
+ 
+@@ -113,21 +118,22 @@ export function EmployeeCalendarScreen(_props: Props) {
+       }
+     } catch (error: unknown) {
+       const requestIsCurrent = phase === 'month'
+         ? currentMonthRequestId === monthRequestId.current
+         : currentWeekRequestId === weekRequestId.current;
+       if (!requestIsCurrent) return;
+       const message = error instanceof Error ? error.message : 'Unable to load meal registrations';
+       setAvailabilityError(message);
+       showNotice({ title: 'Calendar unavailable', message, tone: 'error' });
+     } finally {
+-      if (currentMonthRequestId === monthRequestId.current) setLoading(false);
++      if (currentMonthRequestId === monthRequestId.current) setMonthLoading(false);
++      if (currentWeekRequestId === weekRequestId.current) setWeekLoading(false);
+     }
+   }, [applyCurrentWeek, month, showNotice, token, weekStart]);
+ 
+   useEffect(() => {
+     void loadMonth();
+     return () => {
+       monthRequestId.current += 1;
+       weekRequestId.current += 1;
+     };
+   }, [loadMonth]);

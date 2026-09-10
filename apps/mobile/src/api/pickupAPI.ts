@@ -1,3 +1,4 @@
+import { v1 } from '@imeal/contracts';
 import { API_BASE } from './apiConfig';
 
 export interface PickupOption {
@@ -22,17 +23,79 @@ export interface GenerateQrResponse {
   ttl: number;
 }
 
+export class PickupAvailabilityApiError extends Error {
+  readonly code: v1.PickupAvailabilityCode;
+  readonly status: number;
+  readonly details: v1.PickupAvailabilityError['details'];
+
+  constructor(payload: v1.PickupAvailabilityError, status: number) {
+    super(payload.message);
+    this.name = 'PickupAvailabilityApiError';
+    this.code = payload.code;
+    this.status = status;
+    this.details = payload.details;
+  }
+}
+
+async function throwPickupError(
+  response: Response,
+  fallbackMessage: string,
+): Promise<never> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error(fallbackMessage);
+  }
+
+  const bodyObject =
+    body !== null && typeof body === 'object'
+      ? (body as { message?: unknown; error?: unknown })
+      : undefined;
+  const candidates = [body, bodyObject?.message, bodyObject?.error];
+  const parsedPayload = candidates
+    .map((candidate) =>
+      v1.PickupAvailabilityErrorSchema.safeParse(candidate),
+    )
+    .find((result) => result.success);
+  if (response.status === 403 && parsedPayload?.success) {
+    throw new PickupAvailabilityApiError(parsedPayload.data, response.status);
+  }
+
+  const message =
+    typeof bodyObject?.message === 'string' ? bodyObject.message : undefined;
+  throw new Error(message || fallbackMessage);
+}
+
+async function fetchOrThrow(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  fallbackMessage: string,
+): Promise<Response> {
+  let response: Response;
+  try {
+    response = await fetch(input, init);
+  } catch {
+    throw new Error(fallbackMessage);
+  }
+
+  if (!response.ok) {
+    return await throwPickupError(response, fallbackMessage);
+  }
+  return response;
+}
+
 export const pickupAPI = {
   getPickupOptions: async (token: string): Promise<PickupOptionsResponse> => {
-    const res = await fetch(`${API_BASE}/me/pickup-options`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
+    const res = await fetchOrThrow(
+      `${API_BASE}/me/pickup-options`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       },
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Failed to get pickup options');
-    }
+      'Failed to get pickup options',
+    );
     return res.json();
   },
 
@@ -40,18 +103,18 @@ export const pickupAPI = {
     token: string,
     registrationIds: string[],
   ): Promise<GenerateQrResponse> => {
-    const res = await fetch(`${API_BASE}/me/qr`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+    const res = await fetchOrThrow(
+      `${API_BASE}/me/qr`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ registrationIds }),
       },
-      body: JSON.stringify({ registrationIds }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Failed to generate QR');
-    }
+      'Failed to generate QR',
+    );
     return res.json();
   },
 };

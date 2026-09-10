@@ -9,6 +9,7 @@ import { addDays, formatDay, formatMonth, formatShortDate, startOfWeek, toDateKe
 import { PrototypeCard, Pill, PillText } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+import { useMinimumVisibleLoading } from '../../ui/useMinimumVisibleLoading';
 import { useNotice } from '../../ui/BrandNotice';
 import { useReducedMotion } from '../../ui/useReducedMotion';
 import { theme } from '../../theme';
@@ -53,6 +54,7 @@ export function EmployeeCalendarScreen(_props: Props) {
   const [monthLoading, setMonthLoading] = useState(true);
   const [weekLoading, setWeekLoading] = useState(true);
   const loading = monthLoading || weekLoading;
+  const visibleLoading = useMinimumVisibleLoading(loading);
   const [savingDate, setSavingDate] = useState<string | null>(null);
   const cutoffWarnings = useRef(new Set<string>());
   const monthRequestId = useRef(0);
@@ -197,7 +199,11 @@ export function EmployeeCalendarScreen(_props: Props) {
         return updated;
       });
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unable to update this day';
+      const message = error instanceof TypeError
+        ? 'Unable to reach the meal registration service. Check your connection and try again.'
+        : error instanceof Error
+          ? error.message
+          : 'Unable to update this day';
       if (message === 'Cutoff time exceeded') handleCutoffFailure(dateKey, previous);
       else {
         setWeekState((current) => ({ ...current, [dateKey]: previous }));
@@ -224,8 +230,8 @@ export function EmployeeCalendarScreen(_props: Props) {
       </PrototypeCard>
       <View style={styles.legend}><View style={styles.legendItem}><View style={[styles.swatch, styles.bookedSwatch]} /><Text style={styles.legendText}>Booked</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.todaySwatch]} /><Text style={styles.legendText}>Today</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.availableSwatch]} /><Text style={styles.legendText}>Available</Text></View></View>
       <View style={styles.weekHeader}><PrototypeSectionTitle title="Weekly Meal Registration" subtitle={`${formatShortDate(weekStart)}–${formatShortDate(addDays(weekStart, 6))} · Toggle a day on to register lunch`} /></View>
-      <StateTransition stateKey={loading ? 'loading' : availabilityError && !windowSnapshot ? 'error' : 'ready'}>
-        {loading ? (
+      <StateTransition stateKey={visibleLoading ? 'loading' : availabilityError && !windowSnapshot ? 'error' : 'ready'}>
+        {visibleLoading ? (
           <BrandLoader label="Loading meal calendar…" />
         ) : availabilityError && !windowSnapshot ? (
           <Pressable accessibilityRole="button" onPress={() => void loadMonth()} style={styles.retry}>

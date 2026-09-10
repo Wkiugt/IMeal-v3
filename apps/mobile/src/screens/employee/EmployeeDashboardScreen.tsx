@@ -8,6 +8,7 @@ import { startOfWeek, toDateKey, initials } from '../../businessDate';
 import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+import { useMinimumVisibleLoading } from '../../ui/useMinimumVisibleLoading';
 import { theme } from '../../theme';
 
 type Props = AppTabScreenProps<'EmployeeDashboard'>;
@@ -37,9 +38,10 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
     return () => { mounted = false; };
   }, [token]);
 
+  const visibleLoading = useMinimumVisibleLoading(loading);
   const greetingName = profile?.name || profile?.email.split('@')[0] || 'there';
-  const status = loading ? 'Loading…' : todayRegistered === true ? 'Confirmed' : todayRegistered === false ? 'Not registered' : 'Unavailable';
-  const statusTone = loading || todayRegistered === true ? 'soft' : 'warn';
+  const status = visibleLoading ? 'Loading…' : todayRegistered === true ? 'Confirmed' : todayRegistered === false ? 'Not registered' : 'Unavailable';
+  const statusTone = visibleLoading || todayRegistered === true ? 'soft' : 'warn';
   const today = new Date();
   return (
     <PrototypeFrame>
@@ -51,7 +53,7 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Open profile"
-          onPress={() => navigation.navigate('EmployeeProfile')}
+          onPress={() => navigation.navigate('EmployeeProfile', { screen: 'ProfileHome' })}
           style={({ pressed }) => [styles.avatarButton, pressed && styles.avatarPressed]}
         >
           <Avatar initials={initials(profile?.name, 'ME')} />
@@ -60,8 +62,8 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
       <PrototypeCard style={styles.mealCard}>
         <View style={styles.topRow}>
           <Pill><PillText>Lunch · 12:00–13:00</PillText></Pill>
-          <StateTransition stateKey={loading ? 'loading' : todayRegistered === null ? 'unavailable' : 'loaded'} style={styles.statusTransition}>
-            {loading ? <BrandLoader compact label="Loading today’s registration…" /> : <Pill tone={statusTone}><PillText>{status}</PillText></Pill>}
+          <StateTransition stateKey={visibleLoading ? 'loading' : todayRegistered === null ? 'unavailable' : 'loaded'} style={styles.statusTransition}>
+            {visibleLoading ? <BrandLoader compact label="Loading today’s registration…" /> : <Pill tone={statusTone}><PillText>{status}</PillText></Pill>}
           </StateTransition>
         </View>
         <Text style={styles.mealTitle}>Grilled Chicken Rice Bowl</Text>

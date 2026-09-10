@@ -1,0 +1,513 @@
+# Review package: 85dd1bd..dd00ad8
+
+## Commits
+dd00ad8 feat(mobile): animate shell and auth transitions
+
+## Files changed
+ .../task-2-report.md                               |  58 ++++++++
+ apps/mobile/App.tsx                                | 158 ++++++++++-----------
+ apps/mobile/src/ui/PrototypeShell.tsx              |  50 ++++---
+ 3 files changed, 166 insertions(+), 100 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/mobile-loading-transitions-plan/task-2-report.md b/.superpowers/sdd/mobile-loading-transitions-plan/task-2-report.md
+new file mode 100644
+index 0000000..952c4b2
+--- /dev/null
++++ b/.superpowers/sdd/mobile-loading-transitions-plan/task-2-report.md
+@@ -0,0 +1,58 @@
++# Task 2 — Shell/auth/navigation implementation report
++
++## Files changed
++
++- `apps/mobile/src/ui/PrototypeShell.tsx`
++  - Added the optional `animateEntrance` prop to `PrototypeFrame`, defaulting to `true`.
++  - Reads focus state through `useIsFocused()`.
++  - Wraps the existing device container in `ScreenEntrance active={isFocused}` when entrance animation is enabled.
++  - Keeps an unwrapped device container when `animateEntrance={false}`.
++  - Preserves the safe-area boundary, canvas, scroll behavior, bottom clearance, responsive device width, and existing tab bar behavior.
++  - Added only the wrapper layout style needed to preserve the framed screen's full-height and centered responsive geometry.
++
++- `apps/mobile/App.tsx`
++  - Replaced `ActivityIndicator` restore gates in `AuthScreen` and `ProtectedRoute` with full `BrandLoader` instances labeled exactly `Restoring your session…`.
++  - Replaced both auth-card-local `Utensils` badges with the shared `BrandMark`.
++  - Consolidated the `restoring`, `no-access`, and `sign-in` auth surfaces under one `StateTransition`, keyed respectively as `restoring`, `no-access`, and `sign-in`.
++  - Removed the unused `ActivityIndicator` and `Utensils` imports and removed the duplicated `loginMark` visual style. The remaining `authMark` style only supplies auth-card placement/margin to the shared mark.
++  - Disabled native root-stack transitions with `screenOptions={{ headerShown: false, animation: 'none' }}`.
++  - Retained the profile stack's existing `animation: 'none'` option and left routes, redirects, role-based tab registration, deep-link paths, and history reset logic unchanged.
++
++## Verification
++
++No focused UI component test harness exists in the mobile workspace; the only discovered spec is the unrelated API configuration spec. Per the task constraint, no permanent UI test scaffolding was added.
++
++Command run from the repository root:
++
++```text
++corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
++```
++
++Exact result:
++
++```text
++(no output)
++
++Wall time: 4.11 seconds
++Exit code: 0
++```
++
++Additional changed-file whitespace validation:
++
++```text
++git diff --check -- apps/mobile/App.tsx apps/mobile/src/ui/PrototypeShell.tsx
++```
++
++Exact result:
++
++```text
++(no output)
++
++Wall time: 0.11 seconds
++Exit code: 0
++```
++
++## Concerns
++
++- Runtime/visual animation timing and focus re-entry were not exercised because this slice has no focused UI harness and the requested verification scope excludes starting the full Expo/backend environment. The implementation type-checks and directly consumes the shared motion components, but viewport and Reduce Motion behavior remain part of the plan-level runtime verification.
++- The worktree contains unrelated pre-existing modified and untracked files. They were intentionally excluded from this task's commit.
+diff --git a/apps/mobile/App.tsx b/apps/mobile/App.tsx
+index 884795d..71e9acc 100644
+--- a/apps/mobile/App.tsx
++++ b/apps/mobile/App.tsx
+@@ -1,24 +1,23 @@
+ import React, { useEffect, useState } from 'react';
+-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
++import { StyleSheet, Text, View } from 'react-native';
+ import * as Linking from 'expo-linking';
+ import {
+   NavigationContainer,
+   useNavigation,
+   type LinkingOptions,
+ } from '@react-navigation/native';
+ import {
+   createNativeStackNavigator,
+   type NativeStackNavigationProp,
+ } from '@react-navigation/native-stack';
+ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+-import { Utensils } from 'lucide-react-native';
+ import { SessionProvider, useSession } from './src/auth/session';
+ import { DelegationScreen } from './src/screens/delegation/DelegationScreen';
+ import { EmployeeCalendarScreen } from './src/screens/employee/EmployeeCalendarScreen';
+ import { EmployeeDashboardScreen } from './src/screens/employee/EmployeeDashboardScreen';
+ import { EmployeeProfileScreen } from './src/screens/employee/EmployeeProfileScreen';
+ import { KitchenScannerScreen } from './src/screens/kitchen/KitchenScannerScreen';
+ import { KitchenDashboardScreen } from './src/screens/kitchen/KitchenDashboardScreen';
+ import { PickupIntentScreen } from './src/screens/pickup/PickupIntentScreen';
+ import type {
+   AppTabParamList,
+@@ -27,20 +26,21 @@ import type {
+   RootStackParamList,
+ } from './src/navigation';
+ import { PrototypeButton, PrototypeField } from './src/ui/PrototypePrimitives';
+ import {
+   employeeNav,
+   hybridEmployeeNav,
+   kitchenNav,
+   PrototypeTabBar,
+ } from './src/ui/PrototypeShell';
+ import { NoticeProvider } from './src/ui/BrandNotice';
++import { BrandLoader, BrandMark, StateTransition } from './src/ui/BrandMotion';
+ import { theme } from './src/theme';
+ 
+ const RootStack = createNativeStackNavigator<RootStackParamList>();
+ const Tabs = createBottomTabNavigator<AppTabParamList>();
+ const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
+ const prefix = Linking.createURL('/');
+ 
+ function AuthScreen({ navigation }: AuthScreenProps) {
+   const {
+     token,
+@@ -58,113 +58,106 @@ function AuthScreen({ navigation }: AuthScreenProps) {
+ 
+   useEffect(() => {
+     if (!token || !profile) return;
+     if (canUseEmployee) {
+       navigation.replace('AppTabs', { screen: 'EmployeeDashboard' });
+     } else if (canUseKitchen) {
+       navigation.replace('AppTabs', { screen: 'KitchenDashboard' });
+     }
+   }, [canUseEmployee, canUseKitchen, navigation, profile, token]);
+ 
+-  if (isRestoring) {
+-    return (
+-      <View style={styles.loading}>
+-        <ActivityIndicator color={theme.colors.accentDeep} />
+-      </View>
+-    );
+-  }
+-  if (token && profile && !canUseEmployee && !canUseKitchen) {
+-    return (
+-      <View style={styles.authCanvas}>
+-        <View style={styles.authCard}>
+-          <View style={styles.loginMark}>
+-            <Utensils
+-              size={28}
+-              color={theme.colors.accentDeep}
+-              strokeWidth={1.6}
+-            />
+-          </View>
+-          <Text style={styles.title}>Welcome</Text>
+-          <Text style={styles.subtitle}>
+-            No mobile access is assigned to this account.
+-          </Text>
+-          <PrototypeButton variant="secondary" onPress={() => void logout()}>
+-            Log out
+-          </PrototypeButton>
+-        </View>
+-      </View>
+-    );
+-  }
++  const noMobileAccess =
++    Boolean(token && profile) && !canUseEmployee && !canUseKitchen;
++  const authState = isRestoring
++    ? 'restoring'
++    : noMobileAccess
++      ? 'no-access'
++      : 'sign-in';
+ 
+   return (
+-    <View style={styles.authCanvas}>
+-      <View style={styles.authCard}>
+-        <View style={styles.loginMark}>
+-          <Utensils
+-            size={28}
+-            color={theme.colors.accentDeep}
+-            strokeWidth={1.6}
+-          />
++    <StateTransition stateKey={authState} style={styles.screen}>
++      {isRestoring ? (
++        <View style={styles.loading}>
++          <BrandLoader label="Restoring your session…" />
+         </View>
+-        <Text style={styles.title}>Welcome</Text>
+-        <Text style={styles.subtitle}>
+-          Sign in with a local staff or kitchen account.
+-        </Text>
+-        <PrototypeField
+-          label="Username"
+-          value={username}
+-          onChangeText={setUsername}
+-          autoCapitalize="none"
+-          autoCorrect={false}
+-          autoComplete="username"
+-          style={styles.field}
+-        />
+-        <PrototypeField
+-          label="Password"
+-          value={password}
+-          onChangeText={setPassword}
+-          secureTextEntry
+-          autoCapitalize="none"
+-          autoComplete="password"
+-          style={styles.field}
+-        />
+-        <PrototypeButton
+-          disabled={isSigningIn || !username || !password}
+-          onPress={() => void signIn(username, password)}
+-          style={styles.loginButton}
+-        >
+-          {isSigningIn ? 'Signing in…' : 'Sign in'}
+-        </PrototypeButton>
+-        <Text style={styles.footnote}>
+-          Credentials are loaded from the backend local .env configuration.
+-        </Text>
+-        {authError && <Text style={styles.error}>{authError}</Text>}
+-      </View>
+-    </View>
++      ) : noMobileAccess ? (
++        <View style={styles.authCanvas}>
++          <View style={styles.authCard}>
++            <BrandMark style={styles.authMark} />
++            <Text style={styles.title}>Welcome</Text>
++            <Text style={styles.subtitle}>
++              No mobile access is assigned to this account.
++            </Text>
++            <PrototypeButton variant="secondary" onPress={() => void logout()}>
++              Log out
++            </PrototypeButton>
++          </View>
++        </View>
++      ) : (
++        <View style={styles.authCanvas}>
++          <View style={styles.authCard}>
++            <BrandMark style={styles.authMark} />
++            <Text style={styles.title}>Welcome</Text>
++            <Text style={styles.subtitle}>
++              Sign in with a local staff or kitchen account.
++            </Text>
++            <PrototypeField
++              label="Username"
++              value={username}
++              onChangeText={setUsername}
++              autoCapitalize="none"
++              autoCorrect={false}
++              autoComplete="username"
++              style={styles.field}
++            />
++            <PrototypeField
++              label="Password"
++              value={password}
++              onChangeText={setPassword}
++              secureTextEntry
++              autoCapitalize="none"
++              autoComplete="password"
++              style={styles.field}
++            />
++            <PrototypeButton
++              disabled={isSigningIn || !username || !password}
++              onPress={() => void signIn(username, password)}
++              style={styles.loginButton}
++            >
++              {isSigningIn ? 'Signing in…' : 'Sign in'}
++            </PrototypeButton>
++            <Text style={styles.footnote}>
++              Credentials are loaded from the backend local .env configuration.
++            </Text>
++            {authError && <Text style={styles.error}>{authError}</Text>}
++          </View>
++        </View>
++      )}
++    </StateTransition>
+   );
+ }
+ 
+ function ProtectedRoute({ children }: { children: React.ReactNode }) {
+   const { token, isRestoring } = useSession();
+   const navigation =
+     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+ 
+   useEffect(() => {
+     if (!isRestoring && !token) {
+       navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
+     }
+   }, [isRestoring, navigation, token]);
+ 
+   if (isRestoring || !token) {
+     return (
+       <View style={styles.loading}>
+-        <ActivityIndicator color={theme.colors.accentDeep} />
++        <BrandLoader label="Restoring your session…" />
+       </View>
+     );
+   }
+   return <>{children}</>;
+ }
+ 
+ function ProfileStackNavigator() {
+   return (
+     <ProfileStack.Navigator
+       screenOptions={{ headerShown: false, animation: 'none' }}
+@@ -233,37 +226,42 @@ function linkingConfig(): LinkingOptions<RootStackParamList> {
+       },
+     },
+   };
+ }
+ 
+ export default function App() {
+   return (
+     <SessionProvider>
+       <NoticeProvider>
+         <NavigationContainer linking={linkingConfig()}>
+-          <RootStack.Navigator screenOptions={{ headerShown: false }}>
++          <RootStack.Navigator
++            screenOptions={{ headerShown: false, animation: 'none' }}
++          >
+             <RootStack.Screen name="Auth" component={AuthScreen} />
+             <RootStack.Screen name="AppTabs">
+               {() => (
+                 <ProtectedRoute>
+                   <AppTabsNavigator />
+                 </ProtectedRoute>
+               )}
+             </RootStack.Screen>
+           </RootStack.Navigator>
+         </NavigationContainer>
+       </NoticeProvider>
+     </SessionProvider>
+   );
+ }
+ 
+ const styles = StyleSheet.create({
++  screen: {
++    flex: 1,
++  },
+   loading: {
+     flex: 1,
+     alignItems: 'center',
+     justifyContent: 'center',
+     backgroundColor: theme.colors.bg,
+   },
+   authCanvas: {
+     flex: 1,
+     alignItems: 'center',
+     justifyContent: 'center',
+@@ -273,28 +271,22 @@ const styles = StyleSheet.create({
+   authCard: {
+     width: '100%',
+     maxWidth: 346,
+     padding: 26,
+     borderWidth: 1,
+     borderColor: theme.colors.border,
+     borderRadius: theme.radii.lg,
+     backgroundColor: theme.colors.surface,
+     ...theme.shadows.sm,
+   },
+-  loginMark: {
+-    width: 58,
+-    height: 58,
++  authMark: {
+     alignSelf: 'center',
+-    borderRadius: theme.radii.md,
+-    alignItems: 'center',
+-    justifyContent: 'center',
+-    backgroundColor: theme.colors.accentSoft,
+     marginBottom: 18,
+   },
+   title: {
+     color: theme.colors.fg,
+     fontSize: 30,
+     fontWeight: '700',
+     textAlign: 'center',
+   },
+   subtitle: {
+     color: theme.colors.muted,
+diff --git a/apps/mobile/src/ui/PrototypeShell.tsx b/apps/mobile/src/ui/PrototypeShell.tsx
+index c5f84d8..dba61bf 100644
+--- a/apps/mobile/src/ui/PrototypeShell.tsx
++++ b/apps/mobile/src/ui/PrototypeShell.tsx
+@@ -4,23 +4,25 @@ import {
+   ScrollView,
+   StyleSheet,
+   Text,
+   View,
+   useWindowDimensions,
+   type ScrollViewProps,
+ } from 'react-native';
+ import { SafeAreaView } from 'react-native-safe-area-context';
+ import { CalendarDays, Home, QrCode, ScanLine, UserRound } from 'lucide-react-native';
+ import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
++import { useIsFocused } from '@react-navigation/native';
+ import { theme } from '../theme';
+ import type { AppTabParamList } from '../navigation';
+ import type { PrototypeIcon } from './PrototypePrimitives';
++import { ScreenEntrance } from './BrandMotion';
+ 
+ export type PrototypeNavItem = {
+   label: string;
+   route: keyof AppTabParamList;
+   icon: PrototypeIcon;
+ };
+ 
+ export const employeeNav: PrototypeNavItem[] = [
+   { label: 'Dashboard', route: 'EmployeeDashboard', icon: Home },
+   { label: 'Calendar', route: 'EmployeeCalendar', icon: CalendarDays },
+@@ -89,48 +91,61 @@ export function PrototypeTabBar({
+       </View>
+     </View>
+   );
+ }
+ 
+ export function PrototypeFrame({
+   children,
+   bottomClearance = 120,
+   scroll = true,
+   scrollProps,
++  animateEntrance = true,
+ }: {
+   children: React.ReactNode;
+   bottomClearance?: number;
+   scroll?: boolean;
+   scrollProps?: Omit<ScrollViewProps, 'contentContainerStyle'>;
++  animateEntrance?: boolean;
+ }) {
+   const { width } = useWindowDimensions();
++  const isFocused = useIsFocused();
+   const deviceStyle = width > 480 ? styles.deviceWide : styles.device;
++  const device = (
++    <View style={deviceStyle}>
++      {scroll ? (
++        <ScrollView
++          {...scrollProps}
++          style={styles.body}
++          contentContainerStyle={[
++            styles.scrollContent,
++            { paddingBottom: bottomClearance },
++          ]}
++          showsVerticalScrollIndicator={false}
++        >
++          {children}
++        </ScrollView>
++      ) : (
++        <View style={styles.body}>{children}</View>
++      )}
++    </View>
++  );
++
+   return (
+     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+       <View style={styles.canvas}>
+-        <View style={deviceStyle}>
+-          {scroll ? (
+-            <ScrollView
+-              {...scrollProps}
+-              style={styles.body}
+-              contentContainerStyle={[
+-                styles.scrollContent,
+-                { paddingBottom: bottomClearance },
+-              ]}
+-              showsVerticalScrollIndicator={false}
+-            >
+-              {children}
+-            </ScrollView>
+-          ) : (
+-            <View style={styles.body}>{children}</View>
+-          )}
+-        </View>
++        {animateEntrance ? (
++          <ScreenEntrance active={isFocused} style={styles.screenEntrance}>
++            {device}
++          </ScreenEntrance>
++        ) : (
++          device
++        )}
+       </View>
+     </SafeAreaView>
+   );
+ }
+ 
+ export function PrototypeSectionTitle({ title, subtitle }: { title: string; subtitle?: string }) {
+   return (
+     <View style={styles.sectionTitle}>
+       <Text style={styles.sectionHeading}>{title}</Text>
+       {subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
+@@ -142,20 +157,21 @@ export const prototypeStyles = StyleSheet.create({
+   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+   divider: { height: 1, backgroundColor: theme.colors.border },
+   title: { color: theme.colors.fg, fontSize: 20, fontWeight: '700', letterSpacing: -0.2 },
+   body: { color: theme.colors.fg, fontSize: 14, lineHeight: 21 },
+   muted: { color: theme.colors.muted, fontSize: 13 },
+ });
+ 
+ const styles = StyleSheet.create({
+   safeArea: { flex: 1, backgroundColor: theme.colors.canvas },
+   canvas: { flex: 1, width: '100%', alignItems: 'center', backgroundColor: theme.colors.canvas },
++  screenEntrance: { flex: 1, width: '100%', alignItems: 'center' },
+   device: { flex: 1, width: '100%', backgroundColor: theme.colors.bg, overflow: 'hidden' },
+   deviceWide: { flex: 1, width: 390, maxWidth: '100%', backgroundColor: theme.colors.bg, overflow: 'hidden', borderRadius: 52 },
+   body: { flex: 1 },
+   scrollContent: { paddingHorizontal: theme.spacing.gutter, paddingTop: 4, minHeight: '100%' },
+   tabBar: {
+     width: '100%',
+     alignItems: 'center',
+     paddingHorizontal: theme.spacing.navInset,
+     paddingTop: 8,
+     paddingBottom: 8,

@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "expo start",
+    "start:tunnel": "expo start --tunnel",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web"
@@ -12,6 +13,7 @@
   "dependencies": {
     "@babel/runtime": "^7.20.0",
     "@expo/metro-runtime": "~3.2.3",
+    "@imeal/contracts": "workspace:^",
     "@react-navigation/bottom-tabs": "^6.6.1",
     "@react-navigation/native": "^6.1.18",
     "@react-navigation/native-stack": "^6.11.0",
@@ -34,6 +36,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",
+    "@expo/ngrok": "^4.1.0",
     "@types/node": "^26.4.0",
     "@types/react": "~18.2.45",
     "typescript": "~5.3.3"

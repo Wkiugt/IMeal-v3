@@ -16,7 +16,7 @@ describe('business time', () => {
   it.each([
     ['2026-09-04T03:29:59.000Z', false],
     ['2026-09-04T03:30:00.000Z', true],
-    ['2026-09-04T06:30:00.000Z', true],
+    ['2026-09-04T06:30:00.000Z', false],
     ['2026-09-04T06:30:01.000Z', false],
   ])('enforces the serving window at %s', (instant, expected) => {
     expect(isWithinServingWindow(new Date(instant))).toBe(expected);

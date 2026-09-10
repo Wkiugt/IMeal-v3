@@ -1,0 +1,174 @@
+# Review package
+
+Base: a347b48c79fc60159ffdac60560f782666fde31e
+Head: c3935704778d98443e3fc6d0ab75874dd01d15ba
+
+## Commit
+c393570 test(api): preserve serving authorization without LAN gate
+
+## Stat
+apps/api/test/pickup.e2e-spec.ts | 107 +++++++++++++++++++++++++++++----------
+1 file changed, 80 insertions(+), 27 deletions(-)
+
+## Diff
+
+```diff
+diff --git a/apps/api/test/pickup.e2e-spec.ts b/apps/api/test/pickup.e2e-spec.ts
+index fa36500..5768fa2 100644
+--- a/apps/api/test/pickup.e2e-spec.ts
++++ b/apps/api/test/pickup.e2e-spec.ts
+@@ -1,16 +1,20 @@
++import { INestApplication } from '@nestjs/common';
++import { Reflector } from '@nestjs/core';
++import { JwtService } from '@nestjs/jwt';
+ import { Test, TestingModule } from '@nestjs/testing';
+-import { ExecutionContext, INestApplication } from '@nestjs/common';
+ import request from 'supertest';
+ import type { Server } from 'node:http';
+ import { AppModule } from './../src/app.module.js';
+ 
+ import { vi } from 'vitest';
+ import { InternalPickupController } from './../src/pickup/internal-pickup.controller.js';
++import { AuthService } from './../src/auth/auth.service.js';
++import type { AuthenticatedUser } from './../src/auth/authenticated-user.js';
+ import { PickupService } from './../src/pickup/pickup.service.js';
+ import { JwtAuthGuard } from './../src/auth/jwt-auth.guard.js';
+ import { PermissionsGuard } from './../src/auth/permissions.guard.js';
+@@ -126,73 +130,122 @@ describe('PickupController (e2e)', () => {
+-  it('allows a Kitchen caller to resolve pickup from a public source IP', async () => {
++  it('allows a public source IP only with a bearer token granting kitchen.serve', async () => {
++    const originalAuthMode = process.env.AUTH_MODE;
+     const originalRequireAuth = process.env.REQUIRE_AUTH;
++    const originalLocalAuthJwtSecret = process.env.LOCAL_AUTH_JWT_SECRET;
++    process.env.AUTH_MODE = 'local';
+     process.env.REQUIRE_AUTH = 'true';
++    process.env.LOCAL_AUTH_JWT_SECRET =
++      'test-local-jwt-secret-with-at-least-32-characters';
++
++    const resolvePickup = vi.fn().mockResolvedValue({
++      session: { id: 'public-source-session' },
++      items: [],
++    });
+     let testApp: INestApplication<Server> | undefined;
+ 
+     try {
+       const testingModule = await Test.createTestingModule({
+         controllers: [InternalPickupController],
+         providers: [
+           {
+             provide: PickupService,
++            useValue: { resolvePickup },
++          },
++          {
++            provide: AuthService,
+             useValue: {
+-              resolvePickup: vi.fn().mockResolvedValue({
+-                session: { id: 'public-source-session' },
+-                items: [],
+-              }),
++              getPrincipal: vi.fn(
++                async (sub: string): Promise<AuthenticatedUser> => ({
++                  id: sub,
++                  userId: sub,
++                  email: `${sub}@example.com`,
++                  roles: sub === 'kitchen-1' ? ['kitchen'] : ['staff'],
++                  permissions:
++                    sub === 'kitchen-1' ? ['kitchen.serve'] : [],
++                }),
++              ),
+             },
+           },
++          JwtAuthGuard,
++          PermissionsGuard,
++          Reflector,
+         ],
+-      })
+-        .overrideGuard(JwtAuthGuard)
+-        .useValue({
+-          canActivate(context: ExecutionContext) {
+-            const request = context.switchToHttp().getRequest();
+-            request.user = {
+-              id: 'kitchen-1',
+-              userId: 'kitchen-1',
+-              email: 'kitchen@example.com',
+-              roles: ['kitchen'],
+-              permissions: ['kitchen.serve'],
+-            };
+-            return true;
+-          },
+-        })
+-        .overrideGuard(PermissionsGuard)
+-        .useValue({ canActivate: () => true })
+-        .compile();
++      }).compile();
++
++      const jwtService = new JwtService();
++      const kitchenToken = jwtService.sign(
++        { sub: 'kitchen-1', authType: 'local' },
++        { secret: process.env.LOCAL_AUTH_JWT_SECRET },
++      );
++      const staffToken = jwtService.sign(
++        { sub: 'staff-1', authType: 'local' },
++        { secret: process.env.LOCAL_AUTH_JWT_SECRET },
++      );
+ 
+       testApp = testingModule.createNestApplication();
+       testApp
+@@ -202,6 +243,34 @@ describe('PickupController (e2e)', () => {
+-      const res = await request(testApp.getHttpServer())
++      const kitchenResponse = await request(testApp.getHttpServer())
+         .post('/api/serving/resolve')
++        .set('Authorization', `Bearer ${kitchenToken}`)
+         .set('X-Forwarded-For', '203.0.113.10')
+         .send({ qrPayload: 'PUBLIC_SOURCE_QR' });
+ 
+-      expect(res.status).toBe(201);
+-      expect(res.body).toEqual({
++      expect(kitchenResponse.status).toBe(201);
++      expect(kitchenResponse.body).toEqual({
+         session: { id: 'public-source-session' },
+         items: [],
+       });
++
++      resolvePickup.mockClear();
++      const missingBearerResponse = await request(testApp.getHttpServer())
++        .post('/api/serving/resolve')
++        .set('X-Forwarded-For', '203.0.113.10')
++        .send({ qrPayload: 'PUBLIC_SOURCE_QR' });
++
++      expect(missingBearerResponse.status).toBe(401);
++      expect(resolvePickup).not.toHaveBeenCalled();
++
++      resolvePickup.mockClear();
++      const missingPermissionResponse = await request(testApp.getHttpServer())
++        .post('/api/serving/resolve')
++        .set('Authorization', `Bearer ${staffToken}`)
++        .set('X-Forwarded-For', '203.0.113.10')
++        .send({ qrPayload: 'PUBLIC_SOURCE_QR' });
++
++      expect(missingPermissionResponse.status).toBe(403);
++      expect(resolvePickup).not.toHaveBeenCalled();
+     } finally {
+       await testApp?.close();
++
++      if (originalAuthMode === undefined) {
++        delete process.env.AUTH_MODE;
++      } else {
++        process.env.AUTH_MODE = originalAuthMode;
++      }
++
+       if (originalRequireAuth === undefined) {
+         delete process.env.REQUIRE_AUTH;
+       } else {
+         process.env.REQUIRE_AUTH = originalRequireAuth;
+       }
++
++      if (originalLocalAuthJwtSecret === undefined) {
++        delete process.env.LOCAL_AUTH_JWT_SECRET;
++      } else {
++        process.env.LOCAL_AUTH_JWT_SECRET = originalLocalAuthJwtSecret;
++      }
+     }
+   });
+ });
+```
