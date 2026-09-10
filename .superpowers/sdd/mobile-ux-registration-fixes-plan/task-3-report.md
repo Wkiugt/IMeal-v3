@@ -41,3 +41,11 @@ The contract and API tests followed RED/GREEN cycles: the new contract tests ini
 - The targeted API command's Vitest workspace invocation ran the full API unit discovery (13 files / 77 tests) rather than filtering to only the two requested files; all discovered tests passed.
 - No browser/Expo visual verification was run in this slice; the main integration pass should exercise the three Ticket error cards at the requested viewport.
 - Yarn reported preexisting peer-dependency warnings during install.
+
+## Post-review fix
+
+The final branch review identified that `fetchOrThrow` was catching and replacing generic non-2xx errors after `throwPickupError` had already extracted a server message. The helper now catches only the underlying `fetch` call for true network failures, then lets parsed malformed/server errors and typed 403 errors propagate unchanged.
+
+- `corepack yarn workspace @imeal/api test -- src/common/business-time.spec.ts src/pickup/pickup.service.spec.ts` — 13 files, 77 tests passed.
+- `corepack yarn workspace @imeal/contracts test` — 1 file, 16 tests passed (additional contract tests from the integrated branch were present).
+- `corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json` — passed with no output.

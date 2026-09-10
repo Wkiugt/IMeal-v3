@@ -72,18 +72,17 @@ async function fetchOrThrow(
   init: RequestInit,
   fallbackMessage: string,
 ): Promise<Response> {
+  let response: Response;
   try {
-    const response = await fetch(input, init);
-    if (!response.ok) {
-      return await throwPickupError(response, fallbackMessage);
-    }
-    return response;
-  } catch (error: unknown) {
-    if (error instanceof PickupAvailabilityApiError) {
-      throw error;
-    }
+    response = await fetch(input, init);
+  } catch {
     throw new Error(fallbackMessage);
   }
+
+  if (!response.ok) {
+    return await throwPickupError(response, fallbackMessage);
+  }
+  return response;
 }
 
 export const pickupAPI = {
