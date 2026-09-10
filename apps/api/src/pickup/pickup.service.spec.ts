@@ -73,6 +73,24 @@ describe('PickupService', () => {
   });
 
   describe('checkServingWindow', () => {
+    it('throws the typed window-closed error before querying kitchen readiness', async () => {
+      await expect(
+        service.checkServingWindow('LUNCH', new Date('2026-09-04T03:29:59Z')),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'PICKUP_WINDOW_CLOSED',
+          message:
+            'Meal pickup is only available from 10:30 through 13:30 Vietnam time.',
+          details: {
+            availableFrom: '10:30',
+            availableUntil: '13:30',
+            timeZone: 'Asia/Ho_Chi_Minh',
+          },
+        },
+      });
+      expect(mockPrisma.appSetting.findUnique).not.toHaveBeenCalled();
+    });
+
     it('succeeds when kitchen signal in appSetting is true even without mealDay', async () => {
       mockPrisma.appSetting.findUnique.mockResolvedValueOnce({ value: 'true' });
 
@@ -92,7 +110,7 @@ describe('PickupService', () => {
       ).resolves.toBeUndefined();
     });
 
-    it('throws ForbiddenException when neither kitchen signal nor mealDay is ready', async () => {
+    it('throws the typed not-ready error when neither kitchen signal nor mealDay is ready', async () => {
       mockPrisma.appSetting.findUnique.mockResolvedValueOnce({
         value: 'false',
       });
@@ -102,7 +120,18 @@ describe('PickupService', () => {
 
       await expect(
         service.checkServingWindow('LUNCH', new Date('2026-09-04T04:00:00Z')),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toMatchObject({
+        response: {
+          code: 'PICKUP_NOT_READY',
+          message:
+            'Meal pickup is not currently available. Please wait for the kitchen signal.',
+          details: {
+            availableFrom: '10:30',
+            availableUntil: '13:30',
+            timeZone: 'Asia/Ho_Chi_Minh',
+          },
+        },
+      });
     });
   });
 

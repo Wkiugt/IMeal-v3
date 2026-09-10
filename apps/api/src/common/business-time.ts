@@ -41,7 +41,7 @@ export function isWithinServingWindow(now: Date = new Date()): boolean {
     Number(parts.minute) * 60 +
     Number(parts.second);
   return (
-    secondOfDay >= 10 * 3600 + 30 * 60 && secondOfDay <= 13 * 3600 + 30 * 60
+    secondOfDay >= 10 * 3600 + 30 * 60 && secondOfDay < 13 * 3600 + 30 * 60
   );
 }
 

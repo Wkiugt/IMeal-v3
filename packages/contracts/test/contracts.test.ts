@@ -110,5 +110,48 @@ describe('Contracts v1', () => {
       expect(v1.WaivePenaltyDtoSchema.safeParse({ reason: 'Medical leave approved' }).success).toBe(true);
     });
   });
+  describe('Pickup availability', () => {
+    const details = {
+      availableFrom: '10:30' as const,
+      availableUntil: '13:30' as const,
+      timeZone: 'Asia/Ho_Chi_Minh' as const,
+    };
+
+    it('validates the closed-window error with its exact details', () => {
+      const result = v1.PickupAvailabilityErrorSchema.safeParse({
+        code: 'PICKUP_WINDOW_CLOSED',
+        message:
+          'Meal pickup is only available from 10:30 through 13:30 Vietnam time.',
+        details,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.success && result.data.code).toBe('PICKUP_WINDOW_CLOSED');
+      expect(result.success && result.data.details).toEqual(details);
+    });
+
+    it('validates the not-ready error with its exact details', () => {
+      const result = v1.PickupAvailabilityErrorSchema.safeParse({
+        code: 'PICKUP_NOT_READY',
+        message:
+          'Meal pickup is not currently available. Please wait for the kitchen signal.',
+        details,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.success && result.data.code).toBe('PICKUP_NOT_READY');
+      expect(result.success && result.data.details).toEqual(details);
+    });
+
+    it('rejects missing or incorrect availability details', () => {
+      expect(
+        v1.PickupAvailabilityErrorSchema.safeParse({
+          code: 'PICKUP_WINDOW_CLOSED',
+          message: 'closed',
+          details: { ...details, availableUntil: '14:00' },
+        }).success,
+      ).toBe(false);
+    });
+  });
 });
 

@@ -12,6 +12,18 @@ import {
   isWithinServingWindow,
   parseMealDate,
 } from '../common/business-time.js';
+
+const PICKUP_AVAILABILITY_DETAILS = {
+  availableFrom: '10:30',
+  availableUntil: '13:30',
+  timeZone: 'Asia/Ho_Chi_Minh',
+} as const;
+
+const PICKUP_WINDOW_CLOSED_MESSAGE =
+  'Meal pickup is only available from 10:30 through 13:30 Vietnam time.';
+const PICKUP_NOT_READY_MESSAGE =
+  'Meal pickup is not currently available. Please wait for the kitchen signal.';
+
 interface LockedRegistration {
   id: string;
   status: string;
@@ -41,9 +53,11 @@ export class PickupService {
 
   async checkServingWindow(mealType: string = 'LUNCH', now: Date = new Date()) {
     if (!isWithinServingWindow(now)) {
-      throw new ForbiddenException(
-        'Meal pickup is only available from 10:30 through 13:30 Vietnam time.',
-      );
+      throw new ForbiddenException({
+        code: 'PICKUP_WINDOW_CLOSED',
+        message: PICKUP_WINDOW_CLOSED_MESSAGE,
+        details: PICKUP_AVAILABILITY_DETAILS,
+      });
     }
 
     const today = this.getTodayDate(now);
@@ -65,10 +79,13 @@ export class PickupService {
       return;
     }
 
-    throw new ForbiddenException(
-      'Meal pickup is not currently available. Please wait for the kitchen signal.',
-    );
+    throw new ForbiddenException({
+      code: 'PICKUP_NOT_READY',
+      message: PICKUP_NOT_READY_MESSAGE,
+      details: PICKUP_AVAILABILITY_DETAILS,
+    });
   }
+
 
   async getPickupOptions(userId: string) {
     await this.checkServingWindow();
