@@ -127,6 +127,14 @@ corepack yarn workspace @imeal/mobile start --lan
 
 Expo derives `http://<Metro-host>:3000/api` once from the Metro session; every connected device uses that endpoint. The phone and development machine must be on the same network, the API must listen on `0.0.0.0:3000`, and Windows Firewall must allow inbound TCP port `3000` plus Metro port `8081`.
 
+If the phone is outside the LAN or the LAN QR resolves to `127.0.0.1`, use the workspace tunnel command:
+
+```powershell
+corepack yarn workspace @imeal/mobile start:tunnel
+```
+
+The tunnel requires Internet access on both devices. `@expo/ngrok` is a mobile workspace development dependency. The tunnel URL serves the Expo bundle only; set `EXPO_PUBLIC_API_URL` separately to an API URL reachable from the phone.
+
 For web, Android, or iOS targets, use the corresponding Expo command:
 
 ```powershell
