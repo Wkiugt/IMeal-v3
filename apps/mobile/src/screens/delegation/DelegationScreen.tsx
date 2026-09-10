@@ -7,6 +7,7 @@ import { delegationAPI, type DelegationResponse } from '../../api/delegationAPI'
 import { PrototypeButton, PrototypeCard, PrototypeField, Pill, PillText } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+import { useMinimumVisibleLoading } from '../../ui/useMinimumVisibleLoading';
 import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
 
@@ -21,6 +22,8 @@ export function DelegationScreen({ navigation }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [delegations, setDelegations] = useState<DelegationResponse[]>([]);
   const delegationRequestId = useRef(0);
+  const initialLoading = loading && delegations.length === 0;
+  const visibleLoading = useMinimumVisibleLoading(initialLoading);
   const activeTabRef = useRef<Tab>('OUTGOING');
 
   const loadDelegations = useCallback(async (targetTab: Tab) => {
@@ -74,14 +77,15 @@ export function DelegationScreen({ navigation }: Props) {
   };
 
   const visible = delegations.filter((delegation) => tab === 'INCOMING' || delegation.delegateUserId.toLowerCase().includes(searchQuery.toLowerCase()));
+  const showLoading = loading || visibleLoading;
 
   return (
     <PrototypeFrame>
       <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => navigation.goBack()} style={styles.back}><ArrowLeft size={20} color={theme.colors.fg} /></Pressable><View style={styles.headerCopy}><PrototypeSectionTitle title="Delegations" subtitle="Manage meal pickup permissions" /></View></View>
       <View style={styles.tabs}><Pressable onPress={() => selectTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>My Requests</Text></Pressable><Pressable onPress={() => selectTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>Incoming</Text></Pressable></View>
       {tab === 'OUTGOING' && <PrototypeField icon={Search} placeholder="Search employee by name/ID..." value={searchQuery} onChangeText={setSearchQuery} style={styles.search} />}
-      <StateTransition stateKey={loading ? 'loading' : loadError && delegations.length === 0 ? 'error' : visible.length === 0 ? 'empty' : 'list'}>
-        {loading ? (
+      <StateTransition stateKey={showLoading ? 'loading' : loadError && delegations.length === 0 ? 'error' : visible.length === 0 ? 'empty' : 'list'}>
+        {showLoading ? (
           <BrandLoader label="Loading delegations…" />
         ) : loadError && delegations.length === 0 ? (
           <PrototypeCard style={styles.errorCard}>

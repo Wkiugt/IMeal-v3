@@ -10,6 +10,7 @@ import { initials } from '../../businessDate';
 import { Avatar, Eyebrow, PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
+import { useMinimumVisibleLoading } from '../../ui/useMinimumVisibleLoading';
 import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
 type Props = AppTabScreenProps<'PickupIntent'>;
@@ -27,6 +28,7 @@ export function PickupIntentScreen(_props: Props) {
   const [timeLeft, setTimeLeft] = useState(0);
   const progressAnim = useRef(new Animated.Value(1)).current;
   const optionsRequestId = useRef(0);
+  const visibleLoading = useMinimumVisibleLoading(loading);
 
   const fetchOptions = useCallback(async () => {
     if (!token) return;
@@ -108,8 +110,8 @@ export function PickupIntentScreen(_props: Props) {
   return (
     <PrototypeFrame>
       <PrototypeSectionTitle title="Meal Ticket" subtitle="Show this dynamic QR code to the kitchen staff" />
-      <StateTransition stateKey={loading ? 'loading' : loadError ? 'error' : options.length === 0 ? 'empty' : 'ready'}>
-        {loading ? (
+      <StateTransition stateKey={visibleLoading ? 'loading' : loadError ? 'error' : options.length === 0 ? 'empty' : 'ready'}>
+        {visibleLoading ? (
           <BrandLoader label="Loading pickup options…" />
         ) : loadError ? (
           <PrototypeCard style={styles.emptyCard}>

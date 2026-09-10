@@ -35,6 +35,7 @@ import {
 } from './src/ui/PrototypeShell';
 import { NoticeProvider } from './src/ui/BrandNotice';
 import { BrandLoader, BrandMark, StateTransition } from './src/ui/BrandMotion';
+import { useMinimumVisibleLoading } from './src/ui/useMinimumVisibleLoading';
 import { theme } from './src/theme';
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -57,33 +58,42 @@ function AuthScreen({ navigation }: AuthScreenProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
+  const visibleRestoring = useMinimumVisibleLoading(isRestoring);
+  const visibleSigningIn = useMinimumVisibleLoading(isSigningIn);
+
   useEffect(() => {
-    if (!token || !profile) return;
+    if (!token || !profile || isSigningIn || visibleRestoring || visibleSigningIn) return;
     if (canUseEmployee) {
       navigation.replace('AppTabs', { screen: 'EmployeeDashboard' });
     } else if (canUseKitchen) {
       navigation.replace('AppTabs', { screen: 'KitchenDashboard' });
     }
-  }, [canUseEmployee, canUseKitchen, navigation, profile, token]);
+  }, [canUseEmployee, canUseKitchen, isSigningIn, navigation, profile, token, visibleRestoring, visibleSigningIn]);
 
   const noMobileAccess =
     Boolean(token && profile) && !canUseEmployee && !canUseKitchen;
-  const authState = isRestoring
+  const authState = visibleRestoring
     ? 'restoring'
-    : noMobileAccess
-      ? 'no-access'
-      : 'sign-in';
+    : visibleSigningIn
+      ? 'signing-in'
+      : noMobileAccess
+        ? 'no-access'
+        : 'sign-in';
 
   return (
     <StateTransition stateKey={authState} style={styles.screen}>
-      {isRestoring ? (
+      {visibleRestoring ? (
         <View style={styles.loading}>
           <BrandLoader label="Restoring your session…" />
+        </View>
+      ) : visibleSigningIn ? (
+        <View style={styles.loading}>
+          <BrandLoader label="Signing in…" />
         </View>
       ) : noMobileAccess ? (
         <View style={styles.authCanvas}>
           <View style={styles.authCard}>
-            <BrandMark style={styles.authMark} />
+            <BrandMark size={32} containerSize={72} style={styles.authMark} />
             <Text style={styles.title}>Welcome</Text>
             <Text style={styles.subtitle}>
               No mobile access is assigned to this account.
@@ -96,7 +106,7 @@ function AuthScreen({ navigation }: AuthScreenProps) {
       ) : (
         <View style={styles.authCanvas}>
           <View style={styles.authCard}>
-            <BrandMark style={styles.authMark} />
+            <BrandMark size={32} containerSize={72} style={styles.authMark} />
             <Text style={styles.title}>Welcome</Text>
             <Text style={styles.subtitle}>
               Sign in with a local staff or kitchen account.
@@ -124,7 +134,7 @@ function AuthScreen({ navigation }: AuthScreenProps) {
               onPress={() => void signIn(username, password)}
               style={styles.loginButton}
             >
-              {isSigningIn ? 'Signing in…' : 'Sign in'}
+              Sign in
             </PrototypeButton>
             <Text style={styles.footnote}>
               Credentials are loaded from the backend local .env configuration.
@@ -137,8 +147,10 @@ function AuthScreen({ navigation }: AuthScreenProps) {
   );
 }
 
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token, isRestoring } = useSession();
+  const visibleRestoring = useMinimumVisibleLoading(isRestoring);
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
@@ -148,7 +160,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     }
   }, [isRestoring, navigation, token]);
 
-  if (isRestoring || !token) {
+  if (visibleRestoring || !token) {
     return (
       <View style={styles.loading}>
         <BrandLoader label="Restoring your session…" />
