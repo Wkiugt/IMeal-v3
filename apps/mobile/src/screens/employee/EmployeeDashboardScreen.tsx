@@ -53,7 +53,7 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Open profile"
-          onPress={() => navigation.navigate('EmployeeProfile')}
+          onPress={() => navigation.navigate('EmployeeProfile', { screen: 'ProfileHome' })}
           style={({ pressed }) => [styles.avatarButton, pressed && styles.avatarPressed]}
         >
           <Avatar initials={initials(profile?.name, 'ME')} />

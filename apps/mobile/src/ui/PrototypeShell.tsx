@@ -71,8 +71,12 @@ export function PrototypeTabBar({
                   target: route.key,
                   canPreventDefault: true,
                 });
-                if (!focused && !event.defaultPrevented) {
-                  navigation.navigate(route.name);
+                if (!event.defaultPrevented) {
+                  if (item.route === 'EmployeeProfile') {
+                    navigation.navigate('EmployeeProfile', { screen: 'ProfileHome' });
+                  } else if (!focused) {
+                    navigation.navigate(route.name);
+                  }
                 }
               }}
               style={[styles.navItem, focused && styles.navItemActive]}
