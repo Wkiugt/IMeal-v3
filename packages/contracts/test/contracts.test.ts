@@ -153,5 +153,43 @@ describe('Contracts v1', () => {
       ).toBe(false);
     });
   });
+  describe('Registrations', () => {
+    it('validates a successful batch registration result', () => {
+      const result = v1.BatchRegistrationResponseSchema.safeParse([
+        { date: '2026-09-05', success: true },
+      ]);
+
+      expect(result.success).toBe(true);
+    });
+
+    it('validates a per-date rejection reason', () => {
+      const result = v1.BatchRegistrationResponseSchema.safeParse([
+        { date: '2026-09-05', success: false, reason: 'Cutoff time exceeded' },
+      ]);
+
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects invalid meal date formats and calendar dates', () => {
+      expect(
+        v1.BatchRegistrationRequestSchema.safeParse({
+          registrations: [{ mealDate: '09/05/2026', status: 'ACTIVE' }],
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.BatchRegistrationRequestSchema.safeParse({
+          registrations: [{ mealDate: '2026-02-30', status: 'ACTIVE' }],
+        }).success,
+      ).toBe(false);
+    });
+
+    it('rejects invalid registration status', () => {
+      expect(
+        v1.BatchRegistrationRequestSchema.safeParse({
+          registrations: [{ mealDate: '2026-09-05', status: 'PENDING' }],
+        }).success,
+      ).toBe(false);
+    });
+  });
 });
 

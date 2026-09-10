@@ -7,3 +7,4 @@ export * from './delegations';
 export * from './kitchen';
 export * from './penalties';
 export * from './pickup';
+export * from './registrations';

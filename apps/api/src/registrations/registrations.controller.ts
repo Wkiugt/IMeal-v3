@@ -1,14 +1,15 @@
 import { Controller, Get, Put, Body, Query, UseGuards } from '@nestjs/common';
+import { v1 } from '@imeal/contracts';
 import { RegistrationsService } from './registrations.service.js';
-import { BatchRegisterDto } from './dto/batch-register.dto.js';
 import { CutoffSettingDto } from './dto/cutoff-setting.dto.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { PermissionsGuard } from '../auth/permissions.guard.js';
 import { RequirePermission } from '../auth/require-permission.decorator.js';
+import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/authenticated-user.js';
 
-@Controller('registrations')
+@Controller('api/registrations')
 @UseGuards(JwtAuthGuard)
 export class RegistrationsController {
   constructor(private readonly service: RegistrationsService) {}
@@ -24,9 +25,10 @@ export class RegistrationsController {
   @Put('batch')
   batchRegister(
     @CurrentUser() user: AuthenticatedUser,
-    @Body() dto: BatchRegisterDto,
+    @Body(new ZodValidationPipe(v1.BatchRegistrationRequestSchema))
+    body: v1.BatchRegistrationRequest,
   ) {
-    return this.service.batchRegister(user.id, dto.registrations);
+    return this.service.batchRegister(user.id, body.registrations);
   }
 
   @Get('cutoff')

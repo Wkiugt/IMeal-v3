@@ -199,7 +199,11 @@ export function EmployeeCalendarScreen(_props: Props) {
         return updated;
       });
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unable to update this day';
+      const message = error instanceof TypeError
+        ? 'Unable to reach the meal registration service. Check your connection and try again.'
+        : error instanceof Error
+          ? error.message
+          : 'Unable to update this day';
       if (message === 'Cutoff time exceeded') handleCutoffFailure(dateKey, previous);
       else {
         setWeekState((current) => ({ ...current, [dateKey]: previous }));
