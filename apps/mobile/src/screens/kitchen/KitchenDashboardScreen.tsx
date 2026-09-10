@@ -116,7 +116,7 @@ export function KitchenDashboardScreen({ navigation }: Props) {
   const selectedItems = activeTab === 'logs' ? [] : lists[activeTab];
   const logs = activeTab === 'logs' ? filterLogs(snapshot?.recentLogs || []) : [];
   return (
-    <PrototypeFrame scrollProps={{ refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void fetchDashboard(); }} /> }} bottomClearance={130}>
+    <PrototypeFrame scrollProps={{ refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void fetchDashboard(); }} /> }} bottomClearance={114}>
       <StateTransition stateKey={visibleLoading ? 'loading' : snapshot === null ? 'error' : 'ready'}>
         {visibleLoading ? (
           <BrandLoader label="Loading kitchen dashboard…" />

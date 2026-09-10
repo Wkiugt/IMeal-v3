@@ -103,7 +103,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
       ) : !permission.granted ? (
         <PrototypeFrame animateEntrance={false}><View style={styles.permission}><ScanLine size={40} color={theme.colors.accentDeep} /><Text style={styles.permissionTitle}>Camera access required</Text><Text style={styles.permissionText}>Allow camera access to scan employee meal tickets.</Text><Pressable onPress={requestPermission} style={styles.primaryButton}><Text style={styles.primaryButtonText}>Grant permission</Text></Pressable></View></PrototypeFrame>
       ) : (
-        <PrototypeFrame animateEntrance={false} scroll={false} bottomClearance={130}>
+        <PrototypeFrame animateEntrance={false} scroll={false} bottomClearance={114}>
           <View style={styles.scannerScreen}>
             {isFocused && !servingIntent && <CameraView style={StyleSheet.absoluteFillObject} facing="back" onBarcodeScanned={scanned ? undefined : handleBarCodeScanned} barcodeScannerSettings={{ barcodeTypes: ['qr'] }} />}
             <View style={styles.scrim} />

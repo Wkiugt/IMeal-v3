@@ -82,9 +82,11 @@ export function PrototypeTabBar({
                 color={focused ? theme.colors.accentDeep : theme.colors.muted}
                 strokeWidth={1.8}
               />
-              <Text style={[styles.navLabel, focused && styles.navLabelActive]}>
-                {item.label}
-              </Text>
+              {focused && (
+                <Text style={[styles.navLabel, styles.navLabelActive]}>
+                  {item.label}
+                </Text>
+              )}
             </Pressable>
           );
         })}
@@ -95,7 +97,7 @@ export function PrototypeTabBar({
 
 export function PrototypeFrame({
   children,
-  bottomClearance = 120,
+  bottomClearance = 104,
   scroll = true,
   scrollProps,
   animateEntrance = true,
@@ -173,15 +175,15 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'center',
     paddingHorizontal: theme.spacing.navInset,
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingTop: 6,
+    paddingBottom: 6,
     backgroundColor: theme.colors.canvas,
   },
   bottomNav: {
     width: 390,
     maxWidth: '100%',
-    padding: 8,
-    minHeight: 72,
+    padding: 6,
+    minHeight: 60,
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderRadius: theme.radii.lg,
@@ -190,8 +192,8 @@ const styles = StyleSheet.create({
     gap: 4,
     ...theme.shadows.md,
   },
-  navItem: { flex: 1, minHeight: 56, alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: theme.radii.md },
-  navItemActive: { backgroundColor: theme.colors.accentSoft },
+  navItem: { flexGrow: 1, flexBasis: 0, minWidth: 44, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radii.md },
+  navItemActive: { flexGrow: 1.65, flexDirection: 'row', gap: 7, backgroundColor: theme.colors.accentSoft },
   navLabel: { color: theme.colors.muted, fontSize: 11, fontWeight: '600' },
   navLabelActive: { color: theme.colors.accentDeep },
   sectionTitle: { paddingVertical: 18, gap: 5 },
