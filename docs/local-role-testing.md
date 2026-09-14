@@ -19,11 +19,11 @@ The local credentials are stored in the ignored root `.env` file. Do not commit 
 
 Configured usernames:
 
-| Role | Usernames | Surface |
-| --- | --- | --- |
-| Staff | `staff01` … `staff05` | Mobile employee flow |
-| Kitchen | `kitchen01`, `kitchen02` | Mobile kitchen flow |
-| Admin | `admin01` | Admin Web |
+| Role    | Usernames                | Surface              |
+| ------- | ------------------------ | -------------------- |
+| Staff   | `staff01` … `staff05`    | Mobile employee flow |
+| Kitchen | `kitchen01`, `kitchen02` | Mobile kitchen flow  |
+| Admin   | `admin01`                | Admin Web            |
 
 ## 2. Start PostgreSQL, PgBouncer, MinIO, and migrations
 
@@ -133,7 +133,9 @@ If the phone is outside the LAN or the LAN QR resolves to `127.0.0.1`, use the w
 corepack yarn workspace @imeal/mobile start:tunnel
 ```
 
-The tunnel requires Internet access on both devices. `@expo/ngrok` is a mobile workspace development dependency. The tunnel URL serves the Expo bundle only; set `EXPO_PUBLIC_API_URL` separately to an API URL reachable from the phone.
+The command loads `../../.env` before starting Expo. Set `EXPO_PUBLIC_API_URL` in the repository-root `.env` to the API tunnel origin with `/api`, for example `https://<api-tunnel>.ngrok-free.app/api`. The Expo tunnel URL serves the JavaScript bundle only; it is not the API URL. Restart Metro whenever the API tunnel URL changes.
+
+The tunnel requires Internet access on both devices. `@expo/ngrok` is a mobile workspace development dependency.
 
 For web, Android, or iOS targets, use the corresponding Expo command:
 
@@ -203,12 +205,12 @@ The Admin Web uses API URL `http://localhost:3000` and does not require any `VIT
 
 ## 7. API role smoke matrix
 
-| Check | Staff | Kitchen | Admin |
-| --- | ---: | ---: | ---: |
-| `POST /auth/local-login` | Yes | Yes | Yes |
-| `GET /auth/me` | Yes | Yes | Yes |
-| Employee registration flow | Yes | No, unless also assigned `staff` | No |
-| Kitchen dashboard and serving flow | No | Yes | Only with `kitchen.serve` permission |
+| Check                              | Staff |                          Kitchen |                                Admin |
+| ---------------------------------- | ----: | -------------------------------: | -----------------------------------: |
+| `POST /auth/local-login`           |   Yes |                              Yes |                                  Yes |
+| `GET /auth/me`                     |   Yes |                              Yes |                                  Yes |
+| Employee registration flow         |   Yes | No, unless also assigned `staff` |                                   No |
+| Kitchen dashboard and serving flow |    No |                              Yes | Only with `kitchen.serve` permission |
 
 Serving authorization no longer depends on an internal LAN source IP; a valid bearer token with `kitchen.serve` permission is required.
 

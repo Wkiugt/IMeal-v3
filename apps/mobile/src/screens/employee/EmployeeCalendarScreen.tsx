@@ -53,12 +53,14 @@ export function EmployeeCalendarScreen(_props: Props) {
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [monthLoading, setMonthLoading] = useState(true);
   const [weekLoading, setWeekLoading] = useState(true);
+  const monthLoaded = useRef(false);
   const loading = monthLoading || weekLoading;
   const initialGate = useInitialLoadingGate(
     loading,
     Boolean(availabilityError && !windowSnapshot),
   );
-  const showLoading = initialGate || loading;
+  const hasUsableCalendarData = monthLoaded.current && windowSnapshot !== null;
+  const showLoading = initialGate || (!hasUsableCalendarData && loading);
   const [savingDate, setSavingDate] = useState<string | null>(null);
   const cutoffWarnings = useRef(new Set<string>());
   const monthRequestId = useRef(0);
@@ -80,6 +82,7 @@ export function EmployeeCalendarScreen(_props: Props) {
   const refreshCurrentWeek = useCallback(async () => {
     if (!token) return;
     const requestId = ++weekRequestId.current;
+    setWeekLoading(true);
     try {
       const receiptAt = Date.now();
       const response = await registrationAPI.getWeek(toDateKey(weekStart), token);
@@ -100,10 +103,7 @@ export function EmployeeCalendarScreen(_props: Props) {
   const loadMonth = useCallback(async () => {
     if (!token) return;
     const currentMonthRequestId = ++monthRequestId.current;
-    const currentWeekRequestId = ++weekRequestId.current;
-    let phase: 'month' | 'week' = 'month';
     setMonthLoading(true);
-    setWeekLoading(true);
     try {
       const firstWeek = startOfWeek(month);
       const lastDay = new Date(month.getFullYear(), month.getMonth() + 1, 0);
@@ -113,34 +113,21 @@ export function EmployeeCalendarScreen(_props: Props) {
       if (currentMonthRequestId !== monthRequestId.current) return;
       const registrations: RegistrationRecord[] = responses.flatMap((response) => response.registrations);
       setMonthRegistrations(new Set(registrations.filter((registration) => registration.status === 'ACTIVE').map((registration) => registration.mealDate.slice(0, 10))));
-
-      if (currentWeekRequestId !== weekRequestId.current) return;
-      phase = 'week';
-      const receiptAt = Date.now();
-      const currentWeekResponse = await registrationAPI.getWeek(toDateKey(weekStart), token);
-      if (currentWeekRequestId !== weekRequestId.current) return;
-      if (!applyCurrentWeek(currentWeekResponse, receiptAt)) {
-        showNotice({ title: 'Calendar unavailable', message: 'Cutoff availability could not be loaded.', tone: 'error' });
-      }
+      monthLoaded.current = true;
     } catch (error: unknown) {
-      const requestIsCurrent = phase === 'month'
-        ? currentMonthRequestId === monthRequestId.current
-        : currentWeekRequestId === weekRequestId.current;
-      if (!requestIsCurrent) return;
+      if (currentMonthRequestId !== monthRequestId.current) return;
       const message = error instanceof Error ? error.message : 'Unable to load meal registrations';
       setAvailabilityError(message);
       showNotice({ title: 'Calendar unavailable', message, tone: 'error' });
     } finally {
       if (currentMonthRequestId === monthRequestId.current) setMonthLoading(false);
-      if (currentWeekRequestId === weekRequestId.current) setWeekLoading(false);
     }
-  }, [applyCurrentWeek, month, showNotice, token, weekStart]);
+  }, [month, showNotice, token]);
 
   useEffect(() => {
     void loadMonth();
     return () => {
       monthRequestId.current += 1;
-      weekRequestId.current += 1;
     };
   }, [loadMonth]);
   useFocusEffect(useCallback(() => {

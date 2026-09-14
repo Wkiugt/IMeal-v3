@@ -4,6 +4,13 @@ import { ArrowLeft, CheckCircle, Clock, Search, XCircle } from 'lucide-react-nat
 import type { ProfileStackScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { delegationAPI, type DelegationResponse } from '../../api/delegationAPI';
+import {
+  cacheDelegations,
+  createDelegationCache,
+  getDelegationsForTab,
+  type DelegationCache,
+  type DelegationTab,
+} from './delegationState';
 import { PrototypeButton, PrototypeCard, PrototypeField, Pill, PillText } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
@@ -11,40 +18,50 @@ import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
 
-type Tab = 'OUTGOING' | 'INCOMING';
+type Tab = DelegationTab;
 type Props = ProfileStackScreenProps<'Delegation'>;
 export function DelegationScreen({ navigation }: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
   const [tab, setTab] = useState<Tab>('OUTGOING');
   const [searchQuery, setSearchQuery] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [dataByTab, setDataByTab] = useState<DelegationCache>(() => createDelegationCache());
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [delegations, setDelegations] = useState<DelegationResponse[]>([]);
+  const [actionId, setActionId] = useState<string | null>(null);
   const delegationRequestId = useRef(0);
-  const initialGate = useInitialLoadingGate(
-    loading,
-    Boolean(loadError && delegations.length === 0),
-  );
-  const showLoading = initialGate || loading;
+  const hasLoadedAnyData = useRef(false);
   const activeTabRef = useRef<Tab>('OUTGOING');
+  const activeCache = dataByTab[tab];
+  const initialGate = useInitialLoadingGate(
+    initialLoading,
+    Boolean(loadError && !activeCache.loaded),
+  );
+  const showLoading = initialGate || (initialLoading && !hasLoadedAnyData.current);
+  const showTabLoading = !activeCache.loaded && refreshing;
 
   const loadDelegations = useCallback(async (targetTab: Tab) => {
     if (!token || activeTabRef.current !== targetTab) return;
     const requestId = ++delegationRequestId.current;
     setLoadError(null);
-    setLoading(true);
+    if (hasLoadedAnyData.current) setRefreshing(true);
+    else setInitialLoading(true);
     try {
       const data = await delegationAPI.getDelegations(token, targetTab === 'INCOMING' ? 'incoming' : 'outgoing');
       if (requestId !== delegationRequestId.current || activeTabRef.current !== targetTab) return;
-      setDelegations(data);
+      setDataByTab((current) => cacheDelegations(current, targetTab, data));
+      hasLoadedAnyData.current = true;
     } catch (error: unknown) {
       if (requestId !== delegationRequestId.current || activeTabRef.current !== targetTab) return;
       const message = error instanceof Error ? error.message : 'Unable to load delegations';
       setLoadError(message);
       showNotice({ title: 'Delegations unavailable', message, tone: 'error' });
     } finally {
-      if (requestId === delegationRequestId.current && activeTabRef.current === targetTab) setLoading(false);
+      if (requestId === delegationRequestId.current && activeTabRef.current === targetTab) {
+        setInitialLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [showNotice, token]);
 
@@ -58,47 +75,50 @@ export function DelegationScreen({ navigation }: Props) {
   const selectTab = (nextTab: Tab) => {
     if (nextTab === activeTabRef.current) return;
     activeTabRef.current = nextTab;
-    setDelegations([]);
     setLoadError(null);
-    setLoading(true);
+    setRefreshing(true);
     setTab(nextTab);
   };
 
   const handleAction = async (action: 'accept' | 'decline' | 'revoke', id: string) => {
-    if (!token) return;
+    if (!token || actionId !== null) return;
     const startingTab = activeTabRef.current;
-    setLoading(true);
+    setActionId(id);
     try {
       if (action === 'accept') await delegationAPI.acceptDelegation(id, token);
       if (action === 'decline') await delegationAPI.declineDelegation(id, token);
       if (action === 'revoke') await delegationAPI.revokeDelegation(id, token);
       if (activeTabRef.current === startingTab) await loadDelegations(startingTab);
     } catch (error: unknown) {
-      if (activeTabRef.current === startingTab) setLoading(false);
       showNotice({ title: 'Action failed', message: error instanceof Error ? error.message : 'The delegation state has changed.', tone: 'error' });
+    } finally {
+      setActionId(null);
     }
   };
 
-  const visible = delegations.filter((delegation) => tab === 'INCOMING' || delegation.delegateUserId.toLowerCase().includes(searchQuery.toLowerCase()));
+  const visible = getDelegationsForTab(dataByTab, tab).filter((delegation) => tab === 'INCOMING' || delegation.delegateUserId.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
     <PrototypeFrame>
       <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => navigation.goBack()} style={styles.back}><ArrowLeft size={20} color={theme.colors.fg} /></Pressable><View style={styles.headerCopy}><PrototypeSectionTitle title="Delegations" subtitle="Manage meal pickup permissions" /></View></View>
       <View style={styles.tabs}><Pressable onPress={() => selectTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>My Requests</Text></Pressable><Pressable onPress={() => selectTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>Incoming</Text></Pressable></View>
       {tab === 'OUTGOING' && <PrototypeField icon={Search} placeholder="Search employee by name/ID..." value={searchQuery} onChangeText={setSearchQuery} style={styles.search} />}
-      <StateTransition stateKey={showLoading ? 'loading' : loadError && delegations.length === 0 ? 'error' : visible.length === 0 ? 'empty' : 'list'}>
+      {refreshing && activeCache.loaded && <Text style={styles.refreshing}>Refreshing…</Text>}
+      <StateTransition stateKey={showLoading ? 'loading' : loadError && !activeCache.loaded ? 'error' : showTabLoading ? 'tab-loading' : visible.length === 0 ? 'empty' : 'list'}>
         {showLoading ? (
           <BrandLoader label="Loading delegations…" />
-        ) : loadError && delegations.length === 0 ? (
+        ) : loadError && !activeCache.loaded ? (
           <PrototypeCard style={styles.errorCard}>
             <Text style={styles.errorTitle}>Delegations unavailable</Text>
             <Text style={styles.errorText}>{loadError}</Text>
             <PrototypeButton variant="secondary" onPress={() => void loadDelegations(activeTabRef.current)} style={styles.retryButton}>Retry</PrototypeButton>
           </PrototypeCard>
+        ) : showTabLoading ? (
+          <BrandLoader compact label={`Loading ${tab === 'INCOMING' ? 'incoming' : 'outgoing'} delegations…`} />
         ) : visible.length === 0 ? (
           <Text style={styles.empty}>No delegations found.</Text>
         ) : (
-          <View style={styles.list}>{visible.map((item) => <PrototypeCard key={item.id} style={styles.card}><View style={styles.cardHeader}><Text style={styles.cardTitle}>{tab === 'OUTGOING' ? `To: ${item.delegateUserId}` : `From: ${item.delegateUserId}`}</Text><Status status={item.status} /></View><Text style={styles.cardDate}>Created: {new Date(item.createdAt).toLocaleDateString()}</Text>{item.status === 'PENDING' && <View style={styles.actions}>{tab === 'INCOMING' ? <><Pressable onPress={() => void handleAction('decline', item.id)} style={styles.secondaryAction}><Text style={styles.secondaryText}>Decline</Text></Pressable><Pressable onPress={() => void handleAction('accept', item.id)} style={styles.primaryAction}><Text style={styles.primaryText}>Accept</Text></Pressable></> : <Pressable onPress={() => void handleAction('revoke', item.id)} style={styles.dangerAction}><Text style={styles.dangerText}>Revoke</Text></Pressable>}</View>}</PrototypeCard>)}</View>
+          <View style={styles.list}>{visible.map((item) => <PrototypeCard key={item.id} style={styles.card}><View style={styles.cardHeader}><Text style={styles.cardTitle}>{tab === 'OUTGOING' ? `To: ${item.delegateUserId}` : `From: ${item.delegateUserId}`}</Text><Status status={item.status} /></View><Text style={styles.cardDate}>Created: {new Date(item.createdAt).toLocaleDateString()}</Text>{item.status === 'PENDING' && <View style={styles.actions}>{tab === 'INCOMING' ? <><Pressable disabled={actionId === item.id || refreshing} onPress={() => void handleAction('decline', item.id)} style={styles.secondaryAction}><Text style={styles.secondaryText}>Decline</Text></Pressable><Pressable disabled={actionId === item.id || refreshing} onPress={() => void handleAction('accept', item.id)} style={styles.primaryAction}><Text style={styles.primaryText}>Accept</Text></Pressable></> : <Pressable disabled={actionId === item.id || refreshing} onPress={() => void handleAction('revoke', item.id)} style={styles.dangerAction}><Text style={styles.dangerText}>Revoke</Text></Pressable>}</View>}</PrototypeCard>)}</View>
         )}
       </StateTransition>
     </PrototypeFrame>
@@ -124,6 +144,7 @@ const styles = StyleSheet.create({
   tabText: { color: theme.colors.muted, fontSize: 14, fontWeight: '500' },
   activeTabText: { color: theme.colors.accentDeep, fontWeight: '700' },
   search: { marginVertical: 16 },
+  refreshing: { color: theme.colors.muted, fontSize: 12, marginBottom: 8 },
   empty: { color: theme.colors.muted, textAlign: 'center', marginTop: 24 },
   errorCard: { marginTop: 20 },
   errorTitle: { color: theme.colors.fg, fontSize: 17, fontWeight: '700' },

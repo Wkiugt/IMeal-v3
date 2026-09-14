@@ -8,7 +8,19 @@ import React, {
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { API_ROOT } from '../api/apiConfig';
+import {
+  RequestTimeoutError,
+  fetchWithTimeout,
+} from '../api/requestWithTimeout';
 
+const AUTH_REQUEST_TIMEOUT_MS = 10_000;
+const API_TIMEOUT_MESSAGE =
+  'The API did not respond. Check the API tunnel and try again.';
+
+function getAuthErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof RequestTimeoutError) return API_TIMEOUT_MESSAGE;
+  return error instanceof Error ? error.message : fallback;
+}
 const SESSION_KEY = 'imeal.local.access-token';
 
 export interface MobileProfile {
@@ -35,9 +47,11 @@ function isMobileProfile(value: unknown): value is MobileProfile {
 }
 
 async function loadProfile(accessToken: string): Promise<MobileProfile> {
-  const response = await fetch(`${API_ROOT}/auth/me`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const response = await fetchWithTimeout(
+    `${API_ROOT}/auth/me`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    AUTH_REQUEST_TIMEOUT_MS,
+  );
   if (!response.ok) throw new Error('The saved session is no longer valid');
   const payload: unknown = await response.json();
   if (!isMobileProfile(payload))
@@ -49,11 +63,18 @@ async function loginLocal(
   username: string,
   password: string,
 ): Promise<{ accessToken: string; profile: MobileProfile }> {
-  const response = await fetch(`${API_ROOT}/auth/local-login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ username, password }),
-  });
+  const response = await fetchWithTimeout(
+    `${API_ROOT}/auth/local-login`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ username, password }),
+    },
+    AUTH_REQUEST_TIMEOUT_MS,
+  );
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     let message = 'Local sign-in failed';
@@ -119,11 +140,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           globalThis.localStorage?.removeItem(SESSION_KEY);
         else await SecureStore.deleteItemAsync(SESSION_KEY);
         if (mounted) {
-          setAuthError(
-            error instanceof Error
-              ? error.message
-              : 'Unable to restore session',
-          );
+          setAuthError(getAuthErrorMessage(error, 'Unable to restore session'));
         }
       } finally {
         if (mounted) setIsRestoring(false);
@@ -145,9 +162,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setToken(result.accessToken);
       setProfile(result.profile);
     } catch (error: unknown) {
-      setAuthError(
-        error instanceof Error ? error.message : 'Local sign-in failed',
-      );
+      setAuthError(getAuthErrorMessage(error, 'Local sign-in failed'));
     } finally {
       setIsSigningIn(false);
     }
