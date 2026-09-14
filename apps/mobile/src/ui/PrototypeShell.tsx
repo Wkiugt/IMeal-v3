@@ -46,9 +46,16 @@ export function PrototypeTabBar({
   descriptors,
   navigation,
   navItems,
+  insets,
 }: BottomTabBarProps & { navItems: PrototypeNavItem[] }) {
   return (
-    <View style={styles.tabBar} pointerEvents="box-none">
+    <View
+      style={[
+        styles.tabBar,
+        { paddingBottom: Math.max(insets.bottom, theme.spacing.navInset) },
+      ]}
+      pointerEvents="box-none"
+    >
       <View style={styles.bottomNav} accessibilityRole="tablist">
         {navItems.map((item) => {
           const routeIndex = state.routes.findIndex(
@@ -180,8 +187,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: theme.spacing.navInset,
     paddingTop: 6,
-    paddingBottom: 6,
-    backgroundColor: theme.colors.canvas,
+    backgroundColor: theme.colors.bg,
   },
   bottomNav: {
     width: 390,
