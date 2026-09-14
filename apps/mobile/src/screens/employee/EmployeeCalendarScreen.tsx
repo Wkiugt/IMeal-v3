@@ -259,6 +259,7 @@ export function EmployeeCalendarScreen(_props: Props) {
               const editable = windowSnapshot?.days[dateKey]?.editable === true;
               const locked = !editable;
               const disabled = savingDate !== null || locked;
+              const isSaving = savingDate === dateKey;
               return (
                 <View key={dateKey} style={[styles.weekRow, dateKey === todayKey && styles.todayRow]}>
                   <View style={styles.weekInfo}>
@@ -272,7 +273,7 @@ export function EmployeeCalendarScreen(_props: Props) {
                   <AnimatedMealToggle
                     value={active}
                     disabled={disabled}
-                    saving={savingDate === dateKey}
+                    saving={isSaving}
                     accessibilityLabel={`Toggle lunch registration for ${formatDay(date)}${locked ? ', locked after cutoff' : ''}`}
                     onPress={() => void toggleRegistration(dateKey)}
                   />
@@ -290,11 +291,22 @@ function AnimatedMealToggle({ value, disabled, saving, accessibilityLabel, onPre
   const reducedMotion = useReducedMotion();
   const progress = useRef(new Animated.Value(value ? 1 : 0)).current;
   useEffect(() => {
+    progress.stopAnimation();
     const toValue = value ? 1 : 0;
-    if (reducedMotion) { progress.setValue(toValue); return; }
-    Animated.timing(progress, { toValue, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    if (reducedMotion) {
+      progress.setValue(toValue);
+      return () => {
+        progress.stopAnimation();
+      };
+    }
+    const animation = Animated.timing(progress, { toValue, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true });
+    animation.start();
+    return () => {
+      animation.stop();
+      progress.stopAnimation();
+    };
   }, [progress, reducedMotion, value]);
-  return <Pressable accessibilityRole="switch" accessibilityState={{ checked: value, disabled }} accessibilityLabel={accessibilityLabel} disabled={disabled} onPress={onPress} style={[styles.toggle, value && styles.toggleActive, (disabled || saving) && styles.toggleSaving]}><Animated.View style={[styles.toggleThumb, { transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [0, 20] }) }] }]} /></Pressable>;
+  return <Pressable accessibilityRole="switch" accessibilityState={{ checked: value, disabled }} accessibilityLabel={accessibilityLabel} disabled={disabled} onPress={onPress} style={[styles.toggle, value && styles.toggleActive, saving && styles.toggleSaving]}><Animated.View style={[styles.toggleThumb, { transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [0, 20] }) }] }]} /></Pressable>;
 }
 
 const styles = StyleSheet.create({
