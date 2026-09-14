@@ -55,6 +55,12 @@ Không giữ exception Fraunces/Inter của login legacy trừ khi brand review 
 - Không lồng card nhiều tầng.
 - Safe-area bắt buộc trên iOS/Android gesture navigation.
 
+### 3.5 Loading and transitions
+
+- Initial asynchronous data or permission loads use `BrandLoader` for a minimum of 2,000 ms before successful content is revealed.
+- Known initial errors and recovery states bypass this minimum immediately.
+- Revalidation and mutation flows never receive artificial loading delay. Static or session-only screens are not gated.
+
 ## 4. Global navigation
 
 ### Staff
@@ -72,6 +78,8 @@ Home | Tuần ăn | Check-in | Thông báo | Tài khoản
 Kitchen check-in phải discoverable trong 1 tap sau login.
 
 Do not use web-style module dropdown as primary mobile navigation.
+
+- The outer bottom-navigation backing uses the screen background. Keep the floating pill at least `theme.spacing.navInset` (16px) from the available physical edge, using the OS bottom inset when it is larger.
 
 ## 5. Login screen
 
@@ -179,6 +187,8 @@ Thứ Ba không thể thay đổi vì đã qua hạn.
 ```
 
 Do not use optimistic “saved” state before API success.
+
+- Pending opacity and toggle animation belong only to the day currently being saved. Other days may be interaction-disabled while requests serialize, but must not receive the visual saving state.
 
 ## 8. QR screen
 
