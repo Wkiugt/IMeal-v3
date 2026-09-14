@@ -19,7 +19,7 @@ import {
 } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { useMinimumVisibleLoading } from '../../ui/useMinimumVisibleLoading';
+import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
 
@@ -42,7 +42,8 @@ export function PickupIntentScreen(_props: Props) {
   const [timeLeft, setTimeLeft] = useState(0);
   const progressAnim = useRef(new Animated.Value(1)).current;
   const optionsRequestId = useRef(0);
-  const visibleLoading = useMinimumVisibleLoading(loading);
+  const initialGate = useInitialLoadingGate(loading, Boolean(loadError));
+  const showLoading = initialGate || (loading && options.length === 0);
 
   const fetchOptions = useCallback(async () => {
     if (!token) return;
@@ -171,12 +172,12 @@ export function PickupIntentScreen(_props: Props) {
       />
       <StateTransition
         stateKey={
-          visibleLoading
+          showLoading
             ? 'loading'
             : errorState || (options.length === 0 ? 'empty' : 'ready')
         }
       >
-        {visibleLoading ? (
+        {showLoading ? (
           <BrandLoader label="Loading pickup options…" />
         ) : loadError?.type === 'window-closed' ? (
           <PrototypeCard style={styles.emptyCard}>

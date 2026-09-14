@@ -7,7 +7,7 @@ import { delegationAPI, type DelegationResponse } from '../../api/delegationAPI'
 import { PrototypeButton, PrototypeCard, PrototypeField, Pill, PillText } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { useMinimumVisibleLoading } from '../../ui/useMinimumVisibleLoading';
+import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
 
@@ -22,8 +22,11 @@ export function DelegationScreen({ navigation }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [delegations, setDelegations] = useState<DelegationResponse[]>([]);
   const delegationRequestId = useRef(0);
-  const initialLoading = loading && delegations.length === 0;
-  const visibleLoading = useMinimumVisibleLoading(initialLoading);
+  const initialGate = useInitialLoadingGate(
+    loading,
+    Boolean(loadError && delegations.length === 0),
+  );
+  const showLoading = initialGate || loading;
   const activeTabRef = useRef<Tab>('OUTGOING');
 
   const loadDelegations = useCallback(async (targetTab: Tab) => {
@@ -77,7 +80,6 @@ export function DelegationScreen({ navigation }: Props) {
   };
 
   const visible = delegations.filter((delegation) => tab === 'INCOMING' || delegation.delegateUserId.toLowerCase().includes(searchQuery.toLowerCase()));
-  const showLoading = loading || visibleLoading;
 
   return (
     <PrototypeFrame>

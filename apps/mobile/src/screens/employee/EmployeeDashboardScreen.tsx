@@ -8,7 +8,7 @@ import { startOfWeek, toDateKey, initials } from '../../businessDate';
 import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { useMinimumVisibleLoading } from '../../ui/useMinimumVisibleLoading';
+import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { theme } from '../../theme';
 
 type Props = AppTabScreenProps<'EmployeeDashboard'>;
@@ -38,49 +38,71 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
     return () => { mounted = false; };
   }, [token]);
 
-  const visibleLoading = useMinimumVisibleLoading(loading);
+  const initialGate = useInitialLoadingGate(
+    loading,
+    !loading && todayRegistered === null,
+  );
   const greetingName = profile?.name || profile?.email.split('@')[0] || 'there';
-  const status = visibleLoading ? 'Loading…' : todayRegistered === true ? 'Confirmed' : todayRegistered === false ? 'Not registered' : 'Unavailable';
-  const statusTone = visibleLoading || todayRegistered === true ? 'soft' : 'warn';
+  const status = todayRegistered === true ? 'Confirmed' : todayRegistered === false ? 'Not registered' : 'Unavailable';
+  const statusTone = todayRegistered === true ? 'soft' : 'warn';
   const today = new Date();
   return (
     <PrototypeFrame>
-      <View style={styles.greeting}>
-        <View>
-          <Eyebrow>{today.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }).toUpperCase()}</Eyebrow>
-          <Text style={styles.greetingName}>Hi, {greetingName}</Text>
-        </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Open profile"
-          onPress={() => navigation.navigate('EmployeeProfile', { screen: 'ProfileHome' })}
-          style={({ pressed }) => [styles.avatarButton, pressed && styles.avatarPressed]}
-        >
-          <Avatar initials={initials(profile?.name, 'ME')} />
-        </Pressable>
-      </View>
-      <PrototypeCard style={styles.mealCard}>
-        <View style={styles.topRow}>
-          <Pill><PillText>Lunch · 12:00–13:00</PillText></Pill>
-          <StateTransition stateKey={visibleLoading ? 'loading' : todayRegistered === null ? 'unavailable' : 'loaded'} style={styles.statusTransition}>
-            {visibleLoading ? <BrandLoader compact label="Loading today’s registration…" /> : <Pill tone={statusTone}><PillText>{status}</PillText></Pill>}
-          </StateTransition>
-        </View>
-        <Text style={styles.mealTitle}>Grilled Chicken Rice Bowl</Text>
-        <Text style={styles.mealSub}>Steamed rice, grilled chicken thigh, stir-fried greens</Text>
-        <View style={styles.divider} />
-        <View style={styles.metaRow}><MapPin size={16} color={theme.colors.accentDeep} strokeWidth={1.6} /><Text style={styles.metaText}>Canteen A · Counter 2</Text></View>
-      </PrototypeCard>
+      <StateTransition
+        stateKey={
+          initialGate
+            ? 'loading'
+            : todayRegistered === null
+              ? 'unavailable'
+              : 'loaded'
+        }
+      >
+        {initialGate ? (
+          <BrandLoader label="Loading today’s registration…" />
+        ) : (
+          <>
+            <View style={styles.greeting}>
+              <View>
+                <Eyebrow>{today.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }).toUpperCase()}</Eyebrow>
+                <Text style={styles.greetingName}>Hi, {greetingName}</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open profile"
+                onPress={() => navigation.navigate('EmployeeProfile', { screen: 'ProfileHome' })}
+                style={({ pressed }) => [styles.avatarButton, pressed && styles.avatarPressed]}
+              >
+                <Avatar initials={initials(profile?.name, 'ME')} />
+              </Pressable>
+            </View>
+            <PrototypeCard style={styles.mealCard}>
+              <View style={styles.topRow}>
+                <Pill><PillText>Lunch · 12:00–13:00</PillText></Pill>
+                <StateTransition
+                  stateKey={todayRegistered === null ? 'unavailable' : 'loaded'}
+                  style={styles.statusTransition}
+                >
+                  <Pill tone={statusTone}><PillText>{status}</PillText></Pill>
+                </StateTransition>
+              </View>
+              <Text style={styles.mealTitle}>Grilled Chicken Rice Bowl</Text>
+              <Text style={styles.mealSub}>Steamed rice, grilled chicken thigh, stir-fried greens</Text>
+              <View style={styles.divider} />
+              <View style={styles.metaRow}><MapPin size={16} color={theme.colors.accentDeep} strokeWidth={1.6} /><Text style={styles.metaText}>Canteen A · Counter 2</Text></View>
+            </PrototypeCard>
 
-      <Pressable accessibilityRole="button" onPress={() => navigation.navigate('PickupIntent')} style={styles.scanCta}>
-        <View style={styles.scanIcon}><QrCode size={24} color={theme.colors.surface} strokeWidth={1.6} /></View>
-        <View style={styles.scanCopy}><Text style={styles.scanTitle}>Open meal ticket</Text><Text style={styles.scanSub}>Show your dynamic QR at the canteen</Text></View>
-        <ArrowRight size={18} color={theme.colors.surface} strokeWidth={1.6} />
-      </Pressable>
+            <Pressable accessibilityRole="button" onPress={() => navigation.navigate('PickupIntent')} style={styles.scanCta}>
+              <View style={styles.scanIcon}><QrCode size={24} color={theme.colors.surface} strokeWidth={1.6} /></View>
+              <View style={styles.scanCopy}><Text style={styles.scanTitle}>Open meal ticket</Text><Text style={styles.scanSub}>Show your dynamic QR at the canteen</Text></View>
+              <ArrowRight size={18} color={theme.colors.surface} strokeWidth={1.6} />
+            </Pressable>
 
-      <Pressable onPress={() => navigation.navigate('EmployeeCalendar')} style={styles.calendarLink}>
-        <CalendarDays size={16} color={theme.colors.accentDeep} /><Text style={styles.calendarLinkText}>Manage weekly registration</Text>
-      </Pressable>
+            <Pressable onPress={() => navigation.navigate('EmployeeCalendar')} style={styles.calendarLink}>
+              <CalendarDays size={16} color={theme.colors.accentDeep} /><Text style={styles.calendarLinkText}>Manage weekly registration</Text>
+            </Pressable>
+          </>
+        )}
+      </StateTransition>
     </PrototypeFrame>
   );
 }
