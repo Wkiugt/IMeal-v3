@@ -1,3 +1,4 @@
+import { v1 } from '@imeal/contracts';
 import { API_BASE } from './apiConfig';
 import {
   MobileApiError,
@@ -6,33 +7,10 @@ import {
   toMobileApiError,
 } from './mobileApiError';
 
-export interface CreateDelegationRequest {
-  registrationId: string;
-  delegateUserId: string;
-}
-
-export interface DelegationResponse {
-  id: string;
-  registrationId: string;
-  delegateUserId: string;
-  status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'REVOKED';
-  createdAt: string;
-  updatedAt: string;
-}
+export type CreateDelegationRequest = v1.CreateDelegationRequest;
+export type DelegationResponse = v1.DelegationResponse;
 
 type DelegationErrorKey = 'errors.loadDelegations' | 'errors.delegationAction';
-
-function isDelegationResponse(payload: unknown): payload is DelegationResponse {
-  if (payload === null || typeof payload !== 'object') return false;
-  if (!('id' in payload) || !('registrationId' in payload) || !('delegateUserId' in payload)) return false;
-  if (!('status' in payload) || !('createdAt' in payload) || !('updatedAt' in payload)) return false;
-  return typeof payload.id === 'string'
-    && typeof payload.registrationId === 'string'
-    && typeof payload.delegateUserId === 'string'
-    && (payload.status === 'PENDING' || payload.status === 'ACCEPTED' || payload.status === 'DECLINED' || payload.status === 'REVOKED')
-    && typeof payload.createdAt === 'string'
-    && typeof payload.updatedAt === 'string';
-}
 
 async function requestJson(
   input: RequestInfo | URL,
@@ -49,9 +27,10 @@ async function requestJson(
   return readMobileResponseJson(response, fallbackKey);
 }
 
-function parseDelegation(payload: unknown, fallbackKey: DelegationErrorKey): DelegationResponse {
-  if (isDelegationResponse(payload)) return payload;
-  throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', { payload, fallbackKey });
+function parseDelegation(payload: unknown): DelegationResponse {
+  const parsed = v1.DelegationResponseSchema.safeParse(payload);
+  if (parsed.success) return parsed.data;
+  throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
 }
 
 export const delegationAPI = {
@@ -67,7 +46,6 @@ export const delegationAPI = {
       },
       body: JSON.stringify(data),
     }, 'errors.delegationAction'),
-    'errors.delegationAction',
   ),
 
   acceptDelegation: async (id: string, token: string): Promise<DelegationResponse> => parseDelegation(
@@ -75,7 +53,6 @@ export const delegationAPI = {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}` },
     }, 'errors.delegationAction'),
-    'errors.delegationAction',
   ),
 
   declineDelegation: async (id: string, token: string): Promise<DelegationResponse> => parseDelegation(
@@ -83,7 +60,6 @@ export const delegationAPI = {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}` },
     }, 'errors.delegationAction'),
-    'errors.delegationAction',
   ),
 
   revokeDelegation: async (id: string, token: string): Promise<DelegationResponse> => parseDelegation(
@@ -91,7 +67,6 @@ export const delegationAPI = {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}` },
     }, 'errors.delegationAction'),
-    'errors.delegationAction',
   ),
 
   getDelegations: async (
@@ -103,9 +78,10 @@ export const delegationAPI = {
       { headers: { Authorization: `Bearer ${token}` } },
       'errors.loadDelegations',
     );
-    if (!Array.isArray(payload) || !payload.every(isDelegationResponse)) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', payload);
+    const parsed = v1.DelegationResponseSchema.array().safeParse(payload);
+    if (!parsed.success) {
+      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
     }
-    return payload;
+    return parsed.data;
   },
 };

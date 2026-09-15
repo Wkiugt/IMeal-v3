@@ -71,7 +71,8 @@ export function toMobileApiError(
   const code: MobileApiErrorCode = error instanceof RequestTimeoutError
     ? 'API_TIMEOUT'
     : 'REQUEST_FAILED';
-  return new MobileApiError(code, mobileErrorMessageKey(code) || fallbackKey, error);
+  const messageKey = code === 'REQUEST_FAILED' ? fallbackKey : mobileErrorMessageKey(code);
+  return new MobileApiError(code, messageKey, error);
 }
 
 export async function throwMobileResponseError(
@@ -88,7 +89,8 @@ export async function throwMobileResponseError(
     ? cause.error
     : undefined;
   const code = getErrorPayloadCode(cause) ?? getErrorPayloadCode(nestedPayload) ?? 'REQUEST_FAILED';
-  throw new MobileApiError(code, mobileErrorMessageKey(code) || fallbackKey, cause);
+  const messageKey = code === 'REQUEST_FAILED' ? fallbackKey : mobileErrorMessageKey(code);
+  throw new MobileApiError(code, messageKey, cause);
 }
 
 export async function readMobileResponseJson(response: Response, fallbackKey: TranslationKey): Promise<unknown> {

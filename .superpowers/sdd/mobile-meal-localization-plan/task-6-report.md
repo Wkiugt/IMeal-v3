@@ -77,3 +77,20 @@ Passed with no output.
 - Task 7 still needs to replace the remaining client-owned English screen/navigation/accessibility literals with catalog keys and add the language switcher/persistence-failure notice.
 - No native/web runtime mount or visual smoke test was run; the brief explicitly defers runtime mount verification and prohibits project-wide validation for this task.
 - Project-wide validation remains the main agent's responsibility.
+
+## Review follow-up
+
+- Unknown transport and HTTP failures keep their raw cause but now use the operation fallback translation key; known typed codes continue to map to their dedicated keys.
+- Kitchen dashboard responses now parse through the shared v1 schema, including regular/vegetarian totals and meal-choice fields.
+- Delegation responses now parse through the shared UUID/ISO timestamp schema.
+- `fontMono` remains the portable generic `monospace` family rather than a platform-specific font name.
+
+### Review regression evidence
+
+```text
+corepack yarn workspace @imeal/mobile exec vitest run src/api/mobileApiError.test.ts src/api/kitchenAPI.test.ts src/api/delegationAPI.test.ts
+```
+
+Passed: 3 test files, 7 tests.
+
+The complete focused suite was rerun after these fixes: 11 test files, 26 tests passed. The scoped mobile typecheck was rerun and passed with no output.

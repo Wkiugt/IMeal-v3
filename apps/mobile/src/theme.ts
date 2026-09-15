@@ -23,7 +23,7 @@ export const theme = {
     medium: 'BeVietnamPro_500Medium',
     semiBold: 'BeVietnamPro_600SemiBold',
     bold: 'BeVietnamPro_700Bold',
-    fontMono: 'Courier New',
+    fontMono: 'monospace',
   },
   radii: {
     sm: 14,

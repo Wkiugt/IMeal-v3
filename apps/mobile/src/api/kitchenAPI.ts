@@ -1,3 +1,4 @@
+import { v1 } from '@imeal/contracts';
 import { API_BASE } from './apiConfig';
 import {
   MobileApiError,
@@ -6,99 +7,21 @@ import {
   toMobileApiError,
 } from './mobileApiError';
 
-export interface KitchenDashboardCounters {
-  totalRegistered: number;
-  servedTotal: number;
-  remaining: number;
-  noShowTotal: number;
-}
-
-export interface ServingLogItem {
-  id: string;
-  registrationId: string;
-  userId: string;
-  userName: string;
-  userEmail: string;
-  servedAt: string;
-  isProxy: boolean;
-}
-
-export interface KitchenRegistrationItem {
-  registrationId: string;
-  userId: string;
-  userName: string;
-  userEmail: string;
-  isServed: boolean;
-  servedAt?: string | null;
-}
-
-export interface KitchenDashboardSnapshot {
-  date: string;
-  isServingReady: boolean;
-  counters: KitchenDashboardCounters;
-  recentLogs: ServingLogItem[];
-  lists: {
-    served: KitchenRegistrationItem[];
-    pending: KitchenRegistrationItem[];
-    all: KitchenRegistrationItem[];
-    noShow?: KitchenRegistrationItem[];
-  };
-}
+export type KitchenDashboardCounters = v1.KitchenDashboardCounters;
+export type ServingLogItem = v1.ServingLogItem;
+export type KitchenRegistrationItem = v1.KitchenRegistrationItem;
+export type KitchenDashboardSnapshot = v1.KitchenDashboardSnapshot;
 
 type KitchenErrorKey = 'errors.loadKitchen' | 'errors.toggleServing';
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object';
-}
-
-function isKitchenRegistrationItem(value: unknown): value is KitchenRegistrationItem {
-  if (!isObject(value)) return false;
-  return typeof value.registrationId === 'string'
-    && typeof value.userId === 'string'
-    && typeof value.userName === 'string'
-    && typeof value.userEmail === 'string'
-    && typeof value.isServed === 'boolean'
-    && (!('servedAt' in value) || value.servedAt === null || typeof value.servedAt === 'string');
-}
-
-function isServingLogItem(value: unknown): value is ServingLogItem {
-  if (!isObject(value)) return false;
-  return typeof value.id === 'string'
-    && typeof value.registrationId === 'string'
-    && typeof value.userId === 'string'
-    && typeof value.userName === 'string'
-    && typeof value.userEmail === 'string'
-    && typeof value.servedAt === 'string'
-    && typeof value.isProxy === 'boolean';
-}
-
-function isKitchenDashboardSnapshot(value: unknown): value is KitchenDashboardSnapshot {
-  if (!isObject(value) || !isObject(value.counters) || !isObject(value.lists)) return false;
-  const counters = value.counters;
-  const lists = value.lists;
-  return typeof value.date === 'string'
-    && typeof value.isServingReady === 'boolean'
-    && typeof counters.totalRegistered === 'number'
-    && typeof counters.servedTotal === 'number'
-    && typeof counters.remaining === 'number'
-    && typeof counters.noShowTotal === 'number'
-    && Array.isArray(value.recentLogs)
-    && value.recentLogs.every(isServingLogItem)
-    && Array.isArray(lists.served)
-    && lists.served.every(isKitchenRegistrationItem)
-    && Array.isArray(lists.pending)
-    && lists.pending.every(isKitchenRegistrationItem)
-    && Array.isArray(lists.all)
-    && lists.all.every(isKitchenRegistrationItem)
-    && (!('noShow' in lists) || (Array.isArray(lists.noShow) && lists.noShow.every(isKitchenRegistrationItem)));
-}
-
 function isServingSignalResponse(value: unknown): value is { success: boolean; isServingReady: boolean; date?: string } {
-  if (!isObject(value)) return false;
+  if (value === null || typeof value !== 'object') return false;
+  if (!('success' in value) || !('isServingReady' in value)) return false;
   return typeof value.success === 'boolean'
     && typeof value.isServingReady === 'boolean'
     && (!('date' in value) || typeof value.date === 'string');
 }
+
 
 async function requestJson(
   input: RequestInfo | URL,
@@ -124,10 +47,11 @@ export const kitchenAPI = {
       ? `${API_BASE}/kitchen/days/${date}/dashboard`
       : `${API_BASE}/kitchen/today/dashboard`;
     const payload = await requestJson(url, { headers: { Authorization: `Bearer ${token}` } }, 'errors.loadKitchen');
-    if (!isKitchenDashboardSnapshot(payload)) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', payload);
+    const parsed = v1.KitchenDashboardSnapshotSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
     }
-    return payload;
+    return parsed.data;
   },
 
   toggleServingSignal: async (
