@@ -95,11 +95,6 @@ export function PrototypeTabBar({
                 color={focused ? theme.colors.accentDeep : theme.colors.muted}
                 strokeWidth={1.8}
               />
-              {focused && (
-                <Text style={[styles.navLabel, styles.navLabelActive]}>
-                  {t(item.labelKey)}
-                </Text>
-              )}
             </Pressable>
           );
         })}
@@ -204,10 +199,8 @@ const styles = StyleSheet.create({
     gap: 4,
     ...theme.shadows.md,
   },
-  navItem: { flexGrow: 1, flexBasis: 0, minWidth: 44, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radii.md },
-  navItemActive: { flexGrow: 1.65, flexDirection: 'row', gap: 7, backgroundColor: theme.colors.accentSoft },
-  navLabel: { color: theme.colors.muted, fontSize: 11, fontFamily: theme.typography.semiBold },
-  navLabelActive: { color: theme.colors.accentDeep },
+  navItem: { flex: 1, minWidth: 44, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radii.md },
+  navItemActive: { backgroundColor: theme.colors.accentSoft },
   sectionTitle: { paddingVertical: 18, gap: 5 },
   sectionHeading: { color: theme.colors.fg, fontSize: 20, fontFamily: theme.typography.bold, letterSpacing: -0.2 },
   sectionSubtitle: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19 },
