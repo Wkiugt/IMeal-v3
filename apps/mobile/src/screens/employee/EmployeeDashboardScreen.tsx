@@ -4,17 +4,22 @@ import { ArrowRight, CalendarDays, MapPin, QrCode } from 'lucide-react-native';
 import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { registrationAPI } from '../../api/registrationAPI';
-import { startOfWeek, toDateKey, initials } from '../../businessDate';
+import { getMobileErrorMessage } from '../../api/mobileApiError';
+import { startOfWeek, toDateKey, formatDay, formatShortDate, initials } from '../../businessDate';
 import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
 import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
+import { useNotice } from '../../ui/BrandNotice';
+import { useLanguage } from '../../i18n/LanguageProvider';
 import { theme } from '../../theme';
 
 type Props = AppTabScreenProps<'EmployeeDashboard'>;
 
 export function EmployeeDashboardScreen({ navigation }: Props) {
   const { token, profile } = useSession();
+  const { showNotice } = useNotice();
+  const { locale, t } = useLanguage();
   const [todayRegistered, setTodayRegistered] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -29,21 +34,32 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
           setTodayRegistered(registrations.some((registration) => registration.mealDate.slice(0, 10) === today && registration.status === 'ACTIVE'));
         }
       })
-      .catch(() => {
-        if (mounted) setTodayRegistered(null);
+      .catch((error: unknown) => {
+        if (mounted) {
+          setTodayRegistered(null);
+          showNotice({
+            title: t('dashboard.unavailable'),
+            message: getMobileErrorMessage(error, t, 'errors.loadCalendar'),
+            tone: 'error',
+          });
+        }
       })
       .finally(() => {
         if (mounted) setLoading(false);
       });
     return () => { mounted = false; };
-  }, [token]);
+  }, [showNotice, t, token]);
 
   const initialGate = useInitialLoadingGate(
     loading,
     !loading && todayRegistered === null,
   );
-  const greetingName = profile?.name || profile?.email.split('@')[0] || 'there';
-  const status = todayRegistered === true ? 'Confirmed' : todayRegistered === false ? 'Not registered' : 'Unavailable';
+  const greetingName = profile?.name || profile?.email.split('@')[0] || t('profile.employeeAccount');
+  const status = todayRegistered === true
+    ? t('dashboard.confirmed')
+    : todayRegistered === false
+      ? t('dashboard.notRegistered')
+      : t('dashboard.unavailable');
   const statusTone = todayRegistered === true ? 'soft' : 'warn';
   const today = new Date();
   return (
@@ -58,17 +74,17 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
         }
       >
         {initialGate ? (
-          <BrandLoader label="Loading today’s registration…" />
+          <BrandLoader label={t('dashboard.loadingRegistration')} />
         ) : (
           <>
             <View style={styles.greeting}>
               <View>
-                <Eyebrow>{today.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }).toUpperCase()}</Eyebrow>
-                <Text style={styles.greetingName}>Hi, {greetingName}</Text>
+                <Eyebrow>{`${formatDay(today, locale)}, ${formatShortDate(today, locale)}`.toUpperCase()}</Eyebrow>
+                <Text style={styles.greetingName}>{t('auth.greeting', { name: greetingName })}</Text>
               </View>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Open profile"
+                accessibilityLabel={t('dashboard.openProfile')}
                 onPress={() => navigation.navigate('EmployeeProfile', { screen: 'ProfileHome' })}
                 style={({ pressed }) => [styles.avatarButton, pressed && styles.avatarPressed]}
               >
@@ -77,7 +93,7 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
             </View>
             <PrototypeCard style={styles.mealCard}>
               <View style={styles.topRow}>
-                <Pill><PillText>Lunch · 12:00–13:00</PillText></Pill>
+                <Pill><PillText>{t('dashboard.lunchService')}</PillText></Pill>
                 <StateTransition
                   stateKey={todayRegistered === null ? 'unavailable' : 'loaded'}
                   style={styles.statusTransition}
@@ -88,17 +104,17 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
               <Text style={styles.mealTitle}>Grilled Chicken Rice Bowl</Text>
               <Text style={styles.mealSub}>Steamed rice, grilled chicken thigh, stir-fried greens</Text>
               <View style={styles.divider} />
-              <View style={styles.metaRow}><MapPin size={16} color={theme.colors.accentDeep} strokeWidth={1.6} /><Text style={styles.metaText}>Canteen A · Counter 2</Text></View>
+              <View style={styles.metaRow}><MapPin size={16} color={theme.colors.accentDeep} strokeWidth={1.6} /><Text style={styles.metaText}>{t('dashboard.location')}</Text></View>
             </PrototypeCard>
 
-            <Pressable accessibilityRole="button" onPress={() => navigation.navigate('PickupIntent')} style={styles.scanCta}>
+            <Pressable accessibilityRole="button" accessibilityLabel={t('dashboard.openMealTicket')} onPress={() => navigation.navigate('PickupIntent')} style={styles.scanCta}>
               <View style={styles.scanIcon}><QrCode size={24} color={theme.colors.surface} strokeWidth={1.6} /></View>
-              <View style={styles.scanCopy}><Text style={styles.scanTitle}>Open meal ticket</Text><Text style={styles.scanSub}>Show your dynamic QR at the canteen</Text></View>
+              <View style={styles.scanCopy}><Text style={styles.scanTitle}>{t('dashboard.openMealTicket')}</Text><Text style={styles.scanSub}>{t('dashboard.showDynamicQr')}</Text></View>
               <ArrowRight size={18} color={theme.colors.surface} strokeWidth={1.6} />
             </Pressable>
 
-            <Pressable onPress={() => navigation.navigate('EmployeeCalendar')} style={styles.calendarLink}>
-              <CalendarDays size={16} color={theme.colors.accentDeep} /><Text style={styles.calendarLinkText}>Manage weekly registration</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={t('dashboard.manageWeeklyRegistration')} onPress={() => navigation.navigate('EmployeeCalendar')} style={styles.calendarLink}>
+              <CalendarDays size={16} color={theme.colors.accentDeep} /><Text style={styles.calendarLinkText}>{t('dashboard.manageWeeklyRegistration')}</Text>
             </Pressable>
           </>
         )}

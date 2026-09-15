@@ -5,7 +5,7 @@ import { useIsFocused } from '@react-navigation/native';
 import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { kitchenAPI, type KitchenDashboardSnapshot, type KitchenRegistrationItem, type ServingLogItem } from '../../api/kitchenAPI';
-import { initials } from '../../businessDate';
+import { formatBusinessInstant, initials } from '../../businessDate';
 import { Eyebrow, Pill, PillText, PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
@@ -20,11 +20,11 @@ type Props = AppTabScreenProps<'KitchenDashboard'>;
 export function KitchenDashboardScreen({ navigation }: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
-  const { t } = useLanguage();
+  const { locale, t } = useLanguage();
   const isFocused = useIsFocused();
   const [snapshot, setSnapshot] = useState<KitchenDashboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('pending');
   const [searchQuery, setSearchQuery] = useState('');
@@ -53,8 +53,8 @@ export function KitchenDashboardScreen({ navigation }: Props) {
       if (requestId !== dashboardRequestId.current) return;
       if (currentSnapshot.current === null) {
         const message = getMobileErrorMessage(error, t, 'errors.loadKitchen');
-        setLoadError(message);
-        showNotice({ title: 'Dashboard unavailable', message, tone: 'error' });
+        setLoadError(error);
+        showNotice({ title: t('kitchen.dashboardUnavailable'), message, tone: 'error' });
       }
     } finally {
       if (requestId === dashboardRequestId.current) {
@@ -87,7 +87,7 @@ export function KitchenDashboardScreen({ navigation }: Props) {
       setSnapshot((current) => current ? { ...current, isServingReady: response.isServingReady } : current);
     } catch (error: unknown) {
       showNotice({
-        title: 'Serving signal unavailable',
+        title: t('kitchen.servingSignalUnavailable'),
         message: getMobileErrorMessage(error, t, 'errors.toggleServing'),
         tone: 'error',
       });
@@ -108,8 +108,9 @@ export function KitchenDashboardScreen({ navigation }: Props) {
     },
   }), [active, maxX, sliderX, togglingSignal]);
 
-  const counters = snapshot?.counters || { totalRegistered: 0, servedTotal: 0, remaining: 0, noShowTotal: 0 };
+  const counters = snapshot?.counters || { totalRegistered: 0, regularTotal: 0, vegetarianTotal: 0, servedTotal: 0, remaining: 0, noShowTotal: 0 };
   const progress = counters.totalRegistered ? Math.min(1, counters.servedTotal / counters.totalRegistered) : 0;
+  const mealChoiceLabel = (mealChoice: KitchenRegistrationItem['mealChoice']) => t(mealChoice === 'VEGETARIAN' ? 'kitchen.vegetarian' : 'kitchen.regular');
   const filterItems = (items: KitchenRegistrationItem[]) => {
     const query = searchQuery.trim().toLowerCase();
     return query ? items.filter((item) => item.userName.toLowerCase().includes(query) || item.userEmail.toLowerCase().includes(query)) : items;
@@ -130,21 +131,21 @@ export function KitchenDashboardScreen({ navigation }: Props) {
     <PrototypeFrame scrollProps={{ refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void fetchDashboard(); }} /> }} bottomClearance={114}>
       <StateTransition stateKey={showLoading ? 'loading' : snapshot === null ? 'error' : 'ready'}>
         {showLoading ? (
-          <BrandLoader label="Loading kitchen dashboard…" />
+          <BrandLoader label={t('kitchen.loadingDashboard')} />
         ) : snapshot === null ? (
           <PrototypeCard style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Dashboard unavailable</Text>
-            <Text style={styles.errorText}>{loadError ?? 'Unable to load kitchen dashboard.'}</Text>
-            <PrototypeButton variant="secondary" onPress={() => void fetchDashboard()} style={styles.retryButton}>Retry</PrototypeButton>
+            <Text style={styles.errorTitle}>{t('kitchen.dashboardUnavailable')}</Text>
+            <Text style={styles.errorText}>{getMobileErrorMessage(loadError, t, 'errors.loadKitchen')}</Text>
+            <PrototypeButton variant="secondary" onPress={() => void fetchDashboard()} style={styles.retryButton}>{t('common.retry')}</PrototypeButton>
           </PrototypeCard>
         ) : (
           <>
-            <PrototypeCard style={[styles.servingCard, active && styles.servingActive]}><View style={styles.servingInfo}><Text style={styles.servingTitle}>{active ? 'Serving is live' : 'Ready to Serve?'}</Text><Text style={styles.servingSub}>{active ? 'Kitchen is ready to scan tickets' : 'Slide to begin scanning tickets'}</Text></View><View onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)} style={styles.sliderTrack} {...panResponder.panHandlers}><Animated.View style={[styles.sliderFill, active && styles.sliderFillActive, { width: sliderX.interpolate({ inputRange: [0, Math.max(1, maxX)], outputRange: ['0%', '100%'] }) }]} /><Animated.View style={[styles.sliderThumb, { transform: [{ translateX: sliderX }] }]}><ChevronRight size={20} color={active ? theme.colors.fg : theme.colors.accentDeep} /></Animated.View><Text style={[styles.sliderHint, active && styles.sliderHintActive]}>{active ? 'Slide to stop' : 'Slide to start'}</Text></View></PrototypeCard>
-            <PrototypeCard style={styles.totalCard}><Eyebrow>TOTAL MEALS ORDERED TODAY</Eyebrow><View style={styles.totalRow}><Text style={styles.totalNumber}>{counters.totalRegistered}</Text><Text style={styles.totalUnit}>meals</Text></View><View style={styles.totalMeta}><Utensils size={16} color={theme.colors.accentDeep} /><Text style={styles.totalMetaText}>Lunch service · Canteen A, 12:00–13:00</Text></View></PrototypeCard>
-            <PrototypeCard style={styles.dietCard}><Eyebrow>DIETARY PREFERENCES</Eyebrow><View style={styles.dietBar}><View style={styles.regularSegment} /><View style={styles.vegSegment} /></View><View style={styles.dietLegend}><View style={styles.legendItem}><View style={[styles.legendDot, styles.regularDot]} /><View><Text style={styles.legendLabel}>Regular</Text><Text style={styles.legendNumber}>{Math.round(counters.totalRegistered * 0.72)}</Text></View></View><View style={styles.legendItem}><View style={[styles.legendDot, styles.vegDot]} /><View><Text style={styles.legendLabel}>Vegetarian</Text><Text style={styles.legendNumber}>{counters.totalRegistered - Math.round(counters.totalRegistered * 0.72)}</Text></View></View></View></PrototypeCard>
-            <PrototypeCard style={styles.checkinCard}><View style={styles.checkinHead}><Eyebrow>CHECK-IN PROGRESS</Eyebrow><Text style={styles.checkinRatio}>{counters.servedTotal} / {counters.totalRegistered}</Text></View><View style={styles.progressTrack}><View style={[styles.progressFill, { transform: [{ scaleX: progress }] }]} /></View><View style={styles.checkinLegend}><Text style={styles.legendText}>Checked-in · {counters.servedTotal}</Text><Text style={styles.legendText}>Pending · {counters.remaining}</Text></View></PrototypeCard>
-            <Pressable onPress={() => navigation.navigate('KitchenScanner')} style={styles.scannerLink}><Radio size={18} color={theme.colors.accentDeep} /><Text style={styles.scannerLinkText}>Open ticket scanner</Text></Pressable>
-            <View style={styles.listSection}><View style={styles.listHeader}><Text style={styles.listTitle}>Today's registrations</Text><Text style={styles.syncText}>{loading ? 'Syncing…' : 'Auto-sync 5s'}</Text></View><View style={styles.searchWrap}><Search size={18} color={theme.colors.muted} /><TextInput value={searchQuery} onChangeText={setSearchQuery} placeholder="Search name or email..." placeholderTextColor={theme.colors.muted} style={styles.searchInput} /></View><View style={styles.tabs}>{(['pending', 'served', 'all', 'noshow', 'logs'] as TabType[]).map((tab) => <Pressable key={tab} onPress={() => setActiveTab(tab)} style={[styles.tab, activeTab === tab && styles.tabActive]}><Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{tab === 'pending' ? `Pending (${snapshot.lists.pending.length})` : tab === 'served' ? `Served (${snapshot.lists.served.length})` : tab === 'all' ? `All (${snapshot.lists.all.length})` : tab === 'noshow' ? `No-show (${snapshot.lists.noShow?.length || counters.noShowTotal})` : `Logs (${snapshot.recentLogs.length})`}</Text></Pressable>)}</View>{activeTab === 'logs' ? logs.map((log) => <ListRow key={log.id} initials={initials(log.userName)} name={log.userName} detail={`${new Date(log.servedAt).toLocaleTimeString()} · ${log.userEmail}`} status={log.isProxy ? 'Proxy' : 'Served'} good />) : selectedItems.map((item) => <ListRow key={item.registrationId} initials={initials(item.userName)} name={item.userName} detail={item.isServed && item.servedAt ? new Date(item.servedAt).toLocaleTimeString() : item.userEmail} status={item.isServed ? 'Served' : activeTab === 'noshow' ? 'No-show' : 'Pending'} good={item.isServed} />)}{!loading && selectedItems.length === 0 && logs.length === 0 && <Text style={styles.emptyText}>No matching registrations.</Text>}</View>
+            <PrototypeCard style={[styles.servingCard, active && styles.servingActive]}><View style={styles.servingInfo}><Text style={styles.servingTitle}>{active ? t('kitchen.servingLive') : t('kitchen.readyToServe')}</Text><Text style={styles.servingSub}>{active ? t('kitchen.readyToScan') : t('kitchen.slideToStart')}</Text></View><View accessibilityRole="adjustable" onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)} style={styles.sliderTrack} {...panResponder.panHandlers}><Animated.View style={[styles.sliderFill, active && styles.sliderFillActive, { width: sliderX.interpolate({ inputRange: [0, Math.max(1, maxX)], outputRange: ['0%', '100%'] }) }]} /><Animated.View style={[styles.sliderThumb, { transform: [{ translateX: sliderX }] }]}><ChevronRight size={20} color={active ? theme.colors.fg : theme.colors.accentDeep} /></Animated.View><Text style={[styles.sliderHint, active && styles.sliderHintActive]}>{active ? t('kitchen.slideToStop') : t('kitchen.slideToStart')}</Text></View></PrototypeCard>
+            <PrototypeCard style={styles.totalCard}><Eyebrow>{t('kitchen.totalMealsOrdered')}</Eyebrow><View style={styles.totalRow}><Text style={styles.totalNumber}>{counters.totalRegistered}</Text><Text style={styles.totalUnit}>{t('kitchen.totalUnit')}</Text></View><View style={styles.totalMeta}><Utensils size={16} color={theme.colors.accentDeep} /><Text style={styles.totalMetaText}>{t('kitchen.lunchService')}</Text></View></PrototypeCard>
+            <PrototypeCard style={styles.dietCard}><Eyebrow>{t('kitchen.dietaryPreferences')}</Eyebrow><View style={styles.dietBar}><View style={[styles.regularSegment, { flex: counters.regularTotal }]} /><View style={[styles.vegSegment, { flex: counters.vegetarianTotal }]} /></View><View style={styles.dietLegend}><View style={styles.legendItem}><View style={[styles.legendDot, styles.regularDot]} /><View><Text style={styles.legendLabel}>{t('kitchen.regular')}</Text><Text style={styles.legendNumber}>{counters.regularTotal}</Text></View></View><View style={styles.legendItem}><View style={[styles.legendDot, styles.vegDot]} /><View><Text style={styles.legendLabel}>{t('kitchen.vegetarian')}</Text><Text style={styles.legendNumber}>{counters.vegetarianTotal}</Text></View></View></View></PrototypeCard>
+            <PrototypeCard style={styles.checkinCard}><View style={styles.checkinHead}><Eyebrow>{t('kitchen.checkInProgress')}</Eyebrow><Text style={styles.checkinRatio}>{counters.servedTotal} / {counters.totalRegistered}</Text></View><View style={styles.progressTrack}><View style={[styles.progressFill, { transform: [{ scaleX: progress }] }]} /></View><View style={styles.checkinLegend}><Text style={styles.legendText}>{t('kitchen.checkedIn', { count: counters.servedTotal })}</Text><Text style={styles.legendText}>{t('kitchen.pending', { count: counters.remaining })}</Text></View></PrototypeCard>
+            <Pressable accessibilityRole="button" accessibilityLabel={t('kitchen.openScanner')} onPress={() => navigation.navigate('KitchenScanner')} style={styles.scannerLink}><Radio size={18} color={theme.colors.accentDeep} /><Text style={styles.scannerLinkText}>{t('kitchen.openScanner')}</Text></Pressable>
+            <View style={styles.listSection}><View style={styles.listHeader}><Text style={styles.listTitle}>{t('kitchen.todayRegistrations')}</Text><Text style={styles.syncText}>{loading ? t('kitchen.syncing') : t('kitchen.autoSync')}</Text></View><View style={styles.searchWrap}><Search size={18} color={theme.colors.muted} /><TextInput accessibilityLabel={t('kitchen.searchPlaceholder')} value={searchQuery} onChangeText={setSearchQuery} placeholder={t('kitchen.searchPlaceholder')} placeholderTextColor={theme.colors.muted} style={styles.searchInput} /></View><View style={styles.tabs}>{(['pending', 'served', 'all', 'noshow', 'logs'] as TabType[]).map((tab) => { const tabLabel = tab === 'pending' ? 'kitchen.tabPending' : tab === 'served' ? 'kitchen.tabServed' : tab === 'all' ? 'kitchen.tabAll' : tab === 'noshow' ? 'kitchen.tabNoShow' : 'kitchen.tabLogs'; const count = tab === 'pending' ? snapshot.lists.pending.length : tab === 'served' ? snapshot.lists.served.length : tab === 'all' ? snapshot.lists.all.length : tab === 'noshow' ? snapshot.lists.noShow?.length || counters.noShowTotal : snapshot.recentLogs.length; return <Pressable key={tab} accessibilityRole="tab" accessibilityState={{ selected: activeTab === tab }} onPress={() => setActiveTab(tab)} style={[styles.tab, activeTab === tab && styles.tabActive]}><Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{t(tabLabel, { count })}</Text></Pressable>; })}</View>{activeTab === 'logs' ? logs.map((log) => <ListRow key={log.id} initials={initials(log.userName)} name={log.userName} detail={`${formatBusinessInstant(log.servedAt, locale)} · ${mealChoiceLabel(log.mealChoice)} · ${log.userEmail}`} status={log.isProxy ? t('kitchen.proxy') : t('kitchen.served')} good />) : selectedItems.map((item) => <ListRow key={item.registrationId} initials={initials(item.userName)} name={item.userName} detail={`${item.isServed && item.servedAt ? `${formatBusinessInstant(item.servedAt, locale)} · ` : ''}${mealChoiceLabel(item.mealChoice)} · ${item.userEmail}`} status={item.isServed ? t('kitchen.served') : activeTab === 'noshow' ? t('kitchen.noShow') : t('kitchen.pending')} good={item.isServed} bad={activeTab === 'noshow'} />)}{!loading && selectedItems.length === 0 && logs.length === 0 && <Text style={styles.emptyText}>{t('kitchen.noMatchingRegistrations')}</Text>}</View>
           </>
         )}
       </StateTransition>
@@ -152,8 +153,8 @@ export function KitchenDashboardScreen({ navigation }: Props) {
   );
 }
 
-function ListRow({ initials: avatarInitials, name, detail, status, good }: { initials: string; name: string; detail: string; status: string; good: boolean }) {
-  return <View style={styles.listRow}><View style={[styles.listAvatar, good && styles.listAvatarGood]}><Text style={[styles.listAvatarText, good && styles.listAvatarTextGood]}>{avatarInitials}</Text></View><View style={styles.listCopy}><Text style={styles.listName}>{name}</Text><Text style={styles.listDetail}>{detail}</Text></View><Pill tone={good ? 'good' : status === 'No-show' ? 'bad' : 'soft'}><PillText>{status}</PillText></Pill></View>;
+function ListRow({ initials: avatarInitials, name, detail, status, good, bad }: { initials: string; name: string; detail: string; status: string; good: boolean; bad?: boolean }) {
+  return <View style={styles.listRow}><View style={[styles.listAvatar, good && styles.listAvatarGood]}><Text style={[styles.listAvatarText, good && styles.listAvatarTextGood]}>{avatarInitials}</Text></View><View style={styles.listCopy}><Text style={styles.listName}>{name}</Text><Text style={styles.listDetail}>{detail}</Text></View><Pill tone={good ? 'good' : bad ? 'bad' : 'soft'}><PillText>{status}</PillText></Pill></View>;
 }
 
 const styles = StyleSheet.create({

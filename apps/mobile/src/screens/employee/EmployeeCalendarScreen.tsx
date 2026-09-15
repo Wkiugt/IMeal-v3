@@ -33,6 +33,7 @@ import { theme } from '../../theme';
 type Props = AppTabScreenProps<'EmployeeCalendar'>;
 type WindowDay = { cutoffAt: number; editable: boolean; lunarDay: number; availableMealChoices: readonly MealChoice[] };
 type WindowSnapshot = { serverNowAt: number; receiptAt: number; days: Record<string, WindowDay> };
+type CalendarError = { error: unknown; fallbackKey: 'errors.loadCalendar' } | { key: 'calendar.registrationUnavailable' };
 
 function getWindowSnapshot(response: WeekRegistrationResponse, receiptAt: number): WindowSnapshot | null {
   const serverNowAt = Date.parse(response.registrationWindow?.serverNow || '');
@@ -64,13 +65,13 @@ function getWindowSnapshot(response: WeekRegistrationResponse, receiptAt: number
 export function EmployeeCalendarScreen(_props: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
-  const { t } = useLanguage();
+  const { locale, t } = useLanguage();
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [weekState, setWeekState] = useState<WeekState>({});
   const [draftChoiceByDate, setDraftChoiceByDate] = useState<DraftChoiceByDate>({});
   const [monthRegistrations, setMonthRegistrations] = useState<Set<string>>(new Set());
   const [windowSnapshot, setWindowSnapshot] = useState<WindowSnapshot | null>(null);
-  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  const [availabilityError, setAvailabilityError] = useState<CalendarError | null>(null);
   const [monthLoading, setMonthLoading] = useState(true);
   const [weekLoading, setWeekLoading] = useState(true);
   const monthLoaded = useRef(false);
@@ -98,7 +99,7 @@ export function EmployeeCalendarScreen(_props: Props) {
   ) => {
     const snapshot = getWindowSnapshot(response, receiptAt);
     if (!snapshot) {
-      setAvailabilityError(t('calendar.registrationUnavailable'));
+      setAvailabilityError({ key: 'calendar.registrationUnavailable' });
       return false;
     }
 
@@ -148,7 +149,7 @@ export function EmployeeCalendarScreen(_props: Props) {
     } catch (error: unknown) {
       if (requestId !== weekRequestId.current) return;
       const message = getMobileErrorMessage(error, t, 'errors.loadCalendar');
-      setAvailabilityError(message);
+      setAvailabilityError({ error, fallbackKey: 'errors.loadCalendar' });
       showNotice({ title: t('calendar.registrationUnavailable'), message, tone: 'error' });
     } finally {
       if (requestId === weekRequestId.current) setWeekLoading(false);
@@ -172,7 +173,7 @@ export function EmployeeCalendarScreen(_props: Props) {
     } catch (error: unknown) {
       if (currentMonthRequestId !== monthRequestId.current) return;
       const message = getMobileErrorMessage(error, t, 'errors.loadCalendar');
-      setAvailabilityError(message);
+      setAvailabilityError({ error, fallbackKey: 'errors.loadCalendar' });
       showNotice({ title: t('calendar.registrationUnavailable'), message, tone: 'error' });
     } finally {
       if (currentMonthRequestId === monthRequestId.current) setMonthLoading(false);
@@ -361,27 +362,27 @@ export function EmployeeCalendarScreen(_props: Props) {
         }
       >
         {showLoading ? (
-          <BrandLoader label="Loading meal calendar…" />
+          <BrandLoader label={t('calendar.loading')} />
         ) : availabilityError && !windowSnapshot ? (
-          <Pressable accessibilityRole="button" onPress={() => void loadMonth()} style={styles.retry}>
-            <Text style={styles.retryText}>{availabilityError}</Text>
-            <Text style={styles.retryAction}>Retry</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel={t('common.retry')} onPress={() => void loadMonth()} style={styles.retry}>
+            <Text style={styles.retryText}>{'key' in availabilityError ? t(availabilityError.key) : getMobileErrorMessage(availabilityError.error, t, availabilityError.fallbackKey)}</Text>
+            <Text style={styles.retryAction}>{t('common.retry')}</Text>
           </Pressable>
         ) : (
           <>
             <View style={styles.header}>
-              <Text style={styles.month}>{formatMonth(month)}</Text>
+              <Text style={styles.month}>{formatMonth(month, locale)}</Text>
               <View style={styles.monthNav}>
-                <Pressable accessibilityLabel="Previous month" onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))} style={styles.monthButton}><ChevronLeft size={16} color={theme.colors.accentDeep} /></Pressable>
-                <Pressable accessibilityLabel="Next month" onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))} style={styles.monthButton}><ChevronRight size={16} color={theme.colors.accentDeep} /></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel={t('calendar.previousMonth')} onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))} style={styles.monthButton}><ChevronLeft size={16} color={theme.colors.accentDeep} /></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel={t('calendar.nextMonth')} onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))} style={styles.monthButton}><ChevronRight size={16} color={theme.colors.accentDeep} /></Pressable>
               </View>
             </View>
             <PrototypeCard style={styles.calendarCard}>
-              <View style={styles.weekdayRow}>{['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((day) => <View key={day} style={styles.calendarColumn}><Text style={styles.weekday}>{day}</Text></View>)}</View>
+              <View style={styles.weekdayRow}>{(['calendar.weekday.mo', 'calendar.weekday.tu', 'calendar.weekday.we', 'calendar.weekday.th', 'calendar.weekday.fr', 'calendar.weekday.sa', 'calendar.weekday.su'] as const).map((dayKey) => <View key={dayKey} style={styles.calendarColumn}><Text style={styles.weekday}>{t(dayKey)}</Text></View>)}</View>
               <View style={styles.dayGrid}>{monthRows.map((row, rowIndex) => <View key={`week-${rowIndex}`} style={styles.dayGridRow}>{row.map((day, columnIndex) => { if (!day) return <View key={`empty-${rowIndex}-${columnIndex}`} style={styles.calendarColumn} />; const key = toDateKey(day); const booked = monthRegistrations.has(key); const today = key === todayKey; return <View key={key} style={styles.calendarColumn}><View style={[styles.dayMarker, booked && styles.bookedDay, today && styles.todayDay]}><Text style={[styles.dayNumber, booked && styles.bookedText]}>{day.getDate()}</Text>{booked && <View style={styles.dot} />}</View></View>; })}</View>)}</View>
             </PrototypeCard>
-            <View style={styles.legend}><View style={styles.legendItem}><View style={[styles.swatch, styles.bookedSwatch]} /><Text style={styles.legendText}>Booked</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.todaySwatch]} /><Text style={styles.legendText}>Today</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.availableSwatch]} /><Text style={styles.legendText}>Available</Text></View></View>
-            <View style={styles.weekHeader}><PrototypeSectionTitle title="Weekly Meal Registration" subtitle={`${formatShortDate(weekStart)}–${formatShortDate(addDays(weekStart, 6))} · Toggle a day on to register lunch`} /></View>
+            <View style={styles.legend}><View style={styles.legendItem}><View style={[styles.swatch, styles.bookedSwatch]} /><Text style={styles.legendText}>{t('calendar.booked')}</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.todaySwatch]} /><Text style={styles.legendText}>{t('common.today')}</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.availableSwatch]} /><Text style={styles.legendText}>{t('calendar.available')}</Text></View></View>
+            <View style={styles.weekHeader}><PrototypeSectionTitle title={t('calendar.weeklyRegistration')} subtitle={`${formatShortDate(weekStart, locale)}–${formatShortDate(addDays(weekStart, 6), locale)} · ${t('calendar.toggleHint')}`} /></View>
             {Array.from({ length: 7 }, (_, index) => {
               const date = addDays(weekStart, index);
               const dateKey = toDateKey(date);
@@ -398,9 +399,9 @@ export function EmployeeCalendarScreen(_props: Props) {
                 <View key={dateKey} style={[styles.weekRow, dateKey === todayKey && styles.todayRow]}>
                   <View style={styles.weekInfo}>
                     <View style={styles.weekDayLine}>
-                      <Text style={styles.weekDay}>{formatDay(date)}</Text>
-                      {dateKey === todayKey && <Pill><PillText>Today</PillText></Pill>}
-                      {locked && <Pill tone="warn"><Text style={styles.lockedLabel}>Locked</Text></Pill>}
+                      <Text style={styles.weekDay}>{formatDay(date, locale)}</Text>
+                      {dateKey === todayKey && <Pill><PillText>{t('common.today')}</PillText></Pill>}
+                      {locked && <Pill tone="warn"><Text style={styles.lockedLabel}>{t('common.locked')}</Text></Pill>}
                       {windowDay?.lunarDay === 1 && (
                         <View style={styles.lunarBadge}>
                           <Leaf size={13} color={theme.colors.accentDeep} />
@@ -414,7 +415,7 @@ export function EmployeeCalendarScreen(_props: Props) {
                         </View>
                       )}
                     </View>
-                    <Text style={styles.weekDate}>{formatShortDate(date)}</Text>
+                    <Text style={styles.weekDate}>{formatShortDate(date, locale)}</Text>
                   </View>
                   <View style={styles.weekControls}>
                     {choicesAvailable && (
@@ -428,7 +429,7 @@ export function EmployeeCalendarScreen(_props: Props) {
                       value={active}
                       disabled={locked || isSaving}
                       saving={isSaving}
-                      accessibilityLabel={`Toggle lunch registration for ${formatDay(date)}${locked ? ', locked after cutoff' : ''}`}
+                      accessibilityLabel={t(locked ? 'calendar.toggleLockedAccessibility' : 'calendar.toggleAccessibility', { day: formatDay(date, locale) })}
                       onPress={() => toggleRegistration(dateKey)}
                     />
                   </View>

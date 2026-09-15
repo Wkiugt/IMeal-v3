@@ -12,35 +12,36 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CalendarDays, Home, QrCode, ScanLine, UserRound } from 'lucide-react-native';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useIsFocused } from '@react-navigation/native';
+import type { TranslationKey } from '../i18n/translations';
 import { theme } from '../theme';
 import type { AppTabParamList } from '../navigation';
 import type { PrototypeIcon } from './PrototypePrimitives';
 import { ScreenEntrance } from './BrandMotion';
+import { useLanguage } from '../i18n/LanguageProvider';
 
 export type PrototypeNavItem = {
-  label: string;
+  labelKey: TranslationKey;
   route: keyof AppTabParamList;
   icon: PrototypeIcon;
 };
 
 export const employeeNav: PrototypeNavItem[] = [
-  { label: 'Dashboard', route: 'EmployeeDashboard', icon: Home },
-  { label: 'Calendar', route: 'EmployeeCalendar', icon: CalendarDays },
-  { label: 'Ticket', route: 'PickupIntent', icon: QrCode },
-  { label: 'Profile', route: 'EmployeeProfile', icon: UserRound },
+  { labelKey: 'nav.dashboard', route: 'EmployeeDashboard', icon: Home },
+  { labelKey: 'nav.calendar', route: 'EmployeeCalendar', icon: CalendarDays },
+  { labelKey: 'nav.ticket', route: 'PickupIntent', icon: QrCode },
+  { labelKey: 'nav.profile', route: 'EmployeeProfile', icon: UserRound },
 ];
 
 export const hybridEmployeeNav: PrototypeNavItem[] = [
   ...employeeNav.slice(0, 3),
-  { label: 'Check-in', route: 'KitchenScanner', icon: ScanLine },
+  { labelKey: 'nav.checkIn', route: 'KitchenScanner', icon: ScanLine },
   employeeNav[3],
 ];
 
 export const kitchenNav: PrototypeNavItem[] = [
-  { label: 'Dashboard', route: 'KitchenDashboard', icon: Home },
-  { label: 'Scanner', route: 'KitchenScanner', icon: QrCode },
+  { labelKey: 'nav.dashboard', route: 'KitchenDashboard', icon: Home },
+  { labelKey: 'nav.scanner', route: 'KitchenScanner', icon: QrCode },
 ];
-
 export function PrototypeTabBar({
   state,
   descriptors,
@@ -48,6 +49,7 @@ export function PrototypeTabBar({
   navItems,
   insets,
 }: BottomTabBarProps & { navItems: PrototypeNavItem[] }) {
+  const { t } = useLanguage();
   return (
     <View
       style={[
@@ -71,7 +73,7 @@ export function PrototypeTabBar({
               key={route.key}
               accessibilityRole="tab"
               accessibilityState={{ selected: focused }}
-              accessibilityLabel={options?.tabBarAccessibilityLabel || item.label}
+              accessibilityLabel={options?.tabBarAccessibilityLabel || t(item.labelKey)}
               onPress={() => {
                 const event = navigation.emit({
                   type: 'tabPress',
@@ -95,7 +97,7 @@ export function PrototypeTabBar({
               />
               {focused && (
                 <Text style={[styles.navLabel, styles.navLabelActive]}>
-                  {item.label}
+                  {t(item.labelKey)}
                 </Text>
               )}
             </Pressable>

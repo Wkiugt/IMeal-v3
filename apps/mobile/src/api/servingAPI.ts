@@ -11,24 +11,8 @@ export interface ResolveServingRequest {
   qrPayload: string;
 }
 
-export interface ServingItem {
-  id: string;
-  itemName: string;
-  quantity: number;
-}
-
-export interface ResolveServingResponse {
-  pickupSessionToken: string;
-  session: {
-    expiresAt: string;
-  };
-  intent: {
-    userId: string;
-    items: ServingItem[];
-    totalCount: number;
-    isProxy: boolean;
-  };
-}
+export type ServingItem = v1.ServingIntentItem;
+export type ResolveServingResponse = v1.ResolveServingResponse;
 
 export interface ConfirmServingRequest {
   pickupSessionToken: string;

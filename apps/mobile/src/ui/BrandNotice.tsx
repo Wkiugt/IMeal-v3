@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react-native';
 import { theme } from '../theme';
 import { useReducedMotion } from './useReducedMotion';
-
+import { useLanguage } from '../i18n/LanguageProvider';
 export type NoticeTone = 'info' | 'success' | 'warning' | 'error';
 
 export type ShowNoticeInput = {
@@ -40,6 +40,7 @@ type CurrentNotice = {
 };
 
 export function NoticeProvider({ children }: { children: React.ReactNode }) {
+  const { t } = useLanguage();
   const [notice, setNotice] = useState<CurrentNotice | null>(null);
   const [visibleNotice, setVisibleNotice] = useState<ShowNoticeInput | null>(null);
   const opacity = useRef(new Animated.Value(0)).current;
@@ -142,7 +143,7 @@ export function NoticeProvider({ children }: { children: React.ReactNode }) {
               </View>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Dismiss notification"
+                accessibilityLabel={t('notice.dismiss')}
                 onPress={dismissNotice}
                 style={({ pressed }) => [styles.dismiss, pressed && styles.dismissPressed]}
               >

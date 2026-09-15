@@ -16,15 +16,18 @@ import {
   toMobileApiError,
 } from '../api/mobileApiError';
 import { RequestTimeoutError, fetchWithTimeout } from '../api/requestWithTimeout';
-import { translate } from '../i18n/translations';
-
+import { useLanguage } from '../i18n/LanguageProvider';
+import type { Translate } from '../i18n/translations';
 const AUTH_REQUEST_TIMEOUT_MS = 10_000;
 
-function getAuthErrorMessage(error: unknown, fallbackKey: 'errors.restoreSession' | 'errors.signIn'): string {
+type AuthErrorFallbackKey = 'errors.restoreSession' | 'errors.signIn';
+type AuthErrorState = { error: unknown; fallbackKey: AuthErrorFallbackKey };
+
+function getAuthErrorMessage(error: unknown, fallbackKey: AuthErrorFallbackKey, t: Translate): string {
   if (error instanceof RequestTimeoutError) {
-    return translate('errors.apiTimeout');
+    return t('errors.apiTimeout');
   }
-  return getMobileErrorMessage(error, translate, fallbackKey);
+  return getMobileErrorMessage(error, t, fallbackKey);
 }
 const SESSION_KEY = 'imeal.local.access-token';
 
@@ -121,11 +124,12 @@ type SessionContextValue = {
 const SessionContext = createContext<SessionContextValue | null>(null);
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
+  const { t } = useLanguage();
   const [token, setToken] = useState<string | null>(null);
   const [profile, setProfile] = useState<MobileProfile | null>(null);
   const [isRestoring, setIsRestoring] = useState(true);
   const [isSigningIn, setIsSigningIn] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [authErrorState, setAuthErrorState] = useState<AuthErrorState | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -143,14 +147,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         if (mounted) {
           setToken(savedToken);
           setProfile(savedProfile);
-          setAuthError(null);
+          setAuthErrorState(null);
         }
       } catch (error: unknown) {
         if (Platform.OS === 'web')
           globalThis.localStorage?.removeItem(SESSION_KEY);
         else await SecureStore.deleteItemAsync(SESSION_KEY);
         if (mounted) {
-          setAuthError(getAuthErrorMessage(error, 'errors.restoreSession'));
+          setAuthErrorState({ error, fallbackKey: 'errors.restoreSession' });
         }
       } finally {
         if (mounted) setIsRestoring(false);
@@ -163,7 +167,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (username: string, password: string) => {
     setIsSigningIn(true);
-    setAuthError(null);
+    setAuthErrorState(null);
     try {
       const result = await loginLocal(username, password);
       if (Platform.OS === 'web')
@@ -172,7 +176,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setToken(result.accessToken);
       setProfile(result.profile);
     } catch (error: unknown) {
-      setAuthError(getAuthErrorMessage(error, 'errors.signIn'));
+      setAuthErrorState({ error, fallbackKey: 'errors.signIn' });
     } finally {
       setIsSigningIn(false);
     }
@@ -183,7 +187,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     else await SecureStore.deleteItemAsync(SESSION_KEY);
     setToken(null);
     setProfile(null);
-    setAuthError(null);
+    setAuthErrorState(null);
   };
 
   const value = useMemo<SessionContextValue>(() => {
@@ -194,14 +198,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       isRestoring,
       isSigningIn,
       canSignIn: true,
-      authError,
+      authError: authErrorState
+        ? getAuthErrorMessage(authErrorState.error, authErrorState.fallbackKey, t)
+        : null,
       canUseEmployee: roles.includes('staff'),
       canUseKitchen: roles.includes('kitchen'),
       signIn,
       logout,
     };
-  }, [authError, isRestoring, isSigningIn, profile, token]);
-
+  }, [authErrorState, isRestoring, isSigningIn, profile, t, token]);
   return (
     <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
   );

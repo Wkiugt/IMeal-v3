@@ -10,10 +10,12 @@ import {
   type PickupOption,
 } from '../../api/pickupAPI';
 import { getMobileErrorMessage, MobileApiError } from '../../api/mobileApiError';
-import { initials } from '../../businessDate';
+import { formatShortDate, initials, parseDateKey } from '../../businessDate';
 import {
   Avatar,
   Eyebrow,
+  Pill,
+  PillText,
   PrototypeButton,
   PrototypeCard,
 } from '../../ui/PrototypePrimitives';
@@ -27,12 +29,12 @@ import { useLanguage } from '../../i18n/LanguageProvider';
 type Props = AppTabScreenProps<'PickupIntent'>;
 type PickupLoadError =
   | { type: 'window-closed' }
-  | { type: 'not-ready'; message: string }
-  | { type: 'error'; message: string };
+  | { type: 'not-ready'; error: unknown }
+  | { type: 'error'; error: unknown };
 export function PickupIntentScreen(_props: Props) {
   const { token, profile } = useSession();
   const { showNotice } = useNotice();
-  const { t } = useLanguage();
+  const { locale, t } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<PickupLoadError | null>(null);
   const [options, setOptions] = useState<PickupOption[]>([]);
@@ -75,7 +77,7 @@ export function PickupIntentScreen(_props: Props) {
       } else {
         setLoadError({
           type: error instanceof MobileApiError && error.code === 'PICKUP_NOT_READY' ? 'not-ready' : 'error',
-          message: getMobileErrorMessage(error, t, 'errors.loadPickup'),
+          error,
         });
       }
     } finally {
@@ -184,7 +186,7 @@ export function PickupIntentScreen(_props: Props) {
     });
   };
 
-  const displayName = profile?.name || profile?.email.split('@')[0] || 'Employee';
+  const displayName = profile?.name || profile?.email.split('@')[0] || t('profile.employeeAccount');
   const errorState = loadError?.type;
   const visibleQrValue =
     isFocused && qrState.current?.value === qrValue && qrState.current.expiresAt > Date.now()
@@ -194,8 +196,8 @@ export function PickupIntentScreen(_props: Props) {
   return (
     <PrototypeFrame>
       <PrototypeSectionTitle
-        title="Meal Ticket"
-        subtitle="Show this dynamic QR code to the kitchen staff"
+        title={t('pickup.title')}
+        subtitle={t('pickup.subtitle')}
       />
       <StateTransition
         stateKey={
@@ -205,61 +207,64 @@ export function PickupIntentScreen(_props: Props) {
         }
       >
         {showLoading ? (
-          <BrandLoader label="Loading pickup options…" />
+          <BrandLoader label={t('pickup.loading')} />
         ) : loadError?.type === 'window-closed' ? (
           <PrototypeCard style={styles.emptyCard}>
             <View style={styles.errorHeader}>
               <Clock3 size={22} color={theme.colors.accentDeep} />
-              <Text style={styles.emptyTitle}>Pickup is currently closed</Text>
+              <Text style={styles.emptyTitle}>{t('pickup.windowClosed')}</Text>
             </View>
             <Text style={styles.emptyText}>
-              Meal tickets are available from 10:30 to 13:30 Vietnam time.
+              {t('pickup.windowClosedHint')}
             </Text>
           </PrototypeCard>
         ) : loadError?.type === 'not-ready' ? (
           <PrototypeCard style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>The kitchen is preparing pickup</Text>
-            <Text style={styles.emptyText}>{loadError.message}</Text>
+            <Text style={styles.emptyTitle}>{t('pickup.notReady')}</Text>
+            <Text style={styles.emptyText}>{getMobileErrorMessage(loadError.error, t, 'errors.loadPickup')}</Text>
             <PrototypeButton
               variant="secondary"
               onPress={() => void fetchOptions()}
               style={styles.retryButton}
             >
-              Check again
+              {t('pickup.checkAgain')}
             </PrototypeButton>
           </PrototypeCard>
         ) : loadError?.type === 'error' ? (
           <PrototypeCard style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>Unable to load meal tickets</Text>
-            <Text style={styles.emptyText}>{loadError.message}</Text>
+            <Text style={styles.emptyTitle}>{t('pickup.loadFailed')}</Text>
+            <Text style={styles.emptyText}>{getMobileErrorMessage(loadError.error, t, 'errors.loadPickup')}</Text>
             <PrototypeButton
               variant="secondary"
               onPress={() => void fetchOptions()}
               style={styles.retryButton}
             >
-              Retry
+              {t('common.retry')}
             </PrototypeButton>
           </PrototypeCard>
         ) : options.length === 0 ? (
           <PrototypeCard style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>No meals ready to pick up</Text>
+            <Text style={styles.emptyTitle}>{t('pickup.noMeals')}</Text>
             <Text style={styles.emptyText}>
-              Register a meal in Calendar before generating a ticket.
+              {t('pickup.noMealsHint')}
             </Text>
           </PrototypeCard>
         ) : (
           <>
             <PrototypeCard style={styles.selectionCard}>
               <View style={styles.selectionHeader}>
-                <Eyebrow>MEALS TO PICK UP</Eyebrow>
-                <Text style={styles.selectionHint}>Select one or more</Text>
+                <Eyebrow>{t('pickup.mealsToPickUp')}</Eyebrow>
+                <Text style={styles.selectionHint}>{t('pickup.selectOneOrMore')}</Text>
               </View>
               {options.map((option) => {
                 const selected = selectedIds.has(option.registrationId);
+                const optionTitle = option.type === 'OWN' ? t('pickup.myMeal') : t('pickup.delegatedMeal');
+                const choiceLabel = t(option.mealChoice === 'VEGETARIAN' ? 'calendar.mealChoice.vegetarian' : 'calendar.mealChoice.regular');
                 return (
                   <Pressable
                     key={option.registrationId}
                     accessibilityRole="checkbox"
+                    accessibilityLabel={optionTitle}
                     accessibilityState={{ checked: selected }}
                     onPress={() => toggleSelection(option.registrationId)}
                     style={[styles.optionRow, selected && styles.optionSelected]}
@@ -271,11 +276,12 @@ export function PickupIntentScreen(_props: Props) {
                     )}
                     <View style={styles.optionCopy}>
                       <Text style={styles.optionTitle}>
-                        {option.type === 'OWN' ? 'My meal' : 'Delegated meal'}
+                        {optionTitle}
                       </Text>
+                      <Pill tone="outline"><PillText>{choiceLabel}</PillText></Pill>
                       <Text style={styles.optionDate}>
-                        {option.mealDate.slice(0, 10)}
-                        {option.type === 'DELEGATED' && option.owner ? ` · From ${option.owner.name}` : ''}
+                        {formatShortDate(parseDateKey(option.mealDate), locale)}
+                        {option.type === 'DELEGATED' && option.owner ? ` · ${t('pickup.from', { name: option.owner.name })}` : ''}
                       </Text>
                     </View>
                   </Pressable>
@@ -293,7 +299,7 @@ export function PickupIntentScreen(_props: Props) {
                   />
                 ) : (
                   <View style={styles.qrPlaceholder}>
-                    <BrandLoader compact label="Generating QR code…" />
+                    <BrandLoader compact label={t('pickup.generatingQr')} />
                   </View>
                 )}
                 <Avatar initials={initials(profile?.name, 'ME')} />
@@ -310,31 +316,38 @@ export function PickupIntentScreen(_props: Props) {
               </View>
               <View style={styles.ticketBottom}>
                 <View style={styles.ticketRow}>
-                  <Text style={styles.ticketKey}>Meal</Text>
-                  <Text style={styles.ticketValue}>Lunch</Text>
+                  <Text style={styles.ticketKey}>{t('pickup.meal')}</Text>
+                  <Text style={styles.ticketValue}>{t('pickup.lunch')}</Text>
                 </View>
                 <View style={styles.ticketRow}>
-                  <Text style={styles.ticketKey}>Selected</Text>
+                  <Text style={styles.ticketKey}>{t('pickup.mealChoice')}</Text>
                   <Text style={styles.ticketValue}>
-                    {selectedIds.size} meal{selectedIds.size === 1 ? '' : 's'}
+                    {Array.from(new Set(options.filter((option) => selectedIds.has(option.registrationId)).map((option) => option.mealChoice))).map((choice) => t(choice === 'VEGETARIAN' ? 'calendar.mealChoice.vegetarian' : 'calendar.mealChoice.regular')).join(', ')}
+                  </Text>
+                </View>
+                <View style={styles.ticketRow}>
+                  <Text style={styles.ticketKey}>{t('common.selected')}</Text>
+                  <Text style={styles.ticketValue}>
+                    {t('pickup.selectedCount', { count: selectedIds.size })}
                   </Text>
                 </View>
                 <View style={styles.ticketNote}>
                   <Clock3 size={15} color={theme.colors.accentDeep} />
                   <Text style={styles.ticketNoteText}>
-                    {qrLoading ? 'Refreshing code…' : `Code refreshes in ${timeLeft}s`}
+                    {qrLoading ? t('pickup.refreshingCode') : t('pickup.codeRefreshesIn', { seconds: timeLeft })}
                   </Text>
                 </View>
               </View>
             </PrototypeCard>
             <Pressable
               accessibilityRole="button"
+              accessibilityLabel={t(isGenerating ? 'pickup.pauseTicket' : 'pickup.generateTicket')}
               disabled={selectedIds.size === 0}
               onPress={() => setIsGenerating((current) => !current)}
               style={[styles.generateButton, selectedIds.size === 0 && styles.disabled]}
             >
               <Text style={styles.generateText}>
-                {isGenerating ? 'Pause ticket' : 'Generate ticket'}
+                {t(isGenerating ? 'pickup.pauseTicket' : 'pickup.generateTicket')}
               </Text>
             </Pressable>
           </>
@@ -342,8 +355,8 @@ export function PickupIntentScreen(_props: Props) {
       </StateTransition>
     </PrototypeFrame>
   );
-}
 
+}
 const styles = StyleSheet.create({
   retryButton: { marginTop: 16 },
   emptyCard: { marginTop: 20 },

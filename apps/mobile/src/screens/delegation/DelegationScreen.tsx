@@ -16,6 +16,7 @@ import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
 import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
+import { formatBusinessInstant } from '../../businessDate';
 import { getMobileErrorMessage } from '../../api/mobileApiError';
 import { useLanguage } from '../../i18n/LanguageProvider';
 import { theme } from '../../theme';
@@ -25,13 +26,13 @@ type Props = ProfileStackScreenProps<'Delegation'>;
 export function DelegationScreen({ navigation }: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
-  const { t } = useLanguage();
+  const { locale, t } = useLanguage();
   const [tab, setTab] = useState<Tab>('OUTGOING');
   const [searchQuery, setSearchQuery] = useState('');
   const [dataByTab, setDataByTab] = useState<DelegationCache>(() => createDelegationCache());
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [actionId, setActionId] = useState<string | null>(null);
   const delegationRequestId = useRef(0);
   const hasLoadedAnyData = useRef(false);
@@ -58,8 +59,8 @@ export function DelegationScreen({ navigation }: Props) {
     } catch (error: unknown) {
       if (requestId !== delegationRequestId.current || activeTabRef.current !== targetTab) return;
       const message = getMobileErrorMessage(error, t, 'errors.loadDelegations');
-      setLoadError(message);
-      showNotice({ title: 'Delegations unavailable', message, tone: 'error' });
+      setLoadError(error);
+      showNotice({ title: t('delegation.unavailable'), message, tone: 'error' });
     } finally {
       if (requestId === delegationRequestId.current && activeTabRef.current === targetTab) {
         setInitialLoading(false);
@@ -94,7 +95,7 @@ export function DelegationScreen({ navigation }: Props) {
       if (activeTabRef.current === startingTab) await loadDelegations(startingTab);
     } catch (error: unknown) {
       showNotice({
-        title: 'Action failed',
+        title: t('delegation.actionFailed'),
         message: getMobileErrorMessage(error, t, 'errors.delegationAction'),
         tone: 'error',
       });
@@ -107,25 +108,25 @@ export function DelegationScreen({ navigation }: Props) {
 
   return (
     <PrototypeFrame>
-      <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => navigation.goBack()} style={styles.back}><ArrowLeft size={20} color={theme.colors.fg} /></Pressable><View style={styles.headerCopy}><PrototypeSectionTitle title="Delegations" subtitle="Manage meal pickup permissions" /></View></View>
-      <View style={styles.tabs}><Pressable onPress={() => selectTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>My Requests</Text></Pressable><Pressable onPress={() => selectTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>Incoming</Text></Pressable></View>
-      {tab === 'OUTGOING' && <PrototypeField icon={Search} placeholder="Search employee by name/ID..." value={searchQuery} onChangeText={setSearchQuery} style={styles.search} />}
-      {refreshing && activeCache.loaded && <Text style={styles.refreshing}>Refreshing…</Text>}
+      <View style={styles.header}><Pressable accessibilityRole="button" accessibilityLabel={t('delegation.back')} onPress={() => navigation.goBack()} style={styles.back}><ArrowLeft size={20} color={theme.colors.fg} /></Pressable><View style={styles.headerCopy}><PrototypeSectionTitle title={t('delegation.title')} subtitle={t('delegation.subtitle')} /></View></View>
+      <View style={styles.tabs}><Pressable accessibilityRole="tab" accessibilityState={{ selected: tab === 'OUTGOING' }} onPress={() => selectTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>{t('delegation.myRequests')}</Text></Pressable><Pressable accessibilityRole="tab" accessibilityState={{ selected: tab === 'INCOMING' }} onPress={() => selectTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>{t('delegation.incoming')}</Text></Pressable></View>
+      {tab === 'OUTGOING' && <PrototypeField icon={Search} accessibilityLabel={t('delegation.searchPlaceholder')} placeholder={t('delegation.searchPlaceholder')} value={searchQuery} onChangeText={setSearchQuery} style={styles.search} />}
+      {refreshing && activeCache.loaded && <Text style={styles.refreshing}>{t('delegation.refreshing')}</Text>}
       <StateTransition stateKey={showLoading ? 'loading' : loadError && !activeCache.loaded ? 'error' : showTabLoading ? 'tab-loading' : visible.length === 0 ? 'empty' : 'list'}>
         {showLoading ? (
-          <BrandLoader label="Loading delegations…" />
+          <BrandLoader label={t('delegation.loading')} />
         ) : loadError && !activeCache.loaded ? (
           <PrototypeCard style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Delegations unavailable</Text>
-            <Text style={styles.errorText}>{loadError}</Text>
-            <PrototypeButton variant="secondary" onPress={() => void loadDelegations(activeTabRef.current)} style={styles.retryButton}>Retry</PrototypeButton>
+            <Text style={styles.errorTitle}>{t('delegation.unavailable')}</Text>
+            <Text style={styles.errorText}>{getMobileErrorMessage(loadError, t, 'errors.loadDelegations')}</Text>
+            <PrototypeButton variant="secondary" onPress={() => void loadDelegations(activeTabRef.current)} style={styles.retryButton}>{t('common.retry')}</PrototypeButton>
           </PrototypeCard>
         ) : showTabLoading ? (
-          <BrandLoader compact label={`Loading ${tab === 'INCOMING' ? 'incoming' : 'outgoing'} delegations…`} />
+          <BrandLoader compact label={t(tab === 'INCOMING' ? 'delegation.loadingIncoming' : 'delegation.loadingOutgoing')} />
         ) : visible.length === 0 ? (
-          <Text style={styles.empty}>No delegations found.</Text>
+          <Text style={styles.empty}>{t('delegation.empty')}</Text>
         ) : (
-          <View style={styles.list}>{visible.map((item) => <PrototypeCard key={item.id} style={styles.card}><View style={styles.cardHeader}><Text style={styles.cardTitle}>{tab === 'OUTGOING' ? `To: ${item.delegateUserId}` : `From: ${item.delegateUserId}`}</Text><Status status={item.status} /></View><Text style={styles.cardDate}>Created: {new Date(item.createdAt).toLocaleDateString()}</Text>{item.status === 'PENDING' && <View style={styles.actions}>{tab === 'INCOMING' ? <><Pressable disabled={actionId === item.id || refreshing} onPress={() => void handleAction('decline', item.id)} style={styles.secondaryAction}><Text style={styles.secondaryText}>Decline</Text></Pressable><Pressable disabled={actionId === item.id || refreshing} onPress={() => void handleAction('accept', item.id)} style={styles.primaryAction}><Text style={styles.primaryText}>Accept</Text></Pressable></> : <Pressable disabled={actionId === item.id || refreshing} onPress={() => void handleAction('revoke', item.id)} style={styles.dangerAction}><Text style={styles.dangerText}>Revoke</Text></Pressable>}</View>}</PrototypeCard>)}</View>
+          <View style={styles.list}>{visible.map((item) => <PrototypeCard key={item.id} style={styles.card}><View style={styles.cardHeader}><Text style={styles.cardTitle}>{t(tab === 'OUTGOING' ? 'delegation.to' : 'delegation.from', { id: item.delegateUserId })}</Text><Status status={item.status} /></View><Text style={styles.cardDate}>{t('delegation.createdAt', { date: formatBusinessInstant(item.createdAt, locale) })}</Text>{item.status === 'PENDING' && <View style={styles.actions}>{tab === 'INCOMING' ? <><Pressable accessibilityRole="button" disabled={actionId === item.id || refreshing} onPress={() => void handleAction('decline', item.id)} style={styles.secondaryAction}><Text style={styles.secondaryText}>{t('delegation.decline')}</Text></Pressable><Pressable accessibilityRole="button" disabled={actionId === item.id || refreshing} onPress={() => void handleAction('accept', item.id)} style={styles.primaryAction}><Text style={styles.primaryText}>{t('delegation.accept')}</Text></Pressable></> : <Pressable accessibilityRole="button" disabled={actionId === item.id || refreshing} onPress={() => void handleAction('revoke', item.id)} style={styles.dangerAction}><Text style={styles.dangerText}>{t('delegation.revoke')}</Text></Pressable>}</View>}</PrototypeCard>)}</View>
         )}
       </StateTransition>
     </PrototypeFrame>
@@ -133,11 +134,18 @@ export function DelegationScreen({ navigation }: Props) {
 }
 
 function Status({ status }: { status: DelegationResponse['status'] }) {
+  const { t } = useLanguage();
   const pending = status === 'PENDING';
   const accepted = status === 'ACCEPTED';
   const tone = pending ? 'warn' : accepted ? 'good' : 'bad';
   const Icon = pending ? Clock : accepted ? CheckCircle : XCircle;
-  const label = pending ? 'Pending' : accepted ? 'Accepted' : status === 'DECLINED' ? 'Declined' : 'Revoked';
+  const label = pending
+    ? t('delegation.pending')
+    : accepted
+      ? t('delegation.accepted')
+      : status === 'DECLINED'
+        ? t('delegation.declined')
+        : t('delegation.revoked');
   return <Pill tone={tone}><View style={styles.status}><Icon size={14} color={pending ? theme.colors.statusWarnDeep : accepted ? theme.colors.statusGoodDeep : theme.colors.statusBadDeep} /><PillText>{label}</PillText></View></Pill>;
 }
 
