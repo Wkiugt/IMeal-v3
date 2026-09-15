@@ -6,6 +6,7 @@ import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { registrationAPI, type RegistrationRecord, type WeekRegistrationResponse } from '../../api/registrationAPI';
 import { addDays, formatDay, formatMonth, formatShortDate, startOfWeek, toDateKey } from '../../businessDate';
+import { buildMonthRows } from './calendarGrid';
 import { PrototypeCard, Pill, PillText } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
@@ -147,14 +148,7 @@ export function EmployeeCalendarScreen(_props: Props) {
     return () => clearTimeout(timer);
   }, [refreshCurrentWeek, windowSnapshot]);
 
-  const days = useMemo(() => {
-    const first = new Date(month.getFullYear(), month.getMonth(), 1);
-    const offset = (first.getDay() + 6) % 7;
-    const result: Array<Date | null> = Array.from({ length: offset }, () => null);
-    for (let day = 1; day <= new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate(); day += 1) result.push(new Date(month.getFullYear(), month.getMonth(), day));
-    return result;
-  }, [month]);
-
+  const monthRows = useMemo(() => buildMonthRows(month), [month]);
   const handleCutoffFailure = useCallback((dateKey: string, previous: boolean) => {
     setWeekState((current) => ({ ...current, [dateKey]: previous }));
     setWindowSnapshot((current) => current ? { ...current, days: { ...current.days, [dateKey]: { ...(current.days[dateKey] || { cutoffAt: Date.now(), editable: false }), editable: false } } } : current);
@@ -207,7 +201,7 @@ export function EmployeeCalendarScreen(_props: Props) {
 
   const todayKey = toDateKey(new Date());
   return (
-    <PrototypeFrame>
+    <PrototypeFrame bottomClearance={0}>
       <StateTransition
         stateKey={
           showLoading
@@ -234,8 +228,8 @@ export function EmployeeCalendarScreen(_props: Props) {
               </View>
             </View>
             <PrototypeCard style={styles.calendarCard}>
-              <View style={styles.weekdayRow}>{['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((day) => <Text key={day} style={styles.weekday}>{day}</Text>)}</View>
-              <View style={styles.dayGrid}>{days.map((day, index) => { if (!day) return <View key={`empty-${index}`} style={styles.dayCell} />; const key = toDateKey(day); const booked = monthRegistrations.has(key); const today = key === todayKey; return <View key={key} style={[styles.dayCell, booked && styles.bookedDay, today && styles.todayDay]}><Text style={[styles.dayNumber, booked && styles.bookedText]}>{day.getDate()}</Text>{booked && <View style={styles.dot} />}</View>; })}</View>
+              <View style={styles.weekdayRow}>{['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((day) => <View key={day} style={styles.calendarColumn}><Text style={styles.weekday}>{day}</Text></View>)}</View>
+              <View style={styles.dayGrid}>{monthRows.map((row, rowIndex) => <View key={`week-${rowIndex}`} style={styles.dayGridRow}>{row.map((day, columnIndex) => { if (!day) return <View key={`empty-${rowIndex}-${columnIndex}`} style={styles.calendarColumn} />; const key = toDateKey(day); const booked = monthRegistrations.has(key); const today = key === todayKey; return <View key={key} style={styles.calendarColumn}><View style={[styles.dayMarker, booked && styles.bookedDay, today && styles.todayDay]}><Text style={[styles.dayNumber, booked && styles.bookedText]}>{day.getDate()}</Text>{booked && <View style={styles.dot} />}</View></View>; })}</View>)}</View>
             </PrototypeCard>
             <View style={styles.legend}><View style={styles.legendItem}><View style={[styles.swatch, styles.bookedSwatch]} /><Text style={styles.legendText}>Booked</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.todaySwatch]} /><Text style={styles.legendText}>Today</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.availableSwatch]} /><Text style={styles.legendText}>Available</Text></View></View>
             <View style={styles.weekHeader}><PrototypeSectionTitle title="Weekly Meal Registration" subtitle={`${formatShortDate(weekStart)}–${formatShortDate(addDays(weekStart, 6))} · Toggle a day on to register lunch`} /></View>
@@ -302,15 +296,17 @@ const styles = StyleSheet.create({
   monthNav: { flexDirection: 'row', gap: 8 },
   monthButton: { width: 36, height: 36, borderRadius: theme.radii.pill, backgroundColor: theme.colors.accentTint, alignItems: 'center', justifyContent: 'center' },
   calendarCard: { paddingHorizontal: 16, paddingVertical: 18, marginBottom: 20 },
-  weekdayRow: { flexDirection: 'row', marginBottom: 8 },
-  weekday: { flex: 1, color: theme.colors.muted, fontFamily: theme.typography.fontMono, fontSize: 11, textAlign: 'center' },
-  dayGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
-  dayCell: { width: '13.25%', aspectRatio: 1, borderRadius: theme.radii.pill, alignItems: 'center', justifyContent: 'center' },
+  weekdayRow: { flexDirection: 'row', gap: 4, marginBottom: 8 },
+  calendarColumn: { flex: 1, minWidth: 0, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
+  weekday: { color: theme.colors.muted, fontFamily: theme.typography.fontMono, fontSize: 11, textAlign: 'center' },
+  dayGrid: { gap: 4 },
+  dayGridRow: { flexDirection: 'row', gap: 4 },
+  dayMarker: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', position: 'relative' },
   bookedDay: { backgroundColor: theme.colors.accentSoft },
   todayDay: { borderWidth: 2, borderColor: theme.colors.accentDeep },
   dayNumber: { color: theme.colors.fg, fontSize: 14 },
   bookedText: { color: theme.colors.accentDeep, fontWeight: '700' },
-  dot: { width: 4, height: 4, borderRadius: 2, backgroundColor: theme.colors.accentDeep, marginTop: 3 },
+  dot: { position: 'absolute', width: 4, height: 4, borderRadius: 2, backgroundColor: theme.colors.accentDeep, bottom: 4 },
   legend: { flexDirection: 'row', gap: 18, paddingHorizontal: 4, paddingBottom: 28 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   swatch: { width: 10, height: 10, borderRadius: 5 },
