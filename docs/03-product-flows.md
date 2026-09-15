@@ -124,7 +124,7 @@ sequenceDiagram
     S->>M: Mở Tuần ăn
     M->>API: GET weekly menu + own registrations
     API->>DB: Load published daily menus + registrations
-    API-->>M: Days + registered/editable/cutoff state
+    API-->>M: Days + registered/editable/cutoff state + available meal choices
 ```
 
 Weekly list example:
@@ -148,13 +148,14 @@ Weekly list example:
 [ Lưu thay đổi ]
 ```
 
-### 4.2 Tick/untick
+### 4.2 Tick/untick and meal choice
 
-- Tick editable day → local draft `registered=true`.
-- Untick registered editable day → local draft `registered=false`.
-- Locked day does not toggle.
+- Tick editable day → local draft `registered=true`; normal service date uses `REGULAR`.
+- On lunar day 1 or 15, including a leap month, Staff may choose `REGULAR` or `VEGETARIAN`; no other date exposes `VEGETARIAN`.
+- Untick registered editable day → local draft `registered=false`; the existing `meal_choice` remains stored for history.
+- Locked day does not toggle or change its meal choice.
 - Day without published menu is disabled and explains why.
-- `Chọn cả tuần` only affects currently editable/published days.
+- `Chọn cả tuần` only affects currently editable/published days and uses `REGULAR` unless the Staff chooses otherwise on an eligible lunar date.
 - Unticking a registration with `pending|accepted` delegation warns that the delegation will also be revoked.
 
 ### 4.3 Save week
@@ -167,11 +168,11 @@ sequenceDiagram
     participant DB as PostgreSQL
 
     S->>M: Bấm Lưu thay đổi
-    M->>API: PUT weekly registration changes
+    M->>API: PUT weekly registration changes (status + meal choice)
     API->>API: Resolve VN server time
-    API->>DB: Validate menu/cutoff/current state per date
+    API->>DB: Validate menu/cutoff/current state and meal-choice policy per date
     API->>DB: Apply valid changes; cancel also revokes active delegation atomically
-    DB-->>API: Authoritative day results
+    DB-->>API: Authoritative day results, including stored meal choice
     API-->>M: Success/failure per day
     M->>M: Reconcile server state, retain failed drafts
 ```

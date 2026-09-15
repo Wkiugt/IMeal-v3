@@ -4,9 +4,9 @@
 
 IMeal v2 là ứng dụng nội bộ IEC giúp quản lý vòng đời suất ăn cho khoảng **200–300 nhân sự** theo mô hình:
 
-**Kitchen publish menu tuần → Staff tick ngày muốn ăn → cutoff từng ngày → Kitchen chuẩn bị suất → Kitchen xác nhận giao suất → no-show/penalty/audit**.
+**Kitchen publish menu tuần → Staff tick ngày muốn ăn và chọn loại suất phù hợp → cutoff từng ngày → Kitchen chuẩn bị suất → Kitchen xác nhận giao suất → no-show/penalty/audit**.
 
-V2 chuyển trọng tâm từ web “đăng ký ngày mai + chọn món” sang **mobile-first weekly registration**. Mỗi ngày chỉ có **một món cố định do Kitchen quản lý**, nên Staff chỉ quyết định **có ăn hay không**.
+V2 chuyển trọng tâm từ web “đăng ký ngày mai + chọn món” sang **mobile-first weekly registration**. Mỗi ngày chỉ có **một món cố định do Kitchen quản lý**; ngày service bình thường chỉ nhận loại `REGULAR`, còn ngày mùng 1 hoặc 15 âm lịch (kể cả tháng nhuận) cho phép Staff chọn `REGULAR` hoặc `VEGETARIAN`.
 
 ## 2. Product problems
 
@@ -82,7 +82,8 @@ V2 chuyển trọng tâm từ web “đăng ký ngày mai + chọn món” sang 
 - Tuần bắt đầu Thứ Hai; service dates mặc định Thứ Hai–Thứ Sáu. Holiday/non-service date phải được disable có chủ đích.
 - Mỗi meal date có đúng **0 hoặc 1 daily menu**.
 - Mỗi daily menu có đúng **một món cố định**.
-- Staff không chọn món.
+- Ngày service bình thường chỉ có lựa chọn suất `REGULAR`.
+- Ngày mùng 1 hoặc 15 âm lịch, kể cả tháng nhuận, cho phép lựa chọn `REGULAR` hoặc `VEGETARIAN`.
 - Weekly menu hỗ trợ ít nhất `draft` và `published`.
 - Staff chỉ đăng ký trên ngày có menu đã được publish.
 - Publish yêu cầu mọi enabled service date có daily menu hợp lệ; tuần được phép chứa disabled non-service dates.
@@ -122,16 +123,14 @@ Staff mở một tuần và tick từng ngày:
 
 ### 7.2 Domain rules
 
-- Registration identity: `user + meal_date` unique.
+- Registration identity: `user + meal_date` unique; mỗi row lưu thêm `meal_choice` (`REGULAR` hoặc `VEGETARIAN`).
+- Ngày service bình thường chỉ chấp nhận `REGULAR`; ngày mùng 1 hoặc 15 âm lịch (kể cả tháng nhuận) chấp nhận cả `REGULAR` và `VEGETARIAN`.
 - Weekly screen là presentation/batch-edit layer; source of truth vẫn là registration từng ngày.
 - Cutoff giữ **14:00 ngày trước meal date**, áp dụng độc lập cho từng ngày. Mutation chỉ hợp lệ khi server time `< 14:00`; đúng `14:00:00` là đã khóa.
 - Server time là nguồn sự thật; mobile không được tự quyết định cutoff.
 - Một tuần có thể chứa mixed state: ngày đã khóa, ngày còn editable.
 - Batch save trả kết quả từng ngày; ngày không hợp lệ không được làm mất draft của ngày khác.
 - Không persist literal `unregistered`; không có registration row nghĩa là unregistered.
-- `active registration` nghĩa là row có `status=registered` và chưa có active serving.
-- Cancel registration phải atomically revoke delegation `pending|accepted`, ghi audit và tạo notification cho các bên.
-- Race cancel/accept/revoke/serve được serialize; transaction thắng quyết định outcome, transaction còn lại nhận canonical conflict.
 
 ## 8. QR and serving/check-in
 
