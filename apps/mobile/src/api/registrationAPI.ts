@@ -2,38 +2,12 @@ import { v1 } from '@imeal/contracts';
 import { API_BASE } from './apiConfig';
 
 export type RegistrationStatus = v1.RegistrationStatus;
-
-export interface RegistrationRecord {
-  id: string;
-  mealDate: string;
-  status: RegistrationStatus;
-}
-
-export interface DailyMenuRecord {
-  date: string;
-  isHoliday: boolean;
-  isEnabled: boolean;
-  mealDays?: Array<{ mealType: string; isServingReady: boolean }>;
-}
-
-export interface RegistrationWindowDay {
-  mealDate: string;
-  cutoffAt: string;
-  editable: boolean;
-}
-
-export interface RegistrationWindow {
-  serverNow: string;
-  timeZone: 'Asia/Ho_Chi_Minh';
-  days: RegistrationWindowDay[];
-}
-
-export interface WeekRegistrationResponse {
-  menu: { dailyMenus: DailyMenuRecord[] } | null;
-  registrations: RegistrationRecord[];
-  registrationWindow: RegistrationWindow;
-}
-
+export type MealChoice = v1.MealChoice;
+export type RegistrationRecord = v1.RegistrationRecord;
+export type DailyMenuRecord = v1.WeekDailyMenu;
+export type RegistrationWindowDay = v1.RegistrationWindowDay;
+export type RegistrationWindow = v1.RegistrationWindow;
+export type WeekRegistrationResponse = v1.WeekRegistrationResponse;
 export type BatchRegistrationResult = v1.BatchRegistrationResult;
 
 export const registrationAPI = {
@@ -45,13 +19,17 @@ export const registrationAPI = {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.message || 'Failed to load meal registrations');
     }
-    return response.json();
+    const payload: unknown = await response.json().catch(() => null);
+    const parsed = v1.WeekRegistrationResponseSchema.safeParse(payload);
+    if (!parsed.success) throw new Error('The registration response is invalid');
+    return parsed.data;
   },
 
   batchRegister: async (
-    registrations: Array<{ mealDate: string; status: RegistrationStatus }>,
+    registrations: v1.BatchRegistrationItem[],
     token: string,
-  ): Promise<BatchRegistrationResult[]> => {
+  ): Promise<v1.BatchRegistrationResult[]> => {
+
     const response = await fetch(`${API_BASE}/registrations/batch`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

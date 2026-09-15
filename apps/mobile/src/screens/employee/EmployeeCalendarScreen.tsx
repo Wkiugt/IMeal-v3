@@ -1,12 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
-import { ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { Check, ChevronLeft, ChevronRight, Leaf } from 'lucide-react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { registrationAPI, type RegistrationRecord, type WeekRegistrationResponse } from '../../api/registrationAPI';
 import { addDays, formatDay, formatMonth, formatShortDate, startOfWeek, toDateKey } from '../../businessDate';
 import { buildMonthRows } from './calendarGrid';
+import {
+  CalendarMutationTracker,
+  createWeekState,
+  getMutationPayload,
+  reconcileWeekState,
+  type DraftChoiceByDate,
+  type MealChoice,
+  type WeekState,
+} from './calendarRegistrationState';
 import { PrototypeCard, Pill, PillText } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
@@ -15,9 +24,23 @@ import { useNotice } from '../../ui/BrandNotice';
 import { useReducedMotion } from '../../ui/useReducedMotion';
 import { theme } from '../../theme';
 
+const CALENDAR_COPY = {
+  vi: {
+    mealChoiceGroup: 'Loại suất ăn',
+    mealChoice: { REGULAR: 'Mặn', VEGETARIAN: 'Chay' },
+    lunarDayOne: 'Mùng 1 âm lịch',
+    lunarDayFifteen: 'Rằm · 15 âm lịch',
+  },
+  en: {
+    mealChoiceGroup: 'Meal choice',
+    mealChoice: { REGULAR: 'Regular', VEGETARIAN: 'Vegetarian' },
+    lunarDayOne: 'Lunar day 1',
+    lunarDayFifteen: 'Full moon · lunar day 15',
+  },
+} as const;
+
 type Props = AppTabScreenProps<'EmployeeCalendar'>;
-type WeekState = Record<string, boolean>;
-type WindowDay = { cutoffAt: number; editable: boolean };
+type WindowDay = { cutoffAt: number; editable: boolean; lunarDay: number; availableMealChoices: readonly MealChoice[] };
 type WindowSnapshot = { serverNowAt: number; receiptAt: number; days: Record<string, WindowDay> };
 
 function getWindowSnapshot(response: WeekRegistrationResponse, receiptAt: number): WindowSnapshot | null {
@@ -27,28 +50,32 @@ function getWindowSnapshot(response: WeekRegistrationResponse, receiptAt: number
   const parsedDays: Record<string, WindowDay> = {};
   for (const day of days) {
     const cutoffAt = Date.parse(day.cutoffAt);
-    if (!day.mealDate || !Number.isFinite(cutoffAt) || typeof day.editable !== 'boolean') return null;
-    parsedDays[day.mealDate] = { cutoffAt, editable: day.editable };
+    if (
+      !day.mealDate ||
+      !Number.isFinite(cutoffAt) ||
+      typeof day.editable !== 'boolean' ||
+      !day.lunarDate ||
+      !Number.isInteger(day.lunarDate.day) ||
+      !Array.isArray(day.availableMealChoices) ||
+      day.availableMealChoices.length === 0
+    ) return null;
+    parsedDays[day.mealDate] = {
+      cutoffAt,
+      editable: day.editable,
+      lunarDay: day.lunarDate.day,
+      availableMealChoices: day.availableMealChoices,
+    };
   }
   return { serverNowAt, receiptAt, days: parsedDays };
 }
 
-function registrationsForWeek(response: WeekRegistrationResponse, weekStart: Date): WeekState {
-  const next: WeekState = {};
-  for (let index = 0; index < 7; index += 1) {
-    const dateKey = toDateKey(addDays(weekStart, index));
-    next[dateKey] = response.registrations.some(
-      (registration) => registration.mealDate.slice(0, 10) === dateKey && registration.status === 'ACTIVE',
-    );
-  }
-  return next;
-}
 
 export function EmployeeCalendarScreen(_props: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [weekState, setWeekState] = useState<WeekState>({});
+  const [draftChoiceByDate, setDraftChoiceByDate] = useState<DraftChoiceByDate>({});
   const [monthRegistrations, setMonthRegistrations] = useState<Set<string>>(new Set());
   const [windowSnapshot, setWindowSnapshot] = useState<WindowSnapshot | null>(null);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
@@ -61,20 +88,53 @@ export function EmployeeCalendarScreen(_props: Props) {
     Boolean(availabilityError && !windowSnapshot),
   );
   const hasUsableCalendarData = monthLoaded.current && windowSnapshot !== null;
+  const draftChoiceRef = useRef<DraftChoiceByDate>({});
+  draftChoiceRef.current = draftChoiceByDate;
   const showLoading = initialGate || (!hasUsableCalendarData && loading);
-  const [savingDate, setSavingDate] = useState<string | null>(null);
+  const [savingDates, setSavingDates] = useState<Set<string>>(new Set());
+  const mutationTracker = useRef(new CalendarMutationTracker()).current;
   const cutoffWarnings = useRef(new Set<string>());
   const monthRequestId = useRef(0);
   const weekRequestId = useRef(0);
   const weekStart = useMemo(() => startOfWeek(new Date()), []);
 
-  const applyCurrentWeek = useCallback((response: WeekRegistrationResponse, receiptAt: number) => {
-    setWeekState(registrationsForWeek(response, weekStart));
+  const applyCurrentWeek = useCallback((
+    response: WeekRegistrationResponse,
+    receiptAt: number,
+    mutationIdsAtRequest: Readonly<Record<string, number>>,
+    inFlightAtRequest: ReadonlySet<string>,
+  ) => {
     const snapshot = getWindowSnapshot(response, receiptAt);
     if (!snapshot) {
       setAvailabilityError('Cutoff availability could not be loaded.');
       return false;
     }
+
+    const serverState = createWeekState(response.registrations, weekStart);
+    const shouldPreserveDate = (dateKey: string) =>
+      (mutationIdsAtRequest[dateKey] ?? 0) !== mutationTracker.latestRequestId(dateKey)
+      || inFlightAtRequest.has(dateKey);
+    const reconciledWeekState = reconcileWeekState(
+      serverState,
+      draftChoiceRef.current,
+      response,
+      weekStart,
+    ).weekState;
+    setWeekState((current) => {
+      const reconciled = { ...reconciledWeekState };
+      for (const dateKey of Object.keys(reconciledWeekState)) {
+        if (shouldPreserveDate(dateKey) && current[dateKey]) reconciled[dateKey] = current[dateKey];
+      }
+      return reconciled;
+    });
+    setDraftChoiceByDate((current) => {
+      const reconciled = reconcileWeekState(serverState, current, response, weekStart);
+      const next = { ...reconciled.draftChoiceByDate };
+      for (const dateKey of Object.keys(serverState)) {
+        if (shouldPreserveDate(dateKey) && current[dateKey]) next[dateKey] = current[dateKey];
+      }
+      return next;
+    });
     setWindowSnapshot(snapshot);
     setAvailabilityError(null);
     return true;
@@ -83,12 +143,14 @@ export function EmployeeCalendarScreen(_props: Props) {
   const refreshCurrentWeek = useCallback(async () => {
     if (!token) return;
     const requestId = ++weekRequestId.current;
+    const mutationIdsAtRequest = mutationTracker.snapshotRequestIds();
+    const inFlightAtRequest = mutationTracker.snapshotInFlight();
     setWeekLoading(true);
     try {
       const receiptAt = Date.now();
       const response = await registrationAPI.getWeek(toDateKey(weekStart), token);
       if (requestId !== weekRequestId.current) return;
-      if (!applyCurrentWeek(response, receiptAt)) {
+      if (!applyCurrentWeek(response, receiptAt, mutationIdsAtRequest, inFlightAtRequest)) {
         showNotice({ title: 'Calendar unavailable', message: 'Cutoff availability could not be loaded.', tone: 'error' });
       }
     } catch (error: unknown) {
@@ -149,9 +211,35 @@ export function EmployeeCalendarScreen(_props: Props) {
   }, [refreshCurrentWeek, windowSnapshot]);
 
   const monthRows = useMemo(() => buildMonthRows(month), [month]);
-  const handleCutoffFailure = useCallback((dateKey: string, previous: boolean) => {
-    setWeekState((current) => ({ ...current, [dateKey]: previous }));
-    setWindowSnapshot((current) => current ? { ...current, days: { ...current.days, [dateKey]: { ...(current.days[dateKey] || { cutoffAt: Date.now(), editable: false }), editable: false } } } : current);
+  const handleCutoffFailure = useCallback((
+    dateKey: string,
+    previousState: WeekState[string],
+    previousDraft: MealChoice | undefined,
+    requestId: number,
+  ) => {
+    if (!mutationTracker.isCurrent(dateKey, requestId)) return;
+    setWeekState((current) => ({ ...current, [dateKey]: previousState }));
+    setDraftChoiceByDate((current) => {
+      const next = { ...current };
+      if (previousDraft) next[dateKey] = previousDraft;
+      else delete next[dateKey];
+      return next;
+    });
+    setWindowSnapshot((current) => current ? {
+      ...current,
+      days: {
+        ...current.days,
+        [dateKey]: {
+          ...(current.days[dateKey] || {
+            cutoffAt: Date.now(),
+            lunarDay: 0,
+            availableMealChoices: ['REGULAR'],
+            editable: false,
+          }),
+          editable: false,
+        },
+      },
+    } : current);
     if (!cutoffWarnings.current.has(dateKey)) {
       cutoffWarnings.current.add(dateKey);
       showNotice({ title: 'Registration locked', message: 'The cutoff time has passed for this day.', tone: 'warning' });
@@ -159,45 +247,130 @@ export function EmployeeCalendarScreen(_props: Props) {
     void refreshCurrentWeek();
   }, [refreshCurrentWeek, showNotice]);
 
-  const toggleRegistration = async (dateKey: string) => {
-    if (!token || savingDate) return;
+  const mutateRegistration = useCallback(async (
+    dateKey: string,
+    nextActive: boolean,
+    choiceOverride?: MealChoice,
+  ) => {
+    if (!token || mutationTracker.isInFlight(dateKey)) return;
     const windowDay = windowSnapshot?.days[dateKey];
     if (!windowDay?.editable) return;
-    const previous = weekState[dateKey] || false;
-    const next = !previous;
-    setWeekState((current) => ({ ...current, [dateKey]: next }));
-    setSavingDate(dateKey);
+
+    const previousState = weekState[dateKey] || { active: false, mealChoice: 'REGULAR' as MealChoice };
+    const previousDraft = draftChoiceByDate[dateKey];
+    const payloadDrafts = choiceOverride
+      ? { ...draftChoiceByDate, [dateKey]: choiceOverride }
+      : draftChoiceByDate;
+    const payload = getMutationPayload(dateKey, weekState, payloadDrafts, nextActive);
+    const nextChoice = payload.status === 'ACTIVE' ? payload.mealChoice : previousState.mealChoice;
+    const nextState = { active: nextActive, mealChoice: nextActive ? nextChoice : 'REGULAR' as MealChoice };
+    const requestId = mutationTracker.begin(dateKey);
+    if (requestId === null) return;
+    setSavingDates((current) => new Set(current).add(dateKey));
+    setWeekState((current) => ({ ...current, [dateKey]: nextState }));
+    setDraftChoiceByDate((current) => {
+      const next = { ...current };
+      if (nextActive) delete next[dateKey];
+      else if (nextChoice !== 'REGULAR' && windowDay.availableMealChoices.includes(nextChoice)) next[dateKey] = nextChoice;
+      else delete next[dateKey];
+      return next;
+    });
+
+    const rollback = () => {
+      if (!mutationTracker.isCurrent(dateKey, requestId)) return false;
+      setWeekState((current) => ({ ...current, [dateKey]: previousState }));
+      setDraftChoiceByDate((current) => {
+        const next = { ...current };
+        if (previousDraft) next[dateKey] = previousDraft;
+        else delete next[dateKey];
+        return next;
+      });
+      return true;
+    };
+
     try {
-      const results = await registrationAPI.batchRegister([{ mealDate: dateKey, status: next ? 'ACTIVE' : 'CANCELLED' }], token);
+      const results = await registrationAPI.batchRegister([payload], token);
+      if (!mutationTracker.isCurrent(dateKey, requestId)) return;
       const result = results.find((entry) => entry.date === dateKey);
       if (!result?.success) {
-        if (result?.reason === 'Cutoff time exceeded') handleCutoffFailure(dateKey, previous);
-        else {
-          setWeekState((current) => ({ ...current, [dateKey]: previous }));
-          showNotice({ title: 'Registration not changed', message: result?.reason || 'Unable to update this day', tone: 'error' });
+        const code = result && !result.success ? result.code : 'REGISTRATION_FAILED';
+        if (code === 'CUTOFF_PASSED') {
+          handleCutoffFailure(dateKey, previousState, previousDraft, requestId);
+        } else if (rollback()) {
+          let message = 'Unable to update this day.';
+          switch (code) {
+            case 'MEAL_CHOICE_UNAVAILABLE':
+              message = 'That meal choice is not available for this day.';
+              break;
+            case 'REGISTRATION_FINALIZED':
+              message = 'This registration has already been finalized.';
+              break;
+            case 'INVALID_MEAL_DATE':
+              message = 'This meal date is invalid.';
+              break;
+            case 'REGISTRATION_FAILED':
+              message = 'The meal registration could not be updated.';
+              break;
+          }
+          showNotice({ title: 'Registration not changed', message, tone: 'error' });
         }
         return;
       }
       setMonthRegistrations((current) => {
         const updated = new Set(current);
-        if (next) updated.add(dateKey); else updated.delete(dateKey);
+        if (nextActive) updated.add(dateKey);
+        else updated.delete(dateKey);
         return updated;
       });
     } catch (error: unknown) {
-      const message = error instanceof TypeError
-        ? 'Unable to reach the meal registration service. Check your connection and try again.'
-        : error instanceof Error
-          ? error.message
-          : 'Unable to update this day';
-      if (message === 'Cutoff time exceeded') handleCutoffFailure(dateKey, previous);
-      else {
-        setWeekState((current) => ({ ...current, [dateKey]: previous }));
+      if (!mutationTracker.isCurrent(dateKey, requestId)) return;
+      let errorCode: unknown;
+      if (error && typeof error === 'object' && 'code' in error) errorCode = error.code;
+      if (errorCode === 'CUTOFF_PASSED') {
+        handleCutoffFailure(dateKey, previousState, previousDraft, requestId);
+      } else if (rollback()) {
+        const message = error instanceof TypeError
+          ? 'Unable to reach the meal registration service. Check your connection and try again.'
+          : error instanceof Error
+            ? error.message
+            : 'Unable to update this day.';
         showNotice({ title: 'Registration not changed', message, tone: 'error' });
       }
     } finally {
-      setSavingDate(null);
+      if (mutationTracker.finish(dateKey, requestId)) {
+        setSavingDates((current) => {
+          const next = new Set(current);
+          next.delete(dateKey);
+          return next;
+        });
+      }
     }
-  };
+  }, [
+    draftChoiceByDate,
+    handleCutoffFailure,
+    showNotice,
+    token,
+    weekState,
+    windowSnapshot,
+  ]);
+
+  const toggleRegistration = useCallback((dateKey: string) => {
+    const current = weekState[dateKey] || { active: false, mealChoice: 'REGULAR' as MealChoice };
+    void mutateRegistration(dateKey, !current.active);
+  }, [mutateRegistration, weekState]);
+
+  const selectMealChoice = useCallback((dateKey: string, choice: MealChoice) => {
+    if (mutationTracker.isInFlight(dateKey)) return;
+    const windowDay = windowSnapshot?.days[dateKey];
+    if (!windowDay?.editable || !windowDay.availableMealChoices.includes(choice)) return;
+    const current = weekState[dateKey] || { active: false, mealChoice: 'REGULAR' as MealChoice };
+    if (!current.active) {
+      setDraftChoiceByDate((drafts) => ({ ...drafts, [dateKey]: choice }));
+      setWeekState((states) => ({ ...states, [dateKey]: { active: false, mealChoice: 'REGULAR' } }));
+      return;
+    }
+    void mutateRegistration(dateKey, true, choice);
+  }, [mutateRegistration, weekState, windowSnapshot]);
 
   const todayKey = toDateKey(new Date());
   return (
@@ -236,11 +409,15 @@ export function EmployeeCalendarScreen(_props: Props) {
             {Array.from({ length: 7 }, (_, index) => {
               const date = addDays(weekStart, index);
               const dateKey = toDateKey(date);
-              const active = Boolean(weekState[dateKey]);
-              const editable = windowSnapshot?.days[dateKey]?.editable === true;
-              const locked = !editable;
-              const disabled = savingDate !== null || locked;
-              const isSaving = savingDate === dateKey;
+              const state = weekState[dateKey] || { active: false, mealChoice: 'REGULAR' as MealChoice };
+              const windowDay = windowSnapshot?.days[dateKey];
+              const active = state.active;
+              const locked = windowDay?.editable !== true;
+              const isSaving = savingDates.has(dateKey);
+              const selectedChoice = active
+                ? state.mealChoice
+                : draftChoiceByDate[dateKey] || 'REGULAR';
+              const choicesAvailable = windowDay?.availableMealChoices.includes('VEGETARIAN') === true;
               return (
                 <View key={dateKey} style={[styles.weekRow, dateKey === todayKey && styles.todayRow]}>
                   <View style={styles.weekInfo}>
@@ -248,16 +425,37 @@ export function EmployeeCalendarScreen(_props: Props) {
                       <Text style={styles.weekDay}>{formatDay(date)}</Text>
                       {dateKey === todayKey && <Pill><PillText>Today</PillText></Pill>}
                       {locked && <Pill tone="warn"><Text style={styles.lockedLabel}>Locked</Text></Pill>}
+                      {windowDay?.lunarDay === 1 && (
+                        <View style={styles.lunarBadge}>
+                          <Leaf size={13} color={theme.colors.accentDeep} />
+                          <Text style={styles.lunarBadgeText}>{CALENDAR_COPY.en.lunarDayOne}</Text>
+                        </View>
+                      )}
+                      {windowDay?.lunarDay === 15 && (
+                        <View style={styles.lunarBadge}>
+                          <Leaf size={13} color={theme.colors.accentDeep} />
+                          <Text style={styles.lunarBadgeText}>{CALENDAR_COPY.en.lunarDayFifteen}</Text>
+                        </View>
+                      )}
                     </View>
                     <Text style={styles.weekDate}>{formatShortDate(date)}</Text>
                   </View>
-                  <AnimatedMealToggle
-                    value={active}
-                    disabled={disabled}
-                    saving={isSaving}
-                    accessibilityLabel={`Toggle lunch registration for ${formatDay(date)}${locked ? ', locked after cutoff' : ''}`}
-                    onPress={() => void toggleRegistration(dateKey)}
-                  />
+                  <View style={styles.weekControls}>
+                    {choicesAvailable && (
+                      <MealChoiceSelector
+                        value={selectedChoice}
+                        disabled={locked || isSaving}
+                        onChange={(choice) => selectMealChoice(dateKey, choice)}
+                      />
+                    )}
+                    <AnimatedMealToggle
+                      value={active}
+                      disabled={locked || isSaving}
+                      saving={isSaving}
+                      accessibilityLabel={`Toggle lunch registration for ${formatDay(date)}${locked ? ', locked after cutoff' : ''}`}
+                      onPress={() => toggleRegistration(dateKey)}
+                    />
+                  </View>
                 </View>
               );
             })}
@@ -265,6 +463,48 @@ export function EmployeeCalendarScreen(_props: Props) {
         )}
       </StateTransition>
     </PrototypeFrame>
+  );
+}
+
+type MealChoiceSelectorProps = {
+  value: MealChoice;
+  disabled: boolean;
+  onChange: (choice: MealChoice) => void;
+};
+
+function MealChoiceSelector({ value, disabled, onChange }: MealChoiceSelectorProps) {
+  const groupLabel = CALENDAR_COPY.en.mealChoiceGroup;
+  return (
+    <View style={styles.choiceSelectorWrap}>
+      <Text
+        accessible={true}
+        accessibilityRole="text"
+        accessibilityLabel={groupLabel}
+        style={styles.choiceGroupLabel}
+      >
+        {groupLabel}
+      </Text>
+      <View style={styles.choiceSelector}>
+        {(['REGULAR', 'VEGETARIAN'] as const).map((choice) => {
+          const selected = value === choice;
+          const label = CALENDAR_COPY.en.mealChoice[choice];
+          return (
+            <Pressable
+              key={choice}
+              accessibilityRole="radio"
+              accessibilityLabel={`${groupLabel}: ${label}`}
+              accessibilityState={{ checked: selected, disabled }}
+              disabled={disabled}
+              onPress={() => onChange(choice)}
+              style={[styles.choiceOption, selected && styles.choiceOptionSelected, disabled && styles.choiceOptionDisabled]}
+            >
+              {selected && <Check size={14} color={theme.colors.accentDeep} strokeWidth={2.4} />}
+              <Text style={[styles.choiceOptionText, selected && styles.choiceOptionTextSelected]}>{label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 
@@ -321,10 +561,21 @@ const styles = StyleSheet.create({
   weekRow: { minHeight: 64, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: theme.colors.border },
   todayRow: { backgroundColor: theme.colors.accentTint, marginHorizontal: -theme.spacing.gutter, paddingHorizontal: theme.spacing.gutter },
   weekInfo: { flex: 1, gap: 5 },
+  weekControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  choiceSelectorWrap: { position: 'relative' },
+  choiceGroupLabel: { position: 'absolute', width: 1, height: 1, opacity: 0.01 },
+  choiceSelector: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.sm, overflow: 'hidden' },
+  choiceOption: { minWidth: 44, minHeight: 44, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3 },
+  choiceOptionSelected: { backgroundColor: theme.colors.accentTint },
+  choiceOptionDisabled: { opacity: 0.5 },
+  choiceOptionText: { color: theme.colors.muted, fontSize: 12 },
+  choiceOptionTextSelected: { color: theme.colors.accentDeep, fontWeight: '700' },
   weekDayLine: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   weekDay: { color: theme.colors.fg, fontSize: 14, fontWeight: '700' },
   weekDate: { color: theme.colors.muted, fontSize: 13 },
   lockedLabel: { color: theme.colors.statusWarnDeep, fontSize: 12, fontWeight: '700' },
+  lunarBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 5, borderRadius: theme.radii.pill, backgroundColor: theme.colors.accentTint },
+  lunarBadgeText: { color: theme.colors.accentDeep, fontSize: 11, fontWeight: '600' },
   toggle: { width: 48, height: 28, padding: 3, justifyContent: 'center', borderRadius: theme.radii.pill, backgroundColor: theme.colors.border },
   toggleActive: { backgroundColor: theme.colors.accentDeep },
   toggleSaving: { opacity: 0.5 },
