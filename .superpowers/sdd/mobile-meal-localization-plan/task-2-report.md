@@ -32,4 +32,12 @@ Task 1's contract tests already cover the strict v1 schemas; no contract source 
 
 ## Concerns
 
-- Full registration e2e execution requires the repository's PostgreSQL test environment (`DATABASE_URL`); it could not run in this workspace. Prisma client regeneration was also blocked by a Windows `EPERM` rename while an existing API watch process held the query engine. The focused tests use the updated contracts build and pass.
+- Full registration e2e execution requires the repository's PostgreSQL test environment (`DATABASE_URL`); it could not run in this workspace. E2e reruns stopped before collection with `DATABASE_URL is not set in environment or .env.test`.
+- Prisma client regeneration was blocked by a Windows `EPERM` rename while an existing API watch process held the query engine. The narrow API typecheck completed with no errors, and focused tests use the updated contracts build.
+
+## Review follow-up
+
+- Added a focused race regression: if a concurrent create wins between the initial read and create, the `P2002` transaction is retried in a fresh transaction and the now-existing same-choice ACTIVE row is treated as an idempotent no-op.
+- Updated the e2e success fixture to use lunar-eligible `2026-09-25` for `VEGETARIAN`, and added an HTTP route assertion for the typed `MEAL_CHOICE_UNAVAILABLE` partial result on ordinary `2026-09-24`.
+- Review-fix GREEN: `corepack yarn workspace @imeal/api exec vitest run src/registrations/registrations.service.spec.ts` — `1` file passed, `18/18` tests.
+- Review-fix typecheck: `corepack yarn workspace @imeal/api exec tsc --noEmit --pretty false -p tsconfig.json` — completed with no errors.

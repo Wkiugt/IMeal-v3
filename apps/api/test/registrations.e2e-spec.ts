@@ -94,11 +94,11 @@ describe('RegistrationsController (e2e)', () => {
   it('validates and forwards a batch request, returning each date result', async () => {
     const registrations = [
       {
-        mealDate: '2026-09-05',
+        mealDate: '2026-09-25',
         status: 'ACTIVE',
         mealChoice: 'VEGETARIAN',
       },
-      { mealDate: '2026-09-06', status: 'CANCELLED' },
+      { mealDate: '2026-09-26', status: 'CANCELLED' },
     ];
     const response = await request(app.getHttpServer())
       .put('/api/registrations/batch')
@@ -106,9 +106,9 @@ describe('RegistrationsController (e2e)', () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual([
-      { date: '2026-09-05', success: true },
+      { date: '2026-09-25', success: true },
       {
-        date: '2026-09-06',
+        date: '2026-09-26',
         success: false,
         code: 'CUTOFF_PASSED',
         reason: 'Cutoff time exceeded',
@@ -119,6 +119,38 @@ describe('RegistrationsController (e2e)', () => {
       registrations,
     );
   });
+  it('returns the typed unavailable-choice result for an ordinary date', async () => {
+    mockRegistrationsService.batchRegister.mockResolvedValueOnce([
+      {
+        date: '2026-09-24',
+        success: false,
+        code: 'MEAL_CHOICE_UNAVAILABLE',
+        reason: 'Meal choice is unavailable for this date',
+      },
+    ]);
+    const registrations = [
+      {
+        mealDate: '2026-09-24',
+        status: 'ACTIVE',
+        mealChoice: 'VEGETARIAN',
+      },
+    ];
+
+    const response = await request(app.getHttpServer())
+      .put('/api/registrations/batch')
+      .send({ registrations });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([
+      {
+        date: '2026-09-24',
+        success: false,
+        code: 'MEAL_CHOICE_UNAVAILABLE',
+        reason: 'Meal choice is unavailable for this date',
+      },
+    ]);
+  });
+
 
   it.each([
     ['missing body', undefined],

@@ -245,6 +245,31 @@ describe('RegistrationsService', () => {
       },
     });
   });
+  it('retries a raced first registration create as an idempotent no-op', async () => {
+    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    txMock.registration.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 'registration-1',
+        status: 'ACTIVE',
+        mealChoice: 'REGULAR',
+        delegations: [],
+      });
+    txMock.registration.create.mockRejectedValueOnce({ code: 'P2002' });
+    const service = new RegistrationsService();
+
+    await expect(
+      service.batchRegister('user-1', [
+        {
+          mealDate: '2026-09-24',
+          status: 'ACTIVE',
+          mealChoice: 'REGULAR',
+        },
+      ]),
+    ).resolves.toEqual([{ date: '2026-09-24', success: true }]);
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(2);
+    expect(txMock.registration.update).not.toHaveBeenCalled();
+  });
 
   it('does not write when an active registration keeps the same choice', async () => {
     vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));

@@ -26,6 +26,14 @@ const REGISTRATION_FINALIZED_MESSAGE = 'Registration is finalized';
 class RegistrationFinalizedError extends Error {}
 
 class MealChoiceUnavailableError extends Error {}
+function isUniqueConstraintError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'P2002'
+  );
+}
 type WeeklyMenuData = {
   id: string;
   startDate: Date;
@@ -252,87 +260,99 @@ export class RegistrationsService {
           continue;
         }
 
-        await this.prisma.$transaction(async (tx) => {
-          const registration = await tx.registration.findUnique({
-            where: {
-              userId_mealDate: {
-                userId,
-                mealDate,
-              },
-            },
-            include: { delegations: true },
-          });
+        let transactionAttempt = 0;
+        while (true) {
+          try {
+            await this.prisma.$transaction(async (tx) => {
+              const registration = await tx.registration.findUnique({
+                where: {
+                  userId_mealDate: {
+                    userId,
+                    mealDate,
+                  },
+                },
+                include: { delegations: true },
+              });
 
-          if (
-            registration &&
-            (registration.status === 'SERVED' ||
-              registration.status === 'NO_SHOW')
-          ) {
-            throw new RegistrationFinalizedError();
-          }
-
-          if (
-            item.status === 'ACTIVE' &&
-            !getAvailableMealChoices(mealDateStr).includes(item.mealChoice)
-          ) {
-            throw new MealChoiceUnavailableError();
-          }
-
-          if (item.status === 'ACTIVE') {
-            if (
-              registration &&
-              (registration.status === 'ACTIVE' ||
-                registration.status === 'CANCELLED')
-            ) {
               if (
-                registration.status !== 'ACTIVE' ||
-                registration.mealChoice !== item.mealChoice
+                registration &&
+                (registration.status === 'SERVED' ||
+                  registration.status === 'NO_SHOW')
               ) {
+                throw new RegistrationFinalizedError();
+              }
+
+              if (
+                item.status === 'ACTIVE' &&
+                !getAvailableMealChoices(mealDateStr).includes(item.mealChoice)
+              ) {
+                throw new MealChoiceUnavailableError();
+              }
+
+              if (item.status === 'ACTIVE') {
+                if (
+                  registration &&
+                  (registration.status === 'ACTIVE' ||
+                    registration.status === 'CANCELLED')
+                ) {
+                  if (
+                    registration.status !== 'ACTIVE' ||
+                    registration.mealChoice !== item.mealChoice
+                  ) {
+                    await tx.registration.update({
+                      where: { id: registration.id },
+                      data: {
+                        status: 'ACTIVE',
+                        mealChoice: item.mealChoice,
+                        version: { increment: 1 },
+                      },
+                    });
+                  }
+                } else {
+                  await tx.registration.create({
+                    data: {
+                      userId,
+                      mealDate,
+                      status: 'ACTIVE',
+                      mealChoice: item.mealChoice,
+                      version: 1,
+                    },
+                  });
+                }
+              } else if (registration?.status === 'ACTIVE') {
                 await tx.registration.update({
                   where: { id: registration.id },
                   data: {
-                    status: 'ACTIVE',
-                    mealChoice: item.mealChoice,
+                    status: 'CANCELLED',
                     version: { increment: 1 },
                   },
                 });
-              }
-            } else {
-              await tx.registration.create({
-                data: {
-                  userId,
-                  mealDate,
-                  status: 'ACTIVE',
-                  mealChoice: item.mealChoice,
-                  version: 1,
-                },
-              });
-            }
-          } else if (registration?.status === 'ACTIVE') {
-            await tx.registration.update({
-              where: { id: registration.id },
-              data: {
-                status: 'CANCELLED',
-                version: { increment: 1 },
-              },
-            });
 
-            // Strict modular boundaries (DDD) using Outbox pattern for delegations cascade
-            if (registration.delegations?.length) {
-              const payload = JSON.stringify({
-                registrationId: registration.id,
-              });
-              await tx.outboxEvent.create({
-                data: {
-                  aggregateType: 'REGISTRATION',
-                  aggregateId: registration.id,
-                  eventType: 'REGISTRATION_CANCELLED',
-                  payload,
-                },
-              });
+                // Strict modular boundaries (DDD) using Outbox pattern for delegations cascade
+                if (registration.delegations?.length) {
+                  const payload = JSON.stringify({
+                    registrationId: registration.id,
+                  });
+                  await tx.outboxEvent.create({
+                    data: {
+                      aggregateType: 'REGISTRATION',
+                      aggregateId: registration.id,
+                      eventType: 'REGISTRATION_CANCELLED',
+                      payload,
+                    },
+                  });
+                }
+              }
+            });
+            break;
+          } catch (error: unknown) {
+            if (transactionAttempt === 0 && isUniqueConstraintError(error)) {
+              transactionAttempt += 1;
+              continue;
             }
+            throw error;
           }
-        });
+        }
 
         results.push({ date: mealDateStr, success: true });
       } catch (error: unknown) {
