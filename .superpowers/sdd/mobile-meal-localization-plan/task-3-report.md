@@ -34,3 +34,10 @@
 - The focused e2e command could not collect tests because the environment lacked `DATABASE_URL` (`packages/domain/test/setup.ts` fails before test collection). No database-backed e2e evidence is available in this workspace.
 - Contracts build output is ignored/generated; only contract source is committed.
 - No mobile screens or snapshot columns were changed.
+
+## Review follow-up
+
+- Pickup options now use a strict `type` discriminated union: OWN rejects delegation metadata, while DELEGATED requires both `delegationId` and owner details.
+- Kitchen counters, logs, registration items, snapshot, and nested lists now reject unknown fields instead of silently stripping them.
+- Added focused rejection coverage for malformed pickup options and unknown kitchen response fields.
+- Follow-up verification: contracts 23/23 passed; API pickup/kitchen focused tests 25/25 passed; API package typecheck passed.

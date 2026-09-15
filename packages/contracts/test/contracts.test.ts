@@ -420,6 +420,23 @@ describe('Contracts v1', () => {
           mealChoice: 'VEGETARIAN',
         }).success,
       ).toBe(true);
+      expect(
+        v1.PickupOptionsResponseSchema.safeParse({
+          options: [{ ...pickupOption, owner: undefined }],
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.PickupOptionsResponseSchema.safeParse({
+          options: [
+            {
+              ...pickupOption,
+              type: 'OWN',
+              delegationId: 'delegation-1',
+              owner,
+            },
+          ],
+        }).success,
+      ).toBe(false);
     });
 
     it('validates resolved serving payloads with choice on every item', () => {
@@ -505,6 +522,78 @@ describe('Contracts v1', () => {
           isProxy: false,
         }).success,
       ).toBe(true);
+    });
+    it('rejects unknown fields in all kitchen response objects and lists', () => {
+      const counters = {
+        totalRegistered: 1,
+        regularTotal: 1,
+        vegetarianTotal: 0,
+        servedTotal: 1,
+        remaining: 0,
+        noShowTotal: 0,
+      };
+      const registrationItem = {
+        registrationId: 'registration-1',
+        userId: 'user-1',
+        userName: 'Meal Owner',
+        userEmail: 'owner@example.com',
+        mealChoice: 'REGULAR' as const,
+        isServed: true,
+        servedAt: '2026-09-25T04:00:00.000Z',
+      };
+      const servingLog = {
+        id: 'serving-1',
+        registrationId: 'registration-1',
+        userId: 'user-1',
+        userName: 'Meal Owner',
+        userEmail: 'owner@example.com',
+        mealChoice: 'REGULAR' as const,
+        servedAt: '2026-09-25T04:00:00.000Z',
+        isProxy: false,
+      };
+      const snapshot = {
+        date: '2026-09-25',
+        isServingReady: true,
+        counters,
+        recentLogs: [servingLog],
+        lists: {
+          served: [registrationItem],
+          pending: [],
+          all: [registrationItem],
+          noShow: [],
+        },
+      };
+
+      expect(
+        v1.KitchenDashboardCountersSchema.safeParse({
+          ...counters,
+          extra: true,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.ServingLogItemSchema.safeParse({
+          ...servingLog,
+          extra: true,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.KitchenRegistrationItemSchema.safeParse({
+          ...registrationItem,
+          extra: true,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.KitchenDashboardSnapshotSchema.safeParse({
+          ...snapshot,
+          extra: true,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.KitchenDashboardSnapshotSchema.safeParse({
+          ...snapshot,
+          lists: { ...snapshot.lists, extra: true },
+        }).success,
+      ).toBe(false);
     });
   });
 });

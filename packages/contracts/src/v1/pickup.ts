@@ -8,7 +8,6 @@ const UtcDateTimeSchema = z
     message: 'Timestamp must be an ISO-8601 UTC instant ending in Z',
   });
 
-const PickupOptionTypeSchema = z.enum(['OWN', 'DELEGATED']);
 const PickupOwnerSchema = z
   .object({
     id: z.string(),
@@ -17,16 +16,28 @@ const PickupOwnerSchema = z
   })
   .strict();
 
-export const PickupOptionSchema = z
-  .object({
-    type: PickupOptionTypeSchema,
-    registrationId: z.string(),
-    mealDate: MealDateSchema,
-    mealChoice: MealChoiceSchema,
-    delegationId: z.string().optional(),
-    owner: PickupOwnerSchema.optional(),
-  })
-  .strict();
+const PickupOptionFields = {
+  registrationId: z.string(),
+  mealDate: MealDateSchema,
+  mealChoice: MealChoiceSchema,
+};
+
+export const PickupOptionSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      ...PickupOptionFields,
+      type: z.literal('OWN'),
+    })
+    .strict(),
+  z
+    .object({
+      ...PickupOptionFields,
+      type: z.literal('DELEGATED'),
+      delegationId: z.string(),
+      owner: PickupOwnerSchema,
+    })
+    .strict(),
+]);
 export type PickupOption = z.infer<typeof PickupOptionSchema>;
 
 export const PickupOptionsResponseSchema = z
