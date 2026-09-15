@@ -8,7 +8,7 @@ import { useSession } from '../../auth/session';
 import { servingAPI, type ResolveServingResponse } from '../../api/servingAPI';
 import { PrototypeFrame } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { useMinimumVisibleLoading } from '../../ui/useMinimumVisibleLoading';
+import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { Pill, PillText } from '../../ui/PrototypePrimitives';
 import { useNotice } from '../../ui/BrandNotice';
 import { useReducedMotion } from '../../ui/useReducedMotion';
@@ -28,7 +28,11 @@ export function KitchenScannerScreen({ navigation }: Props) {
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const reduceMotion = useReducedMotion();
-  const permissionLoading = useMinimumVisibleLoading(!permission);
+  const permissionGate = useInitialLoadingGate(
+    !permission,
+    Boolean(permission && permission.granted !== true),
+  );
+  const showPermissionLoading = permissionGate || !permission;
   useEffect(() => {
     if (!expiresAt) return;
     const update = () => setSecondsLeft(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)));
@@ -95,10 +99,10 @@ export function KitchenScannerScreen({ navigation }: Props) {
 
   return (
     <StateTransition
-      stateKey={permissionLoading ? 'permission-loading' : permission?.granted !== true ? 'permission-denied' : 'scanner-ready'}
+      stateKey={showPermissionLoading ? 'permission-loading' : permission?.granted !== true ? 'permission-denied' : 'scanner-ready'}
       style={styles.screenTransition}
     >
-      {!permission || permissionLoading ? (
+      {showPermissionLoading ? (
         <View style={styles.loadingScreen}><BrandLoader label="Preparing camera…" /></View>
       ) : !permission.granted ? (
         <PrototypeFrame animateEntrance={false}><View style={styles.permission}><ScanLine size={40} color={theme.colors.accentDeep} /><Text style={styles.permissionTitle}>Camera access required</Text><Text style={styles.permissionText}>Allow camera access to scan employee meal tickets.</Text><Pressable onPress={requestPermission} style={styles.primaryButton}><Text style={styles.primaryButtonText}>Grant permission</Text></Pressable></View></PrototypeFrame>

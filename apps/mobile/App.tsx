@@ -36,6 +36,7 @@ import {
 import { NoticeProvider } from './src/ui/BrandNotice';
 import { BrandLoader, BrandMark, StateTransition } from './src/ui/BrandMotion';
 import { useMinimumVisibleLoading } from './src/ui/useMinimumVisibleLoading';
+import { useInitialLoadingGate } from './src/ui/useInitialLoadingGate';
 import { theme } from './src/theme';
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -58,7 +59,7 @@ function AuthScreen({ navigation }: AuthScreenProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
-  const visibleRestoring = useMinimumVisibleLoading(isRestoring);
+  const visibleRestoring = useInitialLoadingGate(isRestoring, Boolean(authError));
   const visibleSigningIn = useMinimumVisibleLoading(isSigningIn);
 
   useEffect(() => {
@@ -150,23 +151,25 @@ function AuthScreen({ navigation }: AuthScreenProps) {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token, isRestoring } = useSession();
-  const visibleRestoring = useMinimumVisibleLoading(isRestoring);
+  const noSession = !isRestoring && !token;
+  const visibleRestoring = useInitialLoadingGate(isRestoring, noSession);
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   useEffect(() => {
-    if (!visibleRestoring && !token) {
+    if (noSession) {
       navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
     }
-  }, [navigation, token, visibleRestoring]);
+  }, [navigation, noSession]);
 
-  if (visibleRestoring || !token) {
+  if (visibleRestoring) {
     return (
       <View style={styles.loading}>
         <BrandLoader label="Restoring your session…" />
       </View>
     );
   }
+  if (noSession) return null;
   return <>{children}</>;
 }
 

@@ -5,10 +5,11 @@
   "main": "index.js",
   "scripts": {
     "start": "expo start",
-    "start:tunnel": "expo start --tunnel",
+    "start:tunnel": "dotenv -e ../../.env -- expo start --tunnel",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test": "vitest run"
   },
   "dependencies": {
     "@babel/runtime": "^7.20.0",
@@ -39,6 +40,8 @@
     "@expo/ngrok": "^4.1.0",
     "@types/node": "^26.4.0",
     "@types/react": "~18.2.45",
-    "typescript": "~5.3.3"
+    "dotenv-cli": "^11.0.0",
+    "typescript": "~5.3.3",
+    "vitest": "^4.1.2"
   }
 }

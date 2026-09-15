@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { Check, Clock3, Square } from 'lucide-react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import {
@@ -19,7 +19,7 @@ import {
 } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { useMinimumVisibleLoading } from '../../ui/useMinimumVisibleLoading';
+import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
 
@@ -42,7 +42,10 @@ export function PickupIntentScreen(_props: Props) {
   const [timeLeft, setTimeLeft] = useState(0);
   const progressAnim = useRef(new Animated.Value(1)).current;
   const optionsRequestId = useRef(0);
-  const visibleLoading = useMinimumVisibleLoading(loading);
+  const isFocused = useIsFocused();
+  const qrState = useRef<{ value: string; expiresAt: number; ttlMs: number } | null>(null);
+  const initialGate = useInitialLoadingGate(loading, Boolean(loadError));
+  const showLoading = initialGate || (loading && options.length === 0);
 
   const fetchOptions = useCallback(async () => {
     if (!token) return;
@@ -93,13 +96,38 @@ export function PickupIntentScreen(_props: Props) {
   );
 
   useEffect(() => {
-    if (!isGenerating || !token) {
+    if (!isFocused || !isGenerating || !token) {
+      if (!isFocused && isGenerating && token) {
+        setQrLoading(false);
+        return;
+      }
+      qrState.current = null;
       setQrValue(null);
+      setTimeLeft(0);
+      setQrLoading(false);
+      return;
+    }
+    if (loading) {
+      setQrLoading(false);
       return;
     }
     let cancelled = false;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     let countdownTimer: ReturnType<typeof setInterval> | undefined;
+    const scheduleTimers = (remainingMs: number, totalMs: number, refresh: () => void) => {
+      setTimeLeft(Math.ceil(remainingMs / 1000));
+      progressAnim.setValue(remainingMs / totalMs);
+      Animated.timing(progressAnim, {
+        toValue: 0,
+        duration: remainingMs,
+        useNativeDriver: false,
+      }).start();
+      refreshTimer = setTimeout(refresh, remainingMs);
+      countdownTimer = setInterval(
+        () => setTimeLeft((current) => Math.max(0, current - 1)),
+        1000,
+      );
+    };
     const refresh = async () => {
       if (cancelled) return;
       const ids = Array.from(selectedIds);
@@ -112,17 +140,14 @@ export function PickupIntentScreen(_props: Props) {
         const response = await pickupAPI.generateQr(token, ids);
         if (cancelled) return;
         const ttl = response.ttl > 0 ? response.ttl : 5;
+        const ttlMs = ttl * 1000;
+        qrState.current = {
+          value: response.qr,
+          expiresAt: Date.now() + ttlMs,
+          ttlMs,
+        };
         setQrValue(response.qr);
-        setTimeLeft(ttl);
-        progressAnim.setValue(1);
-        Animated.timing(progressAnim, {
-          toValue: 0,
-          duration: ttl * 1000,
-          useNativeDriver: false,
-        }).start();
-        refreshTimer = setTimeout(() => {
-          void refresh();
-        }, ttl * 1000);
+        scheduleTimers(ttlMs, ttlMs, () => void refresh());
       } catch (error: unknown) {
         if (!cancelled) {
           showNotice({
@@ -138,18 +163,23 @@ export function PickupIntentScreen(_props: Props) {
         if (!cancelled) setQrLoading(false);
       }
     };
-    void refresh();
-    countdownTimer = setInterval(
-      () => setTimeLeft((current) => Math.max(0, current - 1)),
-      1000,
-    );
+    const existingQr = qrState.current;
+    const remainingMs = existingQr ? existingQr.expiresAt - Date.now() : 0;
+    if (existingQr && remainingMs > 0 && selectedIds.size > 0) {
+      scheduleTimers(remainingMs, existingQr.ttlMs, () => void refresh());
+    } else {
+      qrState.current = null;
+      setQrValue(null);
+      setTimeLeft(0);
+      void refresh();
+    }
     return () => {
       cancelled = true;
-      if (refreshTimer) clearTimeout(refreshTimer);
-      if (countdownTimer) clearInterval(countdownTimer);
+      clearTimeout(refreshTimer);
+      clearInterval(countdownTimer);
       progressAnim.stopAnimation();
     };
-  }, [isGenerating, progressAnim, selectedIds, showNotice, token]);
+  }, [isFocused, isGenerating, loading, progressAnim, selectedIds, showNotice, token]);
 
   const toggleSelection = (registrationId: string) => {
     setSelectedIds((current) => {
@@ -162,6 +192,10 @@ export function PickupIntentScreen(_props: Props) {
 
   const displayName = profile?.name || profile?.email.split('@')[0] || 'Employee';
   const errorState = loadError?.type;
+  const visibleQrValue =
+    isFocused && qrState.current?.value === qrValue && qrState.current.expiresAt > Date.now()
+      ? qrValue
+      : null;
 
   return (
     <PrototypeFrame>
@@ -171,12 +205,12 @@ export function PickupIntentScreen(_props: Props) {
       />
       <StateTransition
         stateKey={
-          visibleLoading
+          showLoading
             ? 'loading'
             : errorState || (options.length === 0 ? 'empty' : 'ready')
         }
       >
-        {visibleLoading ? (
+        {showLoading ? (
           <BrandLoader label="Loading pickup options…" />
         ) : loadError?.type === 'window-closed' ? (
           <PrototypeCard style={styles.emptyCard}>
@@ -256,9 +290,9 @@ export function PickupIntentScreen(_props: Props) {
             </PrototypeCard>
             <PrototypeCard style={styles.ticketCard}>
               <View style={styles.ticketTop}>
-                {qrValue ? (
+                {visibleQrValue ? (
                   <QRCode
-                    value={qrValue}
+                    value={visibleQrValue}
                     size={200}
                     color={theme.colors.fg}
                     backgroundColor={theme.colors.surface}

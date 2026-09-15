@@ -9,7 +9,7 @@ import { initials } from '../../businessDate';
 import { Eyebrow, Pill, PillText, PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { useMinimumVisibleLoading } from '../../ui/useMinimumVisibleLoading';
+import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
 type TabType = 'pending' | 'served' | 'all' | 'noshow' | 'logs';
@@ -31,7 +31,11 @@ export function KitchenDashboardScreen({ navigation }: Props) {
   const dashboardRequestId = useRef(0);
   const currentSnapshot = useRef<KitchenDashboardSnapshot | null>(null);
   const initialLoading = snapshot === null && loading;
-  const visibleLoading = useMinimumVisibleLoading(initialLoading);
+  const initialGate = useInitialLoadingGate(
+    initialLoading,
+    Boolean(loadError && snapshot === null),
+  );
+  const showLoading = initialGate || initialLoading;
   const fetchDashboard = useCallback(async () => {
     if (!token) return;
     const requestId = ++dashboardRequestId.current;
@@ -117,8 +121,8 @@ export function KitchenDashboardScreen({ navigation }: Props) {
   const logs = activeTab === 'logs' ? filterLogs(snapshot?.recentLogs || []) : [];
   return (
     <PrototypeFrame scrollProps={{ refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void fetchDashboard(); }} /> }} bottomClearance={114}>
-      <StateTransition stateKey={visibleLoading ? 'loading' : snapshot === null ? 'error' : 'ready'}>
-        {visibleLoading ? (
+      <StateTransition stateKey={showLoading ? 'loading' : snapshot === null ? 'error' : 'ready'}>
+        {showLoading ? (
           <BrandLoader label="Loading kitchen dashboard…" />
         ) : snapshot === null ? (
           <PrototypeCard style={styles.errorCard}>

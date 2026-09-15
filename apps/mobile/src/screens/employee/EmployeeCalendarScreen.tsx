@@ -9,7 +9,7 @@ import { addDays, formatDay, formatMonth, formatShortDate, startOfWeek, toDateKe
 import { PrototypeCard, Pill, PillText } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { useMinimumVisibleLoading } from '../../ui/useMinimumVisibleLoading';
+import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { useReducedMotion } from '../../ui/useReducedMotion';
 import { theme } from '../../theme';
@@ -53,8 +53,14 @@ export function EmployeeCalendarScreen(_props: Props) {
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [monthLoading, setMonthLoading] = useState(true);
   const [weekLoading, setWeekLoading] = useState(true);
+  const monthLoaded = useRef(false);
   const loading = monthLoading || weekLoading;
-  const visibleLoading = useMinimumVisibleLoading(loading);
+  const initialGate = useInitialLoadingGate(
+    loading,
+    Boolean(availabilityError && !windowSnapshot),
+  );
+  const hasUsableCalendarData = monthLoaded.current && windowSnapshot !== null;
+  const showLoading = initialGate || (!hasUsableCalendarData && loading);
   const [savingDate, setSavingDate] = useState<string | null>(null);
   const cutoffWarnings = useRef(new Set<string>());
   const monthRequestId = useRef(0);
@@ -76,6 +82,7 @@ export function EmployeeCalendarScreen(_props: Props) {
   const refreshCurrentWeek = useCallback(async () => {
     if (!token) return;
     const requestId = ++weekRequestId.current;
+    setWeekLoading(true);
     try {
       const receiptAt = Date.now();
       const response = await registrationAPI.getWeek(toDateKey(weekStart), token);
@@ -96,10 +103,7 @@ export function EmployeeCalendarScreen(_props: Props) {
   const loadMonth = useCallback(async () => {
     if (!token) return;
     const currentMonthRequestId = ++monthRequestId.current;
-    const currentWeekRequestId = ++weekRequestId.current;
-    let phase: 'month' | 'week' = 'month';
     setMonthLoading(true);
-    setWeekLoading(true);
     try {
       const firstWeek = startOfWeek(month);
       const lastDay = new Date(month.getFullYear(), month.getMonth() + 1, 0);
@@ -109,34 +113,21 @@ export function EmployeeCalendarScreen(_props: Props) {
       if (currentMonthRequestId !== monthRequestId.current) return;
       const registrations: RegistrationRecord[] = responses.flatMap((response) => response.registrations);
       setMonthRegistrations(new Set(registrations.filter((registration) => registration.status === 'ACTIVE').map((registration) => registration.mealDate.slice(0, 10))));
-
-      if (currentWeekRequestId !== weekRequestId.current) return;
-      phase = 'week';
-      const receiptAt = Date.now();
-      const currentWeekResponse = await registrationAPI.getWeek(toDateKey(weekStart), token);
-      if (currentWeekRequestId !== weekRequestId.current) return;
-      if (!applyCurrentWeek(currentWeekResponse, receiptAt)) {
-        showNotice({ title: 'Calendar unavailable', message: 'Cutoff availability could not be loaded.', tone: 'error' });
-      }
+      monthLoaded.current = true;
     } catch (error: unknown) {
-      const requestIsCurrent = phase === 'month'
-        ? currentMonthRequestId === monthRequestId.current
-        : currentWeekRequestId === weekRequestId.current;
-      if (!requestIsCurrent) return;
+      if (currentMonthRequestId !== monthRequestId.current) return;
       const message = error instanceof Error ? error.message : 'Unable to load meal registrations';
       setAvailabilityError(message);
       showNotice({ title: 'Calendar unavailable', message, tone: 'error' });
     } finally {
       if (currentMonthRequestId === monthRequestId.current) setMonthLoading(false);
-      if (currentWeekRequestId === weekRequestId.current) setWeekLoading(false);
     }
-  }, [applyCurrentWeek, month, showNotice, token, weekStart]);
+  }, [month, showNotice, token]);
 
   useEffect(() => {
     void loadMonth();
     return () => {
       monthRequestId.current += 1;
-      weekRequestId.current += 1;
     };
   }, [loadMonth]);
   useFocusEffect(useCallback(() => {
@@ -217,21 +208,16 @@ export function EmployeeCalendarScreen(_props: Props) {
   const todayKey = toDateKey(new Date());
   return (
     <PrototypeFrame>
-      <View style={styles.header}>
-        <Text style={styles.month}>{formatMonth(month)}</Text>
-        <View style={styles.monthNav}>
-          <Pressable accessibilityLabel="Previous month" onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))} style={styles.monthButton}><ChevronLeft size={16} color={theme.colors.accentDeep} /></Pressable>
-          <Pressable accessibilityLabel="Next month" onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))} style={styles.monthButton}><ChevronRight size={16} color={theme.colors.accentDeep} /></Pressable>
-        </View>
-      </View>
-      <PrototypeCard style={styles.calendarCard}>
-        <View style={styles.weekdayRow}>{['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((day) => <Text key={day} style={styles.weekday}>{day}</Text>)}</View>
-        <View style={styles.dayGrid}>{days.map((day, index) => { if (!day) return <View key={`empty-${index}`} style={styles.dayCell} />; const key = toDateKey(day); const booked = monthRegistrations.has(key); const today = key === todayKey; return <View key={key} style={[styles.dayCell, booked && styles.bookedDay, today && styles.todayDay]}><Text style={[styles.dayNumber, booked && styles.bookedText]}>{day.getDate()}</Text>{booked && <View style={styles.dot} />}</View>; })}</View>
-      </PrototypeCard>
-      <View style={styles.legend}><View style={styles.legendItem}><View style={[styles.swatch, styles.bookedSwatch]} /><Text style={styles.legendText}>Booked</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.todaySwatch]} /><Text style={styles.legendText}>Today</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.availableSwatch]} /><Text style={styles.legendText}>Available</Text></View></View>
-      <View style={styles.weekHeader}><PrototypeSectionTitle title="Weekly Meal Registration" subtitle={`${formatShortDate(weekStart)}–${formatShortDate(addDays(weekStart, 6))} · Toggle a day on to register lunch`} /></View>
-      <StateTransition stateKey={visibleLoading ? 'loading' : availabilityError && !windowSnapshot ? 'error' : 'ready'}>
-        {visibleLoading ? (
+      <StateTransition
+        stateKey={
+          showLoading
+            ? 'loading'
+            : availabilityError && !windowSnapshot
+              ? 'error'
+              : 'ready'
+        }
+      >
+        {showLoading ? (
           <BrandLoader label="Loading meal calendar…" />
         ) : availabilityError && !windowSnapshot ? (
           <Pressable accessibilityRole="button" onPress={() => void loadMonth()} style={styles.retry}>
@@ -239,33 +225,49 @@ export function EmployeeCalendarScreen(_props: Props) {
             <Text style={styles.retryAction}>Retry</Text>
           </Pressable>
         ) : (
-          Array.from({ length: 7 }, (_, index) => {
-            const date = addDays(weekStart, index);
-            const dateKey = toDateKey(date);
-            const active = Boolean(weekState[dateKey]);
-            const editable = windowSnapshot?.days[dateKey]?.editable === true;
-            const locked = !editable;
-            const disabled = savingDate !== null || locked;
-            return (
-              <View key={dateKey} style={[styles.weekRow, dateKey === todayKey && styles.todayRow]}>
-                <View style={styles.weekInfo}>
-                  <View style={styles.weekDayLine}>
-                    <Text style={styles.weekDay}>{formatDay(date)}</Text>
-                    {dateKey === todayKey && <Pill><PillText>Today</PillText></Pill>}
-                    {locked && <Pill tone="warn"><Text style={styles.lockedLabel}>Locked</Text></Pill>}
-                  </View>
-                  <Text style={styles.weekDate}>{formatShortDate(date)}</Text>
-                </View>
-                <AnimatedMealToggle
-                  value={active}
-                  disabled={disabled}
-                  saving={savingDate === dateKey}
-                  accessibilityLabel={`Toggle lunch registration for ${formatDay(date)}${locked ? ', locked after cutoff' : ''}`}
-                  onPress={() => void toggleRegistration(dateKey)}
-                />
+          <>
+            <View style={styles.header}>
+              <Text style={styles.month}>{formatMonth(month)}</Text>
+              <View style={styles.monthNav}>
+                <Pressable accessibilityLabel="Previous month" onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))} style={styles.monthButton}><ChevronLeft size={16} color={theme.colors.accentDeep} /></Pressable>
+                <Pressable accessibilityLabel="Next month" onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))} style={styles.monthButton}><ChevronRight size={16} color={theme.colors.accentDeep} /></Pressable>
               </View>
-            );
-          })
+            </View>
+            <PrototypeCard style={styles.calendarCard}>
+              <View style={styles.weekdayRow}>{['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((day) => <Text key={day} style={styles.weekday}>{day}</Text>)}</View>
+              <View style={styles.dayGrid}>{days.map((day, index) => { if (!day) return <View key={`empty-${index}`} style={styles.dayCell} />; const key = toDateKey(day); const booked = monthRegistrations.has(key); const today = key === todayKey; return <View key={key} style={[styles.dayCell, booked && styles.bookedDay, today && styles.todayDay]}><Text style={[styles.dayNumber, booked && styles.bookedText]}>{day.getDate()}</Text>{booked && <View style={styles.dot} />}</View>; })}</View>
+            </PrototypeCard>
+            <View style={styles.legend}><View style={styles.legendItem}><View style={[styles.swatch, styles.bookedSwatch]} /><Text style={styles.legendText}>Booked</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.todaySwatch]} /><Text style={styles.legendText}>Today</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.availableSwatch]} /><Text style={styles.legendText}>Available</Text></View></View>
+            <View style={styles.weekHeader}><PrototypeSectionTitle title="Weekly Meal Registration" subtitle={`${formatShortDate(weekStart)}–${formatShortDate(addDays(weekStart, 6))} · Toggle a day on to register lunch`} /></View>
+            {Array.from({ length: 7 }, (_, index) => {
+              const date = addDays(weekStart, index);
+              const dateKey = toDateKey(date);
+              const active = Boolean(weekState[dateKey]);
+              const editable = windowSnapshot?.days[dateKey]?.editable === true;
+              const locked = !editable;
+              const disabled = savingDate !== null || locked;
+              const isSaving = savingDate === dateKey;
+              return (
+                <View key={dateKey} style={[styles.weekRow, dateKey === todayKey && styles.todayRow]}>
+                  <View style={styles.weekInfo}>
+                    <View style={styles.weekDayLine}>
+                      <Text style={styles.weekDay}>{formatDay(date)}</Text>
+                      {dateKey === todayKey && <Pill><PillText>Today</PillText></Pill>}
+                      {locked && <Pill tone="warn"><Text style={styles.lockedLabel}>Locked</Text></Pill>}
+                    </View>
+                    <Text style={styles.weekDate}>{formatShortDate(date)}</Text>
+                  </View>
+                  <AnimatedMealToggle
+                    value={active}
+                    disabled={disabled}
+                    saving={isSaving}
+                    accessibilityLabel={`Toggle lunch registration for ${formatDay(date)}${locked ? ', locked after cutoff' : ''}`}
+                    onPress={() => void toggleRegistration(dateKey)}
+                  />
+                </View>
+              );
+            })}
+          </>
         )}
       </StateTransition>
     </PrototypeFrame>
@@ -276,11 +278,22 @@ function AnimatedMealToggle({ value, disabled, saving, accessibilityLabel, onPre
   const reducedMotion = useReducedMotion();
   const progress = useRef(new Animated.Value(value ? 1 : 0)).current;
   useEffect(() => {
+    progress.stopAnimation();
     const toValue = value ? 1 : 0;
-    if (reducedMotion) { progress.setValue(toValue); return; }
-    Animated.timing(progress, { toValue, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    if (reducedMotion) {
+      progress.setValue(toValue);
+      return () => {
+        progress.stopAnimation();
+      };
+    }
+    const animation = Animated.timing(progress, { toValue, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true });
+    animation.start();
+    return () => {
+      animation.stop();
+      progress.stopAnimation();
+    };
   }, [progress, reducedMotion, value]);
-  return <Pressable accessibilityRole="switch" accessibilityState={{ checked: value, disabled }} accessibilityLabel={accessibilityLabel} disabled={disabled} onPress={onPress} style={[styles.toggle, value && styles.toggleActive, (disabled || saving) && styles.toggleSaving]}><Animated.View style={[styles.toggleThumb, { transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [0, 20] }) }] }]} /></Pressable>;
+  return <Pressable accessibilityRole="switch" accessibilityState={{ checked: value, disabled }} accessibilityLabel={accessibilityLabel} disabled={disabled} onPress={onPress} style={[styles.toggle, value && styles.toggleActive, saving && styles.toggleSaving]}><Animated.View style={[styles.toggleThumb, { transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [0, 20] }) }] }]} /></Pressable>;
 }
 
 const styles = StyleSheet.create({

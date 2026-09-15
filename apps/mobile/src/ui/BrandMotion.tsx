@@ -11,6 +11,7 @@ import {
 import Svg, { Path } from 'react-native-svg';
 import { theme } from '../theme';
 import { useReducedMotion } from './useReducedMotion';
+import { shouldAnimateScreenEntrance } from './screenEntranceState';
 
 const MOTION_DURATION_MS = 260;
 
@@ -206,12 +207,15 @@ export function ScreenEntrance({
   const reduceMotion = useReducedMotion();
   const opacity = useRef(new Animated.Value(1)).current;
   const translateY = useRef(new Animated.Value(0)).current;
+  const hasEntered = useRef(false);
 
   useEffect(() => {
     opacity.stopAnimation();
     translateY.stopAnimation();
+    const shouldAnimate = shouldAnimateScreenEntrance(active, hasEntered.current);
+    if (active) hasEntered.current = true;
 
-    if (reduceMotion || !active) {
+    if (reduceMotion || !shouldAnimate) {
       opacity.setValue(1);
       translateY.setValue(0);
       return () => {

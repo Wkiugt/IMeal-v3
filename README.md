@@ -254,7 +254,6 @@ corepack yarn workspace @imeal/worker start:dev
 API bind `0.0.0.0:3000`, nên cùng endpoint có thể phục vụ browser local, Android Emulator alias và điện thoại trong LAN khi firewall cho phép.
 Các endpoint serving không còn yêu cầu request đến từ mạng LAN nội bộ; bearer token hợp lệ với quyền `kitchen.serve` mới là điều kiện ủy quyền.
 
-
 ### Vận hành stack
 
 ```powershell
@@ -355,7 +354,7 @@ Nếu điện thoại không cùng LAN hoặc QR LAN hiển thị `127.0.0.1`, d
 corepack yarn workspace @imeal/mobile start:tunnel
 ```
 
-Tunnel cần Internet ở cả máy development và điện thoại. `@expo/ngrok` đã được khai báo trong mobile workspace, nên không cần cài global. Tunnel URL chỉ tải JavaScript bundle; `EXPO_PUBLIC_API_URL` vẫn phải trỏ tới API public mà điện thoại truy cập được (không dùng Expo Metro URL làm API URL).
+Command này nạp `../../.env` trước khi chạy Expo. Đặt `EXPO_PUBLIC_API_URL` trong `.env` ở thư mục gốc repository tới API tunnel kèm `/api`, ví dụ `https://<api-tunnel>.ngrok-free.app/api`. Expo tunnel URL chỉ tải JavaScript bundle, không phải API URL. Phải restart Metro khi API tunnel URL thay đổi.
 
 ### iOS
 
@@ -376,7 +375,6 @@ corepack yarn workspace @imeal/mobile start --lan
 Thiết bị thật cần Expo client tương thích SDK `~51.0.28`. Repository chưa có signing/provisioning, EAS hoặc native iOS project, nên không cam kết flow cài native iOS. Xem [Expo environment setup](https://docs.expo.dev/get-started/set-up-your-environment/) và [iOS Simulator](https://docs.expo.dev/workflow/ios-simulator/) cho platform setup.
 
 `EXPO_PUBLIC_API_URL` chỉ bắt buộc cho production và là override tùy chọn khi dùng Expo tunnel, reverse proxy hoặc API port khác mặc định. Local Expo LAN thông thường không cần đặt biến này.
-
 
 ### Checklist role nhanh
 
