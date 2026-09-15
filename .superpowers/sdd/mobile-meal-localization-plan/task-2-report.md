@@ -41,3 +41,9 @@ Task 1's contract tests already cover the strict v1 schemas; no contract source 
 - Updated the e2e success fixture to use lunar-eligible `2026-09-25` for `VEGETARIAN`, and added an HTTP route assertion for the typed `MEAL_CHOICE_UNAVAILABLE` partial result on ordinary `2026-09-24`.
 - Review-fix GREEN: `corepack yarn workspace @imeal/api exec vitest run src/registrations/registrations.service.spec.ts` — `1` file passed, `18/18` tests.
 - Review-fix typecheck: `corepack yarn workspace @imeal/api exec tsc --noEmit --pretty false -p tsconfig.json` — completed with no errors.
+
+## Scoped re-review follow-up
+
+- Corrected the default e2e batch mock to return the same lunar-eligible `2026-09-25` / `2026-09-26` dates sent by the success fixture; ordinary-date rejection remains covered separately.
+- Final review-fix verification: API lunar + registrations focused tests `33/33` passed, contracts focused tests `19/19` passed, and API `tsc --noEmit` completed with no errors.
+- Coherent e2e fixture rerun remained blocked before collection by the missing `DATABASE_URL` test environment.

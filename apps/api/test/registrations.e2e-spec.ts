@@ -51,9 +51,9 @@ describe('RegistrationsController (e2e)', () => {
         },
       }),
       batchRegister: vi.fn().mockResolvedValue([
-        { date: '2026-09-05', success: true },
+        { date: '2026-09-25', success: true },
         {
-          date: '2026-09-06',
+          date: '2026-09-26',
           success: false,
           code: 'CUTOFF_PASSED',
           reason: 'Cutoff time exceeded',
