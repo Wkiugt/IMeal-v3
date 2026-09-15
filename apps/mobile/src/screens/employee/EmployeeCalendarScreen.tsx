@@ -70,20 +70,22 @@ export function EmployeeCalendarScreen(_props: Props) {
   const [weekState, setWeekState] = useState<WeekState>({});
   const [draftChoiceByDate, setDraftChoiceByDate] = useState<DraftChoiceByDate>({});
   const [monthRegistrations, setMonthRegistrations] = useState<Set<string>>(new Set());
+  const [monthDataKey, setMonthDataKey] = useState<string | null>(null);
   const [windowSnapshot, setWindowSnapshot] = useState<WindowSnapshot | null>(null);
   const [availabilityError, setAvailabilityError] = useState<CalendarError | null>(null);
+  const [monthError, setMonthError] = useState<CalendarError | null>(null);
   const [monthLoading, setMonthLoading] = useState(true);
   const [weekLoading, setWeekLoading] = useState(true);
-  const monthLoaded = useRef(false);
   const loading = monthLoading || weekLoading;
   const initialGate = useInitialLoadingGate(
     loading,
     Boolean(availabilityError && !windowSnapshot),
   );
-  const hasUsableCalendarData = monthLoaded.current && windowSnapshot !== null;
+  const monthKey = toDateKey(month);
+  const hasMonthData = monthDataKey === monthKey;
   const draftChoiceRef = useRef<DraftChoiceByDate>({});
   draftChoiceRef.current = draftChoiceByDate;
-  const showLoading = initialGate || (!hasUsableCalendarData && loading);
+  const showLoading = initialGate || (!windowSnapshot && loading);
   const [savingDates, setSavingDates] = useState<Set<string>>(new Set());
   const mutationTracker = useRef(new CalendarMutationTracker()).current;
   const cutoffWarnings = useRef(new Set<string>());
@@ -159,7 +161,11 @@ export function EmployeeCalendarScreen(_props: Props) {
   const loadMonth = useCallback(async () => {
     if (!token) return;
     const currentMonthRequestId = ++monthRequestId.current;
+    const requestedMonthKey = toDateKey(month);
     setMonthLoading(true);
+    setMonthError(null);
+    setMonthDataKey(null);
+    setMonthRegistrations(new Set());
     try {
       const firstWeek = startOfWeek(month);
       const lastDay = new Date(month.getFullYear(), month.getMonth() + 1, 0);
@@ -169,11 +175,11 @@ export function EmployeeCalendarScreen(_props: Props) {
       if (currentMonthRequestId !== monthRequestId.current) return;
       const registrations: RegistrationRecord[] = responses.flatMap((response) => response.registrations);
       setMonthRegistrations(new Set(registrations.filter((registration) => registration.status === 'ACTIVE').map((registration) => registration.mealDate.slice(0, 10))));
-      monthLoaded.current = true;
+      setMonthDataKey(requestedMonthKey);
     } catch (error: unknown) {
       if (currentMonthRequestId !== monthRequestId.current) return;
       const message = getMobileErrorMessage(error, t, 'errors.loadCalendar');
-      setAvailabilityError({ error, fallbackKey: 'errors.loadCalendar' });
+      setMonthError({ error, fallbackKey: 'errors.loadCalendar' });
       showNotice({ title: t('calendar.registrationUnavailable'), message, tone: 'error' });
     } finally {
       if (currentMonthRequestId === monthRequestId.current) setMonthLoading(false);
@@ -364,7 +370,7 @@ export function EmployeeCalendarScreen(_props: Props) {
         {showLoading ? (
           <BrandLoader label={t('calendar.loading')} />
         ) : availabilityError && !windowSnapshot ? (
-          <Pressable accessibilityRole="button" accessibilityLabel={t('common.retry')} onPress={() => void loadMonth()} style={styles.retry}>
+          <Pressable accessibilityRole="button" accessibilityLabel={t('common.retry')} onPress={() => void refreshCurrentWeek()} style={styles.retry}>
             <Text style={styles.retryText}>{'key' in availabilityError ? t(availabilityError.key) : getMobileErrorMessage(availabilityError.error, t, availabilityError.fallbackKey)}</Text>
             <Text style={styles.retryAction}>{t('common.retry')}</Text>
           </Pressable>
@@ -377,11 +383,22 @@ export function EmployeeCalendarScreen(_props: Props) {
                 <Pressable accessibilityRole="button" accessibilityLabel={t('calendar.nextMonth')} onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))} style={styles.monthButton}><ChevronRight size={16} color={theme.colors.accentDeep} /></Pressable>
               </View>
             </View>
-            <PrototypeCard style={styles.calendarCard}>
-              <View style={styles.weekdayRow}>{(['calendar.weekday.mo', 'calendar.weekday.tu', 'calendar.weekday.we', 'calendar.weekday.th', 'calendar.weekday.fr', 'calendar.weekday.sa', 'calendar.weekday.su'] as const).map((dayKey) => <View key={dayKey} style={styles.calendarColumn}><Text style={styles.weekday}>{t(dayKey)}</Text></View>)}</View>
-              <View style={styles.dayGrid}>{monthRows.map((row, rowIndex) => <View key={`week-${rowIndex}`} style={styles.dayGridRow}>{row.map((day, columnIndex) => { if (!day) return <View key={`empty-${rowIndex}-${columnIndex}`} style={styles.calendarColumn} />; const key = toDateKey(day); const booked = monthRegistrations.has(key); const today = key === todayKey; return <View key={key} style={styles.calendarColumn}><View style={[styles.dayMarker, booked && styles.bookedDay, today && styles.todayDay]}><Text style={[styles.dayNumber, booked && styles.bookedText]}>{day.getDate()}</Text>{booked && <View style={styles.dot} />}</View></View>; })}</View>)}</View>
-            </PrototypeCard>
-            <View style={styles.legend}><View style={styles.legendItem}><View style={[styles.swatch, styles.bookedSwatch]} /><Text style={styles.legendText}>{t('calendar.booked')}</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.todaySwatch]} /><Text style={styles.legendText}>{t('common.today')}</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.availableSwatch]} /><Text style={styles.legendText}>{t('calendar.available')}</Text></View></View>
+            {monthLoading && !hasMonthData ? (
+              <View style={styles.monthState}><BrandLoader compact label={t('calendar.loading')} /></View>
+            ) : monthError && !hasMonthData ? (
+              <Pressable accessibilityRole="button" accessibilityLabel={t('common.retry')} onPress={() => void loadMonth()} style={styles.monthState}>
+                <Text style={styles.retryText}>{'key' in monthError ? t(monthError.key) : getMobileErrorMessage(monthError.error, t, monthError.fallbackKey)}</Text>
+                <Text style={styles.retryAction}>{t('common.retry')}</Text>
+              </Pressable>
+            ) : (
+              <>
+                <PrototypeCard style={styles.calendarCard}>
+                  <View style={styles.weekdayRow}>{(['calendar.weekday.mo', 'calendar.weekday.tu', 'calendar.weekday.we', 'calendar.weekday.th', 'calendar.weekday.fr', 'calendar.weekday.sa', 'calendar.weekday.su'] as const).map((dayKey) => <View key={dayKey} style={styles.calendarColumn}><Text style={styles.weekday}>{t(dayKey)}</Text></View>)}</View>
+                  <View style={styles.dayGrid}>{monthRows.map((row, rowIndex) => <View key={`week-${rowIndex}`} style={styles.dayGridRow}>{row.map((day, columnIndex) => { if (!day) return <View key={`empty-${rowIndex}-${columnIndex}`} style={styles.calendarColumn} />; const key = toDateKey(day); const booked = monthRegistrations.has(key); const today = key === todayKey; return <View key={key} style={styles.calendarColumn}><View style={[styles.dayMarker, booked && styles.bookedDay, today && styles.todayDay]}><Text style={[styles.dayNumber, booked && styles.bookedText]}>{day.getDate()}</Text>{booked && <View style={styles.dot} />}</View></View>; })}</View>)}</View>
+                </PrototypeCard>
+                <View style={styles.legend}><View style={styles.legendItem}><View style={[styles.swatch, styles.bookedSwatch]} /><Text style={styles.legendText}>{t('calendar.booked')}</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.todaySwatch]} /><Text style={styles.legendText}>{t('common.today')}</Text></View><View style={styles.legendItem}><View style={[styles.swatch, styles.availableSwatch]} /><Text style={styles.legendText}>{t('calendar.available')}</Text></View></View>
+              </>
+            )}
             <View style={styles.weekHeader}><PrototypeSectionTitle title={t('calendar.weeklyRegistration')} subtitle={`${formatShortDate(weekStart, locale)}–${formatShortDate(addDays(weekStart, 6), locale)} · ${t('calendar.toggleHint')}`} /></View>
             {Array.from({ length: 7 }, (_, index) => {
               const date = addDays(weekStart, index);
@@ -429,7 +446,7 @@ export function EmployeeCalendarScreen(_props: Props) {
                       value={active}
                       disabled={locked || isSaving}
                       saving={isSaving}
-                      accessibilityLabel={t(locked ? 'calendar.toggleLockedAccessibility' : 'calendar.toggleAccessibility', { day: formatDay(date, locale) })}
+                      accessibilityLabel={t(locked ? 'calendar.toggleLockedAccessibility' : active ? 'calendar.toggleEnabledAccessibility' : 'calendar.toggleAccessibility', { day: formatDay(date, locale) })}
                       onPress={() => toggleRegistration(dateKey)}
                     />
                   </View>
@@ -514,6 +531,7 @@ const styles = StyleSheet.create({
   monthNav: { flexDirection: 'row', gap: 8 },
   monthButton: { width: 36, height: 36, borderRadius: theme.radii.pill, backgroundColor: theme.colors.accentTint, alignItems: 'center', justifyContent: 'center' },
   calendarCard: { paddingHorizontal: 16, paddingVertical: 18, marginBottom: 20 },
+  monthState: { minHeight: 180, alignItems: 'center', justifyContent: 'center', padding: 16 },
   weekdayRow: { flexDirection: 'row', gap: 4, marginBottom: 8 },
   calendarColumn: { flex: 1, minWidth: 0, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
   weekday: { color: theme.colors.muted, fontFamily: theme.typography.fontMono, fontSize: 11, textAlign: 'center' },

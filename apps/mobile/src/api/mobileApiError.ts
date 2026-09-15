@@ -62,6 +62,22 @@ export function getErrorPayloadCode(payload: unknown): MobileApiErrorCode | null
   return isMobileApiErrorCode(payload.code) ? payload.code : null;
 }
 
+function getNestedErrorPayloadCode(payload: unknown): MobileApiErrorCode | null {
+  if (isMobileApiErrorCode(payload)) return payload;
+  const directCode = getErrorPayloadCode(payload);
+  if (directCode) return directCode;
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const nestedCode = getNestedErrorPayloadCode(item);
+      if (nestedCode) return nestedCode;
+    }
+    return null;
+  }
+  if (payload === null || typeof payload !== 'object') return null;
+  const record = payload as Record<string, unknown>;
+  return getNestedErrorPayloadCode(record.error) ?? getNestedErrorPayloadCode(record.message);
+}
+
 
 export function toMobileApiError(
   error: unknown,
@@ -85,10 +101,7 @@ export async function throwMobileResponseError(
   } catch (error: unknown) {
     cause = error;
   }
-  const nestedPayload = cause && typeof cause === 'object' && 'error' in cause
-    ? cause.error
-    : undefined;
-  const code = getErrorPayloadCode(cause) ?? getErrorPayloadCode(nestedPayload) ?? 'REQUEST_FAILED';
+  const code = getNestedErrorPayloadCode(cause) ?? 'REQUEST_FAILED';
   const messageKey = code === 'REQUEST_FAILED' ? fallbackKey : mobileErrorMessageKey(code);
   throw new MobileApiError(code, messageKey, cause);
 }

@@ -54,4 +54,19 @@ describe('MobileApiError', () => {
       cause: { code: 'SERVER_MAINTENANCE', message: 'raw detail' },
     });
   });
+
+  it('extracts typed codes wrapped in Nest message fields', async () => {
+    const response = new Response(
+      JSON.stringify({
+        statusCode: 400,
+        message: 'PICKUP_NOT_READY',
+        error: 'Bad Request',
+      }),
+      { status: 400 },
+    );
+    await expect(throwMobileResponseError(response, 'errors.loadPickup')).rejects.toMatchObject({
+      code: 'PICKUP_NOT_READY',
+      messageKey: 'errors.pickupNotReady',
+    });
+  });
 });
