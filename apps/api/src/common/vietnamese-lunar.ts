@@ -1,6 +1,8 @@
 import { getLunarDate } from '@dqcai/vn-lunar';
-import type { MealChoice } from '@imeal/contracts';
+import type { v1 } from '@imeal/contracts';
 import { parseMealDate } from './business-time.js';
+
+type MealChoice = v1.MealChoice;
 
 const MIN_SUPPORTED_YEAR = 1200;
 const MAX_SUPPORTED_YEAR = 2199;
