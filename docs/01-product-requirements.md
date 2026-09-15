@@ -131,6 +131,9 @@ Staff mở một tuần và tick từng ngày:
 - Một tuần có thể chứa mixed state: ngày đã khóa, ngày còn editable.
 - Batch save trả kết quả từng ngày; ngày không hợp lệ không được làm mất draft của ngày khác.
 - Không persist literal `unregistered`; không có registration row nghĩa là unregistered.
+- `active registration` nghĩa là row có `status=registered` và chưa có active serving.
+- Cancel registration phải atomically revoke delegation `pending|accepted`, ghi audit và tạo notification cho các bên.
+- Race cancel/accept/revoke/serve được serialize; transaction thắng quyết định outcome, transaction còn lại nhận canonical conflict.
 
 ## 8. QR and serving/check-in
 

@@ -265,6 +265,7 @@ Purpose:
 
 ## 8. `registrations`
 
+```text
 id              UUID PK
 user_id         UUID FK users
 meal_date       date NOT NULL

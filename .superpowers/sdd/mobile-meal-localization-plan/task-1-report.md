@@ -70,3 +70,16 @@ No formatter, linter, or project-wide test suite was run.
 ## Concerns
 
 The migration SQL was not applied to a live PostgreSQL instance in this focused contract/persistence slice; Prisma schema validation passed and the migration is a straightforward enum-plus-non-null-default alteration. The later database verification step should apply it and confirm existing rows are backfilled to `REGULAR`.
+
+## Review follow-up
+
+- Added the required top-level `registrationWindow.cutoffAt` UTC `Z` timestamp and focused coverage for both valid and non-UTC values.
+- Restored the ` ```text` opening fence for the registrations schema in `docs/05-backend-structure.md`.
+- Restored the pre-existing active-registration definition, cancellation delegation/audit behavior, and race serialization bullets in `docs/01-product-requirements.md`.
+
+Focused re-test after the review fixes:
+
+```text
+corepack yarn workspace @imeal/contracts exec vitest run test/contracts.test.ts
+1 passed (1 file), 19 passed (19 tests)
+```

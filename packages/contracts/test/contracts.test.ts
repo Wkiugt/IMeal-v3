@@ -297,6 +297,7 @@ describe('Contracts v1', () => {
         ],
         registrationWindow: {
           serverNow: '2026-09-20T06:00:00.000Z',
+          cutoffAt: '2026-09-20T07:00:00.000Z',
           timeZone: 'Asia/Ho_Chi_Minh',
           days: [
             '2026-09-21',
@@ -345,6 +346,7 @@ describe('Contracts v1', () => {
         registrations: [],
         registrationWindow: {
           serverNow: '2026-09-20T06:00:00.000Z',
+          cutoffAt: '2026-09-20T07:00:00.000Z',
           timeZone: 'Asia/Ho_Chi_Minh',
           days: Array.from({ length: 6 }, () => invalidWindowDay),
         },
@@ -359,6 +361,19 @@ describe('Contracts v1', () => {
           registrationWindow: {
             ...response.registrationWindow,
             days: Array.from({ length: 7 }, () => invalidWindowDay),
+          },
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.WeekRegistrationResponseSchema.safeParse({
+          ...response,
+          registrationWindow: {
+            ...response.registrationWindow,
+            cutoffAt: '2026-09-20T14:00:00+07:00',
+            days: Array.from({ length: 7 }, () => ({
+              ...invalidWindowDay,
+              cutoffAt: '2026-09-20T07:00:00.000Z',
+            })),
           },
         }).success,
       ).toBe(false);
