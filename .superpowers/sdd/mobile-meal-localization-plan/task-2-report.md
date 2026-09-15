@@ -17,8 +17,9 @@ Task 1's contract tests already cover the strict v1 schemas; no contract source 
 - RED utility: `corepack yarn workspace @imeal/api exec vitest run src/common/vietnamese-lunar.spec.ts` — failed because `./vietnamese-lunar.js` did not exist (`0` tests).
 - GREEN utility: same command after implementation — `1` file passed, `15/15` tests.
 - RED registration service: `corepack yarn workspace @imeal/api exec vitest run src/registrations/registrations.service.spec.ts` — `15` expected behavior failures against the old service (including missing result codes, missing lunar metadata, old upsert semantics, and non-typed invalid-date handling).
-- GREEN focused API: `corepack yarn workspace @imeal/api exec vitest run src/common/vietnamese-lunar.spec.ts src/registrations/registrations.service.spec.ts` — `2` files passed, `32/32` tests.
+- GREEN focused API (after final namespace typing fix): `corepack yarn workspace @imeal/api exec vitest run src/common/vietnamese-lunar.spec.ts src/registrations/registrations.service.spec.ts` — `2` files passed, `32/32` tests.
 - Contracts focused: `corepack yarn workspace @imeal/contracts exec vitest run test/contracts.test.ts` — `1` file passed, `19/19` tests.
+- Narrow API typecheck: `corepack yarn workspace @imeal/api exec tsc --noEmit --pretty false -p tsconfig.json` — completed with no errors.
 - Registration e2e command attempted: `corepack yarn workspace @imeal/api exec vitest run --config ./vitest.config.e2e.ts test/registrations.e2e-spec.ts`; setup stopped before collection because `DATABASE_URL` was not configured.
 
 ## Decisions
