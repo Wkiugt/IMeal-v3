@@ -281,6 +281,7 @@ const styles = StyleSheet.create({
   },
   loaderLabel: {
     color: theme.colors.muted,
+    fontFamily: theme.typography.regular,
     fontSize: 13,
     lineHeight: 19,
     textAlign: 'center',

@@ -16,6 +16,8 @@ import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
 import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
+import { getMobileErrorMessage } from '../../api/mobileApiError';
+import { useLanguage } from '../../i18n/LanguageProvider';
 import { theme } from '../../theme';
 
 type Tab = DelegationTab;
@@ -23,6 +25,7 @@ type Props = ProfileStackScreenProps<'Delegation'>;
 export function DelegationScreen({ navigation }: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
+  const { t } = useLanguage();
   const [tab, setTab] = useState<Tab>('OUTGOING');
   const [searchQuery, setSearchQuery] = useState('');
   const [dataByTab, setDataByTab] = useState<DelegationCache>(() => createDelegationCache());
@@ -54,7 +57,7 @@ export function DelegationScreen({ navigation }: Props) {
       hasLoadedAnyData.current = true;
     } catch (error: unknown) {
       if (requestId !== delegationRequestId.current || activeTabRef.current !== targetTab) return;
-      const message = error instanceof Error ? error.message : 'Unable to load delegations';
+      const message = getMobileErrorMessage(error, t, 'errors.loadDelegations');
       setLoadError(message);
       showNotice({ title: 'Delegations unavailable', message, tone: 'error' });
     } finally {
@@ -63,7 +66,7 @@ export function DelegationScreen({ navigation }: Props) {
         setRefreshing(false);
       }
     }
-  }, [showNotice, token]);
+  }, [showNotice, t, token]);
 
   useEffect(() => {
     void loadDelegations(tab);
@@ -90,7 +93,11 @@ export function DelegationScreen({ navigation }: Props) {
       if (action === 'revoke') await delegationAPI.revokeDelegation(id, token);
       if (activeTabRef.current === startingTab) await loadDelegations(startingTab);
     } catch (error: unknown) {
-      showNotice({ title: 'Action failed', message: error instanceof Error ? error.message : 'The delegation state has changed.', tone: 'error' });
+      showNotice({
+        title: 'Action failed',
+        message: getMobileErrorMessage(error, t, 'errors.delegationAction'),
+        tone: 'error',
+      });
     } finally {
       setActionId(null);
     }
@@ -141,26 +148,26 @@ const styles = StyleSheet.create({
   tabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: theme.colors.border },
   tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
   activeTab: { borderBottomWidth: 2, borderBottomColor: theme.colors.accentDeep },
-  tabText: { color: theme.colors.muted, fontSize: 14, fontWeight: '500' },
-  activeTabText: { color: theme.colors.accentDeep, fontWeight: '700' },
+  tabText: { color: theme.colors.muted, fontSize: 14, fontFamily: theme.typography.medium },
+  activeTabText: { color: theme.colors.accentDeep, fontFamily: theme.typography.bold },
   search: { marginVertical: 16 },
-  refreshing: { color: theme.colors.muted, fontSize: 12, marginBottom: 8 },
-  empty: { color: theme.colors.muted, textAlign: 'center', marginTop: 24 },
+  refreshing: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular, marginBottom: 8 },
+  empty: { color: theme.colors.muted, fontFamily: theme.typography.regular, textAlign: 'center', marginTop: 24 },
   errorCard: { marginTop: 20 },
-  errorTitle: { color: theme.colors.fg, fontSize: 17, fontWeight: '700' },
-  errorText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },
+  errorTitle: { color: theme.colors.fg, fontSize: 17, fontFamily: theme.typography.bold },
+  errorText: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19, marginTop: 8 },
   retryButton: { marginTop: 16 },
   list: { gap: 12, paddingVertical: 8 },
   card: { padding: 16 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 8 },
-  cardTitle: { flex: 1, color: theme.colors.fg, fontSize: 15, fontWeight: '700' },
+  cardTitle: { flex: 1, color: theme.colors.fg, fontSize: 15, fontFamily: theme.typography.bold },
   status: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  cardDate: { color: theme.colors.muted, fontSize: 13, marginBottom: 14 },
+  cardDate: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, marginBottom: 14 },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 12 },
   secondaryAction: { minHeight: 40, paddingHorizontal: 16, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.sm, alignItems: 'center', justifyContent: 'center' },
-  secondaryText: { color: theme.colors.fg, fontSize: 13, fontWeight: '600' },
+  secondaryText: { color: theme.colors.fg, fontSize: 13, fontFamily: theme.typography.semiBold },
   primaryAction: { minHeight: 40, paddingHorizontal: 16, borderRadius: theme.radii.sm, backgroundColor: theme.colors.accentDeep, alignItems: 'center', justifyContent: 'center' },
-  primaryText: { color: theme.colors.surface, fontSize: 13, fontWeight: '700' },
+  primaryText: { color: theme.colors.surface, fontSize: 13, fontFamily: theme.typography.bold },
   dangerAction: { minHeight: 40, paddingHorizontal: 16, borderRadius: theme.radii.sm, backgroundColor: theme.colors.statusBadTint, alignItems: 'center', justifyContent: 'center' },
-  dangerText: { color: theme.colors.statusBadDeep, fontSize: 13, fontWeight: '700' },
+  dangerText: { color: theme.colors.statusBadDeep, fontSize: 13, fontFamily: theme.typography.bold },
 });

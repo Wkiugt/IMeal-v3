@@ -11,6 +11,8 @@ import { PrototypeFrame } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
 import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
+import { getMobileErrorMessage } from '../../api/mobileApiError';
+import { useLanguage } from '../../i18n/LanguageProvider';
 import { theme } from '../../theme';
 type TabType = 'pending' | 'served' | 'all' | 'noshow' | 'logs';
 type Props = AppTabScreenProps<'KitchenDashboard'>;
@@ -18,6 +20,7 @@ type Props = AppTabScreenProps<'KitchenDashboard'>;
 export function KitchenDashboardScreen({ navigation }: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
+  const { t } = useLanguage();
   const isFocused = useIsFocused();
   const [snapshot, setSnapshot] = useState<KitchenDashboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -49,7 +52,7 @@ export function KitchenDashboardScreen({ navigation }: Props) {
     } catch (error: unknown) {
       if (requestId !== dashboardRequestId.current) return;
       if (currentSnapshot.current === null) {
-        const message = error instanceof Error ? error.message : 'Unable to load kitchen dashboard.';
+        const message = getMobileErrorMessage(error, t, 'errors.loadKitchen');
         setLoadError(message);
         showNotice({ title: 'Dashboard unavailable', message, tone: 'error' });
       }
@@ -59,7 +62,7 @@ export function KitchenDashboardScreen({ navigation }: Props) {
         setRefreshing(false);
       }
     }
-  }, [showNotice, token]);
+  }, [showNotice, t, token]);
 
   useEffect(() => {
     if (!isFocused) return;
@@ -83,7 +86,11 @@ export function KitchenDashboardScreen({ navigation }: Props) {
       const response = await kitchenAPI.toggleServingSignal(next, undefined, token);
       setSnapshot((current) => current ? { ...current, isServingReady: response.isServingReady } : current);
     } catch (error: unknown) {
-      showNotice({ title: 'Serving signal unavailable', message: error instanceof Error ? error.message : 'Unable to update serving signal', tone: 'error' });
+      showNotice({
+        title: 'Serving signal unavailable',
+        message: getMobileErrorMessage(error, t, 'errors.toggleServing'),
+        tone: 'error',
+      });
     } finally {
       setTogglingSignal(false);
     }
@@ -151,26 +158,26 @@ function ListRow({ initials: avatarInitials, name, detail, status, good }: { ini
 
 const styles = StyleSheet.create({
   errorCard: { marginTop: 20 },
-  errorTitle: { color: theme.colors.fg, fontSize: 17, fontWeight: '700' },
-  errorText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },
+  errorTitle: { color: theme.colors.fg, fontSize: 17, fontFamily: theme.typography.bold },
+  errorText: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19, marginTop: 8 },
   retryButton: { marginTop: 16 },
   servingCard: { marginBottom: 16 },
   servingActive: { backgroundColor: theme.colors.accentTint, borderColor: theme.colors.accentSoft },
   servingInfo: { marginBottom: 20 },
-  servingTitle: { color: theme.colors.fg, fontSize: 21, fontWeight: '700' },
-  servingSub: { color: theme.colors.muted, fontSize: 14, marginTop: 4 },
+  servingTitle: { color: theme.colors.fg, fontSize: 21, fontFamily: theme.typography.bold },
+  servingSub: { color: theme.colors.muted, fontSize: 14, fontFamily: theme.typography.regular, marginTop: 4 },
   sliderTrack: { height: 52, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.pill, backgroundColor: theme.colors.canvas, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   sliderFill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: theme.colors.accentSoft },
   sliderFillActive: { backgroundColor: theme.colors.accentDeep },
   sliderThumb: { position: 'absolute', left: 4, top: 4, width: 44, height: 44, borderRadius: theme.radii.pill, backgroundColor: theme.colors.surface, alignItems: 'center', justifyContent: 'center', ...theme.shadows.sm },
-  sliderHint: { color: theme.colors.muted, fontSize: 14, fontWeight: '600' },
+  sliderHint: { color: theme.colors.muted, fontSize: 14, fontFamily: theme.typography.semiBold },
   sliderHintActive: { color: theme.colors.surface },
   totalCard: { marginBottom: 16 },
   totalRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 10 },
-  totalNumber: { color: theme.colors.fg, fontSize: 52, lineHeight: 56, fontWeight: '700' },
-  totalUnit: { color: theme.colors.muted, fontSize: 15, fontWeight: '600' },
+  totalNumber: { color: theme.colors.fg, fontSize: 52, fontFamily: theme.typography.bold, lineHeight: 56 },
+  totalUnit: { color: theme.colors.muted, fontSize: 15, fontFamily: theme.typography.semiBold },
   totalMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: theme.colors.border },
-  totalMetaText: { color: theme.colors.muted, fontSize: 13 },
+  totalMetaText: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular },
   dietCard: { marginBottom: 16 },
   dietBar: { height: 14, flexDirection: 'row', gap: 2, overflow: 'hidden', borderRadius: theme.radii.pill, marginTop: 14, backgroundColor: theme.colors.surface },
   regularSegment: { flex: 72, backgroundColor: theme.colors.muted, borderTopLeftRadius: 7, borderBottomLeftRadius: 7 },
@@ -180,35 +187,35 @@ const styles = StyleSheet.create({
   legendDot: { width: 10, height: 10, borderRadius: 5 },
   regularDot: { backgroundColor: theme.colors.muted },
   vegDot: { backgroundColor: theme.colors.accentDeep },
-  legendLabel: { color: theme.colors.muted, fontSize: 12 },
-  legendNumber: { color: theme.colors.fg, fontSize: 15, fontFamily: theme.typography.fontMono, fontWeight: '700', marginTop: 1 },
+  legendLabel: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular },
+  legendNumber: { color: theme.colors.fg, fontSize: 15, fontFamily: theme.typography.fontMono, marginTop: 1 },
   checkinCard: { marginBottom: 16 },
   checkinHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  checkinRatio: { color: theme.colors.fg, fontFamily: theme.typography.fontMono, fontSize: 13, fontWeight: '700' },
+  checkinRatio: { color: theme.colors.fg, fontFamily: theme.typography.fontMono, fontSize: 13 },
   progressTrack: { height: 16, overflow: 'hidden', borderRadius: theme.radii.pill, backgroundColor: theme.colors.accentTint, marginTop: 14 },
   progressFill: { width: '100%', height: '100%', backgroundColor: theme.colors.accentDeep, transformOrigin: 'left' },
   checkinLegend: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 },
-  legendText: { color: theme.colors.muted, fontSize: 12 },
+  legendText: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular },
   scannerLink: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  scannerLinkText: { color: theme.colors.accentDeep, fontSize: 13, fontWeight: '700' },
+  scannerLinkText: { color: theme.colors.accentDeep, fontSize: 13, fontFamily: theme.typography.bold },
   listSection: { paddingTop: 18, borderTopWidth: 1, borderTopColor: theme.colors.border },
   listHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
-  listTitle: { color: theme.colors.fg, fontSize: 20, fontWeight: '700' },
-  syncText: { color: theme.colors.muted, fontSize: 11 },
+  listTitle: { color: theme.colors.fg, fontSize: 20, fontFamily: theme.typography.bold },
+  syncText: { color: theme.colors.muted, fontSize: 11, fontFamily: theme.typography.regular },
   searchWrap: { minHeight: 46, marginVertical: 14, paddingHorizontal: 12, gap: 8, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.sm, flexDirection: 'row', alignItems: 'center' },
-  searchInput: { flex: 1, color: theme.colors.fg, fontSize: 14 },
+  searchInput: { flex: 1, color: theme.colors.fg, fontSize: 14, fontFamily: theme.typography.regular },
   tabs: { flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginBottom: 8 },
   tab: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: theme.radii.pill, backgroundColor: theme.colors.canvas },
   tabActive: { backgroundColor: theme.colors.accentSoft },
-  tabText: { color: theme.colors.muted, fontSize: 11, fontWeight: '600' },
+  tabText: { color: theme.colors.muted, fontSize: 11, fontFamily: theme.typography.semiBold },
   tabTextActive: { color: theme.colors.accentDeep },
   listRow: { minHeight: 66, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.border, flexDirection: 'row', alignItems: 'center', gap: 10 },
   listAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
   listAvatarGood: { backgroundColor: theme.colors.statusGoodTint },
-  listAvatarText: { color: theme.colors.accentDeep, fontSize: 12, fontWeight: '700' },
+  listAvatarText: { color: theme.colors.accentDeep, fontSize: 12, fontFamily: theme.typography.bold },
   listAvatarTextGood: { color: theme.colors.statusGoodDeep },
   listCopy: { flex: 1, gap: 3 },
-  listName: { color: theme.colors.fg, fontSize: 13, fontWeight: '700' },
-  listDetail: { color: theme.colors.muted, fontSize: 11 },
-  emptyText: { color: theme.colors.muted, textAlign: 'center', paddingVertical: 24 },
+  listName: { color: theme.colors.fg, fontSize: 13, fontFamily: theme.typography.bold },
+  listDetail: { color: theme.colors.muted, fontSize: 11, fontFamily: theme.typography.regular },
+  emptyText: { color: theme.colors.muted, fontFamily: theme.typography.regular, textAlign: 'center', paddingVertical: 24 },
 });

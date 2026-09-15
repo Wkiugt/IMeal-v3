@@ -9,17 +9,22 @@ import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { API_ROOT } from '../api/apiConfig';
 import {
-  RequestTimeoutError,
-  fetchWithTimeout,
-} from '../api/requestWithTimeout';
+  MobileApiError,
+  getMobileErrorMessage,
+  readMobileResponseJson,
+  throwMobileResponseError,
+  toMobileApiError,
+} from '../api/mobileApiError';
+import { RequestTimeoutError, fetchWithTimeout } from '../api/requestWithTimeout';
+import { translate } from '../i18n/translations';
 
 const AUTH_REQUEST_TIMEOUT_MS = 10_000;
-const API_TIMEOUT_MESSAGE =
-  'The API did not respond. Check the API tunnel and try again.';
 
-function getAuthErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof RequestTimeoutError) return API_TIMEOUT_MESSAGE;
-  return error instanceof Error ? error.message : fallback;
+function getAuthErrorMessage(error: unknown, fallbackKey: 'errors.restoreSession' | 'errors.signIn'): string {
+  if (error instanceof RequestTimeoutError) {
+    return translate('errors.apiTimeout');
+  }
+  return getMobileErrorMessage(error, translate, fallbackKey);
 }
 const SESSION_KEY = 'imeal.local.access-token';
 
@@ -47,15 +52,21 @@ function isMobileProfile(value: unknown): value is MobileProfile {
 }
 
 async function loadProfile(accessToken: string): Promise<MobileProfile> {
-  const response = await fetchWithTimeout(
-    `${API_ROOT}/auth/me`,
-    { headers: { Authorization: `Bearer ${accessToken}` } },
-    AUTH_REQUEST_TIMEOUT_MS,
-  );
-  if (!response.ok) throw new Error('The saved session is no longer valid');
-  const payload: unknown = await response.json();
-  if (!isMobileProfile(payload))
-    throw new Error('The profile response is invalid');
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      `${API_ROOT}/auth/me`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      AUTH_REQUEST_TIMEOUT_MS,
+    );
+  } catch (error: unknown) {
+    throw toMobileApiError(error, 'errors.restoreSession');
+  }
+  if (!response.ok) await throwMobileResponseError(response, 'errors.restoreSession');
+  const payload = await readMobileResponseJson(response, 'errors.restoreSession');
+  if (!isMobileProfile(payload)) {
+    throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', payload);
+  }
   return payload;
 }
 
@@ -63,34 +74,33 @@ async function loginLocal(
   username: string,
   password: string,
 ): Promise<{ accessToken: string; profile: MobileProfile }> {
-  const response = await fetchWithTimeout(
-    `${API_ROOT}/auth/local-login`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      `${API_ROOT}/auth/local-login`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ username, password }),
       },
-      body: JSON.stringify({ username, password }),
-    },
-    AUTH_REQUEST_TIMEOUT_MS,
-  );
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    let message = 'Local sign-in failed';
-    if (payload && typeof payload === 'object' && 'message' in payload) {
-      message = String(payload.message);
-    }
-    throw new Error(message);
+      AUTH_REQUEST_TIMEOUT_MS,
+    );
+  } catch (error: unknown) {
+    throw toMobileApiError(error, 'errors.signIn');
   }
+  const payload = response.ok
+    ? await readMobileResponseJson(response, 'errors.signIn')
+    : await throwMobileResponseError(response, 'errors.signIn');
   if (!payload || typeof payload !== 'object') {
-    throw new Error('The local sign-in response is invalid');
+    throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', payload);
   }
-  const accessToken =
-    'accessToken' in payload ? payload.accessToken : undefined;
+  const accessToken = 'accessToken' in payload ? payload.accessToken : undefined;
   const profile = 'user' in payload ? payload.user : undefined;
   if (typeof accessToken !== 'string' || !isMobileProfile(profile)) {
-    throw new Error('The local sign-in response is invalid');
+    throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', payload);
   }
   return { accessToken, profile };
 }
@@ -140,7 +150,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           globalThis.localStorage?.removeItem(SESSION_KEY);
         else await SecureStore.deleteItemAsync(SESSION_KEY);
         if (mounted) {
-          setAuthError(getAuthErrorMessage(error, 'Unable to restore session'));
+          setAuthError(getAuthErrorMessage(error, 'errors.restoreSession'));
         }
       } finally {
         if (mounted) setIsRestoring(false);
@@ -162,7 +172,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setToken(result.accessToken);
       setProfile(result.profile);
     } catch (error: unknown) {
-      setAuthError(getAuthErrorMessage(error, 'Local sign-in failed'));
+      setAuthError(getAuthErrorMessage(error, 'errors.signIn'));
     } finally {
       setIsSigningIn(false);
     }

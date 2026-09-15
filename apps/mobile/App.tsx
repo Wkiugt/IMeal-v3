@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import * as Linking from 'expo-linking';
+import { useFonts } from 'expo-font';
+import {
+  BeVietnamPro_400Regular,
+  BeVietnamPro_500Medium,
+  BeVietnamPro_600SemiBold,
+  BeVietnamPro_700Bold,
+} from '@expo-google-fonts/be-vietnam-pro';
 import {
   NavigationContainer,
   useNavigation,
@@ -13,6 +20,7 @@ import {
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { SessionProvider, useSession } from './src/auth/session';
+import { LanguageProvider, useLanguage } from './src/i18n/LanguageProvider';
 import { DelegationScreen } from './src/screens/delegation/DelegationScreen';
 import { EmployeeCalendarScreen } from './src/screens/employee/EmployeeCalendarScreen';
 import { EmployeeDashboardScreen } from './src/screens/employee/EmployeeDashboardScreen';
@@ -244,27 +252,65 @@ function linkingConfig(): LinkingOptions<RootStackParamList> {
   };
 }
 
+function NavigationRoot() {
+  const { isRestoring } = useLanguage();
+  if (isRestoring) {
+    return (
+      <View style={styles.bootstrapLoading}>
+        <Text style={styles.bootstrapText}>Restoring your language preference…</Text>
+      </View>
+    );
+  }
+
+  return (
+    <NavigationContainer linking={linkingConfig()}>
+      <RootStack.Navigator
+        screenOptions={{ headerShown: false, animation: 'none' }}
+      >
+        <RootStack.Screen name="Auth" component={AuthScreen} />
+        <RootStack.Screen name="AppTabs">
+          {() => (
+            <ProtectedRoute>
+              <AppTabsNavigator />
+            </ProtectedRoute>
+          )}
+        </RootStack.Screen>
+      </RootStack.Navigator>
+    </NavigationContainer>
+  );
+}
+
+function FontBootstrapError() {
+  return (
+    <View style={styles.bootstrapError}>
+      <Text style={styles.bootstrapErrorTitle}>Unable to load the app font</Text>
+      <Text style={styles.bootstrapErrorText}>
+        Please close and reopen the app to try again.
+      </Text>
+    </View>
+  );
+}
+
 export default function App() {
+  const [fontsLoaded, fontError] = useFonts({
+    BeVietnamPro_400Regular,
+    BeVietnamPro_500Medium,
+    BeVietnamPro_600SemiBold,
+    BeVietnamPro_700Bold,
+  });
+
+  if (fontError) return <FontBootstrapError />;
+  if (!fontsLoaded) return null;
+
   return (
     <SafeAreaProvider>
-      <SessionProvider>
-        <NoticeProvider>
-          <NavigationContainer linking={linkingConfig()}>
-            <RootStack.Navigator
-              screenOptions={{ headerShown: false, animation: 'none' }}
-            >
-              <RootStack.Screen name="Auth" component={AuthScreen} />
-              <RootStack.Screen name="AppTabs">
-                {() => (
-                  <ProtectedRoute>
-                    <AppTabsNavigator />
-                  </ProtectedRoute>
-                )}
-              </RootStack.Screen>
-            </RootStack.Navigator>
-          </NavigationContainer>
-        </NoticeProvider>
-      </SessionProvider>
+      <LanguageProvider>
+        <SessionProvider>
+          <NoticeProvider>
+            <NavigationRoot />
+          </NoticeProvider>
+        </SessionProvider>
+      </LanguageProvider>
     </SafeAreaProvider>
   );
 }
@@ -304,12 +350,13 @@ const styles = StyleSheet.create({
   title: {
     color: theme.colors.fg,
     fontSize: 30,
-    fontWeight: '700',
+    fontFamily: theme.typography.bold,
     textAlign: 'center',
   },
   subtitle: {
     color: theme.colors.muted,
     fontSize: 14,
+    fontFamily: theme.typography.regular,
     lineHeight: 21,
     textAlign: 'center',
     marginTop: 8,
@@ -320,6 +367,7 @@ const styles = StyleSheet.create({
   footnote: {
     color: theme.colors.muted,
     fontSize: 11.5,
+    fontFamily: theme.typography.regular,
     lineHeight: 17,
     textAlign: 'center',
     marginTop: 18,
@@ -327,7 +375,39 @@ const styles = StyleSheet.create({
   error: {
     color: theme.colors.statusBadDeep,
     fontSize: 13,
+    fontFamily: theme.typography.regular,
     textAlign: 'center',
     marginTop: 16,
+  },
+  bootstrapLoading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.bg,
+  },
+  bootstrapText: {
+    color: theme.colors.muted,
+    fontFamily: 'System',
+    fontSize: 14,
+  },
+  bootstrapError: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: theme.spacing.gutter,
+    backgroundColor: theme.colors.bg,
+  },
+  bootstrapErrorTitle: {
+    color: theme.colors.fg,
+    fontFamily: 'System',
+    fontSize: 18,
+    textAlign: 'center',
+  },
+  bootstrapErrorText: {
+    color: theme.colors.muted,
+    fontFamily: 'System',
+    fontSize: 14,
+    marginTop: 8,
+    textAlign: 'center',
   },
 });

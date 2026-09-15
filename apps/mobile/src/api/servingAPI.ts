@@ -1,4 +1,11 @@
+import { v1 } from '@imeal/contracts';
 import { API_BASE } from './apiConfig';
+import {
+  MobileApiError,
+  readMobileResponseJson,
+  throwMobileResponseError,
+  toMobileApiError,
+} from './mobileApiError';
 
 export interface ResolveServingRequest {
   qrPayload: string;
@@ -32,12 +39,15 @@ export interface ConfirmServingResponse {
   message?: string;
 }
 
-export const servingAPI = {
-  resolveServing: async (
-    data: ResolveServingRequest,
-    token: string,
-  ): Promise<ResolveServingResponse> => {
-    const res = await fetch(`${API_BASE}/serving/resolve`, {
+async function postServingRequest(
+  path: string,
+  data: object,
+  token: string,
+  fallbackKey: 'errors.resolveServing' | 'errors.confirmServing',
+): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -45,35 +55,40 @@ export const servingAPI = {
       },
       body: JSON.stringify(data),
     });
+  } catch (error: unknown) {
+    throw toMobileApiError(error, fallbackKey);
+  }
+  if (!response.ok) await throwMobileResponseError(response, fallbackKey);
+  return readMobileResponseJson(response, fallbackKey);
+}
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Failed to resolve serving');
+function isConfirmServingResponse(payload: unknown): payload is ConfirmServingResponse {
+  if (payload === null || typeof payload !== 'object' || !('success' in payload)) return false;
+  if (typeof payload.success !== 'boolean') return false;
+  return !('message' in payload) || typeof payload.message === 'string';
+}
+
+export const servingAPI = {
+  resolveServing: async (
+    data: ResolveServingRequest,
+    token: string,
+  ): Promise<ResolveServingResponse> => {
+    const payload = await postServingRequest('/serving/resolve', data, token, 'errors.resolveServing');
+    const parsed = v1.ResolveServingResponseSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
     }
-    return res.json();
+    return parsed.data;
   },
 
   confirmServing: async (
     data: ConfirmServingRequest,
     token: string,
   ): Promise<ConfirmServingResponse> => {
-    const res = await fetch(`${API_BASE}/serving/confirm`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(data),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      // Check for duplicate serving
-      if (err.code === 'DUPLICATE_SERVING') {
-        throw new Error('Warning: This serving has already been fulfilled.');
-      }
-      throw new Error(err.message || 'Failed to confirm serving');
+    const payload = await postServingRequest('/serving/confirm', data, token, 'errors.confirmServing');
+    if (!isConfirmServingResponse(payload)) {
+      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', payload);
     }
-    return res.json();
+    return payload;
   },
 };

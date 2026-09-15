@@ -7,9 +7,9 @@ import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import {
   pickupAPI,
-  PickupAvailabilityApiError,
   type PickupOption,
 } from '../../api/pickupAPI';
+import { getMobileErrorMessage, MobileApiError } from '../../api/mobileApiError';
 import { initials } from '../../businessDate';
 import {
   Avatar,
@@ -22,16 +22,17 @@ import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
 import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
+import { useLanguage } from '../../i18n/LanguageProvider';
 
 type Props = AppTabScreenProps<'PickupIntent'>;
 type PickupLoadError =
   | { type: 'window-closed' }
   | { type: 'not-ready'; message: string }
   | { type: 'error'; message: string };
-
 export function PickupIntentScreen(_props: Props) {
   const { token, profile } = useSession();
   const { showNotice } = useNotice();
+  const { t } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<PickupLoadError | null>(null);
   const [options, setOptions] = useState<PickupOption[]>([]);
@@ -69,22 +70,18 @@ export function PickupIntentScreen(_props: Props) {
       );
     } catch (error: unknown) {
       if (requestId !== optionsRequestId.current) return;
-      if (error instanceof PickupAvailabilityApiError) {
-        setLoadError(
-          error.code === 'PICKUP_WINDOW_CLOSED'
-            ? { type: 'window-closed' }
-            : { type: 'not-ready', message: error.message },
-        );
+      if (error instanceof MobileApiError && error.code === 'PICKUP_WINDOW_CLOSED') {
+        setLoadError({ type: 'window-closed' });
       } else {
         setLoadError({
-          type: 'error',
-          message: 'Unable to reach pickup service. Check your connection and try again.',
+          type: error instanceof MobileApiError && error.code === 'PICKUP_NOT_READY' ? 'not-ready' : 'error',
+          message: getMobileErrorMessage(error, t, 'errors.loadPickup'),
         });
       }
     } finally {
       if (requestId === optionsRequestId.current) setLoading(false);
     }
-  }, [token]);
+  }, [t, token]);
 
   useFocusEffect(
     useCallback(() => {
@@ -151,11 +148,8 @@ export function PickupIntentScreen(_props: Props) {
       } catch (error: unknown) {
         if (!cancelled) {
           showNotice({
-            title: 'QR unavailable',
-            message:
-              error instanceof Error
-                ? error.message
-                : 'Unable to generate QR code',
+            title: t('pickup.qrUnavailable'),
+            message: getMobileErrorMessage(error, t, 'errors.generateQr'),
             tone: 'error',
           });
         }
@@ -179,7 +173,7 @@ export function PickupIntentScreen(_props: Props) {
       clearInterval(countdownTimer);
       progressAnim.stopAnimation();
     };
-  }, [isFocused, isGenerating, loading, progressAnim, selectedIds, showNotice, token]);
+  }, [isFocused, isGenerating, loading, progressAnim, selectedIds, showNotice, t, token]);
 
   const toggleSelection = (registrationId: string) => {
     setSelectedIds((current) => {
@@ -281,7 +275,7 @@ export function PickupIntentScreen(_props: Props) {
                       </Text>
                       <Text style={styles.optionDate}>
                         {option.mealDate.slice(0, 10)}
-                        {option.owner ? ` · From ${option.owner.name}` : ''}
+                        {option.type === 'DELEGATED' && option.owner ? ` · From ${option.owner.name}` : ''}
                       </Text>
                     </View>
                   </Pressable>
@@ -354,31 +348,31 @@ const styles = StyleSheet.create({
   retryButton: { marginTop: 16 },
   emptyCard: { marginTop: 20 },
   errorHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  emptyTitle: { color: theme.colors.fg, fontSize: 17, fontWeight: '700' },
-  emptyText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },
+  emptyTitle: { color: theme.colors.fg, fontSize: 17, fontFamily: theme.typography.bold },
+  emptyText: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19, marginTop: 8 },
   selectionCard: { marginBottom: 16 },
   selectionHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 },
-  selectionHint: { color: theme.colors.muted, fontSize: 12 },
+  selectionHint: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular },
   optionRow: { minHeight: 52, paddingVertical: 9, paddingHorizontal: 10, borderRadius: theme.radii.sm, flexDirection: 'row', alignItems: 'center', gap: 10 },
   optionSelected: { backgroundColor: theme.colors.accentTint },
   optionCopy: { flex: 1, gap: 3 },
-  optionTitle: { color: theme.colors.fg, fontSize: 14, fontWeight: '700' },
-  optionDate: { color: theme.colors.muted, fontSize: 12 },
+  optionTitle: { color: theme.colors.fg, fontSize: 14, fontFamily: theme.typography.bold },
+  optionDate: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular },
   ticketCard: { padding: 0, overflow: 'hidden', marginBottom: 16 },
   ticketTop: { padding: 26, alignItems: 'center', gap: 10 },
   qrPlaceholder: { width: 200, height: 200, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accentTint },
-  ticketName: { color: theme.colors.fg, fontSize: 17, fontWeight: '700', marginTop: 4 },
+  ticketName: { color: theme.colors.fg, fontSize: 17, fontFamily: theme.typography.bold, marginTop: 4 },
   ticketId: { color: theme.colors.muted, fontFamily: theme.typography.fontMono, fontSize: 13 },
   perforation: { height: 1, marginHorizontal: 14, borderTopWidth: 2, borderTopColor: theme.colors.border, borderStyle: 'dashed' },
   progressTrack: { height: 4, marginHorizontal: 26, overflow: 'hidden', backgroundColor: theme.colors.accentTint },
   progressFill: { width: '100%', height: '100%', backgroundColor: theme.colors.accentDeep, transformOrigin: 'left' },
   ticketBottom: { padding: 22, gap: 14 },
   ticketRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  ticketKey: { color: theme.colors.muted, fontSize: 13 },
-  ticketValue: { color: theme.colors.fg, fontSize: 13, fontWeight: '600' },
+  ticketKey: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular },
+  ticketValue: { color: theme.colors.fg, fontSize: 13, fontFamily: theme.typography.semiBold },
   ticketNote: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
-  ticketNoteText: { color: theme.colors.muted, fontSize: 12 },
+  ticketNoteText: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular },
   generateButton: { minHeight: 48, marginBottom: 16, borderRadius: theme.radii.md, backgroundColor: theme.colors.accentDeep, alignItems: 'center', justifyContent: 'center' },
-  generateText: { color: theme.colors.surface, fontSize: 14, fontWeight: '700' },
+  generateText: { color: theme.colors.surface, fontSize: 14, fontFamily: theme.typography.bold },
   disabled: { opacity: 0.5 },
 });

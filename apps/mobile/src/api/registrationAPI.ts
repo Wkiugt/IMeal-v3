@@ -1,5 +1,11 @@
 import { v1 } from '@imeal/contracts';
 import { API_BASE } from './apiConfig';
+import {
+  MobileApiError,
+  readMobileResponseJson,
+  throwMobileResponseError,
+  toMobileApiError,
+} from './mobileApiError';
 
 export type RegistrationStatus = v1.RegistrationStatus;
 export type MealChoice = v1.MealChoice;
@@ -12,16 +18,20 @@ export type BatchRegistrationResult = v1.BatchRegistrationResult;
 
 export const registrationAPI = {
   getWeek: async (startDate: string, token: string): Promise<WeekRegistrationResponse> => {
-    const response = await fetch(`${API_BASE}/registrations/week?startDate=${encodeURIComponent(startDate)}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.message || 'Failed to load meal registrations');
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/registrations/week?startDate=${encodeURIComponent(startDate)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (error: unknown) {
+      throw toMobileApiError(error, 'errors.loadCalendar');
     }
-    const payload: unknown = await response.json().catch(() => null);
+    if (!response.ok) await throwMobileResponseError(response, 'errors.loadCalendar');
+    const payload = await readMobileResponseJson(response, 'errors.loadCalendar');
     const parsed = v1.WeekRegistrationResponseSchema.safeParse(payload);
-    if (!parsed.success) throw new Error('The registration response is invalid');
+    if (!parsed.success) {
+      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
+    }
     return parsed.data;
   },
 
@@ -29,21 +39,22 @@ export const registrationAPI = {
     registrations: v1.BatchRegistrationItem[],
     token: string,
   ): Promise<v1.BatchRegistrationResult[]> => {
-
-    const response = await fetch(`${API_BASE}/registrations/batch`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ registrations }),
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.message || 'Failed to update meal registrations');
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/registrations/batch`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ registrations }),
+      });
+    } catch (error: unknown) {
+      throw toMobileApiError(error, 'errors.updateRegistration');
     }
+    if (!response.ok) await throwMobileResponseError(response, 'errors.updateRegistration');
 
-    const payload: unknown = await response.json().catch(() => null);
+    const payload = await readMobileResponseJson(response, 'errors.updateRegistration');
     const parsed = v1.BatchRegistrationResponseSchema.safeParse(payload);
     if (!parsed.success) {
-      throw new Error('The registration response is invalid');
+      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
     }
     return parsed.data;
   },

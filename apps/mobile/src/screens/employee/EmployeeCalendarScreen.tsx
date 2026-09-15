@@ -22,22 +22,13 @@ import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
 import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { useReducedMotion } from '../../ui/useReducedMotion';
+import { useLanguage } from '../../i18n/LanguageProvider';
+import {
+  getMobileErrorMessage,
+  mobileErrorMessageKey,
+  MobileApiError,
+} from '../../api/mobileApiError';
 import { theme } from '../../theme';
-
-const CALENDAR_COPY = {
-  vi: {
-    mealChoiceGroup: 'Loại suất ăn',
-    mealChoice: { REGULAR: 'Mặn', VEGETARIAN: 'Chay' },
-    lunarDayOne: 'Mùng 1 âm lịch',
-    lunarDayFifteen: 'Rằm · 15 âm lịch',
-  },
-  en: {
-    mealChoiceGroup: 'Meal choice',
-    mealChoice: { REGULAR: 'Regular', VEGETARIAN: 'Vegetarian' },
-    lunarDayOne: 'Lunar day 1',
-    lunarDayFifteen: 'Full moon · lunar day 15',
-  },
-} as const;
 
 type Props = AppTabScreenProps<'EmployeeCalendar'>;
 type WindowDay = { cutoffAt: number; editable: boolean; lunarDay: number; availableMealChoices: readonly MealChoice[] };
@@ -73,6 +64,7 @@ function getWindowSnapshot(response: WeekRegistrationResponse, receiptAt: number
 export function EmployeeCalendarScreen(_props: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
+  const { t } = useLanguage();
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [weekState, setWeekState] = useState<WeekState>({});
   const [draftChoiceByDate, setDraftChoiceByDate] = useState<DraftChoiceByDate>({});
@@ -106,7 +98,7 @@ export function EmployeeCalendarScreen(_props: Props) {
   ) => {
     const snapshot = getWindowSnapshot(response, receiptAt);
     if (!snapshot) {
-      setAvailabilityError('Cutoff availability could not be loaded.');
+      setAvailabilityError(t('calendar.registrationUnavailable'));
       return false;
     }
 
@@ -138,7 +130,7 @@ export function EmployeeCalendarScreen(_props: Props) {
     setWindowSnapshot(snapshot);
     setAvailabilityError(null);
     return true;
-  }, [weekStart]);
+  }, [t, weekStart]);
 
   const refreshCurrentWeek = useCallback(async () => {
     if (!token) return;
@@ -151,17 +143,17 @@ export function EmployeeCalendarScreen(_props: Props) {
       const response = await registrationAPI.getWeek(toDateKey(weekStart), token);
       if (requestId !== weekRequestId.current) return;
       if (!applyCurrentWeek(response, receiptAt, mutationIdsAtRequest, inFlightAtRequest)) {
-        showNotice({ title: 'Calendar unavailable', message: 'Cutoff availability could not be loaded.', tone: 'error' });
+        showNotice({ title: t('calendar.registrationUnavailable'), message: t('calendar.registrationUnavailable'), tone: 'error' });
       }
     } catch (error: unknown) {
       if (requestId !== weekRequestId.current) return;
-      const message = error instanceof Error ? error.message : 'Unable to load meal registrations';
+      const message = getMobileErrorMessage(error, t, 'errors.loadCalendar');
       setAvailabilityError(message);
-      showNotice({ title: 'Calendar unavailable', message, tone: 'error' });
+      showNotice({ title: t('calendar.registrationUnavailable'), message, tone: 'error' });
     } finally {
       if (requestId === weekRequestId.current) setWeekLoading(false);
     }
-  }, [applyCurrentWeek, showNotice, token, weekStart]);
+  }, [applyCurrentWeek, showNotice, t, token, weekStart]);
 
   const loadMonth = useCallback(async () => {
     if (!token) return;
@@ -179,13 +171,13 @@ export function EmployeeCalendarScreen(_props: Props) {
       monthLoaded.current = true;
     } catch (error: unknown) {
       if (currentMonthRequestId !== monthRequestId.current) return;
-      const message = error instanceof Error ? error.message : 'Unable to load meal registrations';
+      const message = getMobileErrorMessage(error, t, 'errors.loadCalendar');
       setAvailabilityError(message);
-      showNotice({ title: 'Calendar unavailable', message, tone: 'error' });
+      showNotice({ title: t('calendar.registrationUnavailable'), message, tone: 'error' });
     } finally {
       if (currentMonthRequestId === monthRequestId.current) setMonthLoading(false);
     }
-  }, [month, showNotice, token]);
+  }, [month, showNotice, t, token]);
 
   useEffect(() => {
     void loadMonth();
@@ -242,10 +234,10 @@ export function EmployeeCalendarScreen(_props: Props) {
     } : current);
     if (!cutoffWarnings.current.has(dateKey)) {
       cutoffWarnings.current.add(dateKey);
-      showNotice({ title: 'Registration locked', message: 'The cutoff time has passed for this day.', tone: 'warning' });
+      showNotice({ title: t('calendar.registrationLocked'), message: t('calendar.cutoffPassed'), tone: 'warning' });
     }
     void refreshCurrentWeek();
-  }, [refreshCurrentWeek, showNotice]);
+  }, [refreshCurrentWeek, showNotice, t]);
 
   const mutateRegistration = useCallback(async (
     dateKey: string,
@@ -297,22 +289,11 @@ export function EmployeeCalendarScreen(_props: Props) {
         if (code === 'CUTOFF_PASSED') {
           handleCutoffFailure(dateKey, previousState, previousDraft, requestId);
         } else if (rollback()) {
-          let message = 'Unable to update this day.';
-          switch (code) {
-            case 'MEAL_CHOICE_UNAVAILABLE':
-              message = 'That meal choice is not available for this day.';
-              break;
-            case 'REGISTRATION_FINALIZED':
-              message = 'This registration has already been finalized.';
-              break;
-            case 'INVALID_MEAL_DATE':
-              message = 'This meal date is invalid.';
-              break;
-            case 'REGISTRATION_FAILED':
-              message = 'The meal registration could not be updated.';
-              break;
-          }
-          showNotice({ title: 'Registration not changed', message, tone: 'error' });
+          showNotice({
+            title: t('calendar.registrationNotChanged'),
+            message: t(mobileErrorMessageKey(code)),
+            tone: 'error',
+          });
         }
         return;
       }
@@ -324,17 +305,11 @@ export function EmployeeCalendarScreen(_props: Props) {
       });
     } catch (error: unknown) {
       if (!mutationTracker.isCurrent(dateKey, requestId)) return;
-      let errorCode: unknown;
-      if (error && typeof error === 'object' && 'code' in error) errorCode = error.code;
-      if (errorCode === 'CUTOFF_PASSED') {
+      if (error instanceof MobileApiError && error.code === 'CUTOFF_PASSED') {
         handleCutoffFailure(dateKey, previousState, previousDraft, requestId);
       } else if (rollback()) {
-        const message = error instanceof TypeError
-          ? 'Unable to reach the meal registration service. Check your connection and try again.'
-          : error instanceof Error
-            ? error.message
-            : 'Unable to update this day.';
-        showNotice({ title: 'Registration not changed', message, tone: 'error' });
+        const message = getMobileErrorMessage(error, t, 'errors.updateRegistration');
+        showNotice({ title: t('calendar.registrationNotChanged'), message, tone: 'error' });
       }
     } finally {
       if (mutationTracker.finish(dateKey, requestId)) {
@@ -349,6 +324,7 @@ export function EmployeeCalendarScreen(_props: Props) {
     draftChoiceByDate,
     handleCutoffFailure,
     showNotice,
+    t,
     token,
     weekState,
     windowSnapshot,
@@ -428,13 +404,13 @@ export function EmployeeCalendarScreen(_props: Props) {
                       {windowDay?.lunarDay === 1 && (
                         <View style={styles.lunarBadge}>
                           <Leaf size={13} color={theme.colors.accentDeep} />
-                          <Text style={styles.lunarBadgeText}>{CALENDAR_COPY.en.lunarDayOne}</Text>
+                          <Text style={styles.lunarBadgeText}>{t('calendar.lunarDayOne')}</Text>
                         </View>
                       )}
                       {windowDay?.lunarDay === 15 && (
                         <View style={styles.lunarBadge}>
                           <Leaf size={13} color={theme.colors.accentDeep} />
-                          <Text style={styles.lunarBadgeText}>{CALENDAR_COPY.en.lunarDayFifteen}</Text>
+                          <Text style={styles.lunarBadgeText}>{t('calendar.lunarDayFifteen')}</Text>
                         </View>
                       )}
                     </View>
@@ -473,7 +449,8 @@ type MealChoiceSelectorProps = {
 };
 
 function MealChoiceSelector({ value, disabled, onChange }: MealChoiceSelectorProps) {
-  const groupLabel = CALENDAR_COPY.en.mealChoiceGroup;
+  const { t } = useLanguage();
+  const groupLabel = t('calendar.mealChoiceGroup');
   return (
     <View style={styles.choiceSelectorWrap}>
       <Text
@@ -487,7 +464,7 @@ function MealChoiceSelector({ value, disabled, onChange }: MealChoiceSelectorPro
       <View style={styles.choiceSelector}>
         {(['REGULAR', 'VEGETARIAN'] as const).map((choice) => {
           const selected = value === choice;
-          const label = CALENDAR_COPY.en.mealChoice[choice];
+          const label = t(choice === 'REGULAR' ? 'calendar.mealChoice.regular' : 'calendar.mealChoice.vegetarian');
           return (
             <Pressable
               key={choice}
@@ -532,7 +509,7 @@ function AnimatedMealToggle({ value, disabled, saving, accessibilityLabel, onPre
 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 18 },
-  month: { color: theme.colors.fg, fontSize: 20, fontWeight: '700', letterSpacing: -0.2 },
+  month: { color: theme.colors.fg, fontSize: 20, fontFamily: theme.typography.bold, letterSpacing: -0.2 },
   monthNav: { flexDirection: 'row', gap: 8 },
   monthButton: { width: 36, height: 36, borderRadius: theme.radii.pill, backgroundColor: theme.colors.accentTint, alignItems: 'center', justifyContent: 'center' },
   calendarCard: { paddingHorizontal: 16, paddingVertical: 18, marginBottom: 20 },
@@ -544,8 +521,8 @@ const styles = StyleSheet.create({
   dayMarker: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', position: 'relative' },
   bookedDay: { backgroundColor: theme.colors.accentSoft },
   todayDay: { borderWidth: 2, borderColor: theme.colors.accentDeep },
-  dayNumber: { color: theme.colors.fg, fontSize: 14 },
-  bookedText: { color: theme.colors.accentDeep, fontWeight: '700' },
+  dayNumber: { color: theme.colors.fg, fontFamily: theme.typography.regular, fontSize: 14 },
+  bookedText: { color: theme.colors.accentDeep, fontFamily: theme.typography.bold },
   dot: { position: 'absolute', width: 4, height: 4, borderRadius: 2, backgroundColor: theme.colors.accentDeep, bottom: 4 },
   legend: { flexDirection: 'row', gap: 18, paddingHorizontal: 4, paddingBottom: 28 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 7 },
@@ -553,29 +530,29 @@ const styles = StyleSheet.create({
   bookedSwatch: { backgroundColor: theme.colors.accentSoft, borderWidth: 1.5, borderColor: theme.colors.accentDeep },
   todaySwatch: { borderWidth: 1.5, borderColor: theme.colors.accentDeep },
   availableSwatch: { backgroundColor: theme.colors.border },
-  legendText: { color: theme.colors.muted, fontSize: 12 },
+  legendText: { color: theme.colors.muted, fontFamily: theme.typography.regular, fontSize: 12 },
   weekHeader: { borderTopWidth: 1, borderTopColor: theme.colors.border },
   retry: { padding: 14, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.statusBadDeep, borderRadius: theme.radii.md, backgroundColor: theme.colors.statusBadTint, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  retryText: { flex: 1, color: theme.colors.statusBadDeep, fontSize: 13, lineHeight: 19 },
-  retryAction: { color: theme.colors.statusBadDeep, fontSize: 13, fontWeight: '700' },
+  retryText: { flex: 1, color: theme.colors.statusBadDeep, fontFamily: theme.typography.regular, fontSize: 13, lineHeight: 19 },
+  retryAction: { color: theme.colors.statusBadDeep, fontSize: 13, fontFamily: theme.typography.bold },
   weekRow: { minHeight: 64, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: theme.colors.border },
   todayRow: { backgroundColor: theme.colors.accentTint, marginHorizontal: -theme.spacing.gutter, paddingHorizontal: theme.spacing.gutter },
   weekInfo: { flex: 1, gap: 5 },
   weekControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   choiceSelectorWrap: { position: 'relative' },
-  choiceGroupLabel: { position: 'absolute', width: 1, height: 1, opacity: 0.01 },
+  choiceGroupLabel: { position: 'absolute', width: 1, height: 1, opacity: 0.01, fontFamily: theme.typography.regular },
   choiceSelector: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.sm, overflow: 'hidden' },
   choiceOption: { minWidth: 44, minHeight: 44, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3 },
   choiceOptionSelected: { backgroundColor: theme.colors.accentTint },
   choiceOptionDisabled: { opacity: 0.5 },
-  choiceOptionText: { color: theme.colors.muted, fontSize: 12 },
-  choiceOptionTextSelected: { color: theme.colors.accentDeep, fontWeight: '700' },
+  choiceOptionText: { color: theme.colors.muted, fontFamily: theme.typography.regular, fontSize: 12 },
+  choiceOptionTextSelected: { color: theme.colors.accentDeep, fontFamily: theme.typography.bold },
   weekDayLine: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  weekDay: { color: theme.colors.fg, fontSize: 14, fontWeight: '700' },
-  weekDate: { color: theme.colors.muted, fontSize: 13 },
-  lockedLabel: { color: theme.colors.statusWarnDeep, fontSize: 12, fontWeight: '700' },
+  weekDay: { color: theme.colors.fg, fontSize: 14, fontFamily: theme.typography.bold },
+  weekDate: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular },
+  lockedLabel: { color: theme.colors.statusWarnDeep, fontSize: 12, fontFamily: theme.typography.bold },
   lunarBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 5, borderRadius: theme.radii.pill, backgroundColor: theme.colors.accentTint },
-  lunarBadgeText: { color: theme.colors.accentDeep, fontSize: 11, fontWeight: '600' },
+  lunarBadgeText: { color: theme.colors.accentDeep, fontSize: 11, fontFamily: theme.typography.semiBold },
   toggle: { width: 48, height: 28, padding: 3, justifyContent: 'center', borderRadius: theme.radii.pill, backgroundColor: theme.colors.border },
   toggleActive: { backgroundColor: theme.colors.accentDeep },
   toggleSaving: { opacity: 0.5 },

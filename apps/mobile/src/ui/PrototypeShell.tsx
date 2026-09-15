@@ -169,9 +169,9 @@ export function PrototypeSectionTitle({ title, subtitle }: { title: string; subt
 export const prototypeStyles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   divider: { height: 1, backgroundColor: theme.colors.border },
-  title: { color: theme.colors.fg, fontSize: 20, fontWeight: '700', letterSpacing: -0.2 },
-  body: { color: theme.colors.fg, fontSize: 14, lineHeight: 21 },
-  muted: { color: theme.colors.muted, fontSize: 13 },
+  title: { color: theme.colors.fg, fontSize: 20, fontFamily: theme.typography.bold, letterSpacing: -0.2 },
+  body: { color: theme.colors.fg, fontSize: 14, fontFamily: theme.typography.regular, lineHeight: 21 },
+  muted: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular },
 });
 
 const styles = StyleSheet.create({
@@ -204,9 +204,9 @@ const styles = StyleSheet.create({
   },
   navItem: { flexGrow: 1, flexBasis: 0, minWidth: 44, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radii.md },
   navItemActive: { flexGrow: 1.65, flexDirection: 'row', gap: 7, backgroundColor: theme.colors.accentSoft },
-  navLabel: { color: theme.colors.muted, fontSize: 11, fontWeight: '600' },
+  navLabel: { color: theme.colors.muted, fontSize: 11, fontFamily: theme.typography.semiBold },
   navLabelActive: { color: theme.colors.accentDeep },
   sectionTitle: { paddingVertical: 18, gap: 5 },
-  sectionHeading: { color: theme.colors.fg, fontSize: 20, fontWeight: '700', letterSpacing: -0.2 },
-  sectionSubtitle: { color: theme.colors.muted, fontSize: 13, lineHeight: 19 },
+  sectionHeading: { color: theme.colors.fg, fontSize: 20, fontFamily: theme.typography.bold, letterSpacing: -0.2 },
+  sectionSubtitle: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19 },
 });
