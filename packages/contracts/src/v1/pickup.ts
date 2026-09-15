@@ -1,4 +1,79 @@
 import { z } from 'zod';
+import { MealChoiceSchema, MealDateSchema } from './registrations';
+
+const UtcDateTimeSchema = z
+  .string()
+  .datetime({ offset: false })
+  .refine((value) => value.endsWith('Z'), {
+    message: 'Timestamp must be an ISO-8601 UTC instant ending in Z',
+  });
+
+const PickupOptionTypeSchema = z.enum(['OWN', 'DELEGATED']);
+const PickupOwnerSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    email: z.string(),
+  })
+  .strict();
+
+export const PickupOptionSchema = z
+  .object({
+    type: PickupOptionTypeSchema,
+    registrationId: z.string(),
+    mealDate: MealDateSchema,
+    mealChoice: MealChoiceSchema,
+    delegationId: z.string().optional(),
+    owner: PickupOwnerSchema.optional(),
+  })
+  .strict();
+export type PickupOption = z.infer<typeof PickupOptionSchema>;
+
+export const PickupOptionsResponseSchema = z
+  .object({
+    options: z.array(PickupOptionSchema),
+  })
+  .strict();
+export type PickupOptionsResponse = z.infer<typeof PickupOptionsResponseSchema>;
+
+export const ServingIntentItemSchema = z
+  .object({
+    id: z.string(),
+    itemName: z.string(),
+    quantity: z.number().int().positive(),
+    mealChoice: MealChoiceSchema,
+  })
+  .strict();
+export type ServingIntentItem = z.infer<typeof ServingIntentItemSchema>;
+
+const PickupSessionSchema = z
+  .object({
+    id: z.string(),
+    userId: z.string(),
+    registrationIds: z.array(z.string()),
+    expiresAt: UtcDateTimeSchema,
+    createdAt: UtcDateTimeSchema,
+  })
+  .strict();
+
+const ServingIntentSchema = z
+  .object({
+    userId: z.string(),
+    items: z.array(ServingIntentItemSchema),
+    totalCount: z.number().int().nonnegative(),
+    isProxy: z.boolean(),
+  })
+  .strict();
+
+export const ResolveServingResponseSchema = z
+  .object({
+    session: PickupSessionSchema,
+    items: z.array(PickupOptionSchema),
+    pickupSessionToken: z.string(),
+    intent: ServingIntentSchema,
+  })
+  .strict();
+export type ResolveServingResponse = z.infer<typeof ResolveServingResponseSchema>;
 
 export const PickupAvailabilityCodeSchema = z.enum([
   'PICKUP_WINDOW_CLOSED',

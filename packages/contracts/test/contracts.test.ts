@@ -385,5 +385,127 @@ describe('Contracts v1', () => {
       ).toBe(false);
     });
   });
+
+  describe('Pickup and kitchen meal choice transport', () => {
+    const owner = {
+      id: 'owner-1',
+      name: 'Meal Owner',
+      email: 'owner@example.com',
+    };
+    const pickupOption = {
+      type: 'DELEGATED' as const,
+      registrationId: 'registration-1',
+      delegationId: 'delegation-1',
+      mealDate: '2026-09-25',
+      mealChoice: 'VEGETARIAN' as const,
+      owner,
+    };
+
+    it('requires mealChoice on pickup options and serving intent items', () => {
+      expect(
+        v1.PickupOptionsResponseSchema.safeParse({
+          options: [pickupOption],
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.PickupOptionsResponseSchema.safeParse({
+          options: [{ ...pickupOption, mealChoice: undefined }],
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.ServingIntentItemSchema.safeParse({
+          id: 'registration-1',
+          itemName: 'Lunch',
+          quantity: 1,
+          mealChoice: 'VEGETARIAN',
+        }).success,
+      ).toBe(true);
+    });
+
+    it('validates resolved serving payloads with choice on every item', () => {
+      const payload = {
+        session: {
+          id: 'session-1',
+          userId: 'delegate-1',
+          registrationIds: ['registration-1'],
+          expiresAt: '2026-09-04T04:00:30.000Z',
+          createdAt: '2026-09-04T04:00:00.000Z',
+        },
+        items: [pickupOption],
+        pickupSessionToken: 'session-1',
+        intent: {
+          userId: 'delegate-1',
+          items: [
+            {
+              id: 'registration-1',
+              itemName: 'Lunch',
+              quantity: 1,
+              mealChoice: 'VEGETARIAN',
+            },
+          ],
+          totalCount: 1,
+          isProxy: true,
+        },
+      };
+      expect(v1.ResolveServingResponseSchema.safeParse(payload).success).toBe(
+        true,
+      );
+      expect(
+        v1.ResolveServingResponseSchema.safeParse({
+          ...payload,
+          intent: {
+            ...payload.intent,
+            items: [{ ...payload.intent.items[0], mealChoice: undefined }],
+          },
+        }).success,
+      ).toBe(false);
+    });
+
+    it('requires meal choice and partitions kitchen counters', () => {
+      expect(
+        v1.KitchenDashboardCountersSchema.parse({
+          totalRegistered: 3,
+          regularTotal: 2,
+          vegetarianTotal: 1,
+          servedTotal: 1,
+          remaining: 2,
+          noShowTotal: 0,
+        }),
+      ).toMatchObject({ regularTotal: 2, vegetarianTotal: 1 });
+      expect(
+        v1.KitchenDashboardCountersSchema.safeParse({
+          totalRegistered: 3,
+          regularTotal: 3,
+          vegetarianTotal: 1,
+          servedTotal: 1,
+          remaining: 2,
+          noShowTotal: 0,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.KitchenRegistrationItemSchema.safeParse({
+          registrationId: 'registration-1',
+          userId: 'user-1',
+          userName: 'Meal Owner',
+          userEmail: 'owner@example.com',
+          mealChoice: 'VEGETARIAN',
+          isServed: false,
+          servedAt: null,
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.ServingLogItemSchema.safeParse({
+          id: 'serving-1',
+          registrationId: 'registration-1',
+          userId: 'user-1',
+          userName: 'Meal Owner',
+          userEmail: 'owner@example.com',
+          mealChoice: 'VEGETARIAN',
+          servedAt: '2026-09-25T04:00:00.000Z',
+          isProxy: false,
+        }).success,
+      ).toBe(true);
+    });
+  });
 });
 

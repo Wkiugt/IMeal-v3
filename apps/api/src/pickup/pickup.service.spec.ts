@@ -4,6 +4,12 @@ import { vi } from 'vitest';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 
 const mockPrisma = {
+  registration: {
+    findUnique: vi.fn(),
+  },
+  pickupDelegation: {
+    findMany: vi.fn(),
+  },
   servingConfirmRequest: {
     findUnique: vi.fn(),
     create: vi.fn(),
@@ -31,19 +37,21 @@ const mockPrisma = {
 const ownPickupOption = {
   type: 'OWN',
   registrationId: 'reg1',
-  mealDate: new Date('2026-09-04T00:00:00.000Z'),
-};
+  mealDate: '2026-09-04',
+  mealChoice: 'VEGETARIAN',
+} as const;
 const delegatedPickupOption = {
   type: 'DELEGATED',
   registrationId: 'reg2',
   delegationId: 'delegation-1',
-  mealDate: new Date('2026-09-04T00:00:00.000Z'),
+  mealDate: '2026-09-04',
+  mealChoice: 'REGULAR',
   owner: {
     id: 'owner-1',
     name: 'Meal Owner',
     email: 'owner@example.com',
   },
-};
+} as const;
 
 vi.mock('@prisma/client', () => {
   return {
@@ -134,6 +142,58 @@ describe('PickupService', () => {
       });
     });
   });
+  describe('getPickupOptions', () => {
+    it('returns the live meal choice for own and delegated registrations', async () => {
+      vi.spyOn(service, 'checkServingWindow').mockResolvedValue(undefined);
+      mockPrisma.registration.findUnique.mockResolvedValueOnce({
+        id: 'reg1',
+        status: 'ACTIVE',
+        mealDate: new Date('2026-09-04T00:00:00.000Z'),
+        mealChoice: 'VEGETARIAN',
+        mealServing: null,
+      });
+      mockPrisma.pickupDelegation.findMany.mockResolvedValueOnce([
+        {
+          id: 'delegation-1',
+          registrationId: 'reg2',
+          registration: {
+            id: 'reg2',
+            mealDate: new Date('2026-09-04T00:00:00.000Z'),
+            mealChoice: 'REGULAR',
+            user: {
+              id: 'owner-1',
+              name: 'Meal Owner',
+              email: 'owner@example.com',
+            },
+          },
+        },
+      ]);
+
+      const result = await service.getPickupOptions('delegate-1');
+
+      expect(result.options).toEqual([
+        {
+          type: 'OWN',
+          registrationId: 'reg1',
+          mealDate: '2026-09-04',
+          mealChoice: 'VEGETARIAN',
+        },
+        {
+          type: 'DELEGATED',
+          registrationId: 'reg2',
+          delegationId: 'delegation-1',
+          mealDate: '2026-09-04',
+          mealChoice: 'REGULAR',
+          owner: {
+            id: 'owner-1',
+            name: 'Meal Owner',
+            email: 'owner@example.com',
+          },
+        },
+      ]);
+    });
+  });
+
 
   describe('generateQr', () => {
     beforeEach(() => {
@@ -256,7 +316,12 @@ describe('PickupService', () => {
 
       expect(resolved.items).toHaveLength(1);
       expect(resolved.items[0].registrationId).toBe('reg1');
+      expect(resolved.items[0].mealChoice).toBe('VEGETARIAN');
       expect(resolved.pickupSessionToken).toBe('sess-test-1');
+      expect(resolved.intent.items[0]).toMatchObject({
+        id: 'reg1',
+        mealChoice: 'VEGETARIAN',
+      });
       expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
     });
 
@@ -376,7 +441,12 @@ describe('PickupService', () => {
           },
           'caller3',
         ),
-      ).rejects.toThrow('Pickup session has expired');
+      ).rejects.toMatchObject({
+        response: {
+          code: 'PICKUP_SESSION_EXPIRED',
+          message: 'Pickup session has expired',
+        },
+      });
     });
 
     it('gracefully handles concurrent idempotency inside transaction', async () => {
