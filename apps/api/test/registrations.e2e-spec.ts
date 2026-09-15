@@ -6,6 +6,7 @@ import { describe, beforeAll, beforeEach, afterEach, it, expect, vi } from 'vite
 import type { Mock } from 'vitest';
 import { AppModule } from './../src/app.module.js';
 import { RegistrationsService } from './../src/registrations/registrations.service.js';
+
 describe('RegistrationsController (e2e)', () => {
   let app: INestApplication<Server>;
   let mockRegistrationsService: {
@@ -24,25 +25,52 @@ describe('RegistrationsController (e2e)', () => {
         registrations: [],
         registrationWindow: {
           serverNow: '2026-09-03T02:00:00.000Z',
+          cutoffAt: '2026-09-04T07:00:00.000Z',
           timeZone: 'Asia/Ho_Chi_Minh',
-          days: [],
+          days: [
+            '2026-09-05',
+            '2026-09-06',
+            '2026-09-07',
+            '2026-09-08',
+            '2026-09-09',
+            '2026-09-10',
+            '2026-09-11',
+          ].map((mealDate, index) => ({
+            mealDate,
+            cutoffAt: `2026-09-${String(4 + index).padStart(2, '0')}T07:00:00.000Z`,
+            editable: true,
+            lunarDate: {
+              day: index + 1,
+              month: 7,
+              year: 2026,
+              isLeapMonth: false,
+            },
+            availableMealChoices:
+              index === 2 ? ['REGULAR', 'VEGETARIAN'] : ['REGULAR'],
+          })),
         },
       }),
       batchRegister: vi.fn().mockResolvedValue([
         { date: '2026-09-05', success: true },
-        { date: '2026-09-06', success: false, reason: 'Cutoff time exceeded' },
+        {
+          date: '2026-09-06',
+          success: false,
+          code: 'CUTOFF_PASSED',
+          reason: 'Cutoff time exceeded',
+        },
       ]),
     };
 
-    const moduleFixture: TestingModule = await Test.createTestingModule({
+    return Test.createTestingModule({
       imports: [AppModule],
     })
       .overrideProvider(RegistrationsService)
       .useValue(mockRegistrationsService)
-      .compile();
-
-    app = moduleFixture.createNestApplication();
-    await app.init();
+      .compile()
+      .then((moduleFixture) => {
+        app = moduleFixture.createNestApplication();
+        return app.init();
+      });
   });
 
   afterEach(async () => {
@@ -56,6 +84,7 @@ describe('RegistrationsController (e2e)', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.registrationWindow.timeZone).toBe('Asia/Ho_Chi_Minh');
+    expect(response.body.registrationWindow.days).toHaveLength(7);
     expect(mockRegistrationsService.getWeekData).toHaveBeenCalledWith(
       'test-user-id',
       '2026-09-05',
@@ -64,7 +93,11 @@ describe('RegistrationsController (e2e)', () => {
 
   it('validates and forwards a batch request, returning each date result', async () => {
     const registrations = [
-      { mealDate: '2026-09-05', status: 'ACTIVE' },
+      {
+        mealDate: '2026-09-05',
+        status: 'ACTIVE',
+        mealChoice: 'VEGETARIAN',
+      },
       { mealDate: '2026-09-06', status: 'CANCELLED' },
     ];
     const response = await request(app.getHttpServer())
@@ -74,7 +107,12 @@ describe('RegistrationsController (e2e)', () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual([
       { date: '2026-09-05', success: true },
-      { date: '2026-09-06', success: false, reason: 'Cutoff time exceeded' },
+      {
+        date: '2026-09-06',
+        success: false,
+        code: 'CUTOFF_PASSED',
+        reason: 'Cutoff time exceeded',
+      },
     ]);
     expect(mockRegistrationsService.batchRegister).toHaveBeenCalledWith(
       'test-user-id',
@@ -85,8 +123,48 @@ describe('RegistrationsController (e2e)', () => {
   it.each([
     ['missing body', undefined],
     ['missing registrations', {}],
-    ['malformed registration item', { registrations: [{ mealDate: 'not-a-date', status: 'ACTIVE' }] }],
-    ['invalid status', { registrations: [{ mealDate: '2026-09-05', status: 'PENDING' }] }],
+    [
+      'malformed registration item',
+      {
+        registrations: [
+          {
+            mealDate: 'not-a-date',
+            status: 'ACTIVE',
+            mealChoice: 'REGULAR',
+          },
+        ],
+      },
+    ],
+    [
+      'invalid status',
+      {
+        registrations: [
+          {
+            mealDate: '2026-09-05',
+            status: 'PENDING',
+            mealChoice: 'REGULAR',
+          },
+        ],
+      },
+    ],
+    [
+      'cancelled item with meal choice',
+      {
+        registrations: [
+          {
+            mealDate: '2026-09-05',
+            status: 'CANCELLED',
+            mealChoice: 'REGULAR',
+          },
+        ],
+      },
+    ],
+    [
+      'active item without meal choice',
+      {
+        registrations: [{ mealDate: '2026-09-05', status: 'ACTIVE' }],
+      },
+    ],
   ])('returns 400 for %s', async (_name, body) => {
     const response = await request(app.getHttpServer())
       .put('/api/registrations/batch')
@@ -99,7 +177,15 @@ describe('RegistrationsController (e2e)', () => {
   it('does not retain the old unprefixed batch route', async () => {
     const response = await request(app.getHttpServer())
       .put('/registrations/batch')
-      .send({ registrations: [{ mealDate: '2026-09-05', status: 'ACTIVE' }] });
+      .send({
+        registrations: [
+          {
+            mealDate: '2026-09-05',
+            status: 'ACTIVE',
+            mealChoice: 'REGULAR',
+          },
+        ],
+      });
 
     expect(response.status).toBe(404);
   });

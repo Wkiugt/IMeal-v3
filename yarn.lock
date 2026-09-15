@@ -1117,6 +1117,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@dqcai/vn-lunar@npm:1.0.1":
+  version: 1.0.1
+  resolution: "@dqcai/vn-lunar@npm:1.0.1"
+  checksum: 10c0/fb67902077e76bc2566c0869f83f3a079f8245bd982974d67dddbf03d1cebffe1354d26d8ef74263746224e0c569917af415d903c53afd4f9a0287d288c82f49
+  languageName: node
+  linkType: hard
+
 "@esbuild/aix-ppc64@npm:0.21.5":
   version: 0.21.5
   resolution: "@esbuild/aix-ppc64@npm:0.21.5"
@@ -1958,6 +1965,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@imeal/api@workspace:apps/api"
   dependencies:
+    "@dqcai/vn-lunar": "npm:1.0.1"
     "@imeal/contracts": "workspace:^"
     "@imeal/core": "workspace:^"
     "@nestjs/cli": "npm:^12.0.0"

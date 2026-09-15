@@ -5,48 +5,98 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { v1 } from '@imeal/contracts';
+import type { VietnameseLunarDate } from '../common/vietnamese-lunar.js';
 import {
   BUSINESS_TIME_ZONE,
   getCutoffInstant,
   parseMealDate,
 } from '../common/business-time.js';
+import {
+  getAvailableMealChoices,
+  getVietnameseLunarDate,
+} from '../common/vietnamese-lunar.js';
+
+const INVALID_MEAL_DATE_MESSAGE = 'Invalid meal date';
+const CUTOFF_PASSED_MESSAGE = 'Cutoff time exceeded';
+const MEAL_CHOICE_UNAVAILABLE_MESSAGE =
+  'Meal choice is unavailable for this date';
+const REGISTRATION_FINALIZED_MESSAGE = 'Registration is finalized';
+
+class RegistrationFinalizedError extends Error {}
+
+class MealChoiceUnavailableError extends Error {}
+type WeeklyMenuData = {
+  id: string;
+  startDate: Date;
+  endDate: Date;
+  createdAt: Date;
+  updatedAt: Date;
+  dailyMenus: Array<{
+    id: string;
+    weeklyMenuId: string;
+    date: Date;
+    isHoliday: boolean;
+    isEnabled: boolean;
+    createdAt: Date;
+  }>;
+};
 
 @Injectable()
 export class RegistrationsService {
   private prisma = new PrismaClient();
-  private menuCache = new Map<string, { data: any; expiry: number }>();
+  private menuCache = new Map<string, { data: WeeklyMenuData; expiry: number }>();
 
   async getWeekData(userId: string, weekStart: string) {
     let startDate: Date;
     try {
       startDate = parseMealDate(weekStart);
-    } catch {
-      throw new HttpException(
-        'Invalid week start date',
-        HttpStatus.BAD_REQUEST,
-      );
+    } catch (error: unknown) {
+      throw new BadRequestException({
+        code: 'INVALID_MEAL_DATE',
+        message:
+          error instanceof Error ? error.message : INVALID_MEAL_DATE_MESSAGE,
+      });
     }
-    const endDate = new Date(startDate);
-    endDate.setUTCDate(startDate.getUTCDate() + 6);
 
-    const cutoffSetting = await this.getCutoffTime();
-    const serverNow = new Date();
-    const days = Array.from({ length: 7 }, (_, index) => {
+    const mealDates = Array.from({ length: 7 }, (_, index) => {
       const mealDate = new Date(startDate);
       mealDate.setUTCDate(startDate.getUTCDate() + index);
-      const mealDateKey = mealDate.toISOString().slice(0, 10);
+      return mealDate.toISOString().slice(0, 10);
+    });
+
+    let lunarDates: VietnameseLunarDate[];
+    try {
+      lunarDates = mealDates.map((mealDate) =>
+        getVietnameseLunarDate(mealDate),
+      );
+    } catch (error: unknown) {
+      throw new BadRequestException({
+        code: 'INVALID_MEAL_DATE',
+        message:
+          error instanceof Error ? error.message : INVALID_MEAL_DATE_MESSAGE,
+      });
+    }
+
+    const endDate = new Date(startDate);
+    endDate.setUTCDate(startDate.getUTCDate() + 6);
+    const cutoffSetting = await this.getCutoffTime();
+    const serverNow = new Date();
+    const days = mealDates.map((mealDateKey, index) => {
       const cutoffAt = getCutoffInstant(mealDateKey, cutoffSetting.time);
       return {
         mealDate: mealDateKey,
         cutoffAt: cutoffAt.toISOString(),
         editable: serverNow < cutoffAt,
+        lunarDate: lunarDates[index],
+        availableMealChoices: getAvailableMealChoices(mealDateKey),
       };
     });
 
     // 1. Traffic smoothing: Cache the weekly menu to reduce DB queries on Mon morning.
     // Jitter caching: TTL between 15s to 25s
     const cacheKey = `menu_${weekStart}`;
-    let menuData = null;
+    let menuData: WeeklyMenuData | null = null;
     const now = Date.now();
     const cached = this.menuCache.get(cacheKey);
 
@@ -62,7 +112,6 @@ export class RegistrationsService {
         this.menuCache.set(cacheKey, { data: menuData, expiry: now + jitter });
       }
     }
-
     // 2. Fetch user's own registrations (no cache, specific to user)
     const registrations = await this.prisma.registration.findMany({
       where: {
@@ -74,15 +123,38 @@ export class RegistrationsService {
       },
     });
 
-    return {
-      menu: menuData,
-      registrations,
+    const serializedMenu = menuData
+      ? {
+          ...menuData,
+          startDate: menuData.startDate.toISOString().slice(0, 10),
+          endDate: menuData.endDate.toISOString().slice(0, 10),
+          createdAt: menuData.createdAt.toISOString(),
+          updatedAt: menuData.updatedAt.toISOString(),
+          dailyMenus: menuData.dailyMenus.map((dailyMenu) => ({
+            ...dailyMenu,
+            date: dailyMenu.date.toISOString().slice(0, 10),
+            createdAt: dailyMenu.createdAt.toISOString(),
+          })),
+        }
+      : null;
+    const serializedRegistrations = registrations.map((registration) => ({
+      id: registration.id,
+      mealDate: registration.mealDate.toISOString().slice(0, 10),
+      status: registration.status,
+      mealChoice:
+        'mealChoice' in registration ? registration.mealChoice : undefined,
+    }));
+
+    return v1.WeekRegistrationResponseSchema.parse({
+      menu: serializedMenu,
+      registrations: serializedRegistrations,
       registrationWindow: {
         serverNow: serverNow.toISOString(),
+        cutoffAt: days[0].cutoffAt,
         timeZone: BUSINESS_TIME_ZONE,
         days,
       },
-    };
+    });
   }
 
   async getCutoffTime(): Promise<{ time: string; version: number }> {
@@ -143,108 +215,153 @@ export class RegistrationsService {
 
   async batchRegister(
     userId: string,
-    items: { mealDate: string; status: 'ACTIVE' | 'CANCELLED' }[],
-  ) {
+    items: v1.BatchRegistrationItem[],
+  ): Promise<v1.BatchRegistrationResponse> {
     const cutoffSetting = await this.getCutoffTime();
     const cutoffTimeStr = cutoffSetting.time;
-
-    const results = [];
+    const serverNow = new Date();
+    const results: v1.BatchRegistrationResult[] = [];
 
     // Partial success handling: loop each item independently
     for (const item of items) {
+      const mealDateStr = item.mealDate;
+      let mealDate: Date;
       try {
-        const mealDateStr = item.mealDate;
-        let mealDate: Date;
-        try {
-          mealDate = parseMealDate(mealDateStr);
-        } catch (error: unknown) {
-          results.push({
-            date: mealDateStr,
-            success: false,
-            reason:
-              error instanceof Error ? error.message : 'Invalid meal date',
-          });
-          continue;
-        }
+        mealDate = parseMealDate(mealDateStr);
+        getVietnameseLunarDate(mealDateStr);
+      } catch (error: unknown) {
+        results.push({
+          date: mealDateStr,
+          success: false,
+          code: 'INVALID_MEAL_DATE',
+          reason:
+            error instanceof Error ? error.message : INVALID_MEAL_DATE_MESSAGE,
+        });
+        continue;
+      }
 
+      try {
         const cutoffDate = getCutoffInstant(mealDateStr, cutoffTimeStr);
-        const now = new Date();
-        if (now >= cutoffDate) {
+        if (serverNow >= cutoffDate) {
           results.push({
             date: mealDateStr,
             success: false,
-            reason: 'Cutoff time exceeded',
+            code: 'CUTOFF_PASSED',
+            reason: CUTOFF_PASSED_MESSAGE,
           });
           continue;
         }
 
         await this.prisma.$transaction(async (tx) => {
-          if (item.status === 'ACTIVE') {
-            await tx.registration.upsert({
-              where: {
-                userId_mealDate: {
-                  userId,
-                  mealDate,
-                },
-              },
-              update: {
-                status: 'ACTIVE',
-                version: { increment: 1 },
-              },
-              create: {
+          const registration = await tx.registration.findUnique({
+            where: {
+              userId_mealDate: {
                 userId,
                 mealDate,
-                status: 'ACTIVE',
-                version: 1,
               },
-            });
-          } else if (item.status === 'CANCELLED') {
-            const reg = await tx.registration.findUnique({
-              where: {
-                userId_mealDate: {
-                  userId,
-                  mealDate,
-                },
-              },
-              include: { delegations: true },
-            });
+            },
+            include: { delegations: true },
+          });
 
-            if (reg) {
-              await tx.registration.update({
-                where: { id: reg.id },
-                data: {
-                  status: 'CANCELLED',
-                  version: { increment: 1 },
-                },
-              });
+          if (
+            registration &&
+            (registration.status === 'SERVED' ||
+              registration.status === 'NO_SHOW')
+          ) {
+            throw new RegistrationFinalizedError();
+          }
 
-              // Strict modular boundaries (DDD) using Outbox pattern for delegations cascade
-              if (reg.delegations && reg.delegations.length > 0) {
-                const payload = JSON.stringify({ registrationId: reg.id });
-                await tx.outboxEvent.create({
+          if (
+            item.status === 'ACTIVE' &&
+            !getAvailableMealChoices(mealDateStr).includes(item.mealChoice)
+          ) {
+            throw new MealChoiceUnavailableError();
+          }
+
+          if (item.status === 'ACTIVE') {
+            if (
+              registration &&
+              (registration.status === 'ACTIVE' ||
+                registration.status === 'CANCELLED')
+            ) {
+              if (
+                registration.status !== 'ACTIVE' ||
+                registration.mealChoice !== item.mealChoice
+              ) {
+                await tx.registration.update({
+                  where: { id: registration.id },
                   data: {
-                    aggregateType: 'REGISTRATION',
-                    aggregateId: reg.id,
-                    eventType: 'REGISTRATION_CANCELLED',
-                    payload,
+                    status: 'ACTIVE',
+                    mealChoice: item.mealChoice,
+                    version: { increment: 1 },
                   },
                 });
               }
+            } else {
+              await tx.registration.create({
+                data: {
+                  userId,
+                  mealDate,
+                  status: 'ACTIVE',
+                  mealChoice: item.mealChoice,
+                  version: 1,
+                },
+              });
+            }
+          } else if (registration?.status === 'ACTIVE') {
+            await tx.registration.update({
+              where: { id: registration.id },
+              data: {
+                status: 'CANCELLED',
+                version: { increment: 1 },
+              },
+            });
+
+            // Strict modular boundaries (DDD) using Outbox pattern for delegations cascade
+            if (registration.delegations?.length) {
+              const payload = JSON.stringify({
+                registrationId: registration.id,
+              });
+              await tx.outboxEvent.create({
+                data: {
+                  aggregateType: 'REGISTRATION',
+                  aggregateId: registration.id,
+                  eventType: 'REGISTRATION_CANCELLED',
+                  payload,
+                },
+              });
             }
           }
         });
 
         results.push({ date: mealDateStr, success: true });
       } catch (error: unknown) {
-        results.push({
-          date: item.mealDate,
-          success: false,
-          reason:
-            error instanceof Error ? error.message : 'Registration failed',
-        });
+        if (error instanceof RegistrationFinalizedError) {
+          results.push({
+            date: mealDateStr,
+            success: false,
+            code: 'REGISTRATION_FINALIZED',
+            reason: REGISTRATION_FINALIZED_MESSAGE,
+          });
+        } else if (error instanceof MealChoiceUnavailableError) {
+          results.push({
+            date: mealDateStr,
+            success: false,
+            code: 'MEAL_CHOICE_UNAVAILABLE',
+            reason: MEAL_CHOICE_UNAVAILABLE_MESSAGE,
+          });
+        } else {
+          results.push({
+            date: mealDateStr,
+            success: false,
+            code: 'REGISTRATION_FAILED',
+            reason:
+              error instanceof Error ? error.message : 'Registration failed',
+          });
+        }
       }
     }
 
-    return results;
+    return v1.BatchRegistrationResponseSchema.parse(results);
   }
 }
