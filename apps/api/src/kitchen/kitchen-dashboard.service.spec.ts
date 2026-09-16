@@ -47,6 +47,7 @@ describe('KitchenDashboardService', () => {
           id: 'reg-1',
           userId: 'user-1',
           status: 'ACTIVE',
+          mealChoice: 'VEGETARIAN',
           user: { name: 'Nguyen Van A', email: 'a@example.com' },
           mealServing: {
             id: 'srv-1',
@@ -58,6 +59,7 @@ describe('KitchenDashboardService', () => {
           id: 'reg-2',
           userId: 'user-2',
           status: 'ACTIVE',
+          mealChoice: 'REGULAR',
           user: { name: 'Tran Thi B', email: 'b@example.com' },
           mealServing: null,
           delegations: [],
@@ -66,6 +68,7 @@ describe('KitchenDashboardService', () => {
           id: 'reg-3',
           userId: 'user-3',
           status: 'ACTIVE',
+          mealChoice: 'REGULAR',
           user: { name: 'Le Van C', email: 'c@example.com' },
           mealServing: null,
           delegations: [],
@@ -79,6 +82,7 @@ describe('KitchenDashboardService', () => {
             id: 'reg-noshow',
             userId: 'user-4',
             status: 'NO_SHOW',
+            mealChoice: 'VEGETARIAN',
             user: { name: 'Pham Van D', email: 'd@example.com' },
           },
         ]);
@@ -90,6 +94,7 @@ describe('KitchenDashboardService', () => {
           servedAt: new Date('2026-09-03T11:30:00Z'),
           registration: {
             userId: 'user-1',
+            mealChoice: 'VEGETARIAN',
             user: { name: 'Nguyen Van A', email: 'a@example.com' },
             delegations: [],
           },
@@ -104,12 +109,26 @@ describe('KitchenDashboardService', () => {
       expect(snapshot.counters.servedTotal).toBe(1);
       expect(snapshot.counters.remaining).toBe(2);
       expect(snapshot.counters.noShowTotal).toBe(1);
+      expect(snapshot.counters.regularTotal).toBe(2);
+      expect(snapshot.counters.vegetarianTotal).toBe(1);
+      expect(
+        snapshot.counters.regularTotal + snapshot.counters.vegetarianTotal,
+      ).toBe(snapshot.counters.totalRegistered);
 
       expect(snapshot.lists.served).toHaveLength(1);
+      expect(snapshot.lists.served[0].mealChoice).toBe('VEGETARIAN');
+      expect(snapshot.lists.pending[0].mealChoice).toBe('REGULAR');
+      expect(snapshot.lists.all.map((item) => item.mealChoice)).toEqual([
+        'VEGETARIAN',
+        'REGULAR',
+        'REGULAR',
+      ]);
       expect(snapshot.lists.served[0].registrationId).toBe('reg-1');
       expect(snapshot.lists.pending).toHaveLength(2);
       expect(snapshot.lists.all).toHaveLength(3);
       expect(snapshot.lists.noShow).toHaveLength(1);
+      expect(snapshot.lists.noShow[0].mealChoice).toBe('VEGETARIAN');
+      expect(snapshot.recentLogs[0].mealChoice).toBe('VEGETARIAN');
       expect(snapshot.lists.noShow[0].userName).toBe('Pham Van D');
 
       expect(snapshot.recentLogs).toHaveLength(1);
@@ -217,6 +236,8 @@ describe('KitchenDashboardService', () => {
         isServingReady: true,
         counters: {
           totalRegistered: 10,
+          regularTotal: 7,
+          vegetarianTotal: 3,
           servedTotal: 7,
           remaining: 3,
           noShowTotal: 0,
@@ -228,6 +249,7 @@ describe('KitchenDashboardService', () => {
             userId: 'user-1',
             userName: 'Nguyen Van A',
             userEmail: 'a@example.com',
+            mealChoice: 'REGULAR',
             servedAt: '2026-09-03T11:00:00.000Z',
             isProxy: false,
           },

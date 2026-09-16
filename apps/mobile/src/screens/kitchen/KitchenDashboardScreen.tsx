@@ -5,12 +5,14 @@ import { useIsFocused } from '@react-navigation/native';
 import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { kitchenAPI, type KitchenDashboardSnapshot, type KitchenRegistrationItem, type ServingLogItem } from '../../api/kitchenAPI';
-import { initials } from '../../businessDate';
+import { formatBusinessInstant, initials } from '../../businessDate';
 import { Eyebrow, Pill, PillText, PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
 import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
+import { getMobileErrorMessage } from '../../api/mobileApiError';
+import { useLanguage } from '../../i18n/LanguageProvider';
 import { theme } from '../../theme';
 type TabType = 'pending' | 'served' | 'all' | 'noshow' | 'logs';
 type Props = AppTabScreenProps<'KitchenDashboard'>;
@@ -18,10 +20,11 @@ type Props = AppTabScreenProps<'KitchenDashboard'>;
 export function KitchenDashboardScreen({ navigation }: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
+  const { locale, t } = useLanguage();
   const isFocused = useIsFocused();
   const [snapshot, setSnapshot] = useState<KitchenDashboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('pending');
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,9 +52,9 @@ export function KitchenDashboardScreen({ navigation }: Props) {
     } catch (error: unknown) {
       if (requestId !== dashboardRequestId.current) return;
       if (currentSnapshot.current === null) {
-        const message = error instanceof Error ? error.message : 'Unable to load kitchen dashboard.';
-        setLoadError(message);
-        showNotice({ title: 'Dashboard unavailable', message, tone: 'error' });
+        const message = getMobileErrorMessage(error, t, 'errors.loadKitchen');
+        setLoadError(error);
+        showNotice({ title: t('kitchen.dashboardUnavailable'), message, tone: 'error' });
       }
     } finally {
       if (requestId === dashboardRequestId.current) {
@@ -59,7 +62,7 @@ export function KitchenDashboardScreen({ navigation }: Props) {
         setRefreshing(false);
       }
     }
-  }, [showNotice, token]);
+  }, [showNotice, t, token]);
 
   useEffect(() => {
     if (!isFocused) return;
@@ -83,7 +86,11 @@ export function KitchenDashboardScreen({ navigation }: Props) {
       const response = await kitchenAPI.toggleServingSignal(next, undefined, token);
       setSnapshot((current) => current ? { ...current, isServingReady: response.isServingReady } : current);
     } catch (error: unknown) {
-      showNotice({ title: 'Serving signal unavailable', message: error instanceof Error ? error.message : 'Unable to update serving signal', tone: 'error' });
+      showNotice({
+        title: t('kitchen.servingSignalUnavailable'),
+        message: getMobileErrorMessage(error, t, 'errors.toggleServing'),
+        tone: 'error',
+      });
     } finally {
       setTogglingSignal(false);
     }
@@ -101,8 +108,9 @@ export function KitchenDashboardScreen({ navigation }: Props) {
     },
   }), [active, maxX, sliderX, togglingSignal]);
 
-  const counters = snapshot?.counters || { totalRegistered: 0, servedTotal: 0, remaining: 0, noShowTotal: 0 };
+  const counters = snapshot?.counters || { totalRegistered: 0, regularTotal: 0, vegetarianTotal: 0, servedTotal: 0, remaining: 0, noShowTotal: 0 };
   const progress = counters.totalRegistered ? Math.min(1, counters.servedTotal / counters.totalRegistered) : 0;
+  const mealChoiceLabel = (mealChoice: KitchenRegistrationItem['mealChoice']) => t(mealChoice === 'VEGETARIAN' ? 'kitchen.vegetarian' : 'kitchen.regular');
   const filterItems = (items: KitchenRegistrationItem[]) => {
     const query = searchQuery.trim().toLowerCase();
     return query ? items.filter((item) => item.userName.toLowerCase().includes(query) || item.userEmail.toLowerCase().includes(query)) : items;
@@ -123,21 +131,21 @@ export function KitchenDashboardScreen({ navigation }: Props) {
     <PrototypeFrame scrollProps={{ refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void fetchDashboard(); }} /> }} bottomClearance={114}>
       <StateTransition stateKey={showLoading ? 'loading' : snapshot === null ? 'error' : 'ready'}>
         {showLoading ? (
-          <BrandLoader label="Loading kitchen dashboard…" />
+          <BrandLoader label={t('kitchen.loadingDashboard')} />
         ) : snapshot === null ? (
           <PrototypeCard style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Dashboard unavailable</Text>
-            <Text style={styles.errorText}>{loadError ?? 'Unable to load kitchen dashboard.'}</Text>
-            <PrototypeButton variant="secondary" onPress={() => void fetchDashboard()} style={styles.retryButton}>Retry</PrototypeButton>
+            <Text style={styles.errorTitle}>{t('kitchen.dashboardUnavailable')}</Text>
+            <Text style={styles.errorText}>{getMobileErrorMessage(loadError, t, 'errors.loadKitchen')}</Text>
+            <PrototypeButton variant="secondary" onPress={() => void fetchDashboard()} style={styles.retryButton}>{t('common.retry')}</PrototypeButton>
           </PrototypeCard>
         ) : (
           <>
-            <PrototypeCard style={[styles.servingCard, active && styles.servingActive]}><View style={styles.servingInfo}><Text style={styles.servingTitle}>{active ? 'Serving is live' : 'Ready to Serve?'}</Text><Text style={styles.servingSub}>{active ? 'Kitchen is ready to scan tickets' : 'Slide to begin scanning tickets'}</Text></View><View onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)} style={styles.sliderTrack} {...panResponder.panHandlers}><Animated.View style={[styles.sliderFill, active && styles.sliderFillActive, { width: sliderX.interpolate({ inputRange: [0, Math.max(1, maxX)], outputRange: ['0%', '100%'] }) }]} /><Animated.View style={[styles.sliderThumb, { transform: [{ translateX: sliderX }] }]}><ChevronRight size={20} color={active ? theme.colors.fg : theme.colors.accentDeep} /></Animated.View><Text style={[styles.sliderHint, active && styles.sliderHintActive]}>{active ? 'Slide to stop' : 'Slide to start'}</Text></View></PrototypeCard>
-            <PrototypeCard style={styles.totalCard}><Eyebrow>TOTAL MEALS ORDERED TODAY</Eyebrow><View style={styles.totalRow}><Text style={styles.totalNumber}>{counters.totalRegistered}</Text><Text style={styles.totalUnit}>meals</Text></View><View style={styles.totalMeta}><Utensils size={16} color={theme.colors.accentDeep} /><Text style={styles.totalMetaText}>Lunch service · Canteen A, 12:00–13:00</Text></View></PrototypeCard>
-            <PrototypeCard style={styles.dietCard}><Eyebrow>DIETARY PREFERENCES</Eyebrow><View style={styles.dietBar}><View style={styles.regularSegment} /><View style={styles.vegSegment} /></View><View style={styles.dietLegend}><View style={styles.legendItem}><View style={[styles.legendDot, styles.regularDot]} /><View><Text style={styles.legendLabel}>Regular</Text><Text style={styles.legendNumber}>{Math.round(counters.totalRegistered * 0.72)}</Text></View></View><View style={styles.legendItem}><View style={[styles.legendDot, styles.vegDot]} /><View><Text style={styles.legendLabel}>Vegetarian</Text><Text style={styles.legendNumber}>{counters.totalRegistered - Math.round(counters.totalRegistered * 0.72)}</Text></View></View></View></PrototypeCard>
-            <PrototypeCard style={styles.checkinCard}><View style={styles.checkinHead}><Eyebrow>CHECK-IN PROGRESS</Eyebrow><Text style={styles.checkinRatio}>{counters.servedTotal} / {counters.totalRegistered}</Text></View><View style={styles.progressTrack}><View style={[styles.progressFill, { transform: [{ scaleX: progress }] }]} /></View><View style={styles.checkinLegend}><Text style={styles.legendText}>Checked-in · {counters.servedTotal}</Text><Text style={styles.legendText}>Pending · {counters.remaining}</Text></View></PrototypeCard>
-            <Pressable onPress={() => navigation.navigate('KitchenScanner')} style={styles.scannerLink}><Radio size={18} color={theme.colors.accentDeep} /><Text style={styles.scannerLinkText}>Open ticket scanner</Text></Pressable>
-            <View style={styles.listSection}><View style={styles.listHeader}><Text style={styles.listTitle}>Today's registrations</Text><Text style={styles.syncText}>{loading ? 'Syncing…' : 'Auto-sync 5s'}</Text></View><View style={styles.searchWrap}><Search size={18} color={theme.colors.muted} /><TextInput value={searchQuery} onChangeText={setSearchQuery} placeholder="Search name or email..." placeholderTextColor={theme.colors.muted} style={styles.searchInput} /></View><View style={styles.tabs}>{(['pending', 'served', 'all', 'noshow', 'logs'] as TabType[]).map((tab) => <Pressable key={tab} onPress={() => setActiveTab(tab)} style={[styles.tab, activeTab === tab && styles.tabActive]}><Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{tab === 'pending' ? `Pending (${snapshot.lists.pending.length})` : tab === 'served' ? `Served (${snapshot.lists.served.length})` : tab === 'all' ? `All (${snapshot.lists.all.length})` : tab === 'noshow' ? `No-show (${snapshot.lists.noShow?.length || counters.noShowTotal})` : `Logs (${snapshot.recentLogs.length})`}</Text></Pressable>)}</View>{activeTab === 'logs' ? logs.map((log) => <ListRow key={log.id} initials={initials(log.userName)} name={log.userName} detail={`${new Date(log.servedAt).toLocaleTimeString()} · ${log.userEmail}`} status={log.isProxy ? 'Proxy' : 'Served'} good />) : selectedItems.map((item) => <ListRow key={item.registrationId} initials={initials(item.userName)} name={item.userName} detail={item.isServed && item.servedAt ? new Date(item.servedAt).toLocaleTimeString() : item.userEmail} status={item.isServed ? 'Served' : activeTab === 'noshow' ? 'No-show' : 'Pending'} good={item.isServed} />)}{!loading && selectedItems.length === 0 && logs.length === 0 && <Text style={styles.emptyText}>No matching registrations.</Text>}</View>
+            <PrototypeCard style={[styles.servingCard, active && styles.servingActive]}><View style={styles.servingInfo}><Text style={styles.servingTitle}>{active ? t('kitchen.servingLive') : t('kitchen.readyToServe')}</Text><Text style={styles.servingSub}>{active ? t('kitchen.readyToScan') : t('kitchen.slideToStart')}</Text></View><View accessibilityRole="adjustable" onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)} style={styles.sliderTrack} {...panResponder.panHandlers}><Animated.View style={[styles.sliderFill, active && styles.sliderFillActive, { width: sliderX.interpolate({ inputRange: [0, Math.max(1, maxX)], outputRange: ['0%', '100%'] }) }]} /><Animated.View style={[styles.sliderThumb, { transform: [{ translateX: sliderX }] }]}><ChevronRight size={20} color={active ? theme.colors.fg : theme.colors.accentDeep} /></Animated.View><Text style={[styles.sliderHint, active && styles.sliderHintActive]}>{active ? t('kitchen.slideToStop') : t('kitchen.slideToStart')}</Text></View></PrototypeCard>
+            <PrototypeCard style={styles.totalCard}><Eyebrow>{t('kitchen.totalMealsOrdered')}</Eyebrow><View style={styles.totalRow}><Text style={styles.totalNumber}>{counters.totalRegistered}</Text><Text style={styles.totalUnit}>{t('kitchen.totalUnit')}</Text></View><View style={styles.totalMeta}><Utensils size={16} color={theme.colors.accentDeep} /><Text style={styles.totalMetaText}>{t('kitchen.lunchService')}</Text></View></PrototypeCard>
+            <PrototypeCard style={styles.dietCard}><Eyebrow>{t('kitchen.dietaryPreferences')}</Eyebrow><View style={styles.dietBar}><View style={[styles.regularSegment, { flex: counters.regularTotal }]} /><View style={[styles.vegSegment, { flex: counters.vegetarianTotal }]} /></View><View style={styles.dietLegend}><View style={styles.legendItem}><View style={[styles.legendDot, styles.regularDot]} /><View><Text style={styles.legendLabel}>{t('kitchen.regular')}</Text><Text style={styles.legendNumber}>{counters.regularTotal}</Text></View></View><View style={styles.legendItem}><View style={[styles.legendDot, styles.vegDot]} /><View><Text style={styles.legendLabel}>{t('kitchen.vegetarian')}</Text><Text style={styles.legendNumber}>{counters.vegetarianTotal}</Text></View></View></View></PrototypeCard>
+            <PrototypeCard style={styles.checkinCard}><View style={styles.checkinHead}><Eyebrow>{t('kitchen.checkInProgress')}</Eyebrow><Text style={styles.checkinRatio}>{counters.servedTotal} / {counters.totalRegistered}</Text></View><View style={styles.progressTrack}><View style={[styles.progressFill, { transform: [{ scaleX: progress }] }]} /></View><View style={styles.checkinLegend}><Text style={styles.legendText}>{t('kitchen.checkedIn', { count: counters.servedTotal })}</Text><Text style={styles.legendText}>{t('kitchen.pending', { count: counters.remaining })}</Text></View></PrototypeCard>
+            <Pressable accessibilityRole="button" accessibilityLabel={t('kitchen.openScanner')} onPress={() => navigation.navigate('KitchenScanner')} style={styles.scannerLink}><Radio size={18} color={theme.colors.accentDeep} /><Text style={styles.scannerLinkText}>{t('kitchen.openScanner')}</Text></Pressable>
+            <View style={styles.listSection}><View style={styles.listHeader}><Text style={styles.listTitle}>{t('kitchen.todayRegistrations')}</Text><Text style={styles.syncText}>{loading ? t('kitchen.syncing') : t('kitchen.autoSync')}</Text></View><View style={styles.searchWrap}><Search size={18} color={theme.colors.muted} /><TextInput accessibilityLabel={t('kitchen.searchPlaceholder')} value={searchQuery} onChangeText={setSearchQuery} placeholder={t('kitchen.searchPlaceholder')} placeholderTextColor={theme.colors.muted} style={styles.searchInput} /></View><View style={styles.tabs}>{(['pending', 'served', 'all', 'noshow', 'logs'] as TabType[]).map((tab) => { const tabLabel = tab === 'pending' ? 'kitchen.tabPending' : tab === 'served' ? 'kitchen.tabServed' : tab === 'all' ? 'kitchen.tabAll' : tab === 'noshow' ? 'kitchen.tabNoShow' : 'kitchen.tabLogs'; const count = tab === 'pending' ? snapshot.lists.pending.length : tab === 'served' ? snapshot.lists.served.length : tab === 'all' ? snapshot.lists.all.length : tab === 'noshow' ? snapshot.lists.noShow?.length || counters.noShowTotal : snapshot.recentLogs.length; return <Pressable key={tab} accessibilityRole="tab" accessibilityState={{ selected: activeTab === tab }} onPress={() => setActiveTab(tab)} style={[styles.tab, activeTab === tab && styles.tabActive]}><Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{t(tabLabel, { count })}</Text></Pressable>; })}</View>{activeTab === 'logs' ? logs.map((log) => <ListRow key={log.id} initials={initials(log.userName)} name={log.userName} detail={`${formatBusinessInstant(log.servedAt, locale)} · ${mealChoiceLabel(log.mealChoice)} · ${log.userEmail}`} status={log.isProxy ? t('kitchen.proxy') : t('kitchen.served')} good />) : selectedItems.map((item) => <ListRow key={item.registrationId} initials={initials(item.userName)} name={item.userName} detail={`${item.isServed && item.servedAt ? `${formatBusinessInstant(item.servedAt, locale)} · ` : ''}${mealChoiceLabel(item.mealChoice)} · ${item.userEmail}`} status={item.isServed ? t('kitchen.served') : activeTab === 'noshow' ? t('kitchen.noShow') : t('kitchen.pending')} good={item.isServed} bad={activeTab === 'noshow'} />)}{!loading && selectedItems.length === 0 && logs.length === 0 && <Text style={styles.emptyText}>{t('kitchen.noMatchingRegistrations')}</Text>}</View>
           </>
         )}
       </StateTransition>
@@ -145,32 +153,32 @@ export function KitchenDashboardScreen({ navigation }: Props) {
   );
 }
 
-function ListRow({ initials: avatarInitials, name, detail, status, good }: { initials: string; name: string; detail: string; status: string; good: boolean }) {
-  return <View style={styles.listRow}><View style={[styles.listAvatar, good && styles.listAvatarGood]}><Text style={[styles.listAvatarText, good && styles.listAvatarTextGood]}>{avatarInitials}</Text></View><View style={styles.listCopy}><Text style={styles.listName}>{name}</Text><Text style={styles.listDetail}>{detail}</Text></View><Pill tone={good ? 'good' : status === 'No-show' ? 'bad' : 'soft'}><PillText>{status}</PillText></Pill></View>;
+function ListRow({ initials: avatarInitials, name, detail, status, good, bad }: { initials: string; name: string; detail: string; status: string; good: boolean; bad?: boolean }) {
+  return <View style={styles.listRow}><View style={[styles.listAvatar, good && styles.listAvatarGood]}><Text style={[styles.listAvatarText, good && styles.listAvatarTextGood]}>{avatarInitials}</Text></View><View style={styles.listCopy}><Text style={styles.listName}>{name}</Text><Text style={styles.listDetail}>{detail}</Text></View><Pill tone={good ? 'good' : bad ? 'bad' : 'soft'}><PillText>{status}</PillText></Pill></View>;
 }
 
 const styles = StyleSheet.create({
   errorCard: { marginTop: 20 },
-  errorTitle: { color: theme.colors.fg, fontSize: 17, fontWeight: '700' },
-  errorText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },
+  errorTitle: { color: theme.colors.fg, fontSize: 17, fontFamily: theme.typography.bold },
+  errorText: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19, marginTop: 8 },
   retryButton: { marginTop: 16 },
   servingCard: { marginBottom: 16 },
   servingActive: { backgroundColor: theme.colors.accentTint, borderColor: theme.colors.accentSoft },
   servingInfo: { marginBottom: 20 },
-  servingTitle: { color: theme.colors.fg, fontSize: 21, fontWeight: '700' },
-  servingSub: { color: theme.colors.muted, fontSize: 14, marginTop: 4 },
+  servingTitle: { color: theme.colors.fg, fontSize: 21, fontFamily: theme.typography.bold },
+  servingSub: { color: theme.colors.muted, fontSize: 14, fontFamily: theme.typography.regular, marginTop: 4 },
   sliderTrack: { height: 52, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.pill, backgroundColor: theme.colors.canvas, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   sliderFill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: theme.colors.accentSoft },
   sliderFillActive: { backgroundColor: theme.colors.accentDeep },
   sliderThumb: { position: 'absolute', left: 4, top: 4, width: 44, height: 44, borderRadius: theme.radii.pill, backgroundColor: theme.colors.surface, alignItems: 'center', justifyContent: 'center', ...theme.shadows.sm },
-  sliderHint: { color: theme.colors.muted, fontSize: 14, fontWeight: '600' },
+  sliderHint: { color: theme.colors.muted, fontSize: 14, fontFamily: theme.typography.semiBold },
   sliderHintActive: { color: theme.colors.surface },
   totalCard: { marginBottom: 16 },
   totalRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 10 },
-  totalNumber: { color: theme.colors.fg, fontSize: 52, lineHeight: 56, fontWeight: '700' },
-  totalUnit: { color: theme.colors.muted, fontSize: 15, fontWeight: '600' },
+  totalNumber: { color: theme.colors.fg, fontSize: 52, fontFamily: theme.typography.bold, lineHeight: 56 },
+  totalUnit: { color: theme.colors.muted, fontSize: 15, fontFamily: theme.typography.semiBold },
   totalMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: theme.colors.border },
-  totalMetaText: { color: theme.colors.muted, fontSize: 13 },
+  totalMetaText: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular },
   dietCard: { marginBottom: 16 },
   dietBar: { height: 14, flexDirection: 'row', gap: 2, overflow: 'hidden', borderRadius: theme.radii.pill, marginTop: 14, backgroundColor: theme.colors.surface },
   regularSegment: { flex: 72, backgroundColor: theme.colors.muted, borderTopLeftRadius: 7, borderBottomLeftRadius: 7 },
@@ -180,35 +188,35 @@ const styles = StyleSheet.create({
   legendDot: { width: 10, height: 10, borderRadius: 5 },
   regularDot: { backgroundColor: theme.colors.muted },
   vegDot: { backgroundColor: theme.colors.accentDeep },
-  legendLabel: { color: theme.colors.muted, fontSize: 12 },
-  legendNumber: { color: theme.colors.fg, fontSize: 15, fontFamily: theme.typography.fontMono, fontWeight: '700', marginTop: 1 },
+  legendLabel: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular },
+  legendNumber: { color: theme.colors.fg, fontSize: 15, fontFamily: theme.typography.fontMono, marginTop: 1 },
   checkinCard: { marginBottom: 16 },
   checkinHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  checkinRatio: { color: theme.colors.fg, fontFamily: theme.typography.fontMono, fontSize: 13, fontWeight: '700' },
+  checkinRatio: { color: theme.colors.fg, fontFamily: theme.typography.fontMono, fontSize: 13 },
   progressTrack: { height: 16, overflow: 'hidden', borderRadius: theme.radii.pill, backgroundColor: theme.colors.accentTint, marginTop: 14 },
   progressFill: { width: '100%', height: '100%', backgroundColor: theme.colors.accentDeep, transformOrigin: 'left' },
   checkinLegend: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 },
-  legendText: { color: theme.colors.muted, fontSize: 12 },
+  legendText: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular },
   scannerLink: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  scannerLinkText: { color: theme.colors.accentDeep, fontSize: 13, fontWeight: '700' },
+  scannerLinkText: { color: theme.colors.accentDeep, fontSize: 13, fontFamily: theme.typography.bold },
   listSection: { paddingTop: 18, borderTopWidth: 1, borderTopColor: theme.colors.border },
   listHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
-  listTitle: { color: theme.colors.fg, fontSize: 20, fontWeight: '700' },
-  syncText: { color: theme.colors.muted, fontSize: 11 },
+  listTitle: { color: theme.colors.fg, fontSize: 20, fontFamily: theme.typography.bold },
+  syncText: { color: theme.colors.muted, fontSize: 11, fontFamily: theme.typography.regular },
   searchWrap: { minHeight: 46, marginVertical: 14, paddingHorizontal: 12, gap: 8, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.sm, flexDirection: 'row', alignItems: 'center' },
-  searchInput: { flex: 1, color: theme.colors.fg, fontSize: 14 },
+  searchInput: { flex: 1, color: theme.colors.fg, fontSize: 14, fontFamily: theme.typography.regular },
   tabs: { flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginBottom: 8 },
   tab: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: theme.radii.pill, backgroundColor: theme.colors.canvas },
   tabActive: { backgroundColor: theme.colors.accentSoft },
-  tabText: { color: theme.colors.muted, fontSize: 11, fontWeight: '600' },
+  tabText: { color: theme.colors.muted, fontSize: 11, fontFamily: theme.typography.semiBold },
   tabTextActive: { color: theme.colors.accentDeep },
   listRow: { minHeight: 66, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.border, flexDirection: 'row', alignItems: 'center', gap: 10 },
   listAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
   listAvatarGood: { backgroundColor: theme.colors.statusGoodTint },
-  listAvatarText: { color: theme.colors.accentDeep, fontSize: 12, fontWeight: '700' },
+  listAvatarText: { color: theme.colors.accentDeep, fontSize: 12, fontFamily: theme.typography.bold },
   listAvatarTextGood: { color: theme.colors.statusGoodDeep },
   listCopy: { flex: 1, gap: 3 },
-  listName: { color: theme.colors.fg, fontSize: 13, fontWeight: '700' },
-  listDetail: { color: theme.colors.muted, fontSize: 11 },
-  emptyText: { color: theme.colors.muted, textAlign: 'center', paddingVertical: 24 },
+  listName: { color: theme.colors.fg, fontSize: 13, fontFamily: theme.typography.bold },
+  listDetail: { color: theme.colors.muted, fontSize: 11, fontFamily: theme.typography.regular },
+  emptyText: { color: theme.colors.muted, fontFamily: theme.typography.regular, textAlign: 'center', paddingVertical: 24 },
 });

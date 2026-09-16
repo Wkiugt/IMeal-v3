@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import * as Linking from 'expo-linking';
+import { useFonts } from 'expo-font';
+import {
+  BeVietnamPro_400Regular,
+  BeVietnamPro_500Medium,
+  BeVietnamPro_600SemiBold,
+  BeVietnamPro_700Bold,
+} from '@expo-google-fonts/be-vietnam-pro';
 import {
   NavigationContainer,
   useNavigation,
@@ -12,7 +19,9 @@ import {
 } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { LanguageProvider, useLanguage } from './src/i18n/LanguageProvider';
 import { SessionProvider, useSession } from './src/auth/session';
+import { translate } from './src/i18n/translations';
 import { DelegationScreen } from './src/screens/delegation/DelegationScreen';
 import { EmployeeCalendarScreen } from './src/screens/employee/EmployeeCalendarScreen';
 import { EmployeeDashboardScreen } from './src/screens/employee/EmployeeDashboardScreen';
@@ -56,6 +65,7 @@ function AuthScreen({ navigation }: AuthScreenProps) {
     signIn,
     logout,
   } = useSession();
+  const { t } = useLanguage();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
@@ -85,22 +95,22 @@ function AuthScreen({ navigation }: AuthScreenProps) {
     <StateTransition stateKey={authState} style={styles.screen}>
       {visibleRestoring ? (
         <View style={styles.loading}>
-          <BrandLoader label="Restoring your session…" />
+          <BrandLoader label={t('auth.restoreSession')} />
         </View>
       ) : visibleSigningIn ? (
         <View style={styles.loading}>
-          <BrandLoader label="Signing in…" />
+          <BrandLoader label={t('auth.signingIn')} />
         </View>
       ) : noMobileAccess ? (
         <View style={styles.authCanvas}>
           <View style={styles.authCard}>
             <BrandMark size={32} containerSize={72} style={styles.authMark} />
-            <Text style={styles.title}>Welcome</Text>
+            <Text style={styles.title}>{t('auth.welcome')}</Text>
             <Text style={styles.subtitle}>
-              No mobile access is assigned to this account.
+              {t('auth.noMobileAccess')}
             </Text>
             <PrototypeButton variant="secondary" onPress={() => void logout()}>
-              Log out
+              {t('auth.logOut')}
             </PrototypeButton>
           </View>
         </View>
@@ -108,12 +118,12 @@ function AuthScreen({ navigation }: AuthScreenProps) {
         <View style={styles.authCanvas}>
           <View style={styles.authCard}>
             <BrandMark size={32} containerSize={72} style={styles.authMark} />
-            <Text style={styles.title}>Welcome</Text>
+            <Text style={styles.title}>{t('auth.welcome')}</Text>
             <Text style={styles.subtitle}>
-              Sign in with a local staff or kitchen account.
+              {t('auth.localSignInHint')}
             </Text>
             <PrototypeField
-              label="Username"
+              label={t('auth.username')}
               value={username}
               onChangeText={setUsername}
               autoCapitalize="none"
@@ -122,7 +132,7 @@ function AuthScreen({ navigation }: AuthScreenProps) {
               style={styles.field}
             />
             <PrototypeField
-              label="Password"
+              label={t('auth.password')}
               value={password}
               onChangeText={setPassword}
               secureTextEntry
@@ -135,10 +145,10 @@ function AuthScreen({ navigation }: AuthScreenProps) {
               onPress={() => void signIn(username, password)}
               style={styles.loginButton}
             >
-              Sign in
+              {t('auth.signIn')}
             </PrototypeButton>
             <Text style={styles.footnote}>
-              Credentials are loaded from the backend local .env configuration.
+              {t('auth.credentialsHint')}
             </Text>
             {authError && <Text style={styles.error}>{authError}</Text>}
           </View>
@@ -151,6 +161,7 @@ function AuthScreen({ navigation }: AuthScreenProps) {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token, isRestoring } = useSession();
+  const { t } = useLanguage();
   const noSession = !isRestoring && !token;
   const visibleRestoring = useInitialLoadingGate(isRestoring, noSession);
   const navigation =
@@ -165,7 +176,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (visibleRestoring) {
     return (
       <View style={styles.loading}>
-        <BrandLoader label="Restoring your session…" />
+        <BrandLoader label={t('auth.restoreSession')} />
       </View>
     );
   }
@@ -244,27 +255,65 @@ function linkingConfig(): LinkingOptions<RootStackParamList> {
   };
 }
 
+function NavigationRoot() {
+  const { isRestoring, t } = useLanguage();
+  if (isRestoring) {
+    return (
+      <View style={styles.bootstrapLoading}>
+        <Text style={styles.bootstrapText}>{t('bootstrap.restoringLanguage')}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <NavigationContainer linking={linkingConfig()}>
+      <RootStack.Navigator
+        screenOptions={{ headerShown: false, animation: 'none' }}
+      >
+        <RootStack.Screen name="Auth" component={AuthScreen} />
+        <RootStack.Screen name="AppTabs">
+          {() => (
+            <ProtectedRoute>
+              <AppTabsNavigator />
+            </ProtectedRoute>
+          )}
+        </RootStack.Screen>
+      </RootStack.Navigator>
+    </NavigationContainer>
+  );
+}
+
+function FontBootstrapError() {
+  return (
+    <View style={styles.bootstrapError}>
+      <Text style={styles.bootstrapErrorTitle}>{translate('bootstrap.fontErrorTitle')}</Text>
+      <Text style={styles.bootstrapErrorText}>
+        {translate('bootstrap.fontErrorText')}
+      </Text>
+    </View>
+  );
+}
+
 export default function App() {
+  const [fontsLoaded, fontError] = useFonts({
+    BeVietnamPro_400Regular,
+    BeVietnamPro_500Medium,
+    BeVietnamPro_600SemiBold,
+    BeVietnamPro_700Bold,
+  });
+
+  if (fontError) return <FontBootstrapError />;
+  if (!fontsLoaded) return null;
+
   return (
     <SafeAreaProvider>
-      <SessionProvider>
-        <NoticeProvider>
-          <NavigationContainer linking={linkingConfig()}>
-            <RootStack.Navigator
-              screenOptions={{ headerShown: false, animation: 'none' }}
-            >
-              <RootStack.Screen name="Auth" component={AuthScreen} />
-              <RootStack.Screen name="AppTabs">
-                {() => (
-                  <ProtectedRoute>
-                    <AppTabsNavigator />
-                  </ProtectedRoute>
-                )}
-              </RootStack.Screen>
-            </RootStack.Navigator>
-          </NavigationContainer>
-        </NoticeProvider>
-      </SessionProvider>
+      <LanguageProvider>
+        <SessionProvider>
+          <NoticeProvider>
+            <NavigationRoot />
+          </NoticeProvider>
+        </SessionProvider>
+      </LanguageProvider>
     </SafeAreaProvider>
   );
 }
@@ -304,12 +353,13 @@ const styles = StyleSheet.create({
   title: {
     color: theme.colors.fg,
     fontSize: 30,
-    fontWeight: '700',
+    fontFamily: theme.typography.bold,
     textAlign: 'center',
   },
   subtitle: {
     color: theme.colors.muted,
     fontSize: 14,
+    fontFamily: theme.typography.regular,
     lineHeight: 21,
     textAlign: 'center',
     marginTop: 8,
@@ -320,6 +370,7 @@ const styles = StyleSheet.create({
   footnote: {
     color: theme.colors.muted,
     fontSize: 11.5,
+    fontFamily: theme.typography.regular,
     lineHeight: 17,
     textAlign: 'center',
     marginTop: 18,
@@ -327,7 +378,39 @@ const styles = StyleSheet.create({
   error: {
     color: theme.colors.statusBadDeep,
     fontSize: 13,
+    fontFamily: theme.typography.regular,
     textAlign: 'center',
     marginTop: 16,
+  },
+  bootstrapLoading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.bg,
+  },
+  bootstrapText: {
+    color: theme.colors.muted,
+    fontFamily: 'System',
+    fontSize: 14,
+  },
+  bootstrapError: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: theme.spacing.gutter,
+    backgroundColor: theme.colors.bg,
+  },
+  bootstrapErrorTitle: {
+    color: theme.colors.fg,
+    fontFamily: 'System',
+    fontSize: 18,
+    textAlign: 'center',
+  },
+  bootstrapErrorText: {
+    color: theme.colors.muted,
+    fontFamily: 'System',
+    fontSize: 14,
+    marginTop: 8,
+    textAlign: 'center',
   },
 });

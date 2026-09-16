@@ -154,31 +154,102 @@ describe('Contracts v1', () => {
     });
   });
   describe('Registrations', () => {
-    it('validates a successful batch registration result', () => {
-      const result = v1.BatchRegistrationResponseSchema.safeParse([
-        { date: '2026-09-05', success: true },
-      ]);
-
-      expect(result.success).toBe(true);
+    it('validates meal choices and strict status-specific batch items', () => {
+      expect(
+        v1.BatchRegistrationRequestSchema.safeParse({
+          registrations: [
+            {
+              mealDate: '2026-09-05',
+              status: 'ACTIVE',
+              mealChoice: 'VEGETARIAN',
+            },
+            { mealDate: '2026-09-06', status: 'CANCELLED' },
+          ],
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.BatchRegistrationRequestSchema.safeParse({
+          registrations: [
+            {
+              mealDate: '2026-09-05',
+              status: 'CANCELLED',
+              mealChoice: 'REGULAR',
+            },
+          ],
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.BatchRegistrationRequestSchema.safeParse({
+          registrations: [
+            { mealDate: '2026-09-05', status: 'ACTIVE' },
+          ],
+        }).success,
+      ).toBe(false);
     });
 
-    it('validates a per-date rejection reason', () => {
+    it('validates ordered per-date success and failure results', () => {
       const result = v1.BatchRegistrationResponseSchema.safeParse([
-        { date: '2026-09-05', success: false, reason: 'Cutoff time exceeded' },
+        { date: '2026-09-05', success: false, code: 'CUTOFF_PASSED', reason: 'Cutoff time exceeded' },
+        { date: '2026-09-06', success: true },
       ]);
 
       expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.map((item) => item.date)).toEqual([
+          '2026-09-05',
+          '2026-09-06',
+        ]);
+      }
+    });
+
+    it('rejects unknown failure codes and result branch fields', () => {
+      expect(
+        v1.BatchRegistrationResponseSchema.safeParse([
+          {
+            date: '2026-09-05',
+            success: false,
+            code: 'UNKNOWN',
+            reason: 'invalid',
+          },
+        ]).success,
+      ).toBe(false);
+      expect(
+        v1.BatchRegistrationResponseSchema.safeParse([
+          {
+            date: '2026-09-05',
+            success: true,
+            code: 'CUTOFF_PASSED',
+          },
+        ]).success,
+      ).toBe(false);
+      expect(
+        v1.BatchRegistrationResponseSchema.safeParse([
+          { date: '2026-09-05', success: false, reason: 'invalid' },
+        ]).success,
+      ).toBe(false);
     });
 
     it('rejects invalid meal date formats and calendar dates', () => {
       expect(
         v1.BatchRegistrationRequestSchema.safeParse({
-          registrations: [{ mealDate: '09/05/2026', status: 'ACTIVE' }],
+          registrations: [
+            {
+              mealDate: '09/05/2026',
+              status: 'ACTIVE',
+              mealChoice: 'REGULAR',
+            },
+          ],
         }).success,
       ).toBe(false);
       expect(
         v1.BatchRegistrationRequestSchema.safeParse({
-          registrations: [{ mealDate: '2026-02-30', status: 'ACTIVE' }],
+          registrations: [
+            {
+              mealDate: '2026-02-30',
+              status: 'ACTIVE',
+              mealChoice: 'REGULAR',
+            },
+          ],
         }).success,
       ).toBe(false);
     });
@@ -186,7 +257,341 @@ describe('Contracts v1', () => {
     it('rejects invalid registration status', () => {
       expect(
         v1.BatchRegistrationRequestSchema.safeParse({
-          registrations: [{ mealDate: '2026-09-05', status: 'PENDING' }],
+          registrations: [
+            {
+              mealDate: '2026-09-05',
+              status: 'PENDING',
+              mealChoice: 'REGULAR',
+            },
+          ],
+        }).success,
+      ).toBe(false);
+    });
+
+    it('validates the seven-day week response without Date objects', () => {
+      const response = v1.WeekRegistrationResponseSchema.safeParse({
+        menu: {
+          id: 'week-1',
+          startDate: '2026-09-21',
+          endDate: '2026-09-27',
+          createdAt: '2026-09-01T00:00:00.000Z',
+          updatedAt: '2026-09-01T00:00:00.000Z',
+          dailyMenus: [
+            {
+              id: 'menu-day-1',
+              weeklyMenuId: 'week-1',
+              date: '2026-09-21',
+              isHoliday: false,
+              isEnabled: true,
+              createdAt: '2026-09-01T00:00:00.000Z',
+            },
+          ],
+        },
+        registrations: [
+          {
+            id: 'registration-1',
+            mealDate: '2026-09-25',
+            status: 'ACTIVE',
+            mealChoice: 'VEGETARIAN',
+          },
+        ],
+        registrationWindow: {
+          serverNow: '2026-09-20T06:00:00.000Z',
+          cutoffAt: '2026-09-20T07:00:00.000Z',
+          timeZone: 'Asia/Ho_Chi_Minh',
+          days: [
+            '2026-09-21',
+            '2026-09-22',
+            '2026-09-23',
+            '2026-09-24',
+            '2026-09-25',
+            '2026-09-26',
+            '2026-09-27',
+          ].map((mealDate, index) => ({
+            mealDate,
+            cutoffAt: `2026-09-${String(20 + index).padStart(2, '0')}T07:00:00.000Z`,
+            editable: index > 0,
+            lunarDate: {
+              day: index + 1,
+              month: 8,
+              year: 2026,
+              isLeapMonth: false,
+            },
+            availableMealChoices:
+              index === 4
+                ? ['REGULAR', 'VEGETARIAN']
+                : ['REGULAR'],
+          })),
+        },
+      });
+
+      expect(response.success).toBe(true);
+    });
+
+    it('requires UTC timestamps, exact seven days, and strict week response objects', () => {
+      const invalidWindowDay = {
+        mealDate: '2026-09-21',
+        cutoffAt: '2026-09-20T14:00:00+07:00',
+        editable: true,
+        lunarDate: {
+          day: 1,
+          month: 8,
+          year: 2026,
+          isLeapMonth: false,
+        },
+        availableMealChoices: ['REGULAR'],
+      };
+      const response = {
+        menu: null,
+        registrations: [],
+        registrationWindow: {
+          serverNow: '2026-09-20T06:00:00.000Z',
+          cutoffAt: '2026-09-20T07:00:00.000Z',
+          timeZone: 'Asia/Ho_Chi_Minh',
+          days: Array.from({ length: 6 }, () => invalidWindowDay),
+        },
+      };
+
+      expect(
+        v1.WeekRegistrationResponseSchema.safeParse(response).success,
+      ).toBe(false);
+      expect(
+        v1.WeekRegistrationResponseSchema.safeParse({
+          ...response,
+          registrationWindow: {
+            ...response.registrationWindow,
+            days: Array.from({ length: 7 }, () => invalidWindowDay),
+          },
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.WeekRegistrationResponseSchema.safeParse({
+          ...response,
+          registrationWindow: {
+            ...response.registrationWindow,
+            cutoffAt: '2026-09-20T14:00:00+07:00',
+            days: Array.from({ length: 7 }, () => ({
+              ...invalidWindowDay,
+              cutoffAt: '2026-09-20T07:00:00.000Z',
+            })),
+          },
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.WeekRegistrationResponseSchema.safeParse({
+          ...response,
+          extra: true,
+        }).success,
+      ).toBe(false);
+    });
+  });
+
+  describe('Pickup and kitchen meal choice transport', () => {
+    const owner = {
+      id: 'owner-1',
+      name: 'Meal Owner',
+      email: 'owner@example.com',
+    };
+    const pickupOption = {
+      type: 'DELEGATED' as const,
+      registrationId: 'registration-1',
+      delegationId: 'delegation-1',
+      mealDate: '2026-09-25',
+      mealChoice: 'VEGETARIAN' as const,
+      owner,
+    };
+
+    it('requires mealChoice on pickup options and serving intent items', () => {
+      expect(
+        v1.PickupOptionsResponseSchema.safeParse({
+          options: [pickupOption],
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.PickupOptionsResponseSchema.safeParse({
+          options: [{ ...pickupOption, mealChoice: undefined }],
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.ServingIntentItemSchema.safeParse({
+          id: 'registration-1',
+          itemName: 'Lunch',
+          quantity: 1,
+          mealChoice: 'VEGETARIAN',
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.PickupOptionsResponseSchema.safeParse({
+          options: [{ ...pickupOption, owner: undefined }],
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.PickupOptionsResponseSchema.safeParse({
+          options: [
+            {
+              ...pickupOption,
+              type: 'OWN',
+              delegationId: 'delegation-1',
+              owner,
+            },
+          ],
+        }).success,
+      ).toBe(false);
+    });
+
+    it('validates resolved serving payloads with choice on every item', () => {
+      const payload = {
+        session: {
+          id: 'session-1',
+          userId: 'delegate-1',
+          registrationIds: ['registration-1'],
+          expiresAt: '2026-09-04T04:00:30.000Z',
+          createdAt: '2026-09-04T04:00:00.000Z',
+        },
+        items: [pickupOption],
+        pickupSessionToken: 'session-1',
+        intent: {
+          userId: 'delegate-1',
+          items: [
+            {
+              id: 'registration-1',
+              itemName: 'Lunch',
+              quantity: 1,
+              mealChoice: 'VEGETARIAN',
+            },
+          ],
+          totalCount: 1,
+          isProxy: true,
+        },
+      };
+      expect(v1.ResolveServingResponseSchema.safeParse(payload).success).toBe(
+        true,
+      );
+      expect(
+        v1.ResolveServingResponseSchema.safeParse({
+          ...payload,
+          intent: {
+            ...payload.intent,
+            items: [{ ...payload.intent.items[0], mealChoice: undefined }],
+          },
+        }).success,
+      ).toBe(false);
+    });
+
+    it('requires meal choice and partitions kitchen counters', () => {
+      expect(
+        v1.KitchenDashboardCountersSchema.parse({
+          totalRegistered: 3,
+          regularTotal: 2,
+          vegetarianTotal: 1,
+          servedTotal: 1,
+          remaining: 2,
+          noShowTotal: 0,
+        }),
+      ).toMatchObject({ regularTotal: 2, vegetarianTotal: 1 });
+      expect(
+        v1.KitchenDashboardCountersSchema.safeParse({
+          totalRegistered: 3,
+          regularTotal: 3,
+          vegetarianTotal: 1,
+          servedTotal: 1,
+          remaining: 2,
+          noShowTotal: 0,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.KitchenRegistrationItemSchema.safeParse({
+          registrationId: 'registration-1',
+          userId: 'user-1',
+          userName: 'Meal Owner',
+          userEmail: 'owner@example.com',
+          mealChoice: 'VEGETARIAN',
+          isServed: false,
+          servedAt: null,
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.ServingLogItemSchema.safeParse({
+          id: 'serving-1',
+          registrationId: 'registration-1',
+          userId: 'user-1',
+          userName: 'Meal Owner',
+          userEmail: 'owner@example.com',
+          mealChoice: 'VEGETARIAN',
+          servedAt: '2026-09-25T04:00:00.000Z',
+          isProxy: false,
+        }).success,
+      ).toBe(true);
+    });
+    it('rejects unknown fields in all kitchen response objects and lists', () => {
+      const counters = {
+        totalRegistered: 1,
+        regularTotal: 1,
+        vegetarianTotal: 0,
+        servedTotal: 1,
+        remaining: 0,
+        noShowTotal: 0,
+      };
+      const registrationItem = {
+        registrationId: 'registration-1',
+        userId: 'user-1',
+        userName: 'Meal Owner',
+        userEmail: 'owner@example.com',
+        mealChoice: 'REGULAR' as const,
+        isServed: true,
+        servedAt: '2026-09-25T04:00:00.000Z',
+      };
+      const servingLog = {
+        id: 'serving-1',
+        registrationId: 'registration-1',
+        userId: 'user-1',
+        userName: 'Meal Owner',
+        userEmail: 'owner@example.com',
+        mealChoice: 'REGULAR' as const,
+        servedAt: '2026-09-25T04:00:00.000Z',
+        isProxy: false,
+      };
+      const snapshot = {
+        date: '2026-09-25',
+        isServingReady: true,
+        counters,
+        recentLogs: [servingLog],
+        lists: {
+          served: [registrationItem],
+          pending: [],
+          all: [registrationItem],
+          noShow: [],
+        },
+      };
+
+      expect(
+        v1.KitchenDashboardCountersSchema.safeParse({
+          ...counters,
+          extra: true,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.ServingLogItemSchema.safeParse({
+          ...servingLog,
+          extra: true,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.KitchenRegistrationItemSchema.safeParse({
+          ...registrationItem,
+          extra: true,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.KitchenDashboardSnapshotSchema.safeParse({
+          ...snapshot,
+          extra: true,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.KitchenDashboardSnapshotSchema.safeParse({
+          ...snapshot,
+          lists: { ...snapshot.lists, extra: true },
         }).success,
       ).toBe(false);
     });

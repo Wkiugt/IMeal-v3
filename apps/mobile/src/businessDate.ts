@@ -23,16 +23,26 @@ export function addDays(date: Date, amount: number): Date {
   return result;
 }
 
-export function formatDay(date: Date): string {
-  return date.toLocaleDateString(undefined, { weekday: 'long' });
+export type BusinessLocale = 'vi-VN' | 'en-US';
+
+export function formatDay(date: Date, locale: BusinessLocale): string {
+  return date.toLocaleDateString(locale, { weekday: 'long' });
 }
 
-export function formatShortDate(date: Date): string {
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+export function formatShortDate(date: Date, locale: BusinessLocale): string {
+  return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
 }
 
-export function formatMonth(date: Date): string {
-  return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+export function formatMonth(date: Date, locale: BusinessLocale): string {
+  return date.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
+}
+
+export function formatBusinessInstant(iso: string, locale: BusinessLocale): string {
+  return new Date(iso).toLocaleString(locale, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  });
 }
 
 export function initials(name?: string, fallback = 'ME'): string {

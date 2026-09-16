@@ -12,35 +12,36 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CalendarDays, Home, QrCode, ScanLine, UserRound } from 'lucide-react-native';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useIsFocused } from '@react-navigation/native';
+import type { TranslationKey } from '../i18n/translations';
 import { theme } from '../theme';
 import type { AppTabParamList } from '../navigation';
 import type { PrototypeIcon } from './PrototypePrimitives';
 import { ScreenEntrance } from './BrandMotion';
+import { useLanguage } from '../i18n/LanguageProvider';
 
 export type PrototypeNavItem = {
-  label: string;
+  labelKey: TranslationKey;
   route: keyof AppTabParamList;
   icon: PrototypeIcon;
 };
 
 export const employeeNav: PrototypeNavItem[] = [
-  { label: 'Dashboard', route: 'EmployeeDashboard', icon: Home },
-  { label: 'Calendar', route: 'EmployeeCalendar', icon: CalendarDays },
-  { label: 'Ticket', route: 'PickupIntent', icon: QrCode },
-  { label: 'Profile', route: 'EmployeeProfile', icon: UserRound },
+  { labelKey: 'nav.dashboard', route: 'EmployeeDashboard', icon: Home },
+  { labelKey: 'nav.calendar', route: 'EmployeeCalendar', icon: CalendarDays },
+  { labelKey: 'nav.ticket', route: 'PickupIntent', icon: QrCode },
+  { labelKey: 'nav.profile', route: 'EmployeeProfile', icon: UserRound },
 ];
 
 export const hybridEmployeeNav: PrototypeNavItem[] = [
   ...employeeNav.slice(0, 3),
-  { label: 'Check-in', route: 'KitchenScanner', icon: ScanLine },
+  { labelKey: 'nav.checkIn', route: 'KitchenScanner', icon: ScanLine },
   employeeNav[3],
 ];
 
 export const kitchenNav: PrototypeNavItem[] = [
-  { label: 'Dashboard', route: 'KitchenDashboard', icon: Home },
-  { label: 'Scanner', route: 'KitchenScanner', icon: QrCode },
+  { labelKey: 'nav.dashboard', route: 'KitchenDashboard', icon: Home },
+  { labelKey: 'nav.scanner', route: 'KitchenScanner', icon: QrCode },
 ];
-
 export function PrototypeTabBar({
   state,
   descriptors,
@@ -48,6 +49,7 @@ export function PrototypeTabBar({
   navItems,
   insets,
 }: BottomTabBarProps & { navItems: PrototypeNavItem[] }) {
+  const { t } = useLanguage();
   return (
     <View
       style={[
@@ -71,7 +73,7 @@ export function PrototypeTabBar({
               key={route.key}
               accessibilityRole="tab"
               accessibilityState={{ selected: focused }}
-              accessibilityLabel={options?.tabBarAccessibilityLabel || item.label}
+              accessibilityLabel={options?.tabBarAccessibilityLabel || t(item.labelKey)}
               onPress={() => {
                 const event = navigation.emit({
                   type: 'tabPress',
@@ -93,11 +95,6 @@ export function PrototypeTabBar({
                 color={focused ? theme.colors.accentDeep : theme.colors.muted}
                 strokeWidth={1.8}
               />
-              {focused && (
-                <Text style={[styles.navLabel, styles.navLabelActive]}>
-                  {item.label}
-                </Text>
-              )}
             </Pressable>
           );
         })}
@@ -169,9 +166,9 @@ export function PrototypeSectionTitle({ title, subtitle }: { title: string; subt
 export const prototypeStyles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   divider: { height: 1, backgroundColor: theme.colors.border },
-  title: { color: theme.colors.fg, fontSize: 20, fontWeight: '700', letterSpacing: -0.2 },
-  body: { color: theme.colors.fg, fontSize: 14, lineHeight: 21 },
-  muted: { color: theme.colors.muted, fontSize: 13 },
+  title: { color: theme.colors.fg, fontSize: 20, fontFamily: theme.typography.bold, letterSpacing: -0.2 },
+  body: { color: theme.colors.fg, fontSize: 14, fontFamily: theme.typography.regular, lineHeight: 21 },
+  muted: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular },
 });
 
 const styles = StyleSheet.create({
@@ -202,11 +199,9 @@ const styles = StyleSheet.create({
     gap: 4,
     ...theme.shadows.md,
   },
-  navItem: { flexGrow: 1, flexBasis: 0, minWidth: 44, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radii.md },
-  navItemActive: { flexGrow: 1.65, flexDirection: 'row', gap: 7, backgroundColor: theme.colors.accentSoft },
-  navLabel: { color: theme.colors.muted, fontSize: 11, fontWeight: '600' },
-  navLabelActive: { color: theme.colors.accentDeep },
+  navItem: { flex: 1, minWidth: 44, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radii.md },
+  navItemActive: { backgroundColor: theme.colors.accentSoft },
   sectionTitle: { paddingVertical: 18, gap: 5 },
-  sectionHeading: { color: theme.colors.fg, fontSize: 20, fontWeight: '700', letterSpacing: -0.2 },
-  sectionSubtitle: { color: theme.colors.muted, fontSize: 13, lineHeight: 19 },
+  sectionHeading: { color: theme.colors.fg, fontSize: 20, fontFamily: theme.typography.bold, letterSpacing: -0.2 },
+  sectionSubtitle: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19 },
 });

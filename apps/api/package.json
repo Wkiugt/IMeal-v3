@@ -22,6 +22,7 @@
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts"
   },
   "dependencies": {
+    "@dqcai/vn-lunar": "1.0.1",
     "@imeal/contracts": "workspace:^",
     "@imeal/core": "workspace:^",
     "@nestjs/common": "^12.0.1",

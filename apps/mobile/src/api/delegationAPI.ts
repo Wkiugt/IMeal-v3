@@ -1,99 +1,87 @@
+import { v1 } from '@imeal/contracts';
 import { API_BASE } from './apiConfig';
+import {
+  MobileApiError,
+  readMobileResponseJson,
+  throwMobileResponseError,
+  toMobileApiError,
+} from './mobileApiError';
 
-export interface CreateDelegationRequest {
-  registrationId: string;
-  delegateUserId: string;
+export type CreateDelegationRequest = v1.CreateDelegationRequest;
+export type DelegationResponse = v1.DelegationResponse;
+
+type DelegationErrorKey = 'errors.loadDelegations' | 'errors.delegationAction';
+
+async function requestJson(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  fallbackKey: DelegationErrorKey,
+): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(input, init);
+  } catch (error: unknown) {
+    throw toMobileApiError(error, fallbackKey);
+  }
+  if (!response.ok) await throwMobileResponseError(response, fallbackKey);
+  return readMobileResponseJson(response, fallbackKey);
 }
 
-export interface DelegationResponse {
-  id: string;
-  registrationId: string;
-  delegateUserId: string;
-  status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'REVOKED';
-  createdAt: string;
-  updatedAt: string;
+function parseDelegation(payload: unknown): DelegationResponse {
+  const parsed = v1.DelegationResponseSchema.safeParse(payload);
+  if (parsed.success) return parsed.data;
+  throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
 }
 
-// NOTE: Uses fetch for network requests.
-// Ensure your app passes auth tokens via headers if needed.
 export const delegationAPI = {
   createDelegation: async (
     data: CreateDelegationRequest,
     token: string,
-  ): Promise<DelegationResponse> => {
-    const res = await fetch(`${API_BASE}/delegations`, {
+  ): Promise<DelegationResponse> => parseDelegation(
+    await requestJson(`${API_BASE}/delegations`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Failed to create delegation');
-    }
-    return res.json();
-  },
+    }, 'errors.delegationAction'),
+  ),
 
-  acceptDelegation: async (
-    id: string,
-    token: string,
-  ): Promise<DelegationResponse> => {
-    const res = await fetch(`${API_BASE}/delegations/${id}/accept`, {
+  acceptDelegation: async (id: string, token: string): Promise<DelegationResponse> => parseDelegation(
+    await requestJson(`${API_BASE}/delegations/${id}/accept`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Failed to accept delegation');
-    }
-    return res.json();
-  },
+    }, 'errors.delegationAction'),
+  ),
 
-  declineDelegation: async (
-    id: string,
-    token: string,
-  ): Promise<DelegationResponse> => {
-    const res = await fetch(`${API_BASE}/delegations/${id}/decline`, {
+  declineDelegation: async (id: string, token: string): Promise<DelegationResponse> => parseDelegation(
+    await requestJson(`${API_BASE}/delegations/${id}/decline`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Failed to decline delegation');
-    }
-    return res.json();
-  },
+    }, 'errors.delegationAction'),
+  ),
 
-  revokeDelegation: async (
-    id: string,
-    token: string,
-  ): Promise<DelegationResponse> => {
-    const res = await fetch(`${API_BASE}/delegations/${id}/revoke`, {
+  revokeDelegation: async (id: string, token: string): Promise<DelegationResponse> => parseDelegation(
+    await requestJson(`${API_BASE}/delegations/${id}/revoke`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Failed to revoke delegation');
-    }
-    return res.json();
-  },
+    }, 'errors.delegationAction'),
+  ),
 
   getDelegations: async (
     token: string,
     type: 'incoming' | 'outgoing',
   ): Promise<DelegationResponse[]> => {
-    const res = await fetch(
+    const payload = await requestJson(
       `${API_BASE}/delegations?type=${encodeURIComponent(type)}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      },
+      { headers: { Authorization: `Bearer ${token}` } },
+      'errors.loadDelegations',
     );
-    if (!res.ok) {
-      throw new Error('Failed to load delegations');
+    const parsed = v1.DelegationResponseSchema.array().safeParse(payload);
+    if (!parsed.success) {
+      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
     }
-    return res.json();
+    return parsed.data;
   },
 };

@@ -5,6 +5,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client';
+import { v1 } from '@imeal/contracts';
 import * as crypto from 'crypto';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 import {
@@ -23,6 +24,10 @@ const PICKUP_WINDOW_CLOSED_MESSAGE =
   'Meal pickup is only available from 10:30 through 13:30 Vietnam time.';
 const PICKUP_NOT_READY_MESSAGE =
   'Meal pickup is not currently available. Please wait for the kitchen signal.';
+
+function toMealDateKey(value: Date | string): string {
+  return value instanceof Date ? value.toISOString().slice(0, 10) : value;
+}
 
 interface LockedRegistration {
   id: string;
@@ -87,7 +92,7 @@ export class PickupService {
   }
 
 
-  async getPickupOptions(userId: string) {
+  async getPickupOptions(userId: string): Promise<v1.PickupOptionsResponse> {
     await this.checkServingWindow();
 
     const today = this.getTodayDate();
@@ -95,7 +100,13 @@ export class PickupService {
     // 1. Own eligible registration
     const ownRegistration = await this.prisma.registration.findUnique({
       where: { userId_mealDate: { userId, mealDate: today } },
-      include: { mealServing: true },
+      select: {
+        id: true,
+        status: true,
+        mealDate: true,
+        mealChoice: true,
+        mealServing: true,
+      },
     });
 
     // 2. Accepted delegations for today
@@ -111,12 +122,17 @@ export class PickupService {
       },
       include: {
         registration: {
-          include: { user: true },
+          select: {
+            id: true,
+            mealDate: true,
+            mealChoice: true,
+            user: true,
+          },
         },
       },
     });
 
-    const options = [];
+    const options: v1.PickupOption[] = [];
 
     if (
       ownRegistration &&
@@ -126,7 +142,8 @@ export class PickupService {
       options.push({
         type: 'OWN',
         registrationId: ownRegistration.id,
-        mealDate: ownRegistration.mealDate,
+        mealDate: toMealDateKey(ownRegistration.mealDate),
+        mealChoice: ownRegistration.mealChoice,
       });
     }
 
@@ -135,16 +152,20 @@ export class PickupService {
         type: 'DELEGATED',
         registrationId: del.registrationId,
         delegationId: del.id,
-        mealDate: del.registration.mealDate,
+        mealDate: toMealDateKey(del.registration.mealDate),
+        mealChoice: del.registration.mealChoice,
         owner: {
           id: del.registration.user.id,
-          name: del.registration.user.name,
+          name:
+            del.registration.user.name ||
+            del.registration.user.email ||
+            'N/A',
           email: del.registration.user.email,
         },
       });
     }
 
-    return { options };
+    return v1.PickupOptionsResponseSchema.parse({ options });
   }
 
   private getSigningKey(userId: string): Buffer {
@@ -291,8 +312,12 @@ export class PickupService {
       throw new ForbiddenException('QR code has already been used');
     }
 
-    return {
-      session,
+    return v1.ResolveServingResponseSchema.parse({
+      session: {
+        ...session,
+        expiresAt: session.expiresAt.toISOString(),
+        createdAt: session.createdAt.toISOString(),
+      },
       items: pickupOptions,
       pickupSessionToken: session.id,
       intent: {
@@ -304,11 +329,12 @@ export class PickupService {
               ? 'Cơm trưa (Bản thân)'
               : `Cơm trưa (${option.owner?.name || 'Ủy quyền'})`,
           quantity: 1,
+          mealChoice: option.mealChoice,
         })),
         totalCount: pickupOptions.length,
         isProxy: pickupOptions.some((option) => option.type === 'DELEGATED'),
       },
-    };
+    });
   }
 
   async confirmPickup(
@@ -379,9 +405,11 @@ export class PickupService {
     if (!session) {
       throw new BadRequestException('Invalid pickup session');
     }
-
     if (session.expiresAt.getTime() < Date.now()) {
-      throw new BadRequestException('Pickup session has expired');
+      throw new BadRequestException({
+        code: 'PICKUP_SESSION_EXPIRED',
+        message: 'Pickup session has expired',
+      });
     }
 
     for (const regId of registrationIds) {

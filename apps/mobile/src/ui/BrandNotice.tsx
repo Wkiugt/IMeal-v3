@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react-native';
 import { theme } from '../theme';
 import { useReducedMotion } from './useReducedMotion';
-
+import { useLanguage } from '../i18n/LanguageProvider';
 export type NoticeTone = 'info' | 'success' | 'warning' | 'error';
 
 export type ShowNoticeInput = {
@@ -40,6 +40,7 @@ type CurrentNotice = {
 };
 
 export function NoticeProvider({ children }: { children: React.ReactNode }) {
+  const { t } = useLanguage();
   const [notice, setNotice] = useState<CurrentNotice | null>(null);
   const [visibleNotice, setVisibleNotice] = useState<ShowNoticeInput | null>(null);
   const opacity = useRef(new Animated.Value(0)).current;
@@ -142,7 +143,7 @@ export function NoticeProvider({ children }: { children: React.ReactNode }) {
               </View>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Dismiss notification"
+                accessibilityLabel={t('notice.dismiss')}
                 onPress={dismissNotice}
                 style={({ pressed }) => [styles.dismiss, pressed && styles.dismissPressed]}
               >
@@ -168,8 +169,8 @@ const styles = StyleSheet.create({
   card: { minHeight: 72, padding: 14, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.md, backgroundColor: theme.colors.surface, flexDirection: 'row', alignItems: 'flex-start', gap: 11, ...theme.shadows.md },
   iconWrap: { width: 34, height: 34, borderRadius: theme.radii.sm, alignItems: 'center', justifyContent: 'center' },
   copy: { flex: 1, gap: 3 },
-  title: { color: theme.colors.fg, fontSize: 14, fontWeight: '700' },
-  message: { color: theme.colors.muted, fontSize: 13, lineHeight: 19 },
+  title: { color: theme.colors.fg, fontSize: 14, fontFamily: theme.typography.bold },
+  message: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19 },
   dismiss: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginTop: -1, marginRight: -7 },
   dismissPressed: { opacity: 0.65 },
 });

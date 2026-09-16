@@ -138,14 +138,16 @@ TUẦN NÀY
 
 ### 7.1 Day card
 
-Each day is one compact row/card:
+Each day is one compact row/card. The server supplies the lunar metadata and available meal choices:
 
 ```text
-┌──────────────────────────────┐
-│ ✓  Thứ Ba · 18/08           │
-│    Bún bò Huế                │
-│    Sửa đến 14:00 Thứ Hai    │
-└──────────────────────────────┘
+┌────────────────────────────────┐
+│ ✓  Thứ Ba · 18/08              │
+│    Bún bò Huế                  │
+│    Rằm · 15 âm lịch            │
+│    [ Mặn ] [ Chay ]            │
+│    Sửa đến 14:00 Thứ Hai      │
+└────────────────────────────────┘
 ```
 
 Locked:
@@ -166,7 +168,9 @@ No published menu:
 ### 7.2 Controls
 
 - Tap checkbox/row to toggle editable day.
-- `Chọn cả tuần` only selects editable days.
+- On normal service dates, only `Mặn (REGULAR)` is available.
+- On lunar day 1 (`Mùng 1 âm lịch`) or lunar day 15 (`Rằm · 15 âm lịch`), including a leap month, show `Mặn (REGULAR)` and `Chay (VEGETARIAN)`; the selected choice is persisted with the registration.
+- `Chọn cả tuần` only selects editable days and defaults to `Mặn (REGULAR)` unless an eligible lunar day is explicitly changed.
 - Sticky/footer CTA `Lưu thay đổi` appears when draft differs from server.
 - Unsaved changes remain if request partially fails.
 - Unticking a day with active delegation opens confirmation naming the delegate and explains that the delegation will be revoked.

@@ -12,8 +12,8 @@ IMeal v2 là một re-platforming so với hệ thống web Firebase/Firestore h
 - Authentication: **Microsoft Entra ID single-tenant** của tổ chức; tenant/client/scope/redirect values remain TBD until IEC Entra administrator provisions them.
 - Lần login đầu tiên: **auto-provision** user vào PostgreSQL với role `staff`.
 - Role `kitchen` được Admin Web quản lý thủ công và **không bao gồm quyền `staff`**. Nhân sự Kitchen cần đăng ký suất cá nhân phải được cấp đồng thời `staff + kitchen`. Role `admin` chỉ được cấp qua operation server-side được audit, không thể được Admin khác cấp trong Admin Web.
-- Menu: Kitchen chuẩn bị/công bố tuần tiếp theo vào Thứ Bảy–Chủ Nhật; **mỗi ngày có đúng một món cố định**. Publish lần đầu tạo revision 1; sửa trước cutoff tạo revision mới và tự thông báo Staff đã đăng ký.
-- Staff: đăng ký theo tuần bằng cách tick/untick từng ngày; không chọn món.
+- Menu: Kitchen chuẩn bị/công bố tuần tiếp theo vào Thứ Bảy–Chủ Nhật; **mỗi ngày có đúng một món cố định**. Ngày service bình thường chỉ có lựa chọn `REGULAR`; ngày mùng 1 hoặc 15 âm lịch (kể cả tháng nhuận) cho phép `REGULAR` hoặc `VEGETARIAN`.
+- Staff: đăng ký theo tuần bằng cách tick/untick từng ngày; không chọn món nhưng có thể chọn loại suất `REGULAR`/`VEGETARIAN` theo policy ngày âm lịch.
 - Cutoff: giữ business rule **14:00 ngày trước meal date**, áp dụng độc lập cho từng ngày.
 - Cutoff boundary: registration mutation chỉ hợp lệ khi server time **nhỏ hơn 14:00**; đúng `14:00:00` là đã khóa.
 - Tuần bắt đầu Thứ Hai; service dates mặc định Thứ Hai–Thứ Sáu, holiday/non-service date phải disable rõ ràng.
@@ -48,8 +48,9 @@ IMeal v2 là một re-platforming so với hệ thống web Firebase/Firestore h
 | Meal date           | Ngày sử dụng suất ăn theo `Asia/Ho_Chi_Minh`, `YYYY-MM-DD`                                                                        |
 | Week                | Tuần hiển thị trên Staff/Kitchen để quản lý menu và registration                                                                  |
 | Daily menu          | Một món cố định cho một meal date                                                                                                 |
+| Meal choice         | Loại suất `REGULAR` hoặc `VEGETARIAN`; ngày bình thường chỉ `REGULAR`, ngày mùng 1/15 âm lịch (kể cả tháng nhuận) cho phép cả hai |
 | Cutoff              | 14:00 ngày trước meal date                                                                                                        |
-| Registration        | Quyền giữ một suất của một user trong một meal date                                                                               |
+| Registration        | Quyền giữ một suất của một user trong một meal date, lưu thêm meal choice                                                        |
 | Serving / Check-in  | Kitchen xác nhận suất đã thực sự được giao tại quầy                                                                               |
 | Served              | Registration đã có serving hợp lệ; là nguồn sự thật cho “đã nhận suất”                                                            |
 | No-show             | Đã đăng ký nhưng hết meal day vẫn chưa có serving hợp lệ                                                                          |
@@ -80,8 +81,8 @@ Nếu implementation và docs v2 khác nhau, thay đổi phải cập nhật c�
 - `Asia/Ho_Chi_Minh` là timezone business duy nhất.
 - Mobile không được trực tiếp ghi database.
 - Server time là nguồn sự thật cho cutoff và meal date.
-- `UNIQUE(user_id, meal_date)` ngăn duplicate registration.
-- Serving phải idempotent và có audit; một registration chỉ được serve một lần. Core v2 không hỗ trợ reversal sau khi Kitchen xác nhận.
+- `UNIQUE(user_id, meal_date)` ngăn duplicate registration; registration lưu thêm lựa chọn suất (`REGULAR` hoặc `VEGETARIAN`).
+- Ngày service bình thường chỉ có `REGULAR`; ngày mùng 1 hoặc 15 âm lịch, kể cả tháng nhuận, cho phép `REGULAR` hoặc `VEGETARIAN`.
 - QR 5 giây chỉ dùng để xác thực presenter + pickup intent; scan QR không tự động đánh dấu `SERVED` trước Kitchen confirmation.
 - Nếu presenter có nhiều suất hợp lệ, Staff chọn trước các suất dự định lấy trên mobile; Kitchen happy path chỉ scan, kiểm tra số suất/tên và confirm, không phải tick từng item.
 - Delegation không chia sẻ QR của owner; delegate dùng QR của chính mình sau khi đã accept delegation.

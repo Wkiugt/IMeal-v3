@@ -1,71 +1,60 @@
 import { v1 } from '@imeal/contracts';
 import { API_BASE } from './apiConfig';
+import {
+  MobileApiError,
+  readMobileResponseJson,
+  throwMobileResponseError,
+  toMobileApiError,
+} from './mobileApiError';
 
 export type RegistrationStatus = v1.RegistrationStatus;
-
-export interface RegistrationRecord {
-  id: string;
-  mealDate: string;
-  status: RegistrationStatus;
-}
-
-export interface DailyMenuRecord {
-  date: string;
-  isHoliday: boolean;
-  isEnabled: boolean;
-  mealDays?: Array<{ mealType: string; isServingReady: boolean }>;
-}
-
-export interface RegistrationWindowDay {
-  mealDate: string;
-  cutoffAt: string;
-  editable: boolean;
-}
-
-export interface RegistrationWindow {
-  serverNow: string;
-  timeZone: 'Asia/Ho_Chi_Minh';
-  days: RegistrationWindowDay[];
-}
-
-export interface WeekRegistrationResponse {
-  menu: { dailyMenus: DailyMenuRecord[] } | null;
-  registrations: RegistrationRecord[];
-  registrationWindow: RegistrationWindow;
-}
-
+export type MealChoice = v1.MealChoice;
+export type RegistrationRecord = v1.RegistrationRecord;
+export type DailyMenuRecord = v1.WeekDailyMenu;
+export type RegistrationWindowDay = v1.RegistrationWindowDay;
+export type RegistrationWindow = v1.RegistrationWindow;
+export type WeekRegistrationResponse = v1.WeekRegistrationResponse;
 export type BatchRegistrationResult = v1.BatchRegistrationResult;
 
 export const registrationAPI = {
   getWeek: async (startDate: string, token: string): Promise<WeekRegistrationResponse> => {
-    const response = await fetch(`${API_BASE}/registrations/week?startDate=${encodeURIComponent(startDate)}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.message || 'Failed to load meal registrations');
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/registrations/week?startDate=${encodeURIComponent(startDate)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (error: unknown) {
+      throw toMobileApiError(error, 'errors.loadCalendar');
     }
-    return response.json();
+    if (!response.ok) await throwMobileResponseError(response, 'errors.loadCalendar');
+    const payload = await readMobileResponseJson(response, 'errors.loadCalendar');
+    const parsed = v1.WeekRegistrationResponseSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
+    }
+    return parsed.data;
   },
 
   batchRegister: async (
-    registrations: Array<{ mealDate: string; status: RegistrationStatus }>,
+    registrations: v1.BatchRegistrationItem[],
     token: string,
-  ): Promise<BatchRegistrationResult[]> => {
-    const response = await fetch(`${API_BASE}/registrations/batch`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ registrations }),
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.message || 'Failed to update meal registrations');
+  ): Promise<v1.BatchRegistrationResult[]> => {
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/registrations/batch`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ registrations }),
+      });
+    } catch (error: unknown) {
+      throw toMobileApiError(error, 'errors.updateRegistration');
     }
+    if (!response.ok) await throwMobileResponseError(response, 'errors.updateRegistration');
 
-    const payload: unknown = await response.json().catch(() => null);
+    const payload = await readMobileResponseJson(response, 'errors.updateRegistration');
     const parsed = v1.BatchRegistrationResponseSchema.safeParse(payload);
     if (!parsed.success) {
-      throw new Error('The registration response is invalid');
+      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
     }
     return parsed.data;
   },

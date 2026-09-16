@@ -1,5 +1,6 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { v1 } from '@imeal/contracts';
 import { KitchenEventsService } from './kitchen-events.service.js';
 
 @Injectable()
@@ -63,13 +64,23 @@ export class KitchenDashboardService {
       where: { key: `isServingReady:${dateStr}` },
     });
     const isServingReady = kitchenSignal?.value === 'true';
-
-    // 4. Calculate counters
+    // 4. Calculate counters from the same ACTIVE registration set.
     const totalRegistered = registrations.length;
     const servedTotal = registrations.filter(
       (r) => r.mealServing !== null,
     ).length;
     const remaining = Math.max(0, totalRegistered - servedTotal);
+    const regularTotal = registrations.filter(
+      (r) => r.mealChoice === 'REGULAR',
+    ).length;
+    const vegetarianTotal = registrations.filter(
+      (r) => r.mealChoice === 'VEGETARIAN',
+    ).length;
+    if (regularTotal + vegetarianTotal !== totalRegistered) {
+      throw new Error(
+        'Kitchen dashboard meal-choice counters do not match active registrations',
+      );
+    }
 
     // 5. Build lists
     const servedList = registrations
@@ -79,6 +90,7 @@ export class KitchenDashboardService {
         userId: r.userId,
         userName: r.user?.name || r.user?.email || 'N/A',
         userEmail: r.user?.email || '',
+        mealChoice: r.mealChoice,
         isServed: true,
         servedAt: r.mealServing?.servedAt
           ? r.mealServing.servedAt.toISOString()
@@ -91,6 +103,7 @@ export class KitchenDashboardService {
         registrationId: r.id,
         userId: r.userId,
         userName: r.user?.name || r.user?.email || 'N/A',
+        mealChoice: r.mealChoice,
         userEmail: r.user?.email || '',
         isServed: false,
         servedAt: null,
@@ -98,6 +111,7 @@ export class KitchenDashboardService {
 
     const allList = registrations.map((r) => ({
       registrationId: r.id,
+      mealChoice: r.mealChoice,
       userId: r.userId,
       userName: r.user?.name || r.user?.email || 'N/A',
       userEmail: r.user?.email || '',
@@ -138,6 +152,7 @@ export class KitchenDashboardService {
         userName:
           s.registration.user?.name || s.registration.user?.email || 'N/A',
         userEmail: s.registration.user?.email || '',
+        mealChoice: s.registration.mealChoice,
         servedAt: s.servedAt.toISOString(),
         isProxy,
       };
@@ -148,15 +163,18 @@ export class KitchenDashboardService {
       userId: r.userId,
       userName: r.user?.name || r.user?.email || 'N/A',
       userEmail: r.user?.email || '',
+      mealChoice: r.mealChoice,
       isServed: false,
       servedAt: null,
     }));
 
-    return {
+    return v1.KitchenDashboardSnapshotSchema.parse({
       date: dateStr,
       isServingReady,
       counters: {
         totalRegistered,
+        regularTotal,
+        vegetarianTotal,
         servedTotal,
         remaining,
         noShowTotal: noShowCount,
@@ -168,7 +186,7 @@ export class KitchenDashboardService {
         all: allList,
         noShow: noShowList,
       },
-    };
+    });
   }
 
   async toggleServingSignal(dateInput?: string, isReady: boolean = true) {

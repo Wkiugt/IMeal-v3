@@ -45,7 +45,7 @@ flowchart TB
 | `daily_menus`              | One fixed meal per date                                   |
 | `daily_menu_revisions`     | Immutable menu content revisions for history/notification |
 | `meal_days`                | Locked/snapshot operational day data                      |
-| `registrations`            | One reserved meal per user/date                           |
+| `registrations`            | One reserved meal per user/date, with a meal choice      |
 | `pickup_delegations`       | A→B receive-on-behalf authorization                       |
 | `serving_confirm_requests` | Request-level idempotency and result for batch confirm    |
 | `meal_servings`            | Immutable final serving; at most one per registration     |
@@ -227,7 +227,9 @@ enabled meal_date → exactly one daily menu row with one fixed meal
 disabled meal_date → explicit daily menu row with is_service_date=false and no meal
 ```
 
-Staff registration does not store `selected_meal_id` because Staff has no meal choice.
+- Ngày service bình thường chỉ có lựa chọn suất `REGULAR`.
+- Ngày mùng 1 hoặc 15 âm lịch, kể cả tháng nhuận, cho phép `REGULAR` hoặc `VEGETARIAN`.
+- Registration không lưu menu variant; chỉ lưu category chuẩn bị `meal_choice` cùng unique key `(user_id, meal_date)`.
 
 - `week_start_date` is Monday; default enabled service dates are Monday–Friday.
 - Publish requires every enabled service date to have a valid daily menu; holiday/non-service dates are explicitly disabled.
@@ -267,6 +269,7 @@ Purpose:
 id              UUID PK
 user_id         UUID FK users
 meal_date       date NOT NULL
+meal_choice     REGULAR | VEGETARIAN NOT NULL DEFAULT REGULAR
 menu_revision_id UUID FK daily_menu_revisions NOT NULL
 status          registered | canceled | no_show
 registered_at   timestamptz
@@ -278,6 +281,9 @@ updated_at      timestamptz
 
 UNIQUE(user_id, meal_date)
 ```
+
+- Ngày bình thường chỉ được lưu `REGULAR`; mùng 1 hoặc 15 âm lịch (kể cả tháng nhuận) được lưu `REGULAR` hoặc `VEGETARIAN`.
+- `meal_choice` là category chuẩn bị, không phải menu variant; `MealDay.mealType` tiếp tục điều khiển serving window.
 
 Logical business state `SERVED` is derived from a valid `meal_servings` row and is intentionally not duplicated as the registration status.
 
@@ -294,16 +300,14 @@ If serving exists, registration is considered fulfilled regardless of `status=re
 
 ### 8.2 Weekly batch save
 
-One API request contains requested dates. Backend:
+One API request contains requested dates and, for ACTIVE items, the requested `meal_choice`. Backend:
 
 1. Capture server `now` once in VN business context.
-2. Validate each date/menu/cutoff/current transition.
-3. Use `INSERT ... ON CONFLICT`/equivalent ORM upsert for register/re-register and store the current immutable `menu_revision_id`.
+2. Validate each date/menu/cutoff/current transition and the lunar meal-choice policy.
+3. Use `INSERT ... ON CONFLICT`/equivalent ORM upsert for register/re-register and store the current immutable `menu_revision_id` and `meal_choice`.
 4. Cancel only valid active registration.
 5. When canceling, lock and revoke any `pending|accepted` delegation, append audit/events and create notifications in the same transaction.
 6. Return result per requested date.
-
-`UNIQUE(user_id, meal_date)` prevents duplicate rows under concurrent requests.
 
 ## 9. `pickup_delegations`
 

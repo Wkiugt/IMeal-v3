@@ -22,6 +22,8 @@ describe('KitchenDashboardController (e2e)', () => {
     isServingReady: true,
     counters: {
       totalRegistered: 10,
+      regularTotal: 7,
+      vegetarianTotal: 3,
       servedTotal: 6,
       remaining: 4,
       noShowTotal: 0,
@@ -33,6 +35,7 @@ describe('KitchenDashboardController (e2e)', () => {
         userId: 'user-1',
         userName: 'Nguyen Van A',
         userEmail: 'a@example.com',
+        mealChoice: 'VEGETARIAN',
         servedAt: '2026-09-03T11:45:00.000Z',
         isProxy: false,
       },
@@ -43,6 +46,7 @@ describe('KitchenDashboardController (e2e)', () => {
           registrationId: 'reg-1',
           userId: 'user-1',
           userName: 'Nguyen Van A',
+          mealChoice: 'VEGETARIAN',
           userEmail: 'a@example.com',
           isServed: true,
           servedAt: '2026-09-03T11:45:00.000Z',
@@ -54,6 +58,7 @@ describe('KitchenDashboardController (e2e)', () => {
           userId: 'user-2',
           userName: 'Tran Thi B',
           userEmail: 'b@example.com',
+          mealChoice: 'REGULAR',
           isServed: false,
           servedAt: null,
         },
@@ -102,6 +107,14 @@ describe('KitchenDashboardController (e2e)', () => {
     expect(res.body.counters.servedTotal).toBe(6);
     expect(res.body.counters.remaining).toBe(4);
     expect(res.body.counters.noShowTotal).toBe(0);
+    expect(res.body.counters.regularTotal).toBe(7);
+    expect(res.body.counters.vegetarianTotal).toBe(3);
+    expect(
+      res.body.counters.regularTotal + res.body.counters.vegetarianTotal,
+    ).toBe(res.body.counters.totalRegistered);
+    expect(res.body.recentLogs[0].mealChoice).toBe('VEGETARIAN');
+    expect(res.body.lists.served[0].mealChoice).toBe('VEGETARIAN');
+    expect(res.body.lists.pending[0].mealChoice).toBe('REGULAR');
     expect(res.body.lists.served).toHaveLength(1);
     expect(res.body.lists.pending).toHaveLength(1);
     expect(res.body.lists.noShow).toEqual([]);

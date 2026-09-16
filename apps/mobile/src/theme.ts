@@ -19,8 +19,10 @@ export const theme = {
     statusBadDeep: '#861118',
   },
   typography: {
-    fontBody: 'System',
-    fontDisplay: 'System',
+    regular: 'BeVietnamPro_400Regular',
+    medium: 'BeVietnamPro_500Medium',
+    semiBold: 'BeVietnamPro_600SemiBold',
+    bold: 'BeVietnamPro_700Bold',
     fontMono: 'monospace',
   },
   radii: {
