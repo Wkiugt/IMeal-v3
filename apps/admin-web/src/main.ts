@@ -39,6 +39,23 @@ const PenaltyItemSchema = z.object({
   createdAt: z.string(),
 });
 type PenaltyItem = z.infer<typeof PenaltyItemSchema>;
+type PenaltyFilterStatus = 'ALL' | PenaltyItem['status'];
+
+const penaltyFilterOptions: Array<{
+  value: PenaltyFilterStatus;
+  label: string;
+}> = [
+  { value: 'ALL', label: 'Tất cả' },
+  { value: 'PENDING', label: 'Đang chờ' },
+  { value: 'PAID', label: 'Đã thanh toán' },
+  { value: 'WAIVED', label: 'Đã miễn' },
+];
+
+const penaltyStatusLabels: Record<PenaltyItem['status'], string> = {
+  PENDING: 'Đang chờ',
+  PAID: 'Đã thanh toán',
+  WAIVED: 'Đã miễn',
+};
 
 const PenaltyPageSchema = z.object({
   items: z.array(PenaltyItemSchema),
@@ -94,7 +111,8 @@ function actionButton(
 }
 
 function showError(error: unknown): void {
-  const message = error instanceof Error ? error.message : 'Unexpected error';
+  const message =
+    error instanceof Error ? error.message : 'Đã xảy ra lỗi không xác định.';
   const existing = document.querySelector('.error');
   existing?.remove();
   const target = document.querySelector('.layout') ?? app;
@@ -102,7 +120,7 @@ function showError(error: unknown): void {
 }
 
 async function accessToken(): Promise<string> {
-  if (!localToken) throw new Error('Sign in is required');
+  if (!localToken) throw new Error('Bạn cần đăng nhập.');
   return localToken;
 }
 
@@ -122,14 +140,14 @@ async function api(path: string, init?: RequestInit): Promise<unknown> {
     const parsedError = ErrorResponseSchema.safeParse(payload);
     const message = parsedError.success
       ? parsedError.data.message
-      : `Request failed with status ${response.status}`;
+      : `Yêu cầu thất bại với mã trạng thái ${response.status}.`;
     throw new Error(message);
   }
   return payload;
 }
 
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' }).format(
+  return new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium' }).format(
     new Date(value),
   );
 }
@@ -137,24 +155,24 @@ function formatDate(value: string): string {
 function renderShell(): HTMLElement {
   const shell = element('div', 'shell');
   const header = element('header', 'header');
-  header.append(element('h1', 'brand', 'IMeal Administration'));
+  header.append(element('h1', 'brand', 'Quản trị IMeal'));
   const identity = element('div', 'profile');
   identity.append(
     element('span', '', profile?.name || profile?.email || ''),
-    actionButton('Sign out', () => void signOut(), 'secondary'),
+    actionButton('Đăng xuất', () => void signOut(), 'secondary'),
   );
   header.append(identity);
 
   const layout = element('div', 'layout');
   const nav = element('nav', 'nav');
   if (profile?.permissions.includes('menu.manage')) {
-    const menuButton = actionButton('Weekly menus', () => void renderMenus());
+    const menuButton = actionButton('Thực đơn tuần', () => void renderMenus());
     menuButton.setAttribute('aria-pressed', String(currentView === 'menus'));
     nav.append(menuButton);
   }
   if (profile?.permissions.includes('penalty.read')) {
     const penaltyButton = actionButton(
-      'Penalties',
+      'Khoản phạt',
       () => void renderPenalties(),
     );
     penaltyButton.setAttribute(
@@ -191,14 +209,14 @@ async function renderMenus(): Promise<void> {
   const root = contentRoot();
   const toolbar = element('form', 'toolbar');
   const field = element('div', 'field');
-  const label = element('label', '', 'Week starts Monday');
+  const label = element('label', '', 'Tuần bắt đầu từ thứ Hai');
   const input = element('input');
   input.type = 'date';
   input.required = true;
   label.htmlFor = 'week-start';
   input.id = 'week-start';
   field.append(label, input);
-  const create = actionButton('Create draft', () => undefined);
+  const create = actionButton('Tạo bản nháp', () => undefined);
   create.type = 'submit';
   toolbar.append(field, create);
   toolbar.addEventListener('submit', (event) => {
@@ -220,7 +238,7 @@ async function renderMenus(): Promise<void> {
   try {
     const weeks = WeeklyMenusSchema.parse(await api('/admin/weekly-menus'));
     if (weeks.length === 0) {
-      root.append(element('div', 'card empty', 'No weekly menus yet.'));
+      root.append(element('div', 'card empty', 'Chưa có thực đơn tuần nào.'));
       return;
     }
     for (const week of weeks) {
@@ -232,7 +250,7 @@ async function renderMenus(): Promise<void> {
           '',
           `${formatDate(week.startDate)} – ${formatDate(week.endDate)}`,
         ),
-        actionButton('Publish week', () => {
+        actionButton('Đăng thực đơn tuần', () => {
           void api(
             `/admin/weekly-menus/${week.startDate.slice(0, 10)}/publish`,
             {
@@ -250,17 +268,17 @@ async function renderMenus(): Promise<void> {
           element(
             'div',
             'row-main',
-            `${formatDate(day.date)} · ${day.isHoliday ? 'Holiday' : day.isEnabled ? 'Enabled' : 'Disabled'}`,
+            `${formatDate(day.date)} · ${day.isHoliday ? 'Ngày nghỉ' : day.isEnabled ? 'Đang phục vụ' : 'Đã tắt'}`,
           ),
         );
         const contentInput = element('input');
         contentInput.value = day.content || '';
-        contentInput.placeholder = 'Meal description';
+        contentInput.placeholder = 'Mô tả món ăn';
         const actions = element('div', 'row-actions');
         actions.append(
           contentInput,
           actionButton(
-            'Save meal',
+            'Lưu món',
             () => {
               void updateDailyMenu(day.date, {
                 content: contentInput.value,
@@ -269,7 +287,7 @@ async function renderMenus(): Promise<void> {
             'secondary',
           ),
           actionButton(
-            day.isEnabled ? 'Disable' : 'Enable',
+            day.isEnabled ? 'Tắt' : 'Bật',
             () => {
               void updateDailyMenu(day.date, {
                 isEnabled: !day.isEnabled,
@@ -279,7 +297,7 @@ async function renderMenus(): Promise<void> {
             'secondary',
           ),
           actionButton(
-            day.isHoliday ? 'Working day' : 'Holiday',
+            day.isHoliday ? 'Ngày làm việc' : 'Ngày nghỉ',
             () => {
               void updateDailyMenu(day.date, {
                 isHoliday: !day.isHoliday,
@@ -307,17 +325,17 @@ async function renderPenalties(): Promise<void> {
   const toolbar = element('form', 'toolbar');
   const searchField = element('div', 'field');
   const search = element('input');
-  search.placeholder = 'Name or email';
-  searchField.append(element('label', '', 'Search'), search);
+  search.placeholder = 'Tên hoặc email';
+  searchField.append(element('label', '', 'Tìm kiếm'), search);
   const statusField = element('div', 'field');
   const status = element('select');
-  for (const value of ['ALL', 'PENDING', 'PAID', 'WAIVED']) {
-    const option = element('option', '', value);
-    option.value = value;
+  for (const filterOption of penaltyFilterOptions) {
+    const option = element('option', '', filterOption.label);
+    option.value = filterOption.value;
     status.append(option);
   }
-  statusField.append(element('label', '', 'Status'), status);
-  const filter = actionButton('Apply filters', () => undefined);
+  statusField.append(element('label', '', 'Trạng thái'), status);
+  const filter = actionButton('Áp dụng bộ lọc', () => undefined);
   filter.type = 'submit';
   toolbar.append(searchField, statusField, filter);
   root.append(toolbar);
@@ -335,7 +353,7 @@ async function renderPenalties(): Promise<void> {
     );
     if (page.items.length === 0) {
       root.append(
-        element('div', 'card empty', 'No penalties match these filters.'),
+        element('div', 'card empty', 'Không có khoản phạt phù hợp với bộ lọc.'),
       );
       return;
     }
@@ -346,7 +364,7 @@ async function renderPenalties(): Promise<void> {
         element(
           'strong',
           '',
-          penalty.userName || penalty.userEmail || 'Unknown user',
+          penalty.userName || penalty.userEmail || 'Người dùng không xác định',
         ),
         element(
           'div',
@@ -360,7 +378,7 @@ async function renderPenalties(): Promise<void> {
         element(
           'span',
           `status ${penalty.status.toLowerCase()}`,
-          penalty.status,
+          penaltyStatusLabels[penalty.status],
         ),
       );
       if (
@@ -368,16 +386,16 @@ async function renderPenalties(): Promise<void> {
         profile?.permissions.includes('penalty.resolve')
       ) {
         actions.append(
-          actionButton('Mark paid', () => {
+          actionButton('Đánh dấu đã thanh toán', () => {
             void api(`/admin/penalties/${penalty.id}/paid`, { method: 'POST' })
               .then(load)
               .catch(showError);
           }),
           actionButton(
-            'Waive',
+            'Miễn phạt',
             () => {
               const reason = window.prompt(
-                'Waiver reason (at least 5 characters)',
+                'Lý do miễn phạt (ít nhất 5 ký tự)',
               );
               if (!reason || reason.trim().length < 5) return;
               void api(`/admin/penalties/${penalty.id}/waive`, {
@@ -414,7 +432,7 @@ async function signIn(username: string, password: string): Promise<void> {
     throw new Error(
       parsedError.success
         ? parsedError.data.message
-        : `Sign-in failed with status ${response.status}`,
+        : `Đăng nhập thất bại với mã trạng thái ${response.status}.`,
     );
   }
   const login = LocalLoginSchema.parse(payload);
@@ -442,16 +460,16 @@ function renderLogin(error?: unknown): void {
   const username = element('input');
   username.type = 'text';
   username.name = 'username';
-  username.placeholder = 'Username';
+  username.placeholder = 'Tên đăng nhập';
   username.autocomplete = 'username';
   username.required = true;
   const password = element('input');
   password.type = 'password';
   password.name = 'password';
-  password.placeholder = 'Password';
+  password.placeholder = 'Mật khẩu';
   password.autocomplete = 'current-password';
   password.required = true;
-  const submit = actionButton('Sign in', () => undefined);
+  const submit = actionButton('Đăng nhập', () => undefined);
   submit.type = 'submit';
   form.append(username, password, submit);
   form.addEventListener('submit', (event) => {
@@ -464,11 +482,11 @@ function renderLogin(error?: unknown): void {
       });
   });
   card.append(
-    element('h1', '', 'IMeal Administration'),
+    element('h1', '', 'Quản trị IMeal'),
     element(
       'p',
       'muted',
-      'Use the local admin credentials configured in .env.',
+      'Sử dụng thông tin đăng nhập quản trị nội bộ được cấu hình trong .env.',
     ),
     form,
   );
@@ -477,7 +495,7 @@ function renderLogin(error?: unknown): void {
       element(
         'div',
         'error',
-        error instanceof Error ? error.message : 'Sign-in failed',
+        error instanceof Error ? error.message : 'Đăng nhập thất bại.',
       ),
     );
   }
@@ -498,7 +516,7 @@ async function bootstrap(): Promise<void> {
     else if (profile.permissions.includes('penalty.read')) {
       await renderPenalties();
     } else {
-      throw new Error('Your account has no administration permissions');
+      throw new Error('Tài khoản không có quyền quản trị.');
     }
   } catch (error: unknown) {
     signOut(error);
