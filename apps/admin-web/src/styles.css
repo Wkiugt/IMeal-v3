@@ -22,7 +22,8 @@ body {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 button {
@@ -121,6 +122,10 @@ button {
   justify-content: space-between;
   gap: 14px;
 }
+.row {
+  min-width: 0;
+  align-items: flex-start;
+}
 .days {
   display: grid;
   gap: 10px;
@@ -132,12 +137,38 @@ button {
   background: #f7f9fc;
 }
 .row-main {
-  min-width: 180px;
+  min-width: 0;
+  flex: 1 1 180px;
+  overflow-wrap: anywhere;
 }
 .row-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
+}
+.menu-actions {
+  flex: 1 1 420px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.meal-description {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  min-height: 72px;
+  padding: 8px 10px;
+  border: 1px solid #bdc9d8;
+  border-radius: 7px;
+  background: white;
+  resize: vertical;
+  overflow-wrap: anywhere;
+}
+.menu-actions .button {
+  width: 100%;
+  min-width: 0;
+  white-space: normal;
 }
 .status {
   display: inline-block;
@@ -197,6 +228,7 @@ button {
   .profile {
     align-items: flex-end;
   }
+  .row-main,
   .row-actions {
     width: 100%;
   }

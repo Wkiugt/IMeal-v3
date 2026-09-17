@@ -78,7 +78,7 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
         ) : (
           <>
             <View style={styles.greeting}>
-              <View>
+              <View style={styles.greetingCopy}>
                 <Eyebrow>{`${formatDay(today, locale)}, ${formatShortDate(today, locale)}`.toUpperCase()}</Eyebrow>
                 <Text style={styles.greetingName}>{t('auth.greeting', { name: greetingName })}</Text>
               </View>
@@ -101,8 +101,8 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
                   <Pill tone={statusTone}><PillText>{status}</PillText></Pill>
                 </StateTransition>
               </View>
-              <Text style={styles.mealTitle}>Grilled Chicken Rice Bowl</Text>
-              <Text style={styles.mealSub}>Steamed rice, grilled chicken thigh, stir-fried greens</Text>
+              <Text style={styles.mealTitle}>{t('dashboard.mealName')}</Text>
+              <Text style={styles.mealSub}>{t('dashboard.mealDescription')}</Text>
               <View style={styles.divider} />
               <View style={styles.metaRow}><MapPin size={16} color={theme.colors.accentDeep} strokeWidth={1.6} /><Text style={styles.metaText}>{t('dashboard.location')}</Text></View>
             </PrototypeCard>
@@ -125,6 +125,7 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   greeting: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingTop: 18, paddingBottom: 26 },
+  greetingCopy: { flex: 1, minWidth: 0, paddingRight: 12 },
   avatarButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radii.pill },
   avatarPressed: { opacity: 0.7 },
   greetingName: { marginTop: 6, color: theme.colors.fg, fontSize: 24, fontFamily: theme.typography.bold, letterSpacing: -0.25 },
