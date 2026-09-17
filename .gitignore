@@ -22,6 +22,9 @@ draft-mission/
 .worktrees/
 worktrees/
 
+# Superpowers scratch workspaces
+.superpowers/
+
 # Yarn runtime artifacts; yarn.lock and .yarnrc.yml stay tracked
 .yarn/
 .pnp.*
