@@ -271,10 +271,15 @@ async function renderMenus(): Promise<void> {
             `${formatDate(day.date)} · ${day.isHoliday ? 'Ngày nghỉ' : day.isEnabled ? 'Đang phục vụ' : 'Đã tắt'}`,
           ),
         );
-        const contentInput = element('input');
+        const contentInput = element('textarea', 'meal-description');
+        contentInput.rows = 3;
         contentInput.value = day.content || '';
         contentInput.placeholder = 'Mô tả món ăn';
-        const actions = element('div', 'row-actions');
+        contentInput.setAttribute(
+          'aria-label',
+          `Mô tả món ăn ngày ${formatDate(day.date)}`,
+        );
+        const actions = element('div', 'row-actions menu-actions');
         actions.append(
           contentInput,
           actionButton(
