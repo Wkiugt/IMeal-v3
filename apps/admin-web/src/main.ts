@@ -63,6 +63,15 @@ const PenaltyPageSchema = z.object({
 });
 
 const ErrorResponseSchema = z.object({ message: z.string() });
+class AdminDisplayError extends Error {}
+
+function userFacingMessage(error: unknown, fallback: string): string {
+  if (error instanceof AdminDisplayError) {
+    return error.message;
+  }
+  return fallback;
+}
+
 
 type ViewName = 'menus' | 'penalties';
 
@@ -111,8 +120,7 @@ function actionButton(
 }
 
 function showError(error: unknown): void {
-  const message =
-    error instanceof Error ? error.message : 'Đã xảy ra lỗi không xác định.';
+  const message = userFacingMessage(error, 'Đã xảy ra lỗi không xác định.');
   const existing = document.querySelector('.error');
   existing?.remove();
   const target = document.querySelector('.layout') ?? app;
@@ -120,7 +128,7 @@ function showError(error: unknown): void {
 }
 
 async function accessToken(): Promise<string> {
-  if (!localToken) throw new Error('Bạn cần đăng nhập.');
+  if (!localToken) throw new AdminDisplayError('Bạn cần đăng nhập.');
   return localToken;
 }
 
@@ -141,7 +149,7 @@ async function api(path: string, init?: RequestInit): Promise<unknown> {
     const message = parsedError.success
       ? parsedError.data.message
       : `Yêu cầu thất bại với mã trạng thái ${response.status}.`;
-    throw new Error(message);
+    throw new AdminDisplayError(message);
   }
   return payload;
 }
@@ -434,7 +442,7 @@ async function signIn(username: string, password: string): Promise<void> {
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const parsedError = ErrorResponseSchema.safeParse(payload);
-    throw new Error(
+    throw new AdminDisplayError(
       parsedError.success
         ? parsedError.data.message
         : `Đăng nhập thất bại với mã trạng thái ${response.status}.`,
@@ -500,7 +508,7 @@ function renderLogin(error?: unknown): void {
       element(
         'div',
         'error',
-        error instanceof Error ? error.message : 'Đăng nhập thất bại.',
+        userFacingMessage(error, 'Đăng nhập thất bại.'),
       ),
     );
   }
@@ -521,7 +529,7 @@ async function bootstrap(): Promise<void> {
     else if (profile.permissions.includes('penalty.read')) {
       await renderPenalties();
     } else {
-      throw new Error('Tài khoản không có quyền quản trị.');
+      throw new AdminDisplayError('Tài khoản không có quyền quản trị.');
     }
   } catch (error: unknown) {
     signOut(error);
