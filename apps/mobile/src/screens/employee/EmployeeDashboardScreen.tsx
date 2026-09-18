@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ArrowRight, CalendarDays, MapPin, QrCode } from 'lucide-react-native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { registrationAPI } from '../../api/registrationAPI';
@@ -8,8 +9,8 @@ import { getMobileErrorMessage } from '../../api/mobileApiError';
 import { startOfWeek, toDateKey, formatDay, formatShortDate, initials } from '../../businessDate';
 import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame } from '../../ui/PrototypeShell';
-import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
+import { StateTransition } from '../../ui/BrandMotion';
+import { useScreenLoadingGate } from '../../ui/useScreenLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { useLanguage } from '../../i18n/LanguageProvider';
 import { theme } from '../../theme';
@@ -20,40 +21,41 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
   const { token, profile } = useSession();
   const { showNotice } = useNotice();
   const { locale, t } = useLanguage();
+  const isFocused = useIsFocused();
   const [todayRegistered, setTodayRegistered] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
+  const dashboardRequestId = useRef(0);
 
-  useEffect(() => {
-    if (!token) return;
-    let mounted = true;
-    setLoading(true);
-    void registrationAPI.getWeek(toDateKey(startOfWeek(new Date())), token)
-      .then(({ registrations }) => {
-        if (mounted) {
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!token) return undefined;
+      const requestId = ++dashboardRequestId.current;
+      setLoading(true);
+      void registrationAPI.getWeek(toDateKey(startOfWeek(new Date())), token)
+        .then(({ registrations }) => {
+          if (requestId !== dashboardRequestId.current) return;
           const today = toDateKey(new Date());
           setTodayRegistered(registrations.some((registration) => registration.mealDate.slice(0, 10) === today && registration.status === 'ACTIVE'));
-        }
-      })
-      .catch((error: unknown) => {
-        if (mounted) {
+        })
+        .catch((error: unknown) => {
+          if (requestId !== dashboardRequestId.current) return;
           setTodayRegistered(null);
           showNotice({
             title: t('dashboard.unavailable'),
             message: getMobileErrorMessage(error, t, 'errors.loadCalendar'),
             tone: 'error',
           });
-        }
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
-      });
-    return () => { mounted = false; };
-  }, [showNotice, t, token]);
-
-  const initialGate = useInitialLoadingGate(
-    loading,
-    !loading && todayRegistered === null,
+        })
+        .finally(() => {
+          if (requestId === dashboardRequestId.current) setLoading(false);
+        });
+      return () => {
+        dashboardRequestId.current += 1;
+      };
+    }, [showNotice, t, token]),
   );
+
+  const screenLoading = useScreenLoadingGate(isFocused, !loading);
   const greetingName = profile?.name || profile?.email.split('@')[0] || t('profile.employeeAccount');
   const status = todayRegistered === true
     ? t('dashboard.confirmed')
@@ -63,61 +65,51 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
   const statusTone = todayRegistered === true ? 'soft' : 'warn';
   const today = new Date();
   return (
-    <PrototypeFrame>
+    <PrototypeFrame screenLoadingLabel={screenLoading ? t('dashboard.loadingRegistration') : undefined}>
       <StateTransition
-        stateKey={
-          initialGate
-            ? 'loading'
-            : todayRegistered === null
-              ? 'unavailable'
-              : 'loaded'
-        }
+        stateKey={todayRegistered === null ? 'unavailable' : 'loaded'}
       >
-        {initialGate ? (
-          <BrandLoader label={t('dashboard.loadingRegistration')} />
-        ) : (
-          <>
-            <View style={styles.greeting}>
-              <View style={styles.greetingCopy}>
-                <Eyebrow>{`${formatDay(today, locale)}, ${formatShortDate(today, locale)}`.toUpperCase()}</Eyebrow>
-                <Text style={styles.greetingName}>{t('auth.greeting', { name: greetingName })}</Text>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={t('dashboard.openProfile')}
-                onPress={() => navigation.navigate('EmployeeProfile', { screen: 'ProfileHome' })}
-                style={({ pressed }) => [styles.avatarButton, pressed && styles.avatarPressed]}
-              >
-                <Avatar initials={initials(profile?.name, 'ME')} />
-              </Pressable>
+        <>
+          <View style={styles.greeting}>
+            <View style={styles.greetingCopy}>
+              <Eyebrow>{`${formatDay(today, locale)}, ${formatShortDate(today, locale)}`.toUpperCase()}</Eyebrow>
+              <Text style={styles.greetingName}>{t('auth.greeting', { name: greetingName })}</Text>
             </View>
-            <PrototypeCard style={styles.mealCard}>
-              <View style={styles.topRow}>
-                <Pill><PillText>{t('dashboard.lunchService')}</PillText></Pill>
-                <StateTransition
-                  stateKey={todayRegistered === null ? 'unavailable' : 'loaded'}
-                  style={styles.statusTransition}
-                >
-                  <Pill tone={statusTone}><PillText>{status}</PillText></Pill>
-                </StateTransition>
-              </View>
-              <Text style={styles.mealTitle}>{t('dashboard.mealName')}</Text>
-              <Text style={styles.mealSub}>{t('dashboard.mealDescription')}</Text>
-              <View style={styles.divider} />
-              <View style={styles.metaRow}><MapPin size={16} color={theme.colors.accentDeep} strokeWidth={1.6} /><Text style={styles.metaText}>{t('dashboard.location')}</Text></View>
-            </PrototypeCard>
-
-            <Pressable accessibilityRole="button" accessibilityLabel={t('dashboard.openMealTicket')} onPress={() => navigation.navigate('PickupIntent')} style={styles.scanCta}>
-              <View style={styles.scanIcon}><QrCode size={24} color={theme.colors.surface} strokeWidth={1.6} /></View>
-              <View style={styles.scanCopy}><Text style={styles.scanTitle}>{t('dashboard.openMealTicket')}</Text><Text style={styles.scanSub}>{t('dashboard.showDynamicQr')}</Text></View>
-              <ArrowRight size={18} color={theme.colors.surface} strokeWidth={1.6} />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t('dashboard.openProfile')}
+              onPress={() => navigation.navigate('EmployeeProfile', { screen: 'ProfileHome' })}
+              style={({ pressed }) => [styles.avatarButton, pressed && styles.avatarPressed]}
+            >
+              <Avatar initials={initials(profile?.name, 'ME')} />
             </Pressable>
+          </View>
+          <PrototypeCard style={styles.mealCard}>
+            <View style={styles.topRow}>
+              <Pill><PillText>{t('dashboard.lunchService')}</PillText></Pill>
+              <StateTransition
+                stateKey={todayRegistered === null ? 'unavailable' : 'loaded'}
+                style={styles.statusTransition}
+              >
+                <Pill tone={statusTone}><PillText>{status}</PillText></Pill>
+              </StateTransition>
+            </View>
+            <Text style={styles.mealTitle}>{t('dashboard.mealName')}</Text>
+            <Text style={styles.mealSub}>{t('dashboard.mealDescription')}</Text>
+            <View style={styles.divider} />
+            <View style={styles.metaRow}><MapPin size={16} color={theme.colors.accentDeep} strokeWidth={1.6} /><Text style={styles.metaText}>{t('dashboard.location')}</Text></View>
+          </PrototypeCard>
 
-            <Pressable accessibilityRole="button" accessibilityLabel={t('dashboard.manageWeeklyRegistration')} onPress={() => navigation.navigate('EmployeeCalendar')} style={styles.calendarLink}>
-              <CalendarDays size={16} color={theme.colors.accentDeep} /><Text style={styles.calendarLinkText}>{t('dashboard.manageWeeklyRegistration')}</Text>
-            </Pressable>
-          </>
-        )}
+          <Pressable accessibilityRole="button" accessibilityLabel={t('dashboard.openMealTicket')} onPress={() => navigation.navigate('PickupIntent')} style={styles.scanCta}>
+            <View style={styles.scanIcon}><QrCode size={24} color={theme.colors.surface} strokeWidth={1.6} /></View>
+            <View style={styles.scanCopy}><Text style={styles.scanTitle}>{t('dashboard.openMealTicket')}</Text><Text style={styles.scanSub}>{t('dashboard.showDynamicQr')}</Text></View>
+            <ArrowRight size={18} color={theme.colors.surface} strokeWidth={1.6} />
+          </Pressable>
+
+          <Pressable accessibilityRole="button" accessibilityLabel={t('dashboard.manageWeeklyRegistration')} onPress={() => navigation.navigate('EmployeeCalendar')} style={styles.calendarLink}>
+            <CalendarDays size={16} color={theme.colors.accentDeep} /><Text style={styles.calendarLinkText}>{t('dashboard.manageWeeklyRegistration')}</Text>
+          </Pressable>
+        </>
       </StateTransition>
     </PrototypeFrame>
   );

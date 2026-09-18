@@ -3,8 +3,10 @@ import {
   Injectable,
   HttpException,
   HttpStatus,
+  Optional,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { v1 } from '@imeal/contracts';
 import type { VietnameseLunarDate } from '../common/vietnamese-lunar.js';
 import {
@@ -54,6 +56,14 @@ type WeeklyMenuData = {
 export class RegistrationsService {
   private prisma = new PrismaClient();
   private menuCache = new Map<string, { data: WeeklyMenuData; expiry: number }>();
+  private readonly notificationsService: NotificationsService;
+
+  constructor(
+    @Optional() notificationsService?: NotificationsService,
+  ) {
+    this.notificationsService =
+      notificationsService ?? new NotificationsService();
+  }
 
   async getWeekData(userId: string, weekStart: string) {
     let startDate: Date;
@@ -264,15 +274,23 @@ export class RegistrationsService {
         while (true) {
           try {
             await this.prisma.$transaction(async (tx) => {
-              const registration = await tx.registration.findUnique({
+              let registration = await tx.registration.findUnique({
                 where: {
                   userId_mealDate: {
                     userId,
                     mealDate,
                   },
                 },
-                include: { delegations: true },
+                include: { user: true },
               });
+
+              if (registration) {
+                await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registration.id} FOR UPDATE`;
+                registration = await tx.registration.findUnique({
+                  where: { id: registration.id },
+                  include: { user: true },
+                });
+              }
 
               if (
                 registration &&
@@ -328,18 +346,38 @@ export class RegistrationsService {
                   },
                 });
 
-                // Strict modular boundaries (DDD) using Outbox pattern for delegations cascade
-                if (registration.delegations?.length) {
-                  const payload = JSON.stringify({
+                const activeDelegations = await tx.pickupDelegation.findMany({
+                  where: {
                     registrationId: registration.id,
+                    status: { in: ['PENDING', 'ACCEPTED'] },
+                  },
+                });
+                for (const delegation of activeDelegations) {
+                  await tx.pickupDelegation.update({
+                    where: { id: delegation.id },
+                    data: { status: 'REVOKED' },
                   });
-                  await tx.outboxEvent.create({
+                  await tx.auditLog.create({
                     data: {
-                      aggregateType: 'REGISTRATION',
-                      aggregateId: registration.id,
-                      eventType: 'REGISTRATION_CANCELLED',
-                      payload,
+                      userId,
+                      action: 'delegation_revoked',
+                      details: `Delegation ${delegation.id} revoked because registration ${registration.id} was cancelled`,
                     },
+                  });
+                  await this.notificationsService.publish(tx, {
+                    userId: delegation.delegateUserId,
+                    kind: 'DELEGATION_REVOKED',
+                    payload: {
+                      delegationId: delegation.id,
+                      registrationId: registration.id,
+                      mealDate: mealDate.toISOString().slice(0, 10),
+                      counterpartName:
+                        registration.user.name?.trim() ||
+                        registration.user.email?.trim() ||
+                        'nhân viên',
+                      reason: 'REGISTRATION_CANCELLED',
+                    },
+                    dedupeKey: `delegation-revoked:${delegation.delegateUserId}:${delegation.id}`,
                   });
                 }
               }

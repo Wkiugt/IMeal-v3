@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { vi, describe, beforeEach, it, expect } from 'vitest';
-import { PushTransportService } from '../notifications/push-transport.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 describe('DelegationsService', () => {
   let service: DelegationsService;
@@ -16,6 +16,7 @@ describe('DelegationsService', () => {
 
   beforeEach(async () => {
     prismaMock = {
+      $queryRaw: vi.fn(),
       $transaction: vi.fn().mockImplementation((cb) => cb(prismaMock)),
       registration: {
         findUnique: vi.fn(),
@@ -35,17 +36,16 @@ describe('DelegationsService', () => {
       },
     };
 
-    pushServiceMock = {
-      registerToken: vi.fn(),
-      sendPushNotification: vi.fn().mockResolvedValue(undefined),
+    const notificationsServiceMock = {
+      publish: vi.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DelegationsService,
         {
-          provide: PushTransportService,
-          useValue: pushServiceMock,
+          provide: NotificationsService,
+          useValue: notificationsServiceMock,
         },
       ],
     }).compile();
@@ -107,6 +107,7 @@ describe('DelegationsService', () => {
       prismaMock.registration.findUnique.mockResolvedValue({
         userId: 'owner1',
         id: 'reg1',
+        status: 'ACTIVE',
       });
       prismaMock.mealServing.findUnique.mockResolvedValue(null);
       prismaMock.pickupDelegation.findFirst.mockResolvedValue(null);
@@ -131,6 +132,7 @@ describe('DelegationsService', () => {
       prismaMock.registration.findUnique.mockResolvedValue({
         userId: 'owner1',
         id: 'reg1',
+        status: 'ACTIVE',
       });
       prismaMock.mealServing.findUnique.mockResolvedValue(null);
       // Simulate existing active delegation
@@ -152,6 +154,7 @@ describe('DelegationsService', () => {
       prismaMock.registration.findUnique.mockResolvedValue({
         userId: 'owner1',
         id: 'reg1',
+        status: 'ACTIVE',
       });
       // Simulate meal already served
       prismaMock.mealServing.findUnique.mockResolvedValue({ id: 'serving1' });

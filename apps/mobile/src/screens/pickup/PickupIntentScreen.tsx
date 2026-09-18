@@ -21,7 +21,7 @@ import {
 } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
+import { useScreenLoadingGate } from '../../ui/useScreenLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { theme } from '../../theme';
 import { useLanguage } from '../../i18n/LanguageProvider';
@@ -47,8 +47,7 @@ export function PickupIntentScreen(_props: Props) {
   const optionsRequestId = useRef(0);
   const isFocused = useIsFocused();
   const qrState = useRef<{ value: string; expiresAt: number; ttlMs: number } | null>(null);
-  const initialGate = useInitialLoadingGate(loading, Boolean(loadError));
-  const showLoading = initialGate || (loading && options.length === 0);
+  const screenLoading = useScreenLoadingGate(isFocused, !loading);
 
   const fetchOptions = useCallback(async () => {
     if (!token) return;
@@ -194,29 +193,29 @@ export function PickupIntentScreen(_props: Props) {
       : null;
 
   return (
-    <PrototypeFrame>
+    <PrototypeFrame screenLoadingLabel={screenLoading ? t('pickup.loading') : undefined}>
       <PrototypeSectionTitle
         title={t('pickup.title')}
         subtitle={t('pickup.subtitle')}
       />
       <StateTransition
         stateKey={
-          showLoading
-            ? 'loading'
-            : errorState || (options.length === 0 ? 'empty' : 'ready')
+          errorState || (options.length === 0 ? 'empty' : 'ready')
         }
       >
-        {showLoading ? (
-          <BrandLoader label={t('pickup.loading')} />
-        ) : loadError?.type === 'window-closed' ? (
+        {loadError?.type === 'window-closed' ? (
           <PrototypeCard style={styles.emptyCard}>
-            <View style={styles.errorHeader}>
-              <Clock3 size={22} color={theme.colors.accentDeep} />
-              <Text style={styles.emptyTitle}>{t('pickup.windowClosed')}</Text>
+            <View style={styles.windowClosedRow}>
+              <View style={styles.windowClosedIcon}>
+                <Clock3 size={22} color={theme.colors.accentDeep} />
+              </View>
+              <View style={styles.windowClosedCopy}>
+                <Text style={styles.emptyTitle}>{t('pickup.windowClosed')}</Text>
+                <Text style={styles.windowClosedHint}>
+                  {t('pickup.windowClosedHint')}
+                </Text>
+              </View>
             </View>
-            <Text style={styles.emptyText}>
-              {t('pickup.windowClosedHint')}
-            </Text>
           </PrototypeCard>
         ) : loadError?.type === 'not-ready' ? (
           <PrototypeCard style={styles.emptyCard}>
@@ -360,10 +359,13 @@ export function PickupIntentScreen(_props: Props) {
 const styles = StyleSheet.create({
   retryButton: { marginTop: 16 },
   emptyCard: { marginTop: 20 },
-  errorHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  selectionCard: { marginBottom: 16 },
+  windowClosedRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  windowClosedIcon: { width: 40, height: 40, flexShrink: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accentTint, borderRadius: theme.radii.sm },
+  windowClosedCopy: { flex: 1, minWidth: 0 },
+  windowClosedHint: { marginTop: 8, color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19 },
   emptyTitle: { color: theme.colors.fg, fontSize: 17, fontFamily: theme.typography.bold },
   emptyText: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19, marginTop: 8 },
-  selectionCard: { marginBottom: 16 },
   selectionHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 },
   selectionHint: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular },
   optionRow: { minHeight: 52, paddingVertical: 9, paddingHorizontal: 10, borderRadius: theme.radii.sm, flexDirection: 'row', alignItems: 'center', gap: 10 },

@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ArrowLeft, CheckCircle, Clock, Search, XCircle } from 'lucide-react-native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import type { ProfileStackScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { delegationAPI, type DelegationResponse } from '../../api/delegationAPI';
@@ -14,7 +15,7 @@ import {
 import { PrototypeButton, PrototypeCard, PrototypeField, Pill, PillText } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
+import { useScreenLoadingGate } from '../../ui/useScreenLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { formatBusinessInstant } from '../../businessDate';
 import { getMobileErrorMessage } from '../../api/mobileApiError';
@@ -27,6 +28,7 @@ export function DelegationScreen({ navigation }: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
   const { locale, t } = useLanguage();
+  const isFocused = useIsFocused();
   const [tab, setTab] = useState<Tab>('OUTGOING');
   const [searchQuery, setSearchQuery] = useState('');
   const [dataByTab, setDataByTab] = useState<DelegationCache>(() => createDelegationCache());
@@ -38,11 +40,7 @@ export function DelegationScreen({ navigation }: Props) {
   const hasLoadedAnyData = useRef(false);
   const activeTabRef = useRef<Tab>('OUTGOING');
   const activeCache = dataByTab[tab];
-  const initialGate = useInitialLoadingGate(
-    initialLoading,
-    Boolean(loadError && !activeCache.loaded),
-  );
-  const showLoading = initialGate || (initialLoading && !hasLoadedAnyData.current);
+  const screenLoading = useScreenLoadingGate(isFocused, !initialLoading && !refreshing);
   const showTabLoading = !activeCache.loaded && refreshing;
 
   const loadDelegations = useCallback(async (targetTab: Tab) => {
@@ -69,12 +67,14 @@ export function DelegationScreen({ navigation }: Props) {
     }
   }, [showNotice, t, token]);
 
-  useEffect(() => {
-    void loadDelegations(tab);
-    return () => {
-      delegationRequestId.current += 1;
-    };
-  }, [loadDelegations, tab]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadDelegations(activeTabRef.current);
+      return () => {
+        delegationRequestId.current += 1;
+      };
+    }, [loadDelegations, tab]),
+  );
 
   const selectTab = (nextTab: Tab) => {
     if (nextTab === activeTabRef.current) return;
@@ -107,15 +107,13 @@ export function DelegationScreen({ navigation }: Props) {
   const visible = getDelegationsForTab(dataByTab, tab).filter((delegation) => tab === 'INCOMING' || delegation.delegateUserId.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
-    <PrototypeFrame>
+    <PrototypeFrame screenLoadingLabel={screenLoading ? t('delegation.loading') : undefined}>
       <View style={styles.header}><Pressable accessibilityRole="button" accessibilityLabel={t('delegation.back')} onPress={() => navigation.goBack()} style={styles.back}><ArrowLeft size={20} color={theme.colors.fg} /></Pressable><View style={styles.headerCopy}><PrototypeSectionTitle title={t('delegation.title')} subtitle={t('delegation.subtitle')} /></View></View>
       <View style={styles.tabs}><Pressable accessibilityRole="tab" accessibilityState={{ selected: tab === 'OUTGOING' }} onPress={() => selectTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>{t('delegation.myRequests')}</Text></Pressable><Pressable accessibilityRole="tab" accessibilityState={{ selected: tab === 'INCOMING' }} onPress={() => selectTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>{t('delegation.incoming')}</Text></Pressable></View>
       {tab === 'OUTGOING' && <PrototypeField icon={Search} accessibilityLabel={t('delegation.searchPlaceholder')} placeholder={t('delegation.searchPlaceholder')} value={searchQuery} onChangeText={setSearchQuery} style={styles.search} />}
       {refreshing && activeCache.loaded && <Text style={styles.refreshing}>{t('delegation.refreshing')}</Text>}
-      <StateTransition stateKey={showLoading ? 'loading' : loadError && !activeCache.loaded ? 'error' : showTabLoading ? 'tab-loading' : visible.length === 0 ? 'empty' : 'list'}>
-        {showLoading ? (
-          <BrandLoader label={t('delegation.loading')} />
-        ) : loadError && !activeCache.loaded ? (
+      <StateTransition stateKey={loadError && !activeCache.loaded ? 'error' : showTabLoading ? 'tab-loading' : visible.length === 0 ? 'empty' : 'list'}>
+        {loadError && !activeCache.loaded ? (
           <PrototypeCard style={styles.errorCard}>
             <Text style={styles.errorTitle}>{t('delegation.unavailable')}</Text>
             <Text style={styles.errorText}>{getMobileErrorMessage(loadError, t, 'errors.loadDelegations')}</Text>

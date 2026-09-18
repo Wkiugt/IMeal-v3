@@ -117,6 +117,7 @@ Useful workspace commands include `yarn workspace @imeal/api start:dev`, `yarn w
 
 Vitest is used across the repository; Nest tests use `@nestjs/testing`, HTTP e2e tests use Supertest, and contract tests validate Zod schemas.
 
+- Default task workflow: implement requested fixes/features and report the changed files and behavior. Do not run automated test-case suites unless the user explicitly requests them; the user owns manual QA. Non-test static checks required by the active harness remain allowed and must be reported separately.
 - Unit tests: `yarn test:unit`. API and worker unit discovery is `**/*.spec.ts`; contracts and domain use normal Vitest discovery.
 - DB/e2e tests: `yarn test:db`. Domain setup creates a disposable random PostgreSQL schema, deploys migrations, truncates tables between tests, and drops the schema afterward. It requires `DATABASE_URL` and PostgreSQL. API e2e reuses this setup; worker e2e does not.
 - API/worker coverage: `yarn workspace @imeal/api test:cov` or `yarn workspace @imeal/worker test:cov`. Coverage uses V8; no repository-wide threshold was found.

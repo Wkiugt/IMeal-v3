@@ -1,12 +1,17 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { PushTransportService } from '../../notifications/push-transport.service.js';
+import type { Prisma } from '@prisma/client';
+import { NotificationsService } from '../../notifications/notifications.service.js';
+
+function mealDate(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
 
 @Injectable()
 export class WeeklyMenusService {
-  private prisma: PrismaClient;
+  private readonly prisma: PrismaClient;
 
-  constructor(private readonly pushService: PushTransportService) {
+  constructor(private readonly notificationsService: NotificationsService) {
     this.prisma = new PrismaClient();
   }
 
@@ -24,9 +29,8 @@ export class WeeklyMenusService {
   async createDraft(startDateStr: string) {
     const startDate = new Date(startDateStr);
     const endDate = new Date(startDate);
-    endDate.setDate(startDate.getDate() + 6); // Sunday
+    endDate.setDate(startDate.getDate() + 6);
 
-    // Audit log placeholder (userId would come from request context, but we simplify here or mock)
     await this.logAudit(
       'create_draft',
       `Created draft for week ${startDateStr}`,
@@ -39,16 +43,12 @@ export class WeeklyMenusService {
         dailyMenus: {
           create: Array.from({ length: 5 }).map((_, i) => {
             const date = new Date(startDate);
-            date.setDate(startDate.getDate() + i); // Mon to Fri
+            date.setDate(startDate.getDate() + i);
             return {
               date,
               isHoliday: false,
               isEnabled: true,
-              mealDays: {
-                create: {
-                  mealType: 'LUNCH', // Exactly one meal per day
-                },
-              },
+              mealDays: { create: { mealType: 'LUNCH' } },
             };
           }),
         },
@@ -57,25 +57,66 @@ export class WeeklyMenusService {
     });
   }
 
-  async updateDailyMenu(dateStr: string, data: any) {
+  async updateDailyMenu(dateStr: string, data: {
+    content?: string;
+    mealType?: string;
+    isHoliday?: boolean;
+    isEnabled?: boolean;
+  }) {
     const date = new Date(dateStr);
 
     return this.prisma.$transaction(async (tx) => {
+      const weeklyMenuRef = await tx.weeklyMenu.findFirst({
+        where: { dailyMenus: { some: { date } } },
+        select: { id: true },
+      });
+      if (!weeklyMenuRef) {
+        throw new HttpException('Daily menu not found', HttpStatus.NOT_FOUND);
+      }
+
+      await tx.$queryRaw`SELECT id FROM weekly_menus WHERE id = ${weeklyMenuRef.id} FOR UPDATE`;
       const dailyMenu = await tx.dailyMenu.findUnique({
         where: { date },
-        include: { weeklyMenu: true },
+        include: {
+          weeklyMenu: true,
+          revisions: { orderBy: { createdAt: 'desc' }, take: 1 },
+          mealDays: true,
+        },
       });
 
       if (!dailyMenu) {
         throw new HttpException('Daily menu not found', HttpStatus.NOT_FOUND);
       }
 
-      if (data.isHoliday || data.isEnabled === false) {
-        // Prevent unpublish if active registrations exist
+      const lockedWeeklyMenu = await tx.weeklyMenu.findUnique({
+        where: { id: weeklyMenuRef.id },
+        select: { publishedAt: true },
+      });
+      const publishedAt = lockedWeeklyMenu?.publishedAt ?? null;
+      const latestRevision = dailyMenu.revisions[0];
+      const currentMealType = dailyMenu.mealDays[0]?.mealType;
+      const contentChanged =
+        data.content !== undefined && data.content !== latestRevision?.content;
+      const mealTypeChanged =
+        data.mealType !== undefined && data.mealType !== currentMealType;
+      const holidayChanged =
+        data.isHoliday !== undefined && data.isHoliday !== dailyMenu.isHoliday;
+      const enabledChanged =
+        data.isEnabled !== undefined && data.isEnabled !== dailyMenu.isEnabled;
+      const changed =
+        contentChanged || mealTypeChanged || holidayChanged || enabledChanged;
+
+      if (!changed) {
+        return dailyMenu;
+      }
+
+      if (
+        (holidayChanged && data.isHoliday === true) ||
+        (enabledChanged && data.isEnabled === false)
+      ) {
         const registrations = await tx.registration.findMany({
           where: { mealDate: date, status: 'ACTIVE' },
         });
-
         if (registrations.length > 0) {
           throw new HttpException(
             'Cannot disable day with active registrations',
@@ -84,70 +125,116 @@ export class WeeklyMenusService {
         }
       }
 
+      const revision = await tx.dailyMenuRevision.create({
+        data: {
+          dailyMenuId: dailyMenu.id,
+          content: data.content ?? latestRevision?.content ?? '',
+        },
+      });
+
+      await tx.dailyMenu.update({
+        where: { date },
+        data: {
+          isHoliday: data.isHoliday ?? dailyMenu.isHoliday,
+          isEnabled: data.isEnabled ?? dailyMenu.isEnabled,
+        },
+      });
+      if (mealTypeChanged) {
+        await tx.mealDay.updateMany({
+          where: { dailyMenuId: dailyMenu.id },
+          data: { mealType: data.mealType ?? currentMealType ?? 'LUNCH' },
+        });
+      }
+
       await this.logAuditTx(
         tx,
         'update_daily_menu',
         `Updated daily menu for ${dateStr}`,
       );
 
-      return tx.dailyMenu.update({
+      if (publishedAt) {
+        const registrations = await tx.registration.findMany({
+          where: { mealDate: date, status: 'ACTIVE' },
+        });
+        for (const registration of registrations) {
+          await this.notificationsService.publish(tx, {
+            userId: registration.userId,
+            kind: 'REGISTERED_MENU_CHANGED',
+            payload: {
+              dailyMenuRevisionId: revision.id,
+              mealDate: mealDate(date),
+            },
+            dedupeKey: `registered-menu-changed:${registration.userId}:${revision.id}`,
+          });
+        }
+      }
+
+      return tx.dailyMenu.findUnique({
         where: { date },
-        data: {
-          isHoliday: data.isHoliday ?? dailyMenu.isHoliday,
-          isEnabled: data.isEnabled ?? dailyMenu.isEnabled,
-          revisions: data.content
-            ? {
-                create: { content: data.content },
-              }
-            : undefined,
-        },
+        include: { mealDays: true, revisions: true },
       });
     });
   }
 
   async publishWeeklyMenu(weekStartStr: string) {
     const startDate = new Date(weekStartStr);
-    const notificationsToSend: { userId: string; message: string }[] = [];
 
-    const weeklyMenu = await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
       const weeklyMenu = await tx.weeklyMenu.findFirst({
         where: { startDate },
         include: { dailyMenus: true },
       });
-
       if (!weeklyMenu) {
         throw new HttpException('Weekly menu not found', HttpStatus.NOT_FOUND);
       }
 
-      for (const dm of weeklyMenu.dailyMenus) {
-        // Create revision 1 if none exists, else create new revision
-        const existingRevs = await tx.dailyMenuRevision.count({
-          where: { dailyMenuId: dm.id },
-        });
+      await tx.$queryRaw`SELECT id FROM weekly_menus WHERE id = ${weeklyMenu.id} FOR UPDATE`;
+      const lockedWeeklyMenu = await tx.weeklyMenu.findUnique({
+        where: { id: weeklyMenu.id },
+        select: { publishedAt: true },
+      });
+      if (lockedWeeklyMenu?.publishedAt) {
+        return weeklyMenu;
+      }
 
-        await tx.dailyMenuRevision.create({
-          data: {
-            dailyMenuId: dm.id,
-            content: `Revision ${existingRevs + 1} published`,
-          },
+      for (const dailyMenu of weeklyMenu.dailyMenus) {
+        const revision = await tx.dailyMenuRevision.findFirst({
+          where: { dailyMenuId: dailyMenu.id },
+          select: { id: true },
         });
-
-        // Pre-cutoff registrations preservation & notification
-        // Find existing registrations for this date
-        const regs = await tx.registration.findMany({
-          where: { mealDate: dm.date, status: 'ACTIVE' },
-        });
-
-        for (const reg of regs) {
-          const message = `Menu for ${dm.date.toISOString()} has been updated/published.`;
-          await tx.notification.create({
+        if (!revision) {
+          await tx.dailyMenuRevision.create({
             data: {
-              userId: reg.userId,
-              content: message,
+              dailyMenuId: dailyMenu.id,
+              content: `Revision 1 published`,
             },
           });
-          notificationsToSend.push({ userId: reg.userId, message });
         }
+      }
+
+      const published = await tx.weeklyMenu.update({
+        where: { id: weeklyMenu.id },
+        data: { publishedAt: new Date() },
+        include: { dailyMenus: true },
+      });
+
+      const staff = await tx.user.findMany({
+        where: {
+          isActive: true,
+          userRoles: { some: { role: { name: 'staff' } } },
+        },
+        select: { id: true, name: true, email: true },
+      });
+      for (const user of staff) {
+        await this.notificationsService.publish(tx, {
+          userId: user.id,
+          kind: 'REGISTRATION_OPENED',
+          payload: {
+            weekStart: mealDate(weeklyMenu.startDate),
+            weekEnd: mealDate(weeklyMenu.endDate),
+          },
+          dedupeKey: `registration-opened:${user.id}:${weeklyMenu.id}`,
+        });
       }
 
       await this.logAuditTx(
@@ -155,31 +242,19 @@ export class WeeklyMenusService {
         'publish_weekly_menu',
         `Published weekly menu for ${weekStartStr}`,
       );
-      return weeklyMenu;
+      return published;
     });
-
-    // Send push outside the transaction
-    for (const notif of notificationsToSend) {
-      await this.pushService
-        .sendPushNotification(notif.userId, 'Menu Update', notif.message)
-        .catch((e) => {
-          // Handled gracefully in pushService, but catch here just in case
-          console.error('Push error:', e);
-        });
-    }
-
-    return weeklyMenu;
   }
 
   private async logAudit(action: string, details: string) {
-    await this.prisma.auditLog.create({
-      data: { action, details },
-    });
+    await this.prisma.auditLog.create({ data: { action, details } });
   }
 
-  private async logAuditTx(tx: any, action: string, details: string) {
-    await tx.auditLog.create({
-      data: { action, details },
-    });
+  private async logAuditTx(
+    tx: Prisma.TransactionClient,
+    action: string,
+    details: string,
+  ) {
+    await tx.auditLog.create({ data: { action, details } });
   }
 }

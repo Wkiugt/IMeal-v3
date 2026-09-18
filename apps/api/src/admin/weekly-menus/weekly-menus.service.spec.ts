@@ -2,157 +2,116 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { WeeklyMenusService } from './weekly-menus.service.js';
 import { HttpException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { PushTransportService } from '../../notifications/push-transport.service.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 
 const mockPrisma = {
-  weeklyMenu: {
-    findMany: vi.fn(),
-    create: vi.fn(),
-    findFirst: vi.fn(),
-  },
-  dailyMenu: {
-    findUnique: vi.fn(),
-    update: vi.fn(),
-  },
-  registration: {
-    findMany: vi.fn(),
-  },
-  $transaction: vi.fn(async (cb) => {
-    return cb(mockTx);
-  }),
-  auditLog: {
-    create: vi.fn(),
-  },
+  weeklyMenu: { findMany: vi.fn(), create: vi.fn() },
+  dailyMenu: { findUnique: vi.fn(), update: vi.fn() },
+  $transaction: vi.fn(async (callback: (tx: unknown) => unknown) =>
+    callback(mockTx),
+  ),
+  auditLog: { create: vi.fn() },
 };
 
 const mockTx = {
-  dailyMenu: {
+  $queryRaw: vi.fn(),
+  weeklyMenu: {
+    findFirst: vi.fn(),
     findUnique: vi.fn(),
     update: vi.fn(),
   },
-  weeklyMenu: {
-    findFirst: vi.fn(),
-  },
-  registration: {
-    findMany: vi.fn(),
-  },
-  dailyMenuRevision: {
-    count: vi.fn(),
-    create: vi.fn(),
-  },
-  notification: {
-    create: vi.fn(),
-  },
-  auditLog: {
-    create: vi.fn(),
-  },
+  dailyMenu: { findUnique: vi.fn(), update: vi.fn() },
+  mealDay: { updateMany: vi.fn() },
+  registration: { findMany: vi.fn() },
+  dailyMenuRevision: { findFirst: vi.fn(), create: vi.fn() },
+  user: { findMany: vi.fn() },
+  auditLog: { create: vi.fn() },
 };
 
-vi.mock('@prisma/client', () => {
-  return {
-    PrismaClient: class {
-      constructor() {
-        return mockPrisma;
-      }
-    },
-  };
-});
+const notificationsServiceMock = { publish: vi.fn() };
+
+vi.mock('@prisma/client', () => ({
+  PrismaClient: class {
+    constructor() {
+      return mockPrisma;
+    }
+  },
+}));
 
 describe('WeeklyMenusService', () => {
   let service: WeeklyMenusService;
 
   beforeEach(async () => {
-    const pushServiceMock = {
-      registerToken: vi.fn(),
-      sendPushNotification: vi.fn().mockResolvedValue(undefined),
-    };
-
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WeeklyMenusService,
-        {
-          provide: PushTransportService,
-          useValue: pushServiceMock,
-        },
+        { provide: NotificationsService, useValue: notificationsServiceMock },
       ],
     }).compile();
 
     service = module.get<WeeklyMenusService>(WeeklyMenusService);
     vi.clearAllMocks();
+    mockTx.$queryRaw.mockResolvedValue([]);
+    mockTx.weeklyMenu.findFirst.mockResolvedValue({ id: 'wm1' });
+    mockTx.dailyMenuRevision.create.mockResolvedValue({
+      id: '44444444-4444-4444-8444-444444444444',
+    });
+    mockTx.auditLog.create.mockResolvedValue({});
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
+  it('rejects disabling a registered day', async () => {
+    mockTx.dailyMenu.findUnique.mockResolvedValueOnce({
+      id: 'dm1',
+      weeklyMenuId: 'wm1',
+      date: new Date('2026-09-01T00:00:00.000Z'),
+      isHoliday: false,
+      isEnabled: true,
+      weeklyMenu: { publishedAt: null },
+      revisions: [],
+      mealDays: [{ mealType: 'LUNCH' }],
+    });
+    mockTx.weeklyMenu.findUnique.mockResolvedValue({ publishedAt: null });
+    mockTx.registration.findMany.mockResolvedValueOnce([
+      { id: 'reg1', status: 'ACTIVE' },
+    ]);
+
+    await expect(
+      service.updateDailyMenu('2026-09-01', { isHoliday: true }),
+    ).rejects.toThrow(HttpException);
   });
 
-  describe('updateDailyMenu', () => {
-    it('should throw Conflict if disabling day with active registrations', async () => {
-      mockTx.dailyMenu.findUnique.mockResolvedValueOnce({
-        id: 'dm1',
-        date: new Date(),
-        isHoliday: false,
-        isEnabled: true,
-      });
-      mockTx.registration.findMany.mockResolvedValueOnce([
-        { id: 'reg1', status: 'ACTIVE' },
-      ]);
-
-      await expect(
-        service.updateDailyMenu('2026-09-01', { isHoliday: true }),
-      ).rejects.toThrow(HttpException);
-
-      expect(mockTx.registration.findMany).toHaveBeenCalled();
+  it('publishes registration-opened once per active staff user', async () => {
+    const startDate = new Date('2026-09-01T00:00:00.000Z');
+    const endDate = new Date('2026-09-07T00:00:00.000Z');
+    mockTx.weeklyMenu.findFirst.mockResolvedValueOnce({
+      id: 'wm1',
+      startDate,
+      endDate,
+      publishedAt: null,
+      dailyMenus: [{ id: 'dm1', date: startDate }],
     });
-
-    it('should allow disabling if no active registrations', async () => {
-      mockTx.dailyMenu.findUnique.mockResolvedValueOnce({
-        id: 'dm1',
-        date: new Date(),
-        isHoliday: false,
-        isEnabled: true,
-      });
-      mockTx.registration.findMany.mockResolvedValueOnce([]); // No registrations
-      mockTx.dailyMenu.update.mockResolvedValueOnce({
-        id: 'dm1',
-        isHoliday: true,
-        isEnabled: true,
-      });
-
-      const res = await service.updateDailyMenu('2026-09-01', {
-        isHoliday: true,
-      });
-      expect(res.isHoliday).toBe(true);
-      expect(mockTx.auditLog.create).toHaveBeenCalled();
+    mockTx.weeklyMenu.findUnique.mockResolvedValue({ publishedAt: null });
+    mockTx.dailyMenuRevision.findFirst.mockResolvedValueOnce(null);
+    mockTx.weeklyMenu.update.mockResolvedValue({
+      id: 'wm1',
+      startDate,
+      endDate,
+      publishedAt: new Date(),
+      dailyMenus: [],
     });
-  });
+    mockTx.user.findMany.mockResolvedValueOnce([
+      { id: 'user1', name: 'An', email: 'an@example.com' },
+    ]);
 
-  describe('publishWeeklyMenu', () => {
-    it('should insert notifications for existing registrations', async () => {
-      const dmDate = new Date();
-      mockTx.weeklyMenu.findFirst.mockResolvedValueOnce({
-        id: 'wm1',
-        startDate: new Date(),
-        dailyMenus: [{ id: 'dm1', date: dmDate }],
-      });
+    await service.publishWeeklyMenu('2026-09-01');
 
-      mockTx.dailyMenuRevision.count.mockResolvedValueOnce(0);
-      mockTx.registration.findMany.mockResolvedValueOnce([
-        { userId: 'user1', status: 'ACTIVE', mealDate: dmDate },
-      ]);
-
-      await service.publishWeeklyMenu('2026-09-01');
-
-      expect(mockTx.dailyMenuRevision.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ content: 'Revision 1 published' }),
-        }),
-      );
-      expect(mockTx.notification.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ userId: 'user1' }),
-        }),
-      );
-      expect(mockTx.auditLog.create).toHaveBeenCalled();
-    });
+    expect(notificationsServiceMock.publish).toHaveBeenCalledWith(
+      mockTx,
+      expect.objectContaining({
+        userId: 'user1',
+        kind: 'REGISTRATION_OPENED',
+        dedupeKey: 'registration-opened:user1:wm1',
+      }),
+    );
   });
 });

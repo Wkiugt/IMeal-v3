@@ -54,6 +54,8 @@ flowchart TB
 | `notifications`            | Persisted notification inbox                              |
 | `push_devices`             | Device push token metadata if push enabled                |
 | `job_runs`                 | Job execution history                                     |
+| `outbox_events`            | Transactional notification-created delivery work                         |
+| `notification_deliveries`  | Per-notification/per-device delivery state and retry metadata             |
 | `audit_logs`               | Generic sensitive admin/audit actions                     |
 
 ## 3. Entity relationships
@@ -584,42 +586,143 @@ No-show retry:
 
 ## 18. Notifications
 
+The persisted inbox is authoritative. Notification creation is part of the business
+transaction; push is optional/best effort and never the source of truth.
+
+### 18.1 PostgreSQL models
+
 ```text
 notifications
-────────────────────────────
-id
-user_id
-kind
-payload jsonb
-read_at NULL
-created_at
+────────────────────────────────────────────
+id                  UUID PK
+user_id             UUID FK users
+kind                NotificationKind
+payload             jsonb strict kind-specific payload
+title_vi/body_vi    text bilingual copy
+title_en/body_en    text bilingual copy
+read_at             timestamptz NULL
+dedupe_key          text UNIQUE
+created_at          timestamptz
+
+INDEX(user_id, created_at DESC, id DESC)
+INDEX(user_id, read_at, created_at DESC, id DESC)
 ```
 
-Kinds include:
-
-- delegation requested;
-- accepted;
-- declined;
-- revoked;
-- proxy meal served.
-- registration canceled/delegation auto-revoked;
-- published menu revised;
-- account future commitments changed by Admin.
-
-Persist notification in DB before/independent of push delivery. Push failure does not remove inbox event.
-
-Expo Push is the default delivery provider. Device registration is optional per user/device, but the persisted inbox is mandatory:
+Kinds are exactly `LEGACY_MESSAGE`, `REGISTRATION_OPENED`, `REGISTRATION_REMINDER`,
+`PICKUP_REMINDER`, `DELEGATION_REQUESTED`, `DELEGATION_ACCEPTED`, `DELEGATION_DECLINED`,
+`DELEGATION_REVOKED`, `PROXY_PICKUP_COMPLETED`, `REGISTERED_MENU_CHANGED`, and
+`NO_SHOW_PENALTY_CREATED`. `LEGACY_MESSAGE` preserves migrated rows for read-only display;
+new application publishers must not create it.
 
 ```text
 push_devices
-────────────────────────────
-id
-user_id
-platform
-push_token
-last_seen_at
-revoked_at
+────────────────────────────────────────────
+id                  UUID PK
+user_id             UUID FK users
+token               text UNIQUE             # ExpoPushToken[...] / ExponentPushToken[...]
+platform            IOS | ANDROID | UNKNOWN
+last_seen_at        timestamptz
+revoked_at          timestamptz NULL
+created_at          timestamptz
+
+notification_deliveries
+────────────────────────────────────────────
+id                  UUID PK
+notification_id     UUID FK notifications
+push_device_id      UUID FK push_devices
+status              PENDING | PROCESSING | SENT | FAILED
+attempt_count       integer
+next_attempt_at     timestamptz
+last_error          sanitized text NULL
+created_at/updated_at timestamptz
+
+UNIQUE(notification_id, push_device_id)
+INDEX(status, next_attempt_at)
+
+outbox_events
+────────────────────────────────────────────
+id                  UUID PK
+aggregate_type      text                  # NOTIFICATION
+aggregate_id        UUID                  # notification id
+event_type          text                  # NOTIFICATION_CREATED
+payload             text/json
+status              PENDING | PROCESSING | PROCESSED | FAILED
+dedupe_key          text UNIQUE NULL      # notification-delivery:<notificationId>
+attempt_count       integer
+available_at        timestamptz
+processed_at        timestamptz NULL
+last_error          sanitized text NULL
+created_at           timestamptz
 ```
+
+`User.notificationLocale` defaults to `VI`; `User.remindersEnabled` defaults to `true`.
+The reminder flag is one shared opt-out for weekly registration and same-day pickup
+reminders, not for transactional event notification kinds.
+
+### 18.2 Exact event matrix
+
+| Kind | Trigger/timing | Recipient |
+| ---- | -------------- | --------- |
+| `REGISTRATION_OPENED` | First weekly-menu publish only; missing revisions initialized and `publishedAt` set. Repeat/concurrent publish no-op. | Every active Staff user, regardless of reminders. |
+| `REGISTRATION_REMINDER` | Sunday 10:00 `Asia/Ho_Chi_Minh`, next Monday-start published menu, one/user/week. | Active Staff missing an enabled non-holiday `ACTIVE` registration and reminders enabled. |
+| `PICKUP_REMINDER` | Daily 11:30 VN, today's `ACTIVE` unserved registrations. | Accepted delegate else owner; grouped by recipient/date, reminders enabled only. |
+| `DELEGATION_REQUESTED` | Pending request created. | Delegate. |
+| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` | Delegate decision committed. | Registration owner. |
+| `DELEGATION_REVOKED` | Owner revoke or registration cancellation auto-revokes active delegation. | Delegate; payload reason `OWNER_REVOKED` or `REGISTRATION_CANCELLED`. |
+| `PROXY_PICKUP_COMPLETED` | Accepted delegated serving commits and pickup user differs from owner. | Owner only; self pickup emits no item. |
+| `REGISTERED_MENU_CHANGED` | Actual tracked edit to already-published menu date (content, meal type, holiday, enabled). | Active registrants of that date; no-op emits none. |
+| `NO_SHOW_PENALTY_CREATED` | No-show worker at 13:45 VN after service end 13:30. | Registration owner. |
+
+First publish emits `REGISTRATION_OPENED`; an edit to an already-published registered date
+emits `REGISTERED_MENU_CHANGED`, never another opened event. Admin account-disable
+notification is future scope in the account-disable subsystem, not a dormant kind.
+
+Payloads are strict and use UTC IDs/timestamps plus `YYYY-MM-DD` meal dates:
+registration opened `{weekStart, weekEnd}`; registration reminder
+`{weekStart, weekEnd, remainingMealDates}`; pickup reminder
+`{mealDate, registrationIds, registrationCount}`; delegation lifecycle
+`{delegationId, registrationId, mealDate, counterpartName}` plus revoked `reason`;
+proxy completion `{servingId, registrationId, mealDate, delegateName}`; menu change
+`{dailyMenuRevisionId, mealDate}`; no-show `{penaltyId, registrationId, mealDate, amount}`.
+The pickup count equals the ID array length and revoked reason is enum constrained.
+
+Owner-scoped API surface is `GET /api/notifications` (cursor/limit 1–50, default 20),
+`GET /api/notifications/:id`, and `PATCH /api/notifications/:id/read`.
+Preferences are `GET/PATCH /api/notifications/preferences`. Device registration is
+`POST /api/notifications/push-devices` with `{ token, platform: ios|android }`; device
+revocation is `DELETE /api/notifications/push-devices` with `{ token }` only.
+Detail/read never cross user ownership; missing and foreign IDs use `NOTIFICATION_NOT_FOUND`.
+
+### 18.3 Transactional publish and delivery
+
+API publishers (menu, delegation, registration-cancellation, pickup) and worker publishers
+(registration reminder, pickup reminder, no-show) render fixed bilingual copy and insert the
+notification plus its `NOTIFICATION_CREATED` outbox row in the same transaction. Upsert by
+global notification dedupe key is replay-safe and does not reset read/delivery state. Copy
+dates use `Asia/Ho_Chi_Minh`; dispatch selects stored VI/EN copy from the owning user's
+locale. Name fallback is name → email → neutral fallback; copy contains no QR/auth/session.
+
+The worker dispatch cron runs every 15 seconds:
+
+1. Stage 1 claims due `PENDING` `NOTIFICATION_CREATED` rows with
+   `FOR UPDATE SKIP LOCKED`, creates one delivery for each non-revoked device, and marks
+   the outbox row `PROCESSED`.
+2. Stage 2 claims due `PENDING` deliveries and `PROCESSING` deliveries older than five
+   minutes, sends Expo chunks with `sound=default`, Android channel `imeal-default`, and
+   data `imeal://notifications/<notificationId>`.
+3. Accepted tickets become `SENT`. Device-not-registered revokes that device; permanent
+   `MessageTooBig`, `MismatchSenderId`, and `InvalidCredentials` errors become `FAILED`.
+4. Network/HTTP 429/5xx/`MessageRateExceeded` failures retry after 1, 5, and 15 minutes;
+   after the fourth failed attempt they become `FAILED`. Errors are sanitized and logs
+   contain only notification/delivery IDs, attempt, provider code, and sanitized error.
+
+Inbox delivery remains correct when push fails, no device is registered, or OS permission
+is denied. Mobile's one-time contextual explainer prompts only from `Enable`; `Not now`
+marks seen, denial never auto-prompts, and Settings is the recovery CTA. Web does no
+push-specific work and simulators explain physical-device requirement. Push taps validate
+`imeal://notifications/<UUID>` and open owner-scoped detail; registration/menu → Calendar,
+pickup reminder → Pickup Intent, delegation → Delegation, while proxy-completion, no-show,
+and legacy items remain readable with no CTA.
 
 ## 19. `job_runs`
 

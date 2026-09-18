@@ -596,5 +596,133 @@ describe('Contracts v1', () => {
       ).toBe(false);
     });
   });
+
+  describe('Notifications', () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    const registrationId = '22222222-2222-4222-8222-222222222222';
+    const copy = {
+      vi: { title: 'Thông báo', body: 'Nội dung' },
+      en: { title: 'Notification', body: 'Body' },
+    };
+    const common = {
+      id,
+      copy,
+      readAt: null,
+      createdAt: '2026-09-18T10:00:00Z',
+    };
+
+    it('accepts representative notification kinds and exact response envelopes', () => {
+      const opened = v1.NotificationItemSchema.parse({
+        ...common,
+        kind: 'REGISTRATION_OPENED',
+        payload: { weekStart: '2026-09-21', weekEnd: '2026-09-27' },
+      });
+      expect(opened.kind).toBe('REGISTRATION_OPENED');
+
+      const pickup = v1.NotificationItemSchema.parse({
+        ...common,
+        kind: 'PICKUP_REMINDER',
+        payload: {
+          mealDate: '2026-09-21',
+          registrationIds: [registrationId],
+          registrationCount: 1,
+        },
+      });
+      expect(pickup.payload.registrationCount).toBe(1);
+
+      const response = v1.NotificationListResponseSchema.parse({
+        data: [opened, pickup],
+        meta: {
+          nextCursor: id,
+          hasNextPage: true,
+          unreadCount: 2,
+        },
+      });
+      expect(response.meta.nextCursor).toBe(id);
+      expect(
+        v1.NotificationDetailResponseSchema.parse({ data: opened }).data.id,
+      ).toBe(id);
+      expect(
+        v1.NotificationPreferencesResponseSchema.parse({
+          data: { remindersEnabled: true, locale: 'vi' },
+        }).data.locale,
+      ).toBe('vi');
+      expect(
+        v1.RegisterPushDeviceRequestSchema.parse({
+          token: 'ExpoPushToken[xxxxxxxxxxxxxxxxxxxxxx]',
+          platform: 'ios',
+        }).platform,
+      ).toBe('ios');
+    });
+
+    it('rejects malformed notification IDs, timestamps, payloads, and list limits', () => {
+      expect(
+        v1.NotificationItemSchema.safeParse({
+          ...common,
+          id: 'not-a-uuid',
+          kind: 'LEGACY_MESSAGE',
+          payload: {},
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.NotificationItemSchema.safeParse({
+          ...common,
+          createdAt: '2026-09-18T10:00:00+07:00',
+          kind: 'LEGACY_MESSAGE',
+          payload: {},
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.NotificationItemSchema.safeParse({
+          ...common,
+          kind: 'REGISTRATION_OPENED',
+          payload: {
+            weekStart: '2026-09-21',
+            weekEnd: '2026-09-27',
+            unexpected: true,
+          },
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.NotificationItemSchema.safeParse({
+          ...common,
+          kind: 'PICKUP_REMINDER',
+          payload: {
+            mealDate: '2026-09-21',
+            registrationIds: [registrationId],
+            registrationCount: 2,
+          },
+        }).success,
+      ).toBe(false);
+      expect(v1.NotificationListQuerySchema.safeParse({ limit: 0 }).success).toBe(
+        false,
+      );
+      expect(v1.NotificationListQuerySchema.safeParse({ limit: 51 }).success).toBe(
+        false,
+      );
+      expect(
+        v1.NotificationListQuerySchema.safeParse({
+          cursor: 'not-a-uuid',
+        }).success,
+      ).toBe(false);
+    });
+
+    it('accepts only non-empty Expo push token forms', () => {
+      expect(
+        v1.ExpoPushTokenSchema.safeParse('ExpoPushToken[abc123]').success,
+      ).toBe(true);
+      expect(
+        v1.ExpoPushTokenSchema.safeParse('ExponentPushToken[abc123]').success,
+      ).toBe(true);
+      for (const token of [
+        'ExpoPushToken[]',
+        'ExponentPushToken[]',
+        'ExpoPushToken',
+        'PushToken[abc123]',
+      ]) {
+        expect(v1.ExpoPushTokenSchema.safeParse(token).success).toBe(false);
+      }
+    });
+  });
 });
 

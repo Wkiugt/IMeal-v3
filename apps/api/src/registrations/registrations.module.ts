@@ -2,9 +2,10 @@ import { Module } from '@nestjs/common';
 import { RegistrationsController } from './registrations.controller.js';
 import { RegistrationsService } from './registrations.service.js';
 import { AuthModule } from '../auth/auth.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, NotificationsModule],
   controllers: [RegistrationsController],
   providers: [RegistrationsService],
   exports: [RegistrationsService],

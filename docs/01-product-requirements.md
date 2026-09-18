@@ -252,15 +252,96 @@ Serving/check-in and employee-code recovery remain subject to Kitchen confirmati
 
 ## 14. Notifications
 
-Business requirements:
+Notification inbox là source of truth. Mọi notification được lưu trong PostgreSQL trước khi
+delivery; Expo Push chỉ là delivery channel/best-effort hint. Push fail, thiết bị bị revoke,
+hoặc user chưa cấp quyền hệ điều hành không được làm mất inbox item. Không giả định có native
+device proof trong product requirement.
 
-- B nhận thông báo khi A yêu cầu nhận hộ.
-- A nhận trạng thái khi B accept/decline.
-- B nhận thông báo nếu A revoke.
-- A nhận thông báo khi suất của mình được B nhận hộ.
-- Notification phải được persist trong inbox; push chỉ là delivery channel, không phải source of truth.
+### 14.1 Canonical event matrix
 
-Expo Push là provider mặc định. Hệ thống vẫn phải hoạt động đúng nếu push delivery fail nhưng user mở app và đọc inbox.
+| Kind | Trigger/timing | Recipient (exact) | Payload/semantics |
+| ---- | -------------- | ----------------- | ----------------- |
+| `REGISTRATION_OPENED` | Kitchen **first-publish** weekly menu; publish initializes missing revisions and sets `publishedAt`. Repeated/concurrent publish is a no-op. | Tất cả Staff đang active của IMeal (không phụ thuộc `remindersEnabled`). | `{ weekStart, weekEnd }`; registration/menu action deep-links tới Calendar. |
+| `REGISTRATION_REMINDER` | Worker mỗi Chủ nhật **10:00** (`Asia/Ho_Chi_Minh`) cho menu đã publish của thứ Hai tuần kế tiếp; tối đa một item/user/week. | Staff active có ít nhất một enabled, non-holiday meal date chưa có registration `ACTIVE` và `remindersEnabled=true`. | `{ weekStart, weekEnd, remainingMealDates }`; deep-links tới Calendar. |
+| `PICKUP_REMINDER` | Worker mỗi ngày **11:30** giờ Việt Nam, cho các registration `ACTIVE`, chưa có serving của ngày hiện tại. | Với mỗi registration, delegate `ACCEPTED` nhận thay owner; nếu không có delegate accepted thì owner. Bỏ qua recipient có `remindersEnabled=false`; gom tất cả registration cùng recipient/date thành một item. | `{ mealDate, registrationIds, registrationCount }`; deep-links tới Pickup Intent. |
+| `DELEGATION_REQUESTED` | A tạo delegation pending. | Delegate B. | `{ delegationId, registrationId, mealDate, counterpartName }`; action tới Delegation. |
+| `DELEGATION_ACCEPTED` | B accept request. | Owner A. | Cùng payload delegation; action tới Delegation. |
+| `DELEGATION_DECLINED` | B decline request. | Owner A. | Cùng payload delegation; action tới Delegation. |
+| `DELEGATION_REVOKED` | A revoke trước serving, hoặc registration của A bị cancel và active delegation bị revoke trong cùng transaction. | Delegate B. | `{ delegationId, registrationId, mealDate, counterpartName, reason }`, với `reason` là `OWNER_REVOKED` hoặc `REGISTRATION_CANCELLED`; action tới Delegation. |
+| `PROXY_PICKUP_COMPLETED` | Serving commit thành công với accepted delegate và pickup user khác owner. Self pickup không tạo item. | Owner A (chỉ owner). | `{ servingId, registrationId, mealDate, delegateName }`; đọc được trong inbox, không có CTA. |
+| `REGISTERED_MENU_CHANGED` | Kitchen sửa **published** menu date và có actual tracked change (content, meal type, holiday hoặc enabled). No-op không tạo revision/notification. | Mỗi Staff đang có registration `ACTIVE` cho meal date đó. | `{ dailyMenuRevisionId, mealDate }`; registration/menu action tới Calendar. |
+| `NO_SHOW_PENALTY_CREATED` | No-show worker lúc **13:45** VN, sau serving window 10:30–13:30; transaction tạo no-show và penalty idempotently. | Registration owner. | `{ penaltyId, registrationId, mealDate, amount: 50000 }`; readable trong inbox, không có CTA. |
+
+`REGISTRATION_OPENED` chỉ phát ở first publish. Chỉnh sửa một ngày đã publish dùng
+`REGISTERED_MENU_CHANGED`, không dùng lại `REGISTRATION_OPENED`. Admin account-disable
+notification **không thuộc implementation hiện tại**; nếu cần sẽ thuộc account-disable
+subsystem tương lai, không thêm dormant notification kind.
+
+### 14.2 Inbox contract, copy và preferences
+
+Mỗi item có shape bất biến:
+
+```text
+{
+  id: UUID,
+  kind: LEGACY_MESSAGE | REGISTRATION_OPENED | REGISTRATION_REMINDER |
+        PICKUP_REMINDER | DELEGATION_REQUESTED | DELEGATION_ACCEPTED |
+        DELEGATION_DECLINED | DELEGATION_REVOKED | PROXY_PICKUP_COMPLETED |
+        REGISTERED_MENU_CHANGED | NO_SHOW_PENALTY_CREATED,
+  payload: kind-specific strict JSON,
+  copy: { vi: { title, body }, en: { title, body } },
+  readAt: UTC ISO timestamp | null,
+  createdAt: UTC ISO timestamp
+}
+```
+
+IDs và cursor là UUID; timestamp persistence/response dùng UTC ISO (`Z`); meal dates dùng
+`YYYY-MM-DD`. Payload strict theo matrix: delegation IDs và related entity IDs là UUID;
+`PICKUP_REMINDER.registrationCount` phải bằng số `registrationIds`; no-show amount là
+positive integer (canonical 50,000 VND); revoked reason chỉ nhận hai enum ở trên. `LEGACY_MESSAGE`
+chỉ để đọc dữ liệu migration cũ, không được tạo bởi application publisher mới.
+
+API owner-scoped (missing và foreign ID cùng trả `NOTIFICATION_NOT_FOUND`):
+
+- `GET /api/notifications?cursor=<UUID>&limit=<1..50>` (default limit 20): trả
+  `{ data, meta: { nextCursor, hasNextPage, unreadCount } }`, sort `createdAt DESC, id DESC`.
+- `GET /api/notifications/:id`: detail của owner.
+- `PATCH /api/notifications/:id/read`: mark-read idempotently, chỉ sau khi detail load thành công.
+- `GET /api/notifications/preferences` và `PATCH` cùng path: `{ remindersEnabled, locale }`;
+  PATCH phải gửi ít nhất một field, locale là `vi|en`.
+- `POST /api/notifications/push-devices`: đăng ký `{ token, platform: ios|android }`.
+- `DELETE /api/notifications/push-devices`: revoke `{ token }` chỉ trên device đang thuộc owner.
+
+Copy được render song ngữ cố định khi publish, định dạng ngày bằng `Asia/Ho_Chi_Minh`;
+dispatch chọn bản `vi` hoặc `en` theo `User.notificationLocale` (mặc định `vi`). Fallback
+`counterpartName` là name → email → neutral fallback. Bản copy không chứa QR/auth/session data.
+`remindersEnabled` mặc định `true` và là một opt-out chung cho cả registration reminder và
+same-day pickup reminder; không tắt các event notification transactional ở matrix.
+
+### 14.3 Push onboarding và deep link
+
+Sau authenticated native login, mobile hiển thị một contextual permission explainer một lần:
+`Enable` mới gọi OS prompt; `Not now` đánh dấu đã xem. Nếu user deny thì không auto-prompt
+lại; CTA `Enable` khi permission đã denied mở OS Settings. Web không làm push-specific work;
+simulator hiển thị physical-device-required; thiếu EAS project config báo lỗi rõ ràng nhưng
+inbox vẫn dùng được. System-notification status/Settings CTA độc lập với reminder switch.
+
+Push data dùng URL chính xác `imeal://notifications/<notificationId UUID>` và mở
+`NotificationDetail`. CTA trong detail: registration/menu (`REGISTRATION_OPENED`,
+`REGISTRATION_REMINDER`, `REGISTERED_MENU_CHANGED`) → Calendar; pickup
+(`PICKUP_REMINDER`) → Pickup Intent; delegation kinds → Delegation.
+No-show và legacy vẫn đọc được trong inbox; push delivery không được coi là authoritative.
+
+### 14.4 Delivery reliability
+
+API và worker publisher tạo `Notification` cùng `NOTIFICATION_CREATED` outbox event trong
+cùng transaction, dedupe bằng notification key và `notification-delivery:<notificationId>`.
+Worker dispatch chạy mỗi 15 giây: claim outbox bằng row lock/`SKIP LOCKED`, tạo
+per-device delivery cho non-revoked devices rồi mark outbox processed; sau đó claim/send
+delivery theo locale. Delivery transient network/HTTP 429/5xx/`MessageRateExceeded` retry sau
+1, 5 và 15 phút; lần failed thứ tư chuyển `FAILED`. `DeviceNotRegistered` revoke device và
+các lỗi permanent `MessageTooBig`, `MismatchSenderId`, `InvalidCredentials` chuyển
+`FAILED`. Recover `PROCESSING` quá 5 phút; log chỉ IDs/attempt/provider code/sanitized error.
 
 ## 15. Admin and operations
 

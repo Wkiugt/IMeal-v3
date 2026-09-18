@@ -152,8 +152,12 @@ Canonical v2 endpoint semantics:
 | GET        | `/v1/me/delegations`                        | staff                  | Incoming/outgoing delegation list                                                                                                                   |
 | GET        | `/v1/me/history`                            | staff                  | Own registration/serving history with menu snapshot                                                                                                 |
 | GET        | `/v1/me/penalties`                          | staff                  | Own read-only penalty history/detail                                                                                                                |
-| GET        | `/v1/me/notifications`                      | signed-in              | Persisted inbox with cursor pagination                                                                                                              |
-| PATCH      | `/v1/me/notifications/:id/read`             | notification owner     | Mark own inbox item read                                                                                                                            |
+| GET        | `/api/notifications`                       | signed-in owner       | Structured persisted inbox; cursor pagination (`limit` 1–50, default 20) and unread count |
+| GET        | `/api/notifications/:id`                   | notification owner    | Owner-scoped structured notification detail                                             |
+| PATCH      | `/api/notifications/:id/read`              | notification owner    | Idempotently mark own inbox item read                                                   |
+| GET/PATCH   | `/api/notifications/preferences`            | signed-in owner       | Shared reminder opt-out and `vi|en` locale preference                                    |
+| POST       | `/api/notifications/push-devices`           | signed-in owner       | Register own Expo push device with `{ token, platform: ios|android }`                    |
+| DELETE     | `/api/notifications/push-devices`           | signed-in owner       | Revoke own Expo push device with `{ token }` only                                         |
 | POST       | `/v1/delegations`                           | staff                  | Owner requests delegate                                                                                                                             |
 | POST       | `/v1/delegations/:id/accept`                | delegate               | Accept request                                                                                                                                      |
 | POST       | `/v1/delegations/:id/decline`               | delegate               | Decline request                                                                                                                                     |
@@ -179,6 +183,109 @@ Exact path spelling may change only with the shared API contract. Mobile, Admin 
 - Canonical conflict codes include `CUTOFF_PASSED`, `ACCOUNT_DISABLED`, `REGISTRATION_CONFLICT`, `DELEGATION_CONFLICT`, `PICKUP_SESSION_EXPIRED`, `PICKUP_STATE_CHANGED`, `ALREADY_SERVED`, `REQUEST_IN_PROGRESS` and `OUTSIDE_SERVING_WINDOW`.
 - List APIs use cursor pagination with a bounded server maximum; no unbounded Admin export endpoint.
 - Realtime events carry `{ eventId, eventType, mealDate, occurredAt, requestId, payload }`; clients deduplicate by `eventId` and re-fetch snapshot after reconnect.
+
+### 8.2 Staff notification contract
+
+The notification contract is structured and owner-scoped. Each persisted item is:
+
+```text
+{
+  id: UUID,
+  kind: LEGACY_MESSAGE | REGISTRATION_OPENED | REGISTRATION_REMINDER |
+        PICKUP_REMINDER | DELEGATION_REQUESTED | DELEGATION_ACCEPTED |
+        DELEGATION_DECLINED | DELEGATION_REVOKED | PROXY_PICKUP_COMPLETED |
+        REGISTERED_MENU_CHANGED | NO_SHOW_PENALTY_CREATED,
+  payload: strict kind-specific JSON,
+  copy: { vi: { title, body }, en: { title, body } },
+  readAt: UTC ISO timestamp | null,
+  createdAt: UTC ISO timestamp
+}
+```
+
+IDs/cursors are UUIDs, timestamps are UTC ISO strings ending in `Z`, and meal dates are
+`YYYY-MM-DD`. Payload schemas are strict:
+
+- `REGISTRATION_OPENED`: `{ weekStart, weekEnd }`.
+- `REGISTRATION_REMINDER`: `{ weekStart, weekEnd, remainingMealDates }`.
+- `PICKUP_REMINDER`: `{ mealDate, registrationIds, registrationCount }`, with count equal
+  to the ID array length.
+- `DELEGATION_REQUESTED|ACCEPTED|DECLINED`: `{ delegationId, registrationId, mealDate,
+  counterpartName }`.
+- `DELEGATION_REVOKED`: the same fields plus `reason`, exactly `OWNER_REVOKED` or
+  `REGISTRATION_CANCELLED`.
+- `PROXY_PICKUP_COMPLETED`: `{ servingId, registrationId, mealDate, delegateName }`.
+- `REGISTERED_MENU_CHANGED`: `{ dailyMenuRevisionId, mealDate }`.
+- `NO_SHOW_PENALTY_CREATED`: `{ penaltyId, registrationId, mealDate, amount }`.
+
+The exact matrix is:
+
+| Kind | Trigger/timing | Recipient |
+| ---- | -------------- | --------- |
+| `REGISTRATION_OPENED` | First publish of a weekly menu; missing revisions are initialized and `publishedAt` is set. Repeated/concurrent publish is a no-op. | Every active Staff user, regardless of reminder preference. |
+| `REGISTRATION_REMINDER` | Sunday 10:00 (`Asia/Ho_Chi_Minh`) for the next Monday-start published menu; one/user/week. | Active Staff with an enabled non-holiday date lacking an `ACTIVE` registration and `remindersEnabled=true`. |
+| `PICKUP_REMINDER` | Daily 11:30 VN for today's active, unserved registrations. | Accepted delegate, otherwise owner; grouped per recipient/date and omitted when reminders are disabled. |
+| `DELEGATION_REQUESTED` | Owner creates pending delegation. | Delegate. |
+| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` | Delegate responds. | Registration owner. |
+| `DELEGATION_REVOKED` | Owner revokes, or registration cancellation revokes active delegation in the same transaction. | Delegate; reason identifies `OWNER_REVOKED` vs `REGISTRATION_CANCELLED`. |
+| `PROXY_PICKUP_COMPLETED` | Accepted delegated serving commits and pickup user differs from owner. | Owner only; self pickup emits none. |
+| `REGISTERED_MENU_CHANGED` | Actual tracked edit to an already-published date (content, meal type, holiday, enabled). | Active registered Staff for that date. No-op edit emits none. |
+| `NO_SHOW_PENALTY_CREATED` | No-show transaction at 13:45 VN after the 13:30 service end. | Registration owner. |
+
+`REGISTRATION_OPENED` is never reused for a published-menu edit. Admin account-disable
+notification is out of this implementation and belongs to a future account-disable subsystem,
+not a dormant notification kind. `LEGACY_MESSAGE` is migration read-only only.
+
+The notification endpoints are owner-scoped even when a caller supplies another user's UUID:
+missing and foreign detail/read IDs return `NOTIFICATION_NOT_FOUND`. List uses
+`GET /api/notifications?cursor=<UUID>&limit=<1..50>` (default 20), ordered by
+`createdAt DESC, id DESC`, and returns `{ data, meta: { nextCursor, hasNextPage, unreadCount } }`.
+Detail/read are `GET /api/notifications/:id` and `PATCH /api/notifications/:id/read`.
+Preferences are `GET/PATCH /api/notifications/preferences` with
+`{ remindersEnabled, locale: 'vi'|'en' }`; PATCH requires at least one field.
+`POST /api/notifications/push-devices` registers `{ token, platform: 'ios'|'android' }`;
+`DELETE /api/notifications/push-devices` revokes `{ token }` only. Both routes validate the
+Expo token format, while revocation never accepts a platform field.
+
+Publishers render and persist both Vietnamese and English copy at write time. Dates use
+`Asia/Ho_Chi_Minh`; dispatch selects stored copy using `User.notificationLocale` (default
+`vi`). Counterpart display-name fallback is name → email → neutral fallback. Copy never
+contains QR, auth, or session data. `remindersEnabled` defaults to `true` and is one shared
+opt-out for both scheduled reminders; transactional event notifications remain enabled.
+
+### 8.3 Notification persistence and delivery
+
+API producers and worker producers insert/upsert the `notifications` row and a
+`NOTIFICATION_CREATED` `outbox_events` row in the same PostgreSQL transaction. Notification
+dedupe is global by `dedupeKey`; the outbox dedupe key is
+`notification-delivery:<notificationId>`. Replay is a no-op and never resets `readAt` or
+delivery state.
+
+The worker runs dispatch every 15 seconds. Stage 1 claims due pending outbox rows with
+`FOR UPDATE SKIP LOCKED`, creates one `notification_deliveries` row per non-revoked
+`push_device`, and marks the outbox processed. Stage 2 claims due `PENDING` deliveries
+and `PROCESSING` deliveries older than five minutes, sends Expo chunks with stored localized
+copy, `sound=default`, Android channel `imeal-default`, and data URL
+`imeal://notifications/<notificationId>`. Inbox persistence is mandatory; system push is
+best effort.
+
+Accepted tickets become `SENT`. `DeviceNotRegistered` revokes the device and permanently
+fails that delivery; `MessageTooBig`, `MismatchSenderId`, and `InvalidCredentials` are
+permanent failures. Network errors, HTTP 429/5xx, and `MessageRateExceeded` retry after
+1, 5, and 15 minutes; after the fourth failed attempt status is `FAILED`. Recover stale
+processing after five minutes. Sanitize provider errors and log only notification/delivery
+IDs, attempt, provider code, and sanitized error; never log token or copy body.
+
+### 8.4 Permission and navigation requirements
+
+On the first authenticated native session, mobile shows a one-time contextual explainer.
+Only `Enable` calls the OS permission prompt; `Not now` marks it seen. A denied permission
+does not trigger automatic prompts; the Enable/Settings CTA opens system settings. Web does
+no push work, simulators explain that a physical device is required, and missing EAS
+configuration reports a clear registration error while inbox/API remain usable. Push taps
+validate the UUID in `imeal://notifications/<id>` and navigate to NotificationDetail;
+registration/menu kinds go to Calendar, pickup kinds to Pickup Intent, and delegation kinds
+to Delegation. No-show, legacy, and other readable items remain available in the inbox.
+
 
 ## 9. Weekly registration processing
 

@@ -10,6 +10,7 @@ import {
 } from '@expo-google-fonts/be-vietnam-pro';
 import {
   NavigationContainer,
+  useIsFocused,
   useNavigation,
   type LinkingOptions,
 } from '@react-navigation/native';
@@ -26,13 +27,17 @@ import { DelegationScreen } from './src/screens/delegation/DelegationScreen';
 import { EmployeeCalendarScreen } from './src/screens/employee/EmployeeCalendarScreen';
 import { EmployeeDashboardScreen } from './src/screens/employee/EmployeeDashboardScreen';
 import { EmployeeProfileScreen } from './src/screens/employee/EmployeeProfileScreen';
+import { NotificationDetailScreen } from './src/screens/notifications/NotificationDetailScreen';
+import { NotificationListScreen } from './src/screens/notifications/NotificationListScreen';
 import { KitchenScannerScreen } from './src/screens/kitchen/KitchenScannerScreen';
 import { KitchenDashboardScreen } from './src/screens/kitchen/KitchenDashboardScreen';
 import { KitchenProfileScreen } from './src/screens/kitchen/KitchenProfileScreen';
 import { PickupIntentScreen } from './src/screens/pickup/PickupIntentScreen';
+import { flushPendingNotificationNavigation, navigationRef } from './src/navigation';
 import type {
   AppTabParamList,
   AuthScreenProps,
+  NotificationStackParamList,
   ProfileStackParamList,
   RootStackParamList,
 } from './src/navigation';
@@ -44,14 +49,15 @@ import {
   PrototypeTabBar,
 } from './src/ui/PrototypeShell';
 import { NoticeProvider } from './src/ui/BrandNotice';
-import { BrandLoader, BrandMark, StateTransition } from './src/ui/BrandMotion';
+import { ScreenLoading, BrandMark, StateTransition } from './src/ui/BrandMotion';
 import { useMinimumVisibleLoading } from './src/ui/useMinimumVisibleLoading';
-import { useInitialLoadingGate } from './src/ui/useInitialLoadingGate';
+import { useScreenLoadingGate } from './src/ui/useScreenLoadingGate';
 import { theme } from './src/theme';
-
+import { NotificationProvider } from './src/notifications/NotificationProvider';
 const RootStack = createNativeStackNavigator<RootStackParamList>();
 const Tabs = createBottomTabNavigator<AppTabParamList>();
 const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
+const NotificationStack = createNativeStackNavigator<NotificationStackParamList>();
 const prefix = Linking.createURL('/');
 
 function AuthScreen({ navigation }: AuthScreenProps) {
@@ -69,10 +75,9 @@ function AuthScreen({ navigation }: AuthScreenProps) {
   const { t } = useLanguage();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-
-  const visibleRestoring = useInitialLoadingGate(isRestoring, Boolean(authError));
-  const visibleSigningIn = useMinimumVisibleLoading(isSigningIn);
-
+  const isFocused = useIsFocused();
+  const visibleRestoring = useScreenLoadingGate(isFocused, !isRestoring);
+  const visibleSigningIn = useMinimumVisibleLoading(isSigningIn, 1_500);
   useEffect(() => {
     if (!token || !profile || isSigningIn || visibleRestoring || visibleSigningIn) return;
     if (canUseEmployee) {
@@ -95,13 +100,9 @@ function AuthScreen({ navigation }: AuthScreenProps) {
   return (
     <StateTransition stateKey={authState} style={styles.screen}>
       {visibleRestoring ? (
-        <View style={styles.loading}>
-          <BrandLoader label={t('auth.restoreSession')} />
-        </View>
+        <ScreenLoading label={t('auth.restoreSession')} />
       ) : visibleSigningIn ? (
-        <View style={styles.loading}>
-          <BrandLoader label={t('auth.signingIn')} />
-        </View>
+        <ScreenLoading label={t('auth.signingIn')} />
       ) : noMobileAccess ? (
         <View style={styles.authCanvas}>
           <View style={styles.authCard}>
@@ -158,13 +159,12 @@ function AuthScreen({ navigation }: AuthScreenProps) {
     </StateTransition>
   );
 }
-
-
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token, isRestoring } = useSession();
   const { t } = useLanguage();
+  const isFocused = useIsFocused();
   const noSession = !isRestoring && !token;
-  const visibleRestoring = useInitialLoadingGate(isRestoring, noSession);
+  const visibleRestoring = useScreenLoadingGate(isFocused, !isRestoring);
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
@@ -175,11 +175,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }, [navigation, noSession]);
 
   if (visibleRestoring) {
-    return (
-      <View style={styles.loading}>
-        <BrandLoader label={t('auth.restoreSession')} />
-      </View>
-    );
+    return <ScreenLoading label={t('auth.restoreSession')} />;
   }
   if (noSession) return null;
   return <>{children}</>;
@@ -193,6 +189,15 @@ function ProfileStackNavigator() {
       <ProfileStack.Screen name="ProfileHome" component={EmployeeProfileScreen} />
       <ProfileStack.Screen name="Delegation" component={DelegationScreen} />
     </ProfileStack.Navigator>
+  );
+}
+
+function NotificationStackNavigator() {
+  return (
+    <NotificationStack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
+      <NotificationStack.Screen name="NotificationList" component={NotificationListScreen} />
+      <NotificationStack.Screen name="NotificationDetail" component={NotificationDetailScreen} />
+    </NotificationStack.Navigator>
   );
 }
 
@@ -214,6 +219,7 @@ function AppTabsNavigator() {
           <Tabs.Screen name="EmployeeDashboard" component={EmployeeDashboardScreen} />
           <Tabs.Screen name="EmployeeCalendar" component={EmployeeCalendarScreen} />
           <Tabs.Screen name="PickupIntent" component={PickupIntentScreen} />
+          <Tabs.Screen name="Notifications" component={NotificationStackNavigator} />
           {canUseKitchen && (
             <Tabs.Screen name="KitchenScanner" component={KitchenScannerScreen} />
           )}
@@ -242,6 +248,12 @@ function linkingConfig(): LinkingOptions<RootStackParamList> {
             EmployeeDashboard: 'dashboard',
             EmployeeCalendar: 'calendar',
             PickupIntent: 'pickup',
+            Notifications: {
+              screens: {
+                NotificationList: 'notifications',
+                NotificationDetail: 'notifications/:notificationId',
+              },
+            },
             EmployeeProfile: {
               screens: {
                 ProfileHome: 'profile',
@@ -260,16 +272,13 @@ function linkingConfig(): LinkingOptions<RootStackParamList> {
 
 function NavigationRoot() {
   const { isRestoring, t } = useLanguage();
-  if (isRestoring) {
-    return (
-      <View style={styles.bootstrapLoading}>
-        <Text style={styles.bootstrapText}>{t('bootstrap.restoringLanguage')}</Text>
-      </View>
-    );
+  const visibleRestoring = useMinimumVisibleLoading(isRestoring, 1_500);
+  if (visibleRestoring) {
+    return <ScreenLoading label={t('bootstrap.restoringLanguage')} />;
   }
 
   return (
-    <NavigationContainer linking={linkingConfig()}>
+    <NavigationContainer linking={linkingConfig()} ref={navigationRef} onReady={flushPendingNotificationNavigation}>
       <RootStack.Navigator
         screenOptions={{ headerShown: false, animation: 'none' }}
       >
@@ -312,9 +321,11 @@ export default function App() {
     <SafeAreaProvider>
       <LanguageProvider>
         <SessionProvider>
-          <NoticeProvider>
-            <NavigationRoot />
-          </NoticeProvider>
+          <NotificationProvider>
+            <NoticeProvider>
+              <NavigationRoot />
+            </NoticeProvider>
+          </NotificationProvider>
         </SessionProvider>
       </LanguageProvider>
     </SafeAreaProvider>
@@ -323,20 +334,13 @@ export default function App() {
 
 const styles = StyleSheet.create({
   screen: {
-    flex: 1,
-  },
-  loading: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.colors.bg,
+    padding: theme.spacing.gutter,
+    backgroundColor: theme.colors.canvas,
   },
   authCanvas: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: theme.spacing.gutter,
-    backgroundColor: theme.colors.canvas,
   },
   authCard: {
     width: '100%',
@@ -384,17 +388,6 @@ const styles = StyleSheet.create({
     fontFamily: theme.typography.regular,
     textAlign: 'center',
     marginTop: 16,
-  },
-  bootstrapLoading: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.colors.bg,
-  },
-  bootstrapText: {
-    color: theme.colors.muted,
-    fontFamily: 'System',
-    fontSize: 14,
   },
   bootstrapError: {
     flex: 1,

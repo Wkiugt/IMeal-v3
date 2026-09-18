@@ -288,16 +288,80 @@ If revoked/served concurrently, UI must reconcile backend result instead of assu
 
 ## 10. Notification inbox
 
-Notification is persisted in app and can be grouped:
+Notification is a persisted, owner-scoped inbox rather than a push-only feed. The list is
+ordered newest first and supports initial load, pull-to-refresh, empty, loading, error/retry,
+unread markers, tab badge, and cursor pagination (limit 20; server bounds 1–50). Use immutable
+replacement after mark-read so the opened detail and unread badge agree with server state.
+Group list rows by date without changing the server order.
 
-- Delegation request.
-- Delegation accepted/declined/revoked.
-- Proxy serving completed.
-- Registration cancellation that auto-revokes delegation.
-- Published menu revision for a registered date.
-- Admin change to future commitments after account disable.
+Each item renders the stored localized copy and kind-specific content:
 
-Push notification is a delivery hint; tapping it deep-links to the persisted in-app item/action.
+```text
+{
+  id: UUID,
+  kind,
+  payload,
+  copy: { vi: { title, body }, en: { title, body } },
+  readAt: UTC ISO timestamp | null,
+  createdAt: UTC ISO timestamp
+}
+```
+
+Detail loads `GET /api/notifications/:id` owner-scoped and only then calls
+`PATCH /api/notifications/:id/read`. Missing and foreign IDs show the same safe not-found
+recovery. Render no QR/auth/session data in copy. Bilingual copy is fixed at publish time;
+push/in-app date formatting follows `Asia/Ho_Chi_Minh`, and the user's `vi|en` locale selects
+the push language.
+
+### 10.1 Notification matrix and actions
+
+| Kind | Recipient and timing | Detail CTA/destination |
+| ---- | -------------------- | ---------------------- |
+| `REGISTRATION_OPENED` | Every active Staff user when Kitchen first publishes a week; repeat publish is a no-op. | Calendar. |
+| `REGISTRATION_REMINDER` | Staff missing enabled non-holiday registrations, Sunday 10:00 VN for next week, only when reminders are enabled. | Calendar. |
+| `PICKUP_REMINDER` | Accepted delegate or owner for today's active unserved meals, 11:30 VN, grouped by recipient/date, when reminders are enabled. | Pickup Intent. |
+| `DELEGATION_REQUESTED` | Delegate when owner creates a pending request. | Delegation. |
+| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` | Owner after delegate response. | Delegation. |
+| `DELEGATION_REVOKED` | Delegate after owner revoke or registration cancellation; show reason. | Delegation. |
+| `PROXY_PICKUP_COMPLETED` | Owner after successful proxy serving; self pickup has no item. | Readable detail, no CTA. |
+| `REGISTERED_MENU_CHANGED` | Active registrants after an actual edit to a published date; no-op has no item. | Calendar/date. |
+| `NO_SHOW_PENALTY_CREATED` | Owner after 13:45 VN no-show processing, with 50,000 VND amount. | Readable detail, no CTA. |
+
+First publish emits `REGISTRATION_OPENED`; an edit to an already-published registered date
+emits `REGISTERED_MENU_CHANGED`, not another opened item. Admin account-disable notification
+is future scope only and has no current UI kind.
+
+### 10.2 Push permission onboarding
+
+On first authenticated native login, show one contextual explainer:
+
+```text
+Nhận thông báo để không bỏ lỡ đăng ký, nhận suất và ủy quyền
+[ Bật thông báo ] [ Để sau ]
+```
+
+`Bật thông báo` is the only path that calls the OS permission prompt; `Để sau` marks the
+one-time explainer as seen. Once permission is denied, never auto-prompt again; the Enable
+action becomes an OS Settings CTA. The profile also exposes an independent system-notification
+status/Settings action, separate from the reminder preference. Web does no push-specific work;
+simulators show that a physical device is required; missing EAS configuration shows a clear
+registration error while inbox remains usable. Avoid claiming native-device proof in this UI
+spec.
+
+The shared reminder switch defaults on and controls both scheduled reminder kinds. It changes
+only after `PATCH /api/notifications/preferences` succeeds; on failure restore the confirmed
+server value and show recovery copy. Locale PATCH is best effort and must preserve VI/EN key
+parity. Transactional delegation, menu, proxy-completion, and no-show notifications are not
+silenced by this switch.
+
+### 10.3 Push tap and screen states
+
+Push data uses the exact `imeal://notifications/<validated UUID>` URL. Foreground and
+background/cold-start responses navigate through the authenticated navigation ref to
+`NotificationDetail`; if auth/navigation is not ready, queue the UUID until ready. Ignore
+malformed or mismatched payloads. Detail actions go to Calendar, Pickup Intent, or Delegation
+as listed above. Proxy, no-show, and legacy items remain readable even without an action.
+System push is best effort; tapping/opening the inbox is authoritative.
 
 ## 11. Kitchen Check-in screen
 

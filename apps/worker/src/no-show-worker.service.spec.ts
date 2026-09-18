@@ -10,10 +10,16 @@ const mockTx = {
   },
   penalty: {
     findFirst: vi.fn(),
-    create: vi.fn(),
+    create: vi.fn().mockResolvedValue({ id: 'penalty-1' }),
   },
   notification: {
-    create: vi.fn(),
+    upsert: vi.fn().mockResolvedValue({
+      id: 'notification-1',
+      userId: 'user-1',
+    }),
+  },
+  outboxEvent: {
+    upsert: vi.fn().mockResolvedValue({ id: 'outbox-1' }),
   },
   auditLog: {
     create: vi.fn(),
@@ -201,6 +207,7 @@ describe('NoShowWorkerService', () => {
       expect(mockTx.penalty.create).toHaveBeenCalledTimes(2);
       expect(mockTx.penalty.create).toHaveBeenCalledWith({
         data: {
+          id: expect.any(String),
           userId: 'user-1',
           amount: 50000,
           reason: 'NO_SHOW_PENALTY_2026-09-03_reg-1',
@@ -208,26 +215,41 @@ describe('NoShowWorkerService', () => {
       });
       expect(mockTx.penalty.create).toHaveBeenCalledWith({
         data: {
+          id: expect.any(String),
           userId: 'user-2',
           amount: 50000,
           reason: 'NO_SHOW_PENALTY_2026-09-03_reg-2',
         },
       });
 
-      // Verify Notification
-      expect(mockTx.notification.create).toHaveBeenCalledTimes(2);
-      expect(mockTx.notification.create).toHaveBeenCalledWith({
-        data: {
+      // Verify structured Notification and delivery outbox
+      expect(mockTx.notification.upsert).toHaveBeenCalledTimes(2);
+      expect(mockTx.notification.upsert).toHaveBeenCalledWith({
+        where: { dedupeKey: 'no-show-penalty:user-1:reg-1' },
+        update: {},
+        create: {
           userId: 'user-1',
-          content: 'Bạn bị phạt 50.000đ do không nhận suất ăn ngày 2026-09-03.',
-          isRead: false,
+          kind: 'NO_SHOW_PENALTY_CREATED',
+          payload: {
+            penaltyId: 'penalty-1',
+            registrationId: 'reg-1',
+            mealDate: '2026-09-03',
+            amount: 50000,
+          },
+          titleVi: 'Phạt không nhận suất',
+          bodyVi: 'Bạn bị phạt 50.000đ do không nhận suất ngày 3/9/2026.',
+          titleEn: 'No-show penalty',
+          bodyEn:
+            'A VND 50,000 penalty was added because your meal for 9/3/2026 was not collected.',
+          dedupeKey: 'no-show-penalty:user-1:reg-1',
         },
       });
+      expect(mockTx.outboxEvent.upsert).toHaveBeenCalledTimes(2);
 
       // Verify AuditLog
-      expect(mockTx.auditLog.create).toHaveBeenCalledTimes(2);
       expect(mockTx.auditLog.create).toHaveBeenCalledWith({
         data: {
+          id: expect.any(String),
           action: 'NO_SHOW_PROCESSED',
           userId: 'user-1',
           details: JSON.stringify({
@@ -241,6 +263,7 @@ describe('NoShowWorkerService', () => {
       // Verify JobRun created
       expect(mockTx.jobRun.create).toHaveBeenCalledWith({
         data: {
+          id: expect.any(String),
           jobName: 'no_show_worker_2026-09-03',
           status: 'COMPLETED',
           completedAt: expect.any(Date),
@@ -334,9 +357,8 @@ describe('NoShowWorkerService', () => {
       });
 
       expect(result.processedCount).toBe(0);
-      expect(mockTx.registration.update).not.toHaveBeenCalled();
+      expect(mockTx.notification.upsert).not.toHaveBeenCalled();
       expect(mockTx.penalty.create).not.toHaveBeenCalled();
-      expect(mockTx.notification.create).not.toHaveBeenCalled();
       expect(mockTx.auditLog.create).not.toHaveBeenCalled();
       expect(mockTx.jobRun.create).toHaveBeenCalled();
     });
@@ -352,6 +374,7 @@ describe('NoShowWorkerService', () => {
       expect(result.processedCount).toBe(0);
       expect(mockTx.jobRun.create).toHaveBeenCalledWith({
         data: {
+          id: expect.any(String),
           jobName: 'no_show_worker_2026-09-03',
           status: 'COMPLETED',
           completedAt: expect.any(Date),

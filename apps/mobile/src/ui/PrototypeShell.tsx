@@ -9,26 +9,26 @@ import {
   type ScrollViewProps,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { CalendarDays, Home, QrCode, ScanLine, UserRound } from 'lucide-react-native';
+import { Bell, CalendarDays, Home, QrCode, ScanLine, UserRound } from 'lucide-react-native';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useIsFocused } from '@react-navigation/native';
 import type { TranslationKey } from '../i18n/translations';
 import { theme } from '../theme';
 import type { AppTabParamList } from '../navigation';
 import type { PrototypeIcon } from './PrototypePrimitives';
-import { ScreenEntrance } from './BrandMotion';
+import { ScreenEntrance, ScreenLoading } from './BrandMotion';
 import { useLanguage } from '../i18n/LanguageProvider';
+import { useNotifications } from '../notifications/NotificationProvider';
 
 export type PrototypeNavItem = {
   labelKey: TranslationKey;
   route: keyof AppTabParamList;
   icon: PrototypeIcon;
 };
-
 export const employeeNav: PrototypeNavItem[] = [
   { labelKey: 'nav.dashboard', route: 'EmployeeDashboard', icon: Home },
   { labelKey: 'nav.calendar', route: 'EmployeeCalendar', icon: CalendarDays },
-  { labelKey: 'nav.ticket', route: 'PickupIntent', icon: QrCode },
+  { labelKey: 'nav.notifications', route: 'Notifications', icon: Bell },
   { labelKey: 'nav.profile', route: 'EmployeeProfile', icon: UserRound },
 ];
 
@@ -51,6 +51,7 @@ export function PrototypeTabBar({
   insets,
 }: BottomTabBarProps & { navItems: PrototypeNavItem[] }) {
   const { t } = useLanguage();
+  const { unreadCount } = useNotifications();
   return (
     <View
       style={[
@@ -89,13 +90,17 @@ export function PrototypeTabBar({
                   }
                 }
               }}
-              style={[styles.navItem, focused && styles.navItemActive]}
-            >
-              <Icon
-                size={22}
-                color={focused ? theme.colors.accentDeep : theme.colors.muted}
-                strokeWidth={1.8}
-              />
+              >
+              <View style={styles.iconWrap}>
+                <Icon
+                  size={22}
+                  color={focused ? theme.colors.accentDeep : theme.colors.muted}
+                  strokeWidth={1.8}
+                />
+                {item.route === 'Notifications' && unreadCount > 0 && (
+                  <View style={styles.badge}><Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text></View>
+                )}
+              </View>
             </Pressable>
           );
         })}
@@ -110,19 +115,23 @@ export function PrototypeFrame({
   scroll = true,
   scrollProps,
   animateEntrance = true,
+  screenLoadingLabel,
 }: {
   children: React.ReactNode;
   bottomClearance?: number;
   scroll?: boolean;
   scrollProps?: Omit<ScrollViewProps, 'contentContainerStyle'>;
   animateEntrance?: boolean;
+  screenLoadingLabel?: string;
 }) {
   const { width } = useWindowDimensions();
   const isFocused = useIsFocused();
   const deviceStyle = width > 480 ? styles.deviceWide : styles.device;
   const device = (
     <View style={deviceStyle}>
-      {scroll ? (
+      {screenLoadingLabel ? (
+        <ScreenLoading label={screenLoadingLabel} />
+      ) : scroll ? (
         <ScrollView
           {...scrollProps}
           style={styles.body}
@@ -202,6 +211,9 @@ const styles = StyleSheet.create({
   },
   navItem: { flex: 1, minWidth: 44, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radii.md },
   navItemActive: { backgroundColor: theme.colors.accentSoft },
+  iconWrap: { position: 'relative', alignItems: 'center', justifyContent: 'center' },
+  badge: { position: 'absolute', top: -8, right: -12, minWidth: 16, height: 16, paddingHorizontal: 3, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.statusBadDeep },
+  badgeText: { color: theme.colors.surface, fontSize: 9, fontFamily: theme.typography.bold },
   sectionTitle: { paddingVertical: 18, gap: 5 },
   sectionHeading: { color: theme.colors.fg, fontSize: 20, fontFamily: theme.typography.bold, letterSpacing: -0.2 },
   sectionSubtitle: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19 },

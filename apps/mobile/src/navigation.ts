@@ -1,4 +1,4 @@
-import type { NavigatorScreenParams } from '@react-navigation/native';
+import { createNavigationContainerRef, type NavigatorScreenParams } from '@react-navigation/native';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
@@ -7,10 +7,16 @@ export type ProfileStackParamList = {
   Delegation: undefined;
 };
 
+export type NotificationStackParamList = {
+  NotificationList: undefined;
+  NotificationDetail: { notificationId: string };
+};
+
 export type AppTabParamList = {
   EmployeeDashboard: undefined;
-  EmployeeCalendar: undefined;
+  EmployeeCalendar: { mealDate?: string } | undefined;
   PickupIntent: undefined;
+  Notifications: NavigatorScreenParams<NotificationStackParamList> | undefined;
   EmployeeProfile: NavigatorScreenParams<ProfileStackParamList> | undefined;
   KitchenDashboard: undefined;
   KitchenScanner: undefined;
@@ -21,6 +27,31 @@ export type RootStackParamList = {
   Auth: undefined;
   AppTabs: NavigatorScreenParams<AppTabParamList> | undefined;
 };
+
+export const navigationRef = createNavigationContainerRef<RootStackParamList>();
+
+let pendingNotificationId: string | null = null;
+
+export function navigateToNotification(notificationId: string): void {
+  if (!navigationRef.isReady()) {
+    pendingNotificationId = notificationId;
+    return;
+  }
+  navigationRef.navigate('AppTabs', {
+    screen: 'Notifications',
+    params: {
+      screen: 'NotificationDetail',
+      params: { notificationId },
+    },
+  });
+}
+
+export function flushPendingNotificationNavigation(): void {
+  if (!pendingNotificationId || !navigationRef.isReady()) return;
+  const notificationId = pendingNotificationId;
+  pendingNotificationId = null;
+  navigateToNotification(notificationId);
+}
 
 export type AuthScreenProps = NativeStackScreenProps<RootStackParamList, 'Auth'>;
 export type AppTabScreenProps<RouteName extends keyof AppTabParamList> =

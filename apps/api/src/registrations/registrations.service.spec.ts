@@ -4,12 +4,16 @@ import { v1 } from '@imeal/contracts';
 import { RegistrationsService } from './registrations.service.js';
 
 const txMock = {
+  $queryRaw: vi.fn(),
   registration: {
     findUnique: vi.fn(),
     update: vi.fn(),
     create: vi.fn(),
   },
-  outboxEvent: { create: vi.fn() },
+  pickupDelegation: { findMany: vi.fn(), update: vi.fn() },
+  auditLog: { create: vi.fn() },
+  notification: { upsert: vi.fn() },
+  outboxEvent: { upsert: vi.fn(), create: vi.fn() },
 };
 
 const prismaMock = {
@@ -37,9 +41,16 @@ describe('RegistrationsService', () => {
     prismaMock.$transaction.mockImplementation(async (callback) =>
       callback(txMock),
     );
+    txMock.$queryRaw.mockResolvedValue([]);
+    txMock.pickupDelegation.findMany.mockResolvedValue([]);
     txMock.registration.update.mockResolvedValue({});
     txMock.registration.create.mockResolvedValue({});
-    txMock.outboxEvent.create.mockResolvedValue({});
+    txMock.pickupDelegation.update.mockResolvedValue({});
+    txMock.auditLog.create.mockResolvedValue({});
+    txMock.notification.upsert.mockResolvedValue({
+      id: '55555555-5555-4555-8555-555555555555',
+    });
+    txMock.outboxEvent.upsert.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -348,14 +359,28 @@ describe('RegistrationsService', () => {
     });
   });
 
-  it('cancels active registrations and emits delegation cascade outbox events', async () => {
+  it('cancels active registrations and revokes delegations transactionally', async () => {
     vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue({
       id: 'registration-1',
       status: 'ACTIVE',
       mealChoice: 'REGULAR',
-      delegations: [{ id: 'delegation-1' }],
+      user: { name: 'Owner', email: 'owner@example.com' },
+      delegations: [
+        {
+          id: 'delegation-1',
+          delegateUserId: 'delegate-1',
+          status: 'PENDING',
+        },
+      ],
     });
+    txMock.pickupDelegation.findMany.mockResolvedValueOnce([
+      {
+        id: 'delegation-1',
+        delegateUserId: 'delegate-1',
+        status: 'PENDING',
+      },
+    ]);
     const service = new RegistrationsService();
 
     await expect(
@@ -367,14 +392,12 @@ describe('RegistrationsService', () => {
       where: { id: 'registration-1' },
       data: { status: 'CANCELLED', version: { increment: 1 } },
     });
-    expect(txMock.outboxEvent.create).toHaveBeenCalledWith({
-      data: {
-        aggregateType: 'REGISTRATION',
-        aggregateId: 'registration-1',
-        eventType: 'REGISTRATION_CANCELLED',
-        payload: JSON.stringify({ registrationId: 'registration-1' }),
-      },
+    expect(txMock.pickupDelegation.update).toHaveBeenCalledWith({
+      where: { id: 'delegation-1' },
+      data: { status: 'REVOKED' },
     });
+    expect(txMock.notification.upsert).toHaveBeenCalled();
+    expect(txMock.outboxEvent.create).not.toHaveBeenCalled();
   });
 
   it('makes cancellation of missing or already cancelled registrations idempotent', async () => {

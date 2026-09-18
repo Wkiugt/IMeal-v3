@@ -1,28 +1,74 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
-import { Check, ChevronRight, LogOut, UsersRound } from 'lucide-react-native';
+import { Bell, Check, ChevronRight, LogOut, Settings, UsersRound } from 'lucide-react-native';
 import type { ProfileStackScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { initials } from '../../businessDate';
-import { Avatar, Eyebrow, Pill, PillText, PrototypeCard } from '../../ui/PrototypePrimitives';
+import { Avatar, Eyebrow, Pill, PillText, PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame } from '../../ui/PrototypeShell';
 import { useNotice } from '../../ui/BrandNotice';
 import { useLanguage } from '../../i18n/LanguageProvider';
+import { notificationAPI } from '../../api/notificationAPI';
+import { useNotifications } from '../../notifications/NotificationProvider';
 import { theme } from '../../theme';
+
 type Props = ProfileStackScreenProps<'ProfileHome'>;
 
 export function EmployeeProfileScreen({ navigation }: Props) {
-  const { profile, logout } = useSession();
+  const { token, profile, logout } = useSession();
   const { showNotice } = useNotice();
   const { language, setLanguage, t } = useLanguage();
+  const { permissionStatus, configurationError, enableNotifications, openSettings, revokeCurrentDevice } = useNotifications();
   const [reminders, setReminders] = useState(true);
+  const [confirmedReminders, setConfirmedReminders] = useState(true);
+  const [reminderLoading, setReminderLoading] = useState(true);
   const displayName = profile?.name || profile?.email.split('@')[0] || t('profile.employeeAccount');
   const userCode = profile?.userId || profile?.id || '—';
+
+  useEffect(() => {
+    if (!token) return;
+    let mounted = true;
+    setReminderLoading(true);
+    void notificationAPI.getPreferences(token).then((preferences) => {
+      if (!mounted) return;
+      setReminders(preferences.remindersEnabled);
+      setConfirmedReminders(preferences.remindersEnabled);
+    }).catch(() => {
+      if (mounted) showNotice({ title: t('common.error'), message: t('profile.preferenceLoadFailed'), tone: 'warning' });
+    }).finally(() => {
+      if (mounted) setReminderLoading(false);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [showNotice, t, token]);
+
+  const handleReminderChange = async (nextValue: boolean) => {
+    if (!token || reminderLoading) return;
+    const previousValue = confirmedReminders;
+    setReminderLoading(true);
+    try {
+      const preferences = await notificationAPI.updatePreferences({ remindersEnabled: nextValue }, token);
+      setConfirmedReminders(preferences.remindersEnabled);
+      setReminders(preferences.remindersEnabled);
+    } catch {
+      setReminders(previousValue);
+      setConfirmedReminders(previousValue);
+      showNotice({ title: t('common.error'), message: t('profile.preferenceSaveFailed'), tone: 'warning' });
+    } finally {
+      setReminderLoading(false);
+    }
+  };
+
+  const performLogout = async () => {
+    await revokeCurrentDevice().catch(() => undefined);
+    await logout();
+  };
 
   const handleLogout = () => {
     Alert.alert(t('auth.logOut'), t('profile.logOutConfirm'), [
       { text: t('common.cancel'), style: 'cancel' },
-      { text: t('auth.logOut'), style: 'destructive', onPress: () => void logout() },
+      { text: t('auth.logOut'), style: 'destructive', onPress: () => { void performLogout(); } },
     ]);
   };
 
@@ -31,13 +77,25 @@ export function EmployeeProfileScreen({ navigation }: Props) {
     try {
       await setLanguage(nextLanguage);
     } catch {
-      showNotice({
-        title: t('common.error'),
-        message: t('profile.languagePersistenceFailed'),
-        tone: 'warning',
-      });
+      showNotice({ title: t('common.error'), message: t('profile.languagePersistenceFailed'), tone: 'warning' });
+      return;
+    }
+    if (!token) return;
+    try {
+      await notificationAPI.updatePreferences({ locale: nextLanguage }, token);
+    } catch {
+      showNotice({ title: t('common.error'), message: t('profile.languagePersistenceFailed'), tone: 'warning' });
     }
   };
+  const systemStatus = permissionStatus === 'granted'
+    ? t('notifications.enabled')
+    : permissionStatus === 'denied'
+      ? t('notifications.denied')
+      : permissionStatus === 'simulator'
+        ? t('notifications.physicalDeviceRequired')
+        : t('notifications.notEnabled');
+  const systemAction = permissionStatus === 'denied' ? openSettings : enableNotifications;
+  const systemActionLabel = permissionStatus === 'denied' ? t('notifications.openSettings') : t('notifications.enable');
 
   return (
     <PrototypeFrame>
@@ -53,7 +111,10 @@ export function EmployeeProfileScreen({ navigation }: Props) {
       <PrototypeCard style={styles.preferencesCard}>
         <View style={styles.preferenceRow}><View><Text style={styles.preferenceLabel}>{t('profile.dietaryPreferences')}</Text><Text style={styles.preferenceSub}>{t('profile.managedByAccount')}</Text></View><Pill><PillText>{t('profile.notSet')}</PillText></Pill></View>
         <View style={styles.divider} />
-        <View style={styles.preferenceRow}><View style={styles.preferenceCopy}><Text style={styles.preferenceLabel}>{t('profile.bookingReminders')}</Text><Text style={styles.preferenceSub}>{t('profile.remindersHint')}</Text></View><Switch accessibilityLabel={t('profile.bookingReminders')} value={reminders} onValueChange={setReminders} trackColor={{ false: theme.colors.border, true: theme.colors.accentDeep }} thumbColor={theme.colors.surface} /></View>
+        <View style={styles.preferenceRow}><View style={styles.preferenceCopy}><Text style={styles.preferenceLabel}>{t('profile.bookingReminders')}</Text><Text style={styles.preferenceSub}>{t('profile.remindersHint')}</Text></View><Switch accessibilityLabel={t('profile.bookingReminders')} disabled={reminderLoading} value={confirmedReminders} onValueChange={(value) => void handleReminderChange(value)} trackColor={{ false: theme.colors.border, true: theme.colors.accentDeep }} thumbColor={theme.colors.surface} /></View>
+        <View style={styles.divider} />
+        <View style={styles.preferenceRow}><View style={styles.preferenceCopy}><Text style={styles.preferenceLabel}>{t('profile.systemNotifications')}</Text><Text style={styles.preferenceSub}>{systemStatus}</Text></View><PrototypeButton icon={permissionStatus === 'denied' ? Settings : Bell} variant="secondary" disabled={permissionStatus === 'simulator' || permissionStatus === 'unavailable'} onPress={() => void systemAction()}>{systemActionLabel}</PrototypeButton></View>
+        {configurationError && <Text style={styles.recovery}>{configurationError}</Text>}
         <View style={styles.divider} />
         <View style={styles.languageRow}>
           <View style={styles.preferenceCopy}><Text style={styles.preferenceLabel}>{t('profile.language')}</Text><Text style={styles.preferenceSub}>{t('profile.languageHint')}</Text></View>
@@ -64,14 +125,7 @@ export function EmployeeProfileScreen({ navigation }: Props) {
             ] as const).map(([nextLanguage, labelKey]) => {
               const selected = language === nextLanguage;
               return (
-                <Pressable
-                  key={nextLanguage}
-                  accessibilityRole="radio"
-                  accessibilityLabel={t(labelKey)}
-                  accessibilityState={{ checked: selected }}
-                  onPress={() => void handleLanguageChange(nextLanguage)}
-                  style={[styles.languageOption, selected && styles.languageOptionSelected]}
-                >
+                <Pressable key={nextLanguage} accessibilityRole="radio" accessibilityLabel={t(labelKey)} accessibilityState={{ checked: selected }} onPress={() => void handleLanguageChange(nextLanguage)} style={[styles.languageOption, selected && styles.languageOptionSelected]}>
                   {selected && <Check size={14} color={theme.colors.accentDeep} strokeWidth={2.4} />}
                   <Text style={[styles.languageOptionText, selected && styles.languageOptionTextSelected]}>{t(labelKey)}</Text>
                 </Pressable>
@@ -111,6 +165,7 @@ const styles = StyleSheet.create({
   preferenceCopy: { flex: 1 },
   preferenceLabel: { color: theme.colors.fg, fontSize: 14, fontFamily: theme.typography.semiBold },
   preferenceSub: { marginTop: 4, color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular },
+  recovery: { color: theme.colors.statusWarnDeep, fontSize: 12, lineHeight: 18, fontFamily: theme.typography.semiBold },
   divider: { height: 1, backgroundColor: theme.colors.border },
   delegationRow: { minHeight: 68, paddingHorizontal: 16, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.md, flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
   delegationIcon: { width: 36, height: 36, borderRadius: theme.radii.sm, backgroundColor: theme.colors.accentTint, alignItems: 'center', justifyContent: 'center' },
