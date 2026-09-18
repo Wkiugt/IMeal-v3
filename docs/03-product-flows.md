@@ -328,6 +328,73 @@ If A unticks a registration that has `pending|accepted` delegation:
 3. A and B receive authoritative state; B receives a persisted notification.
 4. Accept committed first does not block cancellation: cancellation still atomically revokes the accepted delegation. Only a serving already committed first returns `ALREADY_SERVED`; no partial cancellation is shown.
 
+## 6.6 Staff notification flow
+
+Notification is created in the same transaction as the authoritative business change and
+appears in the recipient's persisted inbox before any optional push delivery. The inbox item has
+`{ id, kind, payload, copy: { vi: { title, body }, en: { title, body } }, readAt, createdAt }`;
+IDs/cursors are UUIDs, dates are `YYYY-MM-DD`, and timestamps are UTC ISO strings. Detail and
+read are owner-scoped; a foreign notification ID is indistinguishable from a missing one.
+
+### Canonical event matrix
+
+| Event | When | Who receives it | Flow destination |
+| ----- | ---- | --------------- | ---------------- |
+| `REGISTRATION_OPENED` | First publish only; initializes missing daily revisions and marks weekly menu published. | Every active Staff user, independent of reminder opt-out. | Calendar. |
+| `REGISTRATION_REMINDER` | Sunday 10:00 VN for next Monday's published menu; one per Staff/week. | Active Staff missing at least one enabled, non-holiday registration and with reminders enabled. | Calendar. |
+| `PICKUP_REMINDER` | Daily 11:30 VN for today's active unserved registrations. | Accepted delegate, otherwise owner; one grouped item per recipient/date when reminders enabled. | Pickup Intent. |
+| `DELEGATION_REQUESTED` | Owner sends pending request. | Delegate. | Delegation. |
+| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` | Delegate responds. | Owner. | Delegation. |
+| `DELEGATION_REVOKED` | Owner revokes, or owner cancellation revokes the active delegation. | Delegate, with reason `OWNER_REVOKED` or `REGISTRATION_CANCELLED`. | Delegation. |
+| `PROXY_PICKUP_COMPLETED` | Accepted delegate successfully receives the meal for the owner. | Owner only; self pickup creates no notification. | Readable detail, no CTA. |
+| `NO_SHOW_PENALTY_CREATED` | No-show worker at 13:45 VN after the 13:30 service end. | Registration owner. | Readable detail, no CTA. |
+
+Published-menu edits use `REGISTERED_MENU_CHANGED`, never `REGISTRATION_OPENED`. Admin
+account-disable notification is not a current flow; it remains part of a future
+account-disable subsystem rather than a dormant kind.
+
+### Inbox and push flow
+
+1. API or worker publisher writes the structured notification and
+   `NOTIFICATION_CREATED` outbox event atomically. Dedupe replay does not reset read state.
+2. Mobile requests `GET /api/notifications` with cursor pagination (limit 20 by default,
+   bounded to 1–50), opens owner-scoped detail, then marks read after detail load succeeds.
+   `unreadCount` drives the Notifications tab badge.
+3. The worker claims due outbox rows every 15 seconds, creates per-device deliveries for
+   non-revoked devices, and sends Expo Push best-effort. Transient failures retry after
+   1/5/15 minutes; the fourth failed attempt is `FAILED`, permanent device/provider errors
+   fail immediately and an unregistered device is revoked. A stale `PROCESSING` delivery
+   older than five minutes is recoverable.
+4. Push data is `imeal://notifications/<UUID>`. A validated tap opens the persisted
+   NotificationDetail; a notification remains readable if push fails or is unavailable.
+
+### Locale, reminder preference, and permission onboarding
+
+Both `vi` and `en` title/body are stored at publish time, so the inbox always retains both
+copies. A mobile language change updates the local UI immediately and best-effort PATCHes
+`locale` through `/api/notifications/preferences`; if that PATCH fails, the local language
+and inbox remain usable, while only the locale used for future push delivery stays at the
+previous server value. Push chooses the stored copy using the server locale (default `vi`),
+and dates in copy use `Asia/Ho_Chi_Minh`. The one
+`remindersEnabled` preference (default `true`) opts out of both weekly registration and
+same-day pickup reminders; it does not suppress transactional delegation/menu/pickup/no-show
+events. The reminder switch changes only after its PATCH succeeds.
+
+After first authenticated native login, show one contextual explainer. `Enable` is the only
+action that invokes the OS prompt; `Not now` dismisses and records the one-time state.
+After denial, do not auto-prompt; the Settings CTA opens OS settings. Web does no push work,
+and a simulator explains that a physical device is required. Missing push configuration must
+not disable inbox use. A separate profile system-notification status/Settings CTA is not the
+reminder switch.
+
+### Deep-link destinations
+
+- Registration/menu (`REGISTRATION_OPENED`, `REGISTRATION_REMINDER`, `REGISTERED_MENU_CHANGED`) → Calendar, with an optional meal date/week handoff.
+- Pickup (`PICKUP_REMINDER`) → Pickup Intent.
+- Delegation lifecycle → Delegation.
+- No-show and migrated legacy items remain readable without claiming an unavailable action.
+
+
 ## 7. Kitchen menu management
 
 ### 7.1 Weekly menu screen

@@ -1,9 +1,0 @@
-{
-  "expo": {
-    "name": "IMealMobile",
-    "slug": "imeal-mobile",
-    "version": "1.0.0",
-    "scheme": "imeal",
-    "platforms": ["ios", "android", "web"]
-  }
-}

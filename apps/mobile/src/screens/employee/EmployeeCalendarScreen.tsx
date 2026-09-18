@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Check, ChevronLeft, ChevronRight, Leaf } from 'lucide-react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { registrationAPI, type RegistrationRecord, type WeekRegistrationResponse } from '../../api/registrationAPI';
-import { addDays, formatDay, formatMonth, formatShortDate, startOfWeek, toDateKey } from '../../businessDate';
+import { addDays, formatDay, formatMonth, formatShortDate, parseDateKey, startOfWeek, toDateKey } from '../../businessDate';
 import { buildMonthRows } from './calendarGrid';
 import {
   CalendarMutationTracker,
@@ -19,7 +19,7 @@ import {
 import { PrototypeCard, Pill, PillText } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
+import { useScreenLoadingGate } from '../../ui/useScreenLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { useReducedMotion } from '../../ui/useReducedMotion';
 import { useLanguage } from '../../i18n/LanguageProvider';
@@ -62,11 +62,13 @@ function getWindowSnapshot(response: WeekRegistrationResponse, receiptAt: number
 }
 
 
-export function EmployeeCalendarScreen(_props: Props) {
+export function EmployeeCalendarScreen({ navigation, route }: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
   const { locale, t } = useLanguage();
+  const isFocused = useIsFocused();
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [weekState, setWeekState] = useState<WeekState>({});
   const [draftChoiceByDate, setDraftChoiceByDate] = useState<DraftChoiceByDate>({});
   const [monthRegistrations, setMonthRegistrations] = useState<Set<string>>(new Set());
@@ -77,21 +79,29 @@ export function EmployeeCalendarScreen(_props: Props) {
   const [monthLoading, setMonthLoading] = useState(true);
   const [weekLoading, setWeekLoading] = useState(true);
   const loading = monthLoading || weekLoading;
-  const initialGate = useInitialLoadingGate(
-    loading,
-    Boolean(availabilityError && !windowSnapshot),
-  );
+  const screenLoading = useScreenLoadingGate(isFocused, !loading);
   const monthKey = toDateKey(month);
   const hasMonthData = monthDataKey === monthKey;
   const draftChoiceRef = useRef<DraftChoiceByDate>({});
   draftChoiceRef.current = draftChoiceByDate;
-  const showLoading = initialGate || (!windowSnapshot && loading);
   const [savingDates, setSavingDates] = useState<Set<string>>(new Set());
   const mutationTracker = useRef(new CalendarMutationTracker()).current;
   const cutoffWarnings = useRef(new Set<string>());
   const monthRequestId = useRef(0);
   const weekRequestId = useRef(0);
-  const weekStart = useMemo(() => startOfWeek(new Date()), []);
+
+  useEffect(() => {
+    const mealDate = route.params?.mealDate;
+    if (!mealDate) return;
+    const date = parseDateKey(mealDate);
+    if (Number.isNaN(date.getTime())) {
+      navigation.setParams({ mealDate: undefined });
+      return;
+    }
+    setMonth(new Date(date.getFullYear(), date.getMonth(), 1));
+    setWeekStart(startOfWeek(date));
+    navigation.setParams({ mealDate: undefined });
+  }, [navigation, route.params?.mealDate]);
 
   const applyCurrentWeek = useCallback((
     response: WeekRegistrationResponse,
@@ -357,19 +367,11 @@ export function EmployeeCalendarScreen(_props: Props) {
 
   const todayKey = toDateKey(new Date());
   return (
-    <PrototypeFrame bottomClearance={0}>
+    <PrototypeFrame bottomClearance={0} screenLoadingLabel={screenLoading ? t('calendar.loading') : undefined}>
       <StateTransition
-        stateKey={
-          showLoading
-            ? 'loading'
-            : availabilityError && !windowSnapshot
-              ? 'error'
-              : 'ready'
-        }
+        stateKey={availabilityError && !windowSnapshot ? 'error' : 'ready'}
       >
-        {showLoading ? (
-          <BrandLoader label={t('calendar.loading')} />
-        ) : availabilityError && !windowSnapshot ? (
+        {availabilityError && !windowSnapshot ? (
           <Pressable accessibilityRole="button" accessibilityLabel={t('common.retry')} onPress={() => void refreshCurrentWeek()} style={styles.retry}>
             <Text style={styles.retryText}>{'key' in availabilityError ? t(availabilityError.key) : getMobileErrorMessage(availabilityError.error, t, availabilityError.fallbackKey)}</Text>
             <Text style={styles.retryAction}>{t('common.retry')}</Text>

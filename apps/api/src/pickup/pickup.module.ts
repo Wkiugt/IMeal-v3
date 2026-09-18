@@ -4,9 +4,10 @@ import { InternalPickupController } from './internal-pickup.controller.js';
 import { PickupService } from './pickup.service.js';
 import { AuthModule } from '../auth/auth.module.js';
 import { KitchenModule } from '../kitchen/kitchen.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 
 @Module({
-  imports: [AuthModule, KitchenModule],
+  imports: [AuthModule, KitchenModule, NotificationsModule],
   controllers: [PickupController, InternalPickupController],
   providers: [PickupService],
   exports: [PickupService],

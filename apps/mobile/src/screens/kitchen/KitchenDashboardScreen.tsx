@@ -8,8 +8,8 @@ import { kitchenAPI, type KitchenDashboardSnapshot, type KitchenRegistrationItem
 import { formatBusinessInstant, initials } from '../../businessDate';
 import { Eyebrow, Pill, PillText, PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
 import { PrototypeFrame } from '../../ui/PrototypeShell';
-import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { useInitialLoadingGate } from '../../ui/useInitialLoadingGate';
+import { StateTransition } from '../../ui/BrandMotion';
+import { useScreenLoadingGate } from '../../ui/useScreenLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { getMobileErrorMessage } from '../../api/mobileApiError';
 import { useLanguage } from '../../i18n/LanguageProvider';
@@ -35,12 +35,7 @@ export function KitchenDashboardScreen({ navigation }: Props) {
   const sliderX = useRef(new Animated.Value(0)).current;
   const dashboardRequestId = useRef(0);
   const currentSnapshot = useRef<KitchenDashboardSnapshot | null>(null);
-  const initialLoading = snapshot === null && loading;
-  const initialGate = useInitialLoadingGate(
-    initialLoading,
-    Boolean(loadError && snapshot === null),
-  );
-  const showLoading = initialGate || initialLoading;
+  const screenLoading = useScreenLoadingGate(isFocused, !loading);
   const fetchDashboard = useCallback(async () => {
     if (!token) return;
     const requestId = ++dashboardRequestId.current;
@@ -78,7 +73,7 @@ export function KitchenDashboardScreen({ navigation }: Props) {
 
   const active = Boolean(snapshot?.isServingReady);
   const maxX = Math.max(0, trackWidth - 52);
-  const settleSlider = (value: number) => Animated.spring(sliderX, { toValue: value, useNativeDriver: true, bounciness: 0 }).start();
+  const settleSlider = (value: number) => Animated.spring(sliderX, { toValue: value, useNativeDriver: false, bounciness: 0 }).start();
   useEffect(() => { settleSlider(active ? maxX : 0); }, [active, maxX]);
 
   const toggleSignal = async (next: boolean) => {
@@ -130,11 +125,9 @@ export function KitchenDashboardScreen({ navigation }: Props) {
   const selectedItems = activeTab === 'logs' ? [] : lists[activeTab];
   const logs = activeTab === 'logs' ? filterLogs(snapshot?.recentLogs || []) : [];
   return (
-    <PrototypeFrame scrollProps={{ refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void fetchDashboard(); }} /> }} bottomClearance={114}>
-      <StateTransition stateKey={showLoading ? 'loading' : snapshot === null ? 'error' : 'ready'}>
-        {showLoading ? (
-          <BrandLoader label={t('kitchen.loadingDashboard')} />
-        ) : snapshot === null ? (
+    <PrototypeFrame screenLoadingLabel={screenLoading ? t('kitchen.loadingDashboard') : undefined} scrollProps={{ refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void fetchDashboard(); }} /> }} bottomClearance={114}>
+      <StateTransition style={styles.dashboardContent} stateKey={snapshot === null ? 'error' : 'ready'}>
+        {snapshot === null ? (
           <PrototypeCard style={styles.errorCard}>
             <Text style={styles.errorTitle}>{t('kitchen.dashboardUnavailable')}</Text>
             <Text style={styles.errorText}>{getMobileErrorMessage(loadError, t, 'errors.loadKitchen')}</Text>

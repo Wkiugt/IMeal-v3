@@ -3,7 +3,6 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { Server } from 'node:http';
 import { AppModule } from './../src/app.module.js';
-
 import { vi } from 'vitest';
 import { NotificationsService } from './../src/notifications/notifications.service.js';
 
@@ -11,7 +10,7 @@ describe('NotificationsController (e2e)', () => {
   let app: INestApplication<Server>;
 
   beforeAll(() => {
-    process.env.REQUIRE_AUTH = 'false'; // Bypass auth
+    process.env.REQUIRE_AUTH = 'false';
   });
 
   beforeEach(async () => {
@@ -21,10 +20,13 @@ describe('NotificationsController (e2e)', () => {
       .overrideProvider(NotificationsService)
       .useValue({
         getNotifications: vi.fn().mockResolvedValue({
-          items: [],
-          meta: { page: 1, limit: 10, totalCount: 0, totalPages: 0 },
+          data: [],
+          meta: { nextCursor: null, hasNextPage: false, unreadCount: 0 },
         }),
-        markAsRead: vi.fn().mockResolvedValue({}),
+        getNotification: vi.fn(),
+        markAsRead: vi.fn(),
+        getPreferences: vi.fn(),
+        updatePreferences: vi.fn(),
       })
       .compile();
 
@@ -36,9 +38,9 @@ describe('NotificationsController (e2e)', () => {
     await app.close();
   });
 
-  it('should return 400 for negative page', async () => {
+  it('should return 400 for an invalid cursor', async () => {
     const res = await request(app.getHttpServer()).get(
-      '/api/notifications?page=-1',
+      '/api/notifications?cursor=not-a-uuid',
     );
     expect(res.status).toBe(400);
   });
@@ -50,30 +52,30 @@ describe('NotificationsController (e2e)', () => {
     expect(res.status).toBe(400);
   });
 
-  it('should return 400 for limit > 100', async () => {
+  it('should return 400 for limit > 50', async () => {
     const res = await request(app.getHttpServer()).get(
-      '/api/notifications?limit=101',
+      '/api/notifications?limit=51',
     );
     expect(res.status).toBe(400);
   });
 
-  it('should parse valid pagination params', async () => {
+  it('should parse valid cursor pagination params', async () => {
     const res = await request(app.getHttpServer()).get(
-      '/api/notifications?page=2&limit=50',
+      '/api/notifications?limit=50',
     );
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      items: [],
-      meta: { page: 1, limit: 10, totalCount: 0, totalPages: 0 },
+      data: [],
+      meta: { nextCursor: null, hasNextPage: false, unreadCount: 0 },
     });
   });
 
-  it('should fallback to defaults when query is missing', async () => {
+  it('should use the default limit when query is missing', async () => {
     const res = await request(app.getHttpServer()).get('/api/notifications');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      items: [],
-      meta: { page: 1, limit: 10, totalCount: 0, totalPages: 0 },
+      data: [],
+      meta: { nextCursor: null, hasNextPage: false, unreadCount: 0 },
     });
   });
 });

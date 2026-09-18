@@ -8,7 +8,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
+import { Utensils } from 'lucide-react-native';
 import { theme } from '../theme';
 import { useReducedMotion } from './useReducedMotion';
 import { shouldAnimateScreenEntrance } from './screenEntranceState';
@@ -34,19 +34,11 @@ export function BrandMark({
         style,
       ]}
     >
-      <Svg
-        width={size}
-        height={size}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke={theme.colors.accentDeep}
-        strokeWidth={1.6}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <Path d="M6 3v9a3 3 0 0 0 6 0V3M9 8.5V3" />
-        <Path d="M17.5 3c-1.4 1.4-2 3-2 5.2 0 1.8.9 2.8 2 3.3V21" />
-      </Svg>
+      <Utensils
+        size={size}
+        color={theme.colors.accentDeep}
+        strokeWidth={2}
+      />
     </View>
   );
 }
@@ -129,6 +121,14 @@ export function BrandLoader({ label, compact = false }: BrandLoaderProps) {
       <Text style={[styles.loaderLabel, compact && styles.loaderLabelCompact]}>
         {label}
       </Text>
+    </View>
+  );
+}
+
+export function ScreenLoading({ label }: { label: string }) {
+  return (
+    <View style={styles.screenLoading}>
+      <BrandLoader label={label} />
     </View>
   );
 }
@@ -269,6 +269,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 12,
     paddingVertical: 28,
+    backgroundColor: theme.colors.bg,
+  },
+  screenLoading: {
+    flex: 1,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: theme.colors.bg,
   },
   loaderCompact: {

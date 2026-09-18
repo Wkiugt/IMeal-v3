@@ -31,7 +31,6 @@
     "@nestjs/passport": "^12.0.0",
     "@nestjs/platform-fastify": "^12.0.1",
     "@prisma/client": "^5.22.0",
-    "expo-server-sdk": "^7.2.0",
     "jwks-rsa": "^4.1.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",

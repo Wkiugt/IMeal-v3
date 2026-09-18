@@ -7,14 +7,14 @@ const labels = {
   vi: {
     'nav.dashboard': 'Bảng điều khiển',
     'nav.calendar': 'Lịch',
-    'nav.ticket': 'Vé suất ăn',
+    'nav.notifications': 'Thông báo',
     'nav.profile': 'Hồ sơ',
     'nav.scanner': 'Máy quét',
   },
   en: {
     'nav.dashboard': 'Dashboard',
     'nav.calendar': 'Calendar',
-    'nav.ticket': 'Meal ticket',
+    'nav.notifications': 'Notifications',
     'nav.profile': 'Profile',
     'nav.scanner': 'Scanner',
   },
@@ -43,6 +43,7 @@ vi.mock('./BrandMotion', () => ({ ScreenEntrance: nativeComponent('ScreenEntranc
 vi.mock('lucide-react-native', () => {
   const icon = (name: string) => nativeComponent(name);
   return {
+    Bell: icon('Bell'),
     CalendarDays: icon('CalendarDays'),
     Home: icon('Home'),
     QrCode: icon('QrCode'),
@@ -54,6 +55,10 @@ vi.mock('../i18n/LanguageProvider', () => ({
   useLanguage: () => ({
     t: (key: keyof typeof labels.vi) => labels[languageMock.language][key],
   }),
+}));
+
+vi.mock('../notifications/NotificationProvider', () => ({
+  useNotifications: () => ({ unreadCount: 0 }),
 }));
 
 import { theme } from '../theme';
@@ -129,8 +134,8 @@ describe('PrototypeTabBar', () => {
   });
 
   it.each([
-    ['vi', ['Bảng điều khiển', 'Lịch', 'Vé suất ăn', 'Hồ sơ']],
-    ['en', ['Dashboard', 'Calendar', 'Meal ticket', 'Profile']],
+    ['vi', ['Bảng điều khiển', 'Lịch', 'Thông báo', 'Hồ sơ']],
+    ['en', ['Dashboard', 'Calendar', 'Notifications', 'Profile']],
   ] as const)('resolves %s accessibility labels and preserves profile nesting', (language, expectedLabels) => {
     languageMock.language = language;
     const { navigation, pressables } = renderTabBar();

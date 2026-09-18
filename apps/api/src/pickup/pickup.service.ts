@@ -8,6 +8,8 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { v1 } from '@imeal/contracts';
 import * as crypto from 'crypto';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { displayNotificationName } from '../notifications/notification-copy.js';
 import {
   getBusinessDate,
   isWithinServingWindow,
@@ -28,11 +30,17 @@ const PICKUP_NOT_READY_MESSAGE =
 function toMealDateKey(value: Date | string): string {
   return value instanceof Date ? value.toISOString().slice(0, 10) : value;
 }
-
 interface LockedRegistration {
   id: string;
   status: string;
   user_id: string;
+}
+
+interface LockedDelegation {
+  id: string;
+  status: string;
+  registration_id: string;
+  delegate_user_id: string;
 }
 export interface PickupSessionRecord {
   id: string;
@@ -48,6 +56,7 @@ export class PickupService {
 
   constructor(
     @Optional() private readonly kitchenEventsService?: KitchenEventsService,
+    @Optional() private readonly notificationsService?: NotificationsService,
   ) {
     this.prisma = new PrismaClient();
   }
@@ -465,13 +474,31 @@ export class PickupService {
             throw new Error('Some registrations not found');
           }
 
-          const delegations = await tx.$queryRaw<any[]>`
-            SELECT id, status
+          const delegations = await tx.$queryRaw<LockedDelegation[]>`
+            SELECT id, status, registration_id, "delegate_user_id"
             FROM pickup_delegations
             WHERE registration_id IN (${Prisma.join(registrationIds)})
             ORDER BY id
             FOR UPDATE
           `;
+          const acceptedDelegationsByRegistration = new Map(
+            delegations
+              .filter((delegation) => delegation.status === 'ACCEPTED')
+              .map((delegation) => [delegation.registration_id, delegation]),
+          );
+          const acceptedDelegateIds = [
+            ...new Set(
+              delegations
+                .filter((delegation) => delegation.status === 'ACCEPTED')
+                .map((delegation) => delegation.delegate_user_id),
+            ),
+          ];
+          const delegateUsers = acceptedDelegateIds.length
+            ? await tx.user.findMany({
+                where: { id: { in: acceptedDelegateIds } },
+                select: { id: true, name: true, email: true },
+              })
+            : [];
 
           // Re-validate rules
           const existingServings = await tx.mealServing.findMany({
@@ -541,6 +568,32 @@ export class PickupService {
                 eventType: 'PICKUP_CONFIRMED',
               },
             });
+
+            const registration = regs.find((item) => item.id === regId);
+            const acceptedDelegation =
+              acceptedDelegationsByRegistration.get(regId);
+            if (
+              this.notificationsService &&
+              registration &&
+              acceptedDelegation &&
+              session.userId !== registration.user_id &&
+              acceptedDelegation.delegate_user_id === session.userId
+            ) {
+              const delegate = delegateUsers.find(
+                (user) => user.id === acceptedDelegation.delegate_user_id,
+              );
+              await this.notificationsService.publish(tx, {
+                userId: registration.user_id,
+                kind: 'PROXY_PICKUP_COMPLETED',
+                payload: {
+                  servingId: serving.id,
+                  registrationId: regId,
+                  mealDate: confirmationDateKey,
+                  delegateName: displayNotificationName(delegate),
+                },
+                dedupeKey: `proxy-pickup-completed:${registration.user_id}:${serving.id}`,
+              });
+            }
           }
 
           // Close PickupSession (set expiresAt to now)

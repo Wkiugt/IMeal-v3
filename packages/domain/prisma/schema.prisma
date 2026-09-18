@@ -51,23 +51,56 @@ enum OutboxStatus {
   FAILED
 }
 
+enum NotificationKind {
+  LEGACY_MESSAGE
+  REGISTRATION_OPENED
+  REGISTRATION_REMINDER
+  PICKUP_REMINDER
+  DELEGATION_REQUESTED
+  DELEGATION_ACCEPTED
+  DELEGATION_DECLINED
+  DELEGATION_REVOKED
+  PROXY_PICKUP_COMPLETED
+  REGISTERED_MENU_CHANGED
+  NO_SHOW_PENALTY_CREATED
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
+enum PushPlatform {
+  IOS
+  ANDROID
+  UNKNOWN
+}
+
+enum NotificationLocale {
+  VI
+  EN
+}
+
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  isActive Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                String   @id @default(uuid())
+  email             String   @unique
+  name              String?
+  isActive          Boolean  @default(true) @map("is_active")
+  notificationLocale NotificationLocale @default(VI) @map("notification_locale")
+  remindersEnabled  Boolean  @default(true) @map("reminders_enabled")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
 
-  userRoles       UserRole[]
-  userPermissions UserPermission[]
-  registrations   Registration[]
-  delegations     PickupDelegation[] @relation("DelegateUser")
-  penalties       Penalty[]
-  notifications   Notification[]
-  pushDevices     PushDevice[]
-  auditLogs       AuditLog[]
-
+  userRoles         UserRole[]
+  userPermissions   UserPermission[]
+  registrations     Registration[]
+  delegations       PickupDelegation[] @relation("DelegateUser")
+  penalties         Penalty[]
+  notifications     Notification[]
+  pushDevices       PushDevice[]
+  auditLogs         AuditLog[]
   @@map("users")
 }
 
@@ -125,13 +158,13 @@ model UserPermission {
   @@id([userId, permissionId])
   @@map("user_permissions")
 }
-
 model WeeklyMenu {
-  id        String   @id @default(uuid())
-  startDate DateTime @db.Date @map("start_date")
-  endDate   DateTime @db.Date @map("end_date")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id          String   @id @default(uuid())
+  startDate   DateTime @db.Date @map("start_date")
+  endDate     DateTime @db.Date @map("end_date")
+  publishedAt DateTime? @map("published_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   dailyMenus DailyMenu[]
 
@@ -267,27 +300,60 @@ model Penalty {
 }
 
 model Notification {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  content   String
-  isRead    Boolean  @default(false) @map("is_read")
-  createdAt DateTime @default(now()) @map("created_at")
+  id         String           @id @default(uuid())
+  userId     String           @map("user_id")
+  kind       NotificationKind
+  payload    Json
+  titleVi    String           @map("title_vi")
+  bodyVi     String           @map("body_vi")
+  titleEn    String           @map("title_en")
+  bodyEn     String           @map("body_en")
+  readAt     DateTime?        @map("read_at")
+  dedupeKey  String           @unique @map("dedupe_key")
+  createdAt  DateTime         @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries NotificationDelivery[]
 
+  @@index([userId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([userId, readAt, createdAt(sort: Desc), id(sort: Desc)])
   @@map("notifications")
 }
 
 model PushDevice {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  token     String   @unique
-  createdAt DateTime @default(now()) @map("created_at")
+  id          String       @id @default(uuid())
+  userId      String       @map("user_id")
+  token       String       @unique
+  platform    PushPlatform  @default(UNKNOWN)
+  lastSeenAt  DateTime      @default(now()) @map("last_seen_at")
+  revokedAt   DateTime?     @map("revoked_at")
+  createdAt   DateTime     @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries  NotificationDelivery[]
 
   @@map("push_devices")
 }
+
+model NotificationDelivery {
+  id             String                    @id @default(uuid())
+  notificationId String                    @map("notification_id")
+  pushDeviceId   String                    @map("push_device_id")
+  status         NotificationDeliveryStatus @default(PENDING)
+  attemptCount   Int                       @default(0) @map("attempt_count")
+  nextAttemptAt  DateTime                  @default(now()) @map("next_attempt_at")
+  lastError      String?                   @map("last_error")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  pushDevice  PushDevice   @relation(fields: [pushDeviceId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, pushDeviceId])
+  @@index([status, nextAttemptAt])
+  @@map("notification_deliveries")
+}
+
 
 model JobRun {
   id          String    @id @default(uuid())
@@ -312,13 +378,18 @@ model AuditLog {
 }
 
 model OutboxEvent {
-  id            String   @id @default(uuid())
-  aggregateType String   @map("aggregate_type")
-  aggregateId   String   @map("aggregate_id")
-  eventType     String   @map("event_type")
+  id            String       @id @default(uuid())
+  aggregateType String       @map("aggregate_type")
+  aggregateId   String       @map("aggregate_id")
+  eventType     String       @map("event_type")
   payload       String
   status        OutboxStatus @default(PENDING)
-  createdAt     DateTime @default(now()) @map("created_at")
+  dedupeKey     String?      @unique @map("dedupe_key")
+  attemptCount  Int          @default(0) @map("attempt_count")
+  availableAt   DateTime     @default(now()) @map("available_at")
+  processedAt   DateTime?    @map("processed_at")
+  lastError     String?      @map("last_error")
+  createdAt     DateTime     @default(now()) @map("created_at")
 
   @@map("outbox_events")
 }

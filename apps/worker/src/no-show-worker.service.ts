@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { BadRequestException, Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaClient } from '@prisma/client';
+import { WorkerNotificationPublisher } from './worker-notification-publisher.js';
 
 export interface ProcessNoShowsOptions {
   force?: boolean;
@@ -10,10 +12,15 @@ export interface ProcessNoShowsOptions {
 @Injectable()
 export class NoShowWorkerService {
   private readonly logger = new Logger(NoShowWorkerService.name);
-  private prisma: PrismaClient;
+  private readonly prisma: PrismaClient;
+  private readonly notificationPublisher: WorkerNotificationPublisher;
 
-  constructor() {
+  constructor(
+    @Optional() notificationPublisher?: WorkerNotificationPublisher,
+  ) {
     this.prisma = new PrismaClient();
+    this.notificationPublisher =
+      notificationPublisher ?? new WorkerNotificationPublisher();
   }
 
   private getVietnamTime(now: Date = new Date()) {
@@ -128,28 +135,32 @@ export class NoShowWorkerService {
           },
         });
 
-        if (!existingPenalty) {
-          await tx.penalty.create({
+        const penalty =
+          existingPenalty ??
+          (await tx.penalty.create({
             data: {
+              id: randomUUID(),
               userId: reg.userId,
               amount: 50000,
               reason: penaltyReason,
             },
-          });
-        }
+          }));
 
-        // Create Notification
-        await tx.notification.create({
-          data: {
-            userId: reg.userId,
-            content: `Bạn bị phạt 50.000đ do không nhận suất ăn ngày ${dateStr}.`,
-            isRead: false,
+        await this.notificationPublisher.publish(tx, {
+          userId: reg.userId,
+          kind: 'NO_SHOW_PENALTY_CREATED',
+          payload: {
+            penaltyId: penalty.id,
+            registrationId: reg.id,
+            mealDate: dateStr,
+            amount: 50000,
           },
+          dedupeKey: `no-show-penalty:${reg.userId}:${reg.id}`,
         });
 
-        // Create AuditLog
         await tx.auditLog.create({
           data: {
+            id: randomUUID(),
             action: 'NO_SHOW_PROCESSED',
             userId: reg.userId,
             details: JSON.stringify({
@@ -180,6 +191,7 @@ export class NoShowWorkerService {
       } else {
         await tx.jobRun.create({
           data: {
+            id: randomUUID(),
             jobName,
             status: 'COMPLETED',
             completedAt: new Date(),

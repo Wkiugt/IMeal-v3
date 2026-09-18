@@ -8,3 +8,4 @@ export * from './kitchen';
 export * from './penalties';
 export * from './pickup';
 export * from './registrations';
+export * from './notifications';
