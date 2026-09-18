@@ -18,6 +18,12 @@ Staff + Kitchen:
 Home | Tuần ăn | Check-in | Thông báo | Tài khoản
 ```
 
+Kitchen-only:
+
+```text
+Dashboard | Máy quét | Tài khoản
+```
+
 Kitchen role không thay thế hoặc kế thừa Staff role. Nhân sự Kitchen chỉ đăng ký suất của chính mình khi Admin cấp thêm role `staff`.
 
 ### Admin Web

@@ -75,6 +75,12 @@ Home | Tuần ăn | Thông báo | Tài khoản
 Home | Tuần ăn | Check-in | Thông báo | Tài khoản
 ```
 
+### Kitchen-only
+
+```text
+Dashboard | Máy quét | Tài khoản
+```
+
 Kitchen check-in phải discoverable trong 1 tap sau login.
 
 Do not use web-style module dropdown as primary mobile navigation.
@@ -305,6 +311,10 @@ On phone/tablet:
 4. Current resolved pickup card.
 5. Recent log.
 6. Tabs/list.
+
+For the compact summary metrics, normal phones use a deliberately non-mirrored 40/60 two-column bento: the total-meals tile is the narrow standalone column, while dietary breakdown and check-in progress stack in the wider column. Below 350px or above 1.2 font scale, the columns stack into one full-width column so labels and controls remain accessible.
+
+The scan guide is centered in the remaining camera viewport and transparent over the live preview. The viewport scrim remains in place to preserve title, hint, and bracket contrast.
 
 Example:
 

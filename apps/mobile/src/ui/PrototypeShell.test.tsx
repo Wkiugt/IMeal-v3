@@ -9,12 +9,14 @@ const labels = {
     'nav.calendar': 'Lịch',
     'nav.ticket': 'Vé suất ăn',
     'nav.profile': 'Hồ sơ',
+    'nav.scanner': 'Máy quét',
   },
   en: {
     'nav.dashboard': 'Dashboard',
     'nav.calendar': 'Calendar',
     'nav.ticket': 'Meal ticket',
     'nav.profile': 'Profile',
+    'nav.scanner': 'Scanner',
   },
 } as const;
 
@@ -102,7 +104,7 @@ describe('PrototypeTabBar', () => {
     for (const [navItems, expectedCount] of [
       [employeeNav, 4],
       [hybridEmployeeNav, 5],
-      [kitchenNav, 2],
+      [kitchenNav, 3],
     ] as const) {
       expect(renderTabBar(navItems).pressables).toHaveLength(expectedCount);
     }
@@ -138,5 +140,19 @@ describe('PrototypeTabBar', () => {
     expect(navigation.navigate).toHaveBeenCalledWith('EmployeeCalendar');
     pressables[3].props.onPress();
     expect(navigation.navigate).toHaveBeenCalledWith('EmployeeProfile', { screen: 'ProfileHome' });
+  });
+
+  it.each([
+    ['vi', ['Bảng điều khiển', 'Máy quét', 'Hồ sơ']],
+    ['en', ['Dashboard', 'Scanner', 'Profile']],
+  ] as const)('resolves %s kitchen-only labels and direct profile navigation', (language, expectedLabels) => {
+    languageMock.language = language;
+    const { navigation, pressables } = renderTabBar(kitchenNav);
+
+    expect(pressables.map((pressable) => pressable.props.accessibilityLabel)).toEqual(expectedLabels);
+    pressables[1].props.onPress();
+    expect(navigation.navigate).toHaveBeenCalledWith('KitchenScanner');
+    pressables[2].props.onPress();
+    expect(navigation.navigate).toHaveBeenCalledWith('KitchenProfile');
   });
 });

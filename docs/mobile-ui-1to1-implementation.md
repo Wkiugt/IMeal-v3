@@ -8,7 +8,7 @@ This change converts the mobile Staff and Kitchen actors to the preserved protot
 
 - Staff: `Dashboard | Calendar | Ticket | Profile`
 - Staff + Kitchen: `Dashboard | Calendar | Ticket | Check-in | Profile`
-- Kitchen-only: `Dashboard | Scanner`
+- Kitchen-only: `Dashboard | Scanner | Profile`
 
 Protected routes no longer receive access tokens through navigation parameters. `SessionProvider` restores the Entra session and supplies the token/profile to mobile screens. Cold deep links redirect unauthenticated users to `Auth`.
 
@@ -18,9 +18,10 @@ Protected routes no longer receive access tokens through navigation parameters. 
 - Employee calendar: monthly booking markers, weekly registration toggles, server partial-success handling, cutoff error rollback.
 - Employee ticket: real pickup options, multi-selection, signed QR generation, five-second refresh/countdown, QR progress indicator.
 - Employee profile: identity, account metadata, preferences surface, delegation entry, logout.
+- Kitchen profile: server-backed kitchen identity, language selection, persistence warning, logout confirmation; no Staff-only meal or delegation controls.
 - Delegations: outgoing/incoming tabs, search, status pills, accept/decline/revoke actions.
-- Kitchen dashboard: serving slider, total meals, dietary breakdown, check-in progress, polling, pull-to-refresh, search, registration tabs, logs.
-- Kitchen scanner: camera permission state, QR resolve, explicit confirmation, proxy indicator, thirty-second pickup-session expiry, reduced-motion scan treatment.
+- Kitchen dashboard: serving slider, compact non-mirrored 40/60 bento metrics on normal phones, stacked narrow/large-text fallback, polling, pull-to-refresh, search, registration tabs, logs.
+- Kitchen scanner: centered transparent scan guide over the live camera preview with viewport scrim, camera permission state, QR resolve, explicit confirmation, proxy indicator, thirty-second pickup-session expiry, reduced-motion scan treatment.
 
 ## API details
 
