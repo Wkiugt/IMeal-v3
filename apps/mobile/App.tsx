@@ -28,6 +28,7 @@ import { EmployeeDashboardScreen } from './src/screens/employee/EmployeeDashboar
 import { EmployeeProfileScreen } from './src/screens/employee/EmployeeProfileScreen';
 import { KitchenScannerScreen } from './src/screens/kitchen/KitchenScannerScreen';
 import { KitchenDashboardScreen } from './src/screens/kitchen/KitchenDashboardScreen';
+import { KitchenProfileScreen } from './src/screens/kitchen/KitchenProfileScreen';
 import { PickupIntentScreen } from './src/screens/pickup/PickupIntentScreen';
 import type {
   AppTabParamList,
@@ -223,6 +224,7 @@ function AppTabsNavigator() {
         <>
           <Tabs.Screen name="KitchenDashboard" component={KitchenDashboardScreen} />
           <Tabs.Screen name="KitchenScanner" component={KitchenScannerScreen} />
+          <Tabs.Screen name="KitchenProfile" component={KitchenProfileScreen} />
         </>
       )}
     </Tabs.Navigator>
@@ -248,6 +250,7 @@ function linkingConfig(): LinkingOptions<RootStackParamList> {
             },
             KitchenDashboard: 'kitchen-dashboard',
             KitchenScanner: 'scanner',
+            KitchenProfile: 'kitchen-profile',
           },
         },
       },

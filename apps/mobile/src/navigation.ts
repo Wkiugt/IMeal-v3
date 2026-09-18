@@ -14,6 +14,7 @@ export type AppTabParamList = {
   EmployeeProfile: NavigatorScreenParams<ProfileStackParamList> | undefined;
   KitchenDashboard: undefined;
   KitchenScanner: undefined;
+  KitchenProfile: undefined;
 };
 
 export type RootStackParamList = {

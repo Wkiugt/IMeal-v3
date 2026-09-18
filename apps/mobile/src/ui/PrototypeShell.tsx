@@ -41,6 +41,7 @@ export const hybridEmployeeNav: PrototypeNavItem[] = [
 export const kitchenNav: PrototypeNavItem[] = [
   { labelKey: 'nav.dashboard', route: 'KitchenDashboard', icon: Home },
   { labelKey: 'nav.scanner', route: 'KitchenScanner', icon: QrCode },
+  { labelKey: 'nav.profile', route: 'KitchenProfile', icon: UserRound },
 ];
 export function PrototypeTabBar({
   state,
