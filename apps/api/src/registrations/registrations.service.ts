@@ -143,14 +143,17 @@ export class RegistrationsService {
 
     const serializedMenu = menuData
       ? {
-          ...menuData,
+          id: menuData.id,
           startDate: menuData.startDate.toISOString().slice(0, 10),
           endDate: menuData.endDate.toISOString().slice(0, 10),
           createdAt: menuData.createdAt.toISOString(),
           updatedAt: menuData.updatedAt.toISOString(),
           dailyMenus: menuData.dailyMenus.map((dailyMenu) => ({
-            ...dailyMenu,
+            id: dailyMenu.id,
+            weeklyMenuId: dailyMenu.weeklyMenuId,
             date: dailyMenu.date.toISOString().slice(0, 10),
+            isHoliday: dailyMenu.isHoliday,
+            isEnabled: dailyMenu.isEnabled,
             createdAt: dailyMenu.createdAt.toISOString(),
           })),
         }
