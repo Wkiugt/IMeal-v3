@@ -1,19 +1,16 @@
 import React, { useEffect, useRef } from 'react';
 import {
   Animated,
-  Easing,
   StyleSheet,
-  Text,
   View,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
 import { Utensils } from 'lucide-react-native';
-import { theme } from '../theme';
+import { designTokens } from './designTokens';
 import { useReducedMotion } from './useReducedMotion';
 import { shouldAnimateScreenEntrance } from './screenEntranceState';
-
-const MOTION_DURATION_MS = 260;
+import { AppText } from './components';
 
 type BrandMarkProps = {
   size?: number;
@@ -36,7 +33,7 @@ export function BrandMark({
     >
       <Utensils
         size={size}
-        color={theme.colors.accentDeep}
+        color={designTokens.color.brand.primary}
         strokeWidth={2}
       />
     </View>
@@ -70,28 +67,28 @@ export function BrandLoader({ label, compact = false }: BrandLoaderProps) {
         Animated.parallel([
           Animated.timing(opacity, {
             toValue: 1,
-            duration: 450,
-            easing: Easing.inOut(Easing.cubic),
+            duration: designTokens.motion.duration.shimmerCycle / 2,
+            easing: designTokens.motion.easing.standard,
             useNativeDriver: true,
           }),
           Animated.timing(scale, {
             toValue: 1.04,
-            duration: 450,
-            easing: Easing.inOut(Easing.cubic),
+            duration: designTokens.motion.duration.shimmerCycle / 2,
+            easing: designTokens.motion.easing.standard,
             useNativeDriver: true,
           }),
         ]),
         Animated.parallel([
           Animated.timing(opacity, {
             toValue: 0.6,
-            duration: 450,
-            easing: Easing.inOut(Easing.cubic),
+            duration: designTokens.motion.duration.shimmerCycle / 2,
+            easing: designTokens.motion.easing.standard,
             useNativeDriver: true,
           }),
           Animated.timing(scale, {
             toValue: 0.96,
-            duration: 450,
-            easing: Easing.inOut(Easing.cubic),
+            duration: designTokens.motion.duration.shimmerCycle / 2,
+            easing: designTokens.motion.easing.standard,
             useNativeDriver: true,
           }),
         ]),
@@ -118,9 +115,9 @@ export function BrandLoader({ label, compact = false }: BrandLoaderProps) {
           containerSize={compact ? 36 : 56}
         />
       </Animated.View>
-      <Text style={[styles.loaderLabel, compact && styles.loaderLabelCompact]}>
+      <AppText variant="supporting" tone="secondary" style={[styles.loaderLabel, compact && styles.loaderLabelCompact]}>
         {label}
-      </Text>
+      </AppText>
     </View>
   );
 }
@@ -146,7 +143,7 @@ export function StateTransition({
 }: StateTransitionProps) {
   const reduceMotion = useReducedMotion();
   const opacity = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
-  const translateY = useRef(new Animated.Value(reduceMotion ? 0 : 8)).current;
+  const translateY = useRef(new Animated.Value(reduceMotion ? 0 : designTokens.motion.distance.entrance)).current;
 
   useEffect(() => {
     opacity.stopAnimation();
@@ -162,18 +159,18 @@ export function StateTransition({
     }
 
     opacity.setValue(0);
-    translateY.setValue(8);
+    translateY.setValue(designTokens.motion.distance.entrance);
     const entrance = Animated.parallel([
       Animated.timing(opacity, {
         toValue: 1,
-        duration: MOTION_DURATION_MS,
-        easing: Easing.out(Easing.cubic),
+        duration: designTokens.motion.duration.standard,
+        easing: designTokens.motion.easing.standard,
         useNativeDriver: true,
       }),
       Animated.timing(translateY, {
         toValue: 0,
-        duration: MOTION_DURATION_MS,
-        easing: Easing.out(Easing.cubic),
+        duration: designTokens.motion.duration.standard,
+        easing: designTokens.motion.easing.standard,
         useNativeDriver: true,
       }),
     ]);
@@ -225,18 +222,18 @@ export function ScreenEntrance({
     }
 
     opacity.setValue(0);
-    translateY.setValue(8);
+    translateY.setValue(designTokens.motion.distance.entrance);
     const entrance = Animated.parallel([
       Animated.timing(opacity, {
         toValue: 1,
-        duration: MOTION_DURATION_MS,
-        easing: Easing.out(Easing.cubic),
+        duration: designTokens.motion.duration.standard,
+        easing: designTokens.motion.easing.standard,
         useNativeDriver: true,
       }),
       Animated.timing(translateY, {
         toValue: 0,
-        duration: MOTION_DURATION_MS,
-        easing: Easing.out(Easing.cubic),
+        duration: designTokens.motion.duration.standard,
+        easing: designTokens.motion.easing.standard,
         useNativeDriver: true,
       }),
     ]);
@@ -260,8 +257,8 @@ const styles = StyleSheet.create({
   brandMark: {
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: theme.radii.md,
-    backgroundColor: theme.colors.accentSoft,
+    borderRadius: designTokens.radius.heroCard,
+    backgroundColor: designTokens.color.brand.soft,
   },
   loader: {
     flex: 1,
@@ -269,14 +266,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 12,
     paddingVertical: 28,
-    backgroundColor: theme.colors.bg,
+    backgroundColor: designTokens.color.background.page,
   },
   screenLoading: {
     flex: 1,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: theme.colors.bg,
+    backgroundColor: designTokens.color.background.page,
   },
   loaderCompact: {
     flex: 0,
@@ -287,16 +284,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   loaderLabel: {
-    color: theme.colors.muted,
-    fontFamily: theme.typography.regular,
-    fontSize: 13,
-    lineHeight: 19,
+    flexShrink: 1,
     textAlign: 'center',
   },
   loaderLabelCompact: {
-    flexShrink: 1,
-    fontSize: 12,
-    lineHeight: 17,
     textAlign: 'left',
   },
 });
