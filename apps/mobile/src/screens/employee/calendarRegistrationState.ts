@@ -1,11 +1,16 @@
 import type { v1 } from '@imeal/contracts';
-import { addDays, toDateKey } from '../../businessDate';
+import { addDays, parseDateKey, toDateKey } from '../../businessDate';
 
 export type MealChoice = v1.MealChoice;
 export type WeekState = Record<string, { active: boolean; mealChoice: MealChoice }>;
 export type DraftChoiceByDate = Record<string, MealChoice>;
 
 const REGULAR: MealChoice = 'REGULAR';
+
+export function isDefaultNonServiceDate(dateKey: string): boolean {
+  const dayOfWeek = parseDateKey(dateKey).getDay();
+  return dayOfWeek === 0 || dayOfWeek === 6;
+}
 
 export function createWeekState(
   registrations: readonly v1.RegistrationRecord[],

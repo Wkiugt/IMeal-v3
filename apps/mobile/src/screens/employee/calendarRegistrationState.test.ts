@@ -7,6 +7,7 @@ import {
   getMutationPayload,
   reconcileWeekState,
   type DraftChoiceByDate,
+  isDefaultNonServiceDate,
   type WeekState,
 } from './calendarRegistrationState';
 
@@ -42,6 +43,11 @@ const response = {
 } satisfies v1.WeekRegistrationResponse;
 
 describe('calendar registration state', () => {
+  it('marks Saturday and Sunday as default non-service dates', () => {
+    expect(isDefaultNonServiceDate('2026-09-26')).toBe(true);
+    expect(isDefaultNonServiceDate('2026-09-27')).toBe(true);
+    expect(isDefaultNonServiceDate('2026-09-25')).toBe(false);
+  });
   it('hydrates active status and meal choice while defaulting missing dates to regular', () => {
     expect(createWeekState(response.registrations, weekStart)).toEqual({
       '2026-09-21': { active: false, mealChoice: 'REGULAR' },

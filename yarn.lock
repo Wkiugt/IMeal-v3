@@ -2059,6 +2059,7 @@ __metadata:
     "@types/react": "npm:~18.2.45"
     dotenv-cli: "npm:^11.0.0"
     expo: "npm:~51.0.28"
+    expo-blur: "npm:~13.0.3"
     expo-camera: "npm:~15.0.16"
     expo-constants: "npm:~16.0.2"
     expo-crypto: "npm:~13.0.2"
@@ -7242,6 +7243,15 @@ __metadata:
   peerDependencies:
     expo: "*"
   checksum: 10c0/aed3164cee4483e47fa56c8898384769d60ebb3f94553f7ad2a33a8902d73a1379aee3fc51833c8f0a4a59979ed842ba079e52c8e1903104b1ad312ad90fe1d1
+  languageName: node
+  linkType: hard
+
+"expo-blur@npm:~13.0.3":
+  version: 13.0.3
+  resolution: "expo-blur@npm:13.0.3"
+  peerDependencies:
+    expo: "*"
+  checksum: 10c0/632aea3dda468e0331c8aa9d63aae39c5d9cba7276e0f246da8fc8009a9f9033aa20aab249814d45056057473c6573dd417198e315682997e3a465f902a4c520
   languageName: node
   linkType: hard
 

@@ -145,6 +145,7 @@ describe('RegistrationsService', () => {
       endDate: new Date('2026-09-27T00:00:00.000Z'),
       createdAt: new Date('2026-09-01T00:00:00.000Z'),
       updatedAt: new Date('2026-09-02T00:00:00.000Z'),
+      publishedAt: new Date('2026-09-03T00:00:00.000Z'),
       dailyMenus: [
         {
           id: 'daily-menu-1',

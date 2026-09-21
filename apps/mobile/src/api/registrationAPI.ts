@@ -1,5 +1,6 @@
 import { v1 } from '@imeal/contracts';
 import { API_BASE } from './apiConfig';
+import { fetchWithTimeout } from './requestWithTimeout';
 import {
   MobileApiError,
   readMobileResponseJson,
@@ -7,6 +8,7 @@ import {
   toMobileApiError,
 } from './mobileApiError';
 
+const REGISTRATION_REQUEST_TIMEOUT_MS = 10_000;
 export type RegistrationStatus = v1.RegistrationStatus;
 export type MealChoice = v1.MealChoice;
 export type RegistrationRecord = v1.RegistrationRecord;
@@ -20,9 +22,11 @@ export const registrationAPI = {
   getWeek: async (startDate: string, token: string): Promise<WeekRegistrationResponse> => {
     let response: Response;
     try {
-      response = await fetch(`${API_BASE}/registrations/week?startDate=${encodeURIComponent(startDate)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      response = await fetchWithTimeout(
+        `${API_BASE}/registrations/week?startDate=${encodeURIComponent(startDate)}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+        REGISTRATION_REQUEST_TIMEOUT_MS,
+      );
     } catch (error: unknown) {
       throw toMobileApiError(error, 'errors.loadCalendar');
     }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import * as Linking from 'expo-linking';
 import { useFonts } from 'expo-font';
 import {
@@ -19,7 +19,7 @@ import {
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { LanguageProvider, useLanguage } from './src/i18n/LanguageProvider';
 import { SessionProvider, useSession } from './src/auth/session';
 import { translate } from './src/i18n/translations';
@@ -41,18 +41,18 @@ import type {
   ProfileStackParamList,
   RootStackParamList,
 } from './src/navigation';
-import { PrototypeButton, PrototypeField } from './src/ui/PrototypePrimitives';
+import { ActionButton, AppText, TextField } from './src/ui/components';
 import {
   employeeNav,
   hybridEmployeeNav,
   kitchenNav,
-  PrototypeTabBar,
-} from './src/ui/PrototypeShell';
+  AppTabBar,
+} from './src/ui/AppShell';
 import { NoticeProvider } from './src/ui/BrandNotice';
 import { ScreenLoading, BrandMark, StateTransition } from './src/ui/BrandMotion';
 import { useMinimumVisibleLoading } from './src/ui/useMinimumVisibleLoading';
 import { useScreenLoadingGate } from './src/ui/useScreenLoadingGate';
-import { theme } from './src/theme';
+import { designTokens, getElevationStyle } from './src/ui/designTokens';
 import { NotificationProvider } from './src/notifications/NotificationProvider';
 const RootStack = createNativeStackNavigator<RootStackParamList>();
 const Tabs = createBottomTabNavigator<AppTabParamList>();
@@ -98,65 +98,85 @@ function AuthScreen({ navigation }: AuthScreenProps) {
         : 'sign-in';
 
   return (
-    <StateTransition stateKey={authState} style={styles.screen}>
-      {visibleRestoring ? (
-        <ScreenLoading label={t('auth.restoreSession')} />
-      ) : visibleSigningIn ? (
-        <ScreenLoading label={t('auth.signingIn')} />
-      ) : noMobileAccess ? (
-        <View style={styles.authCanvas}>
-          <View style={styles.authCard}>
-            <BrandMark size={32} containerSize={72} style={styles.authMark} />
-            <Text style={styles.title}>{t('auth.welcome')}</Text>
-            <Text style={styles.subtitle}>
-              {t('auth.noMobileAccess')}
-            </Text>
-            <PrototypeButton variant="secondary" onPress={() => void logout()}>
-              {t('auth.logOut')}
-            </PrototypeButton>
-          </View>
-        </View>
-      ) : (
-        <View style={styles.authCanvas}>
-          <View style={styles.authCard}>
-            <BrandMark size={32} containerSize={72} style={styles.authMark} />
-            <Text style={styles.title}>{t('auth.welcome')}</Text>
-            <Text style={styles.subtitle}>
-              {t('auth.localSignInHint')}
-            </Text>
-            <PrototypeField
-              label={t('auth.username')}
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoComplete="username"
-              style={styles.field}
-            />
-            <PrototypeField
-              label={t('auth.password')}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoCapitalize="none"
-              autoComplete="password"
-              style={styles.field}
-            />
-            <PrototypeButton
-              disabled={isSigningIn || !username || !password}
-              onPress={() => void signIn(username, password)}
-              style={styles.loginButton}
-            >
-              {t('auth.signIn')}
-            </PrototypeButton>
-            <Text style={styles.footnote}>
-              {t('auth.credentialsHint')}
-            </Text>
-            {authError && <Text style={styles.error}>{authError}</Text>}
-          </View>
-        </View>
-      )}
-    </StateTransition>
+    <SafeAreaView style={styles.authSafeArea}>
+      <KeyboardAvoidingView
+        style={styles.authKeyboard}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.authScrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <StateTransition stateKey={authState} style={styles.stateTransition}>
+            {visibleRestoring ? (
+              <ScreenLoading label={t('auth.restoreSession')} />
+            ) : visibleSigningIn ? (
+              <ScreenLoading label={t('auth.signingIn')} />
+            ) : noMobileAccess ? (
+              <View style={styles.authCanvas}>
+                <View style={styles.authCard}>
+                  <BrandMark size={32} containerSize={72} style={styles.authMark} />
+                  <AppText variant="pageTitle" style={styles.title}>{t('auth.welcome')}</AppText>
+                  <AppText variant="body" tone="secondary" style={styles.subtitle}>
+                    {t('auth.noMobileAccess')}
+                  </AppText>
+                  <ActionButton
+                    variant="secondary"
+                    size="md"
+                    label={t('auth.logOut')}
+                    onPress={() => void logout()}
+                  />
+                </View>
+              </View>
+            ) : (
+              <View style={styles.authCanvas}>
+                <View style={styles.authCard}>
+                  <BrandMark size={32} containerSize={72} style={styles.authMark} />
+                  <AppText variant="pageTitle" style={styles.title}>{t('auth.welcome')}</AppText>
+                  <AppText variant="body" tone="secondary" style={styles.subtitle}>
+                    {t('auth.localSignInHint')}
+                  </AppText>
+                  <TextField
+                    label={t('auth.username')}
+                    value={username}
+                    onChangeText={setUsername}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoComplete="username"
+                    containerStyle={styles.field}
+                  />
+                  <TextField
+                    label={t('auth.password')}
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    autoComplete="password"
+                    containerStyle={styles.field}
+                  />
+                  <ActionButton
+                    variant="primary"
+                    size="lg"
+                    label={t('auth.signIn')}
+                    disabled={isSigningIn || !username || !password}
+                    onPress={() => void signIn(username, password)}
+                    style={styles.loginButton}
+                  />
+                  <AppText variant="caption" tone="secondary" style={styles.footnote}>
+                    {t('auth.credentialsHint')}
+                  </AppText>
+                  {authError && (
+                    <AppText variant="supporting" tone="critical" style={styles.error}>
+                      {authError}
+                    </AppText>
+                  )}
+                </View>
+              </View>
+            )}
+          </StateTransition>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -212,7 +232,7 @@ function AppTabsNavigator() {
   return (
     <Tabs.Navigator
       screenOptions={{ headerShown: false, unmountOnBlur: false }}
-      tabBar={(props) => <PrototypeTabBar {...props} navItems={navItems} />}
+      tabBar={(props) => <AppTabBar {...props} navItems={navItems} />}
     >
       {canUseEmployee && (
         <>
@@ -298,10 +318,12 @@ function NavigationRoot() {
 function FontBootstrapError() {
   return (
     <View style={styles.bootstrapError}>
-      <Text style={styles.bootstrapErrorTitle}>{translate('bootstrap.fontErrorTitle')}</Text>
-      <Text style={styles.bootstrapErrorText}>
+      <AppText variant="sectionTitle" style={styles.bootstrapErrorTitle}>
+        {translate('bootstrap.fontErrorTitle')}
+      </AppText>
+      <AppText variant="body" tone="secondary" style={styles.bootstrapErrorText}>
         {translate('bootstrap.fontErrorText')}
-      </Text>
+      </AppText>
     </View>
   );
 }
@@ -333,12 +355,22 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    padding: theme.spacing.gutter,
-    backgroundColor: theme.colors.canvas,
+  authSafeArea: {
+    flex: 1,
+    backgroundColor: designTokens.color.background.page,
+  },
+  authKeyboard: {
+    flex: 1,
+  },
+  authScrollContent: {
+    flexGrow: 1,
+    padding: designTokens.space['2xl'],
+  },
+  stateTransition: {
+    flexGrow: 1,
   },
   authCanvas: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -347,45 +379,32 @@ const styles = StyleSheet.create({
     maxWidth: 346,
     padding: 26,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.radii.lg,
-    backgroundColor: theme.colors.surface,
-    ...theme.shadows.sm,
+    borderColor: designTokens.color.border.standard,
+    borderRadius: designTokens.radius.floating,
+    backgroundColor: designTokens.color.surface.standard,
+    ...getElevationStyle(1),
   },
   authMark: {
     alignSelf: 'center',
     marginBottom: 18,
-    borderRadius: theme.radii.pill,
+    borderRadius: designTokens.radius.full,
   },
   title: {
-    color: theme.colors.fg,
-    fontSize: 30,
-    fontFamily: theme.typography.bold,
     textAlign: 'center',
   },
   subtitle: {
-    color: theme.colors.muted,
-    fontSize: 14,
-    fontFamily: theme.typography.regular,
-    lineHeight: 21,
     textAlign: 'center',
-    marginTop: 8,
-    marginBottom: 24,
+    marginTop: designTokens.space.sm,
+    marginBottom: designTokens.space['2xl'],
   },
   field: { marginBottom: 14 },
   loginButton: { marginTop: 4 },
   footnote: {
-    color: theme.colors.muted,
-    fontSize: 11.5,
-    fontFamily: theme.typography.regular,
-    lineHeight: 17,
+    flexShrink: 1,
     textAlign: 'center',
     marginTop: 18,
   },
   error: {
-    color: theme.colors.statusBadDeep,
-    fontSize: 13,
-    fontFamily: theme.typography.regular,
     textAlign: 'center',
     marginTop: 16,
   },
@@ -393,19 +412,13 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: theme.spacing.gutter,
-    backgroundColor: theme.colors.bg,
+    padding: designTokens.space['2xl'],
+    backgroundColor: designTokens.color.background.page,
   },
   bootstrapErrorTitle: {
-    color: theme.colors.fg,
-    fontFamily: 'System',
-    fontSize: 18,
     textAlign: 'center',
   },
   bootstrapErrorText: {
-    color: theme.colors.muted,
-    fontFamily: 'System',
-    fontSize: 14,
     marginTop: 8,
     textAlign: 'center',
   },

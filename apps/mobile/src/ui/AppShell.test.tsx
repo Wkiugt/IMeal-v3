@@ -2,7 +2,8 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 const languageMock = vi.hoisted(() => ({ language: 'vi' as 'vi' | 'en' }));
-
+const notificationMock = vi.hoisted(() => ({ unreadCount: 0 }));
+const safeAreaMock = vi.hoisted(() => ({ bottom: 0 }));
 const labels = {
   vi: {
     'nav.dashboard': 'Bảng điều khiển',
@@ -29,6 +30,16 @@ function nativeComponent(name: string) {
 }
 
 vi.mock('react-native', () => ({
+  Animated: {
+    Value: class {
+      setValue() {}
+      stopAnimation() {}
+    },
+  },
+  Easing: {
+    bezier: () => 'bezier',
+    linear: 'linear',
+  },
   Pressable: nativeComponent('Pressable'),
   ScrollView: nativeComponent('ScrollView'),
   StyleSheet: { create: <T,>(styles: T) => styles },
@@ -37,9 +48,16 @@ vi.mock('react-native', () => ({
   useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
 }));
 
-vi.mock('react-native-safe-area-context', () => ({ SafeAreaView: nativeComponent('SafeAreaView') }));
+vi.mock('react-native-safe-area-context', () => ({
+  SafeAreaView: nativeComponent('SafeAreaView'),
+  useSafeAreaInsets: () => ({ bottom: safeAreaMock.bottom, top: 0, left: 0, right: 0 }),
+}));
 vi.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));
 vi.mock('./BrandMotion', () => ({ ScreenEntrance: nativeComponent('ScreenEntrance') }));
+vi.mock('./components', () => ({
+  AppText: nativeComponent('AppText'),
+  FloatingSurface: nativeComponent('FloatingSurface'),
+}));
 vi.mock('lucide-react-native', () => {
   const icon = (name: string) => nativeComponent(name);
   return {
@@ -58,17 +76,19 @@ vi.mock('../i18n/LanguageProvider', () => ({
 }));
 
 vi.mock('../notifications/NotificationProvider', () => ({
-  useNotifications: () => ({ unreadCount: 0 }),
+  useNotifications: () => notificationMock,
 }));
 
-import { theme } from '../theme';
+import { designTokens } from './designTokens';
 import {
   employeeNav,
   hybridEmployeeNav,
   kitchenNav,
-  PrototypeTabBar,
-  type PrototypeNavItem,
-} from './PrototypeShell';
+  AppFrame,
+  getDockFootprint,
+  AppTabBar,
+  type AppNavItem,
+} from './AppShell';
 
 function elementsOfType(node: React.ReactNode, displayName: string): React.ReactElement[] {
   if (!React.isValidElement(node)) return [];
@@ -87,23 +107,28 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     ...flattenStyle(value),
   }), {});
 }
-function renderTabBar(navItems: PrototypeNavItem[] = employeeNav, focusedIndex = 0) {
+
+function renderTabBar(
+  navItems: AppNavItem[] = employeeNav,
+  focusedIndex = 0,
+  routeNames: AppNavItem[] = navItems,
+) {
   const navigation = {
     emit: vi.fn(() => ({ defaultPrevented: false })),
     navigate: vi.fn(),
   };
-  const routes = navItems.map((item) => ({ key: `${item.route}-key`, name: item.route }));
-  const tree = PrototypeTabBar({
+  const routes = routeNames.map((item) => ({ key: `${item.route}-key`, name: item.route }));
+  const tree = AppTabBar({
     state: { index: focusedIndex, routes } as never,
     descriptors: Object.fromEntries(routes.map((route) => [route.key, { options: {} }])) as never,
     navigation: navigation as never,
     navItems,
     insets: { bottom: 0, top: 0, left: 0, right: 0 },
   });
-  return { navigation, pressables: elementsOfType(tree, 'Pressable') };
+  return { navigation, tree, pressables: elementsOfType(tree, 'Pressable') };
 }
 
-describe('PrototypeTabBar', () => {
+describe('AppTabBar', () => {
   it('renders icon-only equal-footprint targets while keeping active accessibility state', () => {
     const { pressables } = renderTabBar();
     for (const [navItems, expectedCount] of [
@@ -119,15 +144,16 @@ describe('PrototypeTabBar', () => {
 
     const styles = pressables.map((pressable) => flattenStyle(pressable.props.style));
     expect(styles.every((style) => style.flex === 1)).toBe(true);
-    expect(styles.every((style) => style.minWidth === 44 && style.minHeight === 48)).toBe(true);
-    expect(styles[0]).toMatchObject({ backgroundColor: theme.colors.accentSoft });
-    expect(styles.slice(1).every((style) => style.backgroundColor === undefined)).toBe(true);
+    expect(styles.every((style) => style.minWidth === designTokens.size.touchMin && style.minHeight === 48)).toBe(true);
+    expect(styles.every((style) => style.backgroundColor === undefined)).toBe(true);
     expect(styles[0]).not.toHaveProperty('flexGrow');
     expect(styles[0]).not.toHaveProperty('flexDirection');
     expect(styles[0]).not.toHaveProperty('gap');
 
-    expect(elementsOfType(pressables[0], 'Home')[0].props.color).toBe(theme.colors.accentDeep);
-    expect(elementsOfType(pressables[1], 'CalendarDays')[0].props.color).toBe(theme.colors.muted);
+    expect(elementsOfType(pressables[0], 'Home')[0].props.color).toBe(designTokens.color.brand.primary);
+    expect(elementsOfType(pressables[1], 'CalendarDays')[0].props.color).toBe(designTokens.color.text.tertiary);
+    expect(elementsOfType(pressables[0], 'Home')[0].props.strokeWidth).toBe(2.1);
+    expect(elementsOfType(pressables[1], 'CalendarDays')[0].props.strokeWidth).toBe(1.8);
     expect(pressables[0].props.accessibilityRole).toBe('tab');
     expect(pressables[0].props.accessibilityState).toEqual({ selected: true });
     expect(pressables[1].props.accessibilityState).toEqual({ selected: false });
@@ -159,5 +185,55 @@ describe('PrototypeTabBar', () => {
     expect(navigation.navigate).toHaveBeenCalledWith('KitchenScanner');
     pressables[2].props.onPress();
     expect(navigation.navigate).toHaveBeenCalledWith('KitchenProfile');
+  });
+
+  it('does not show a false selected tab when the active route is hidden from the dock', () => {
+    const pickupRoute: AppNavItem = { ...employeeNav[0], route: 'PickupIntent' };
+    const { pressables } = renderTabBar(employeeNav, 4, [...employeeNav, pickupRoute]);
+
+    expect(pressables.every((pressable) => pressable.props.accessibilityState.selected === false)).toBe(true);
+    expect(elementsOfType(pressables[0], 'Home')[0].props.color).toBe(designTokens.color.text.tertiary);
+  });
+
+  it('keeps the unread notification badge in the visible route item', () => {
+    notificationMock.unreadCount = 7;
+    const { pressables } = renderTabBar();
+
+    expect(elementsOfType(pressables[2], 'AppText')[0].props.children).toBe(7);
+    notificationMock.unreadCount = 0;
+  });
+});
+
+describe('AppFrame clearance', () => {
+  it('computes dock footprint from the safe-area inset', () => {
+    expect(getDockFootprint(0)).toBe(
+      designTokens.size.navMinHeight + designTokens.space.lg + designTokens.space.sm,
+    );
+    expect(getDockFootprint(24)).toBe(
+      designTokens.size.navMinHeight + 24 + designTokens.space.sm,
+    );
+  });
+
+  it.each([
+    [0, 104],
+    [24, 108],
+  ] as const)('uses safe-area dock clearance for scroll content at inset %d', (bottom, expected) => {
+    safeAreaMock.bottom = bottom;
+    const tree = AppFrame({ children: React.createElement('Content') });
+    const scrollView = elementsOfType(tree, 'ScrollView')[0];
+
+    expect(flattenStyle(scrollView.props.contentContainerStyle).paddingBottom).toBe(expected);
+  });
+
+  it('applies the same clearance to non-scroll content', () => {
+    safeAreaMock.bottom = 24;
+    const tree = AppFrame({ children: React.createElement('Content'), scroll: false, bottomClearance: 0 });
+    const body = elementsOfType(tree, 'View').find((element) => {
+      const style = flattenStyle(element.props.style);
+      return style.paddingBottom === 108;
+    });
+
+    expect(body).toBeDefined();
+    expect(flattenStyle(body?.props.style).paddingBottom).toBe(108);
   });
 });

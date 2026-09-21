@@ -108,6 +108,7 @@ describe('DelegationsService', () => {
         userId: 'owner1',
         id: 'reg1',
         status: 'ACTIVE',
+        mealDate: new Date('2026-09-08T00:00:00.000Z'),
       });
       prismaMock.mealServing.findUnique.mockResolvedValue(null);
       prismaMock.pickupDelegation.findFirst.mockResolvedValue(null);
@@ -175,7 +176,10 @@ describe('DelegationsService', () => {
         registrationId: 'reg1',
         delegateUserId: 'delegate1',
         status: 'PENDING',
-        registration: { userId: 'owner1' },
+        registration: {
+          userId: 'owner1',
+          mealDate: new Date('2026-09-08T00:00:00.000Z'),
+        },
       });
       prismaMock.mealServing.findUnique.mockResolvedValue(null);
       prismaMock.pickupDelegation.update.mockResolvedValue({
@@ -221,7 +225,10 @@ describe('DelegationsService', () => {
         registrationId: 'reg1',
         delegateUserId: 'delegate1',
         status: 'PENDING',
-        registration: { userId: 'owner1' },
+        registration: {
+          userId: 'owner1',
+          mealDate: new Date('2026-09-08T00:00:00.000Z'),
+        },
       });
       prismaMock.mealServing.findUnique.mockResolvedValue(null);
       prismaMock.pickupDelegation.update.mockResolvedValue({

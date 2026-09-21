@@ -223,27 +223,43 @@ describe('NoShowWorkerService', () => {
       });
 
       // Verify structured Notification and delivery outbox
-      expect(mockTx.notification.upsert).toHaveBeenCalledTimes(2);
-      expect(mockTx.notification.upsert).toHaveBeenCalledWith({
-        where: { dedupeKey: 'no-show-penalty:user-1:reg-1' },
-        update: {},
-        create: {
-          userId: 'user-1',
-          kind: 'NO_SHOW_PENALTY_CREATED',
-          payload: {
-            penaltyId: 'penalty-1',
-            registrationId: 'reg-1',
-            mealDate: '2026-09-03',
-            amount: 50000,
-          },
-          titleVi: 'Phạt không nhận suất',
-          bodyVi: 'Bạn bị phạt 50.000đ do không nhận suất ngày 3/9/2026.',
-          titleEn: 'No-show penalty',
-          bodyEn:
-            'A VND 50,000 penalty was added because your meal for 9/3/2026 was not collected.',
-          dedupeKey: 'no-show-penalty:user-1:reg-1',
-        },
-      });
+      expect(mockTx.notification.upsert).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          where: { dedupeKey: 'no-show-penalty:user-1:reg-1' },
+          update: {},
+          create: expect.objectContaining({
+            id: expect.any(String),
+            userId: 'user-1',
+            kind: 'NO_SHOW_PENALTY_CREATED',
+            payload: {
+              penaltyId: 'penalty-1',
+              registrationId: 'reg-1',
+              mealDate: '2026-09-03',
+              amount: 50000,
+            },
+            titleVi: 'Phạt không nhận suất',
+            bodyVi: 'Bạn bị phạt 50.000đ do không nhận suất ngày 3/9/2026.',
+            titleEn: 'No-show penalty',
+            bodyEn:
+              'A VND 50,000 penalty was added because your meal for 9/3/2026 was not collected.',
+            dedupeKey: 'no-show-penalty:user-1:reg-1',
+          }),
+        }),
+      );
+      expect(mockTx.notification.upsert).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          where: { dedupeKey: 'no-show-penalty:user-2:reg-2' },
+          create: expect.objectContaining({
+            id: expect.any(String),
+            userId: 'user-2',
+            payload: expect.objectContaining({
+              registrationId: 'reg-2',
+            }),
+          }),
+        }),
+      );
       expect(mockTx.outboxEvent.upsert).toHaveBeenCalledTimes(2);
 
       // Verify AuditLog
