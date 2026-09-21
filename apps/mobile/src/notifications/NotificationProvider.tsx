@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
-import { AppState, Linking, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, Linking, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
@@ -10,7 +10,8 @@ import { useLanguage } from '../i18n/LanguageProvider';
 import { useSession } from '../auth/session';
 import { notificationAPI } from '../api/notificationAPI';
 import { navigateToNotification } from '../navigation';
-import { theme } from '../theme';
+import { designTokens, getElevationStyle } from '../ui/designTokens';
+import { ActionButton } from '../ui/components';
 
 const EXPLAINER_KEY = 'imeal.notification-explainer-seen.v1';
 const FOREGROUND_NOTIFICATION_BEHAVIOR = {
@@ -354,12 +355,20 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
             <Text style={styles.heading}>{t('notifications.explainerTitle')}</Text>
             <Text style={styles.copy}>{t('notifications.explainerBody')}</Text>
             {!physicalDevice && <Text style={styles.warning}>{t('notifications.physicalDeviceRequired')}</Text>}
-            <Pressable accessibilityRole="button" onPress={() => void enableNotifications()} style={styles.primaryButton}>
-              <Text style={styles.primaryText}>{t('notifications.enable')}</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" onPress={() => { void writeExplainerSeen().catch(() => undefined); setExplainerVisible(false); }} style={styles.secondaryButton}>
-              <Text style={styles.secondaryText}>{t('notifications.notNow')}</Text>
-            </Pressable>
+            <ActionButton
+              variant="primary"
+              size="lg"
+              label={t('notifications.enable')}
+              onPress={() => void enableNotifications()}
+              style={styles.primaryButton}
+            />
+            <ActionButton
+              variant="ghost"
+              size="md"
+              label={t('notifications.notNow')}
+              onPress={() => { void writeExplainerSeen().catch(() => undefined); setExplainerVisible(false); }}
+              style={styles.secondaryButton}
+            />
           </View>
         </View>
       </Modal>
@@ -374,13 +383,11 @@ export function useNotifications(): NotificationContextValue {
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, padding: theme.spacing.gutter, justifyContent: 'center', backgroundColor: 'rgba(17, 30, 24, 0.45)' },
-  dialog: { padding: theme.spacing.card, borderRadius: theme.radii.lg, backgroundColor: theme.colors.surface, gap: 14, ...theme.shadows.md },
-  heading: { color: theme.colors.fg, fontSize: 20, fontFamily: theme.typography.bold },
-  copy: { color: theme.colors.muted, fontSize: 14, fontFamily: theme.typography.regular, lineHeight: 21 },
-  warning: { color: theme.colors.statusWarnDeep, fontSize: 13, fontFamily: theme.typography.semiBold },
-  primaryButton: { minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radii.md, backgroundColor: theme.colors.accentDeep },
-  primaryText: { color: theme.colors.surface, fontSize: 14, fontFamily: theme.typography.bold },
+  backdrop: { flex: 1, padding: designTokens.space['2xl'], justifyContent: 'center', backgroundColor: 'rgba(17, 30, 24, 0.45)' },
+  dialog: { padding: designTokens.space['2xl'], borderRadius: designTokens.radius.floating, backgroundColor: designTokens.color.surface.standard, gap: 14, ...getElevationStyle(2) },
+  heading: { color: designTokens.color.text.strong, fontSize: 20, fontFamily: designTokens.typography.family.bold },
+  copy: { color: designTokens.color.text.secondary, fontSize: 14, fontFamily: designTokens.typography.family.regular, lineHeight: 21 },
+  warning: { color: designTokens.color.semantic.warning.base, fontSize: 13, fontFamily: designTokens.typography.family.semiBold },
+  primaryButton: { minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: designTokens.radius.heroCard, backgroundColor: designTokens.color.brand.primary },
   secondaryButton: { minHeight: 42, alignItems: 'center', justifyContent: 'center' },
-  secondaryText: { color: theme.colors.muted, fontSize: 14, fontFamily: theme.typography.semiBold },
 });

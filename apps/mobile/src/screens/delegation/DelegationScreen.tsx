@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { ArrowLeft, CheckCircle, Clock, Search, XCircle } from 'lucide-react-native';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import type { ProfileStackScreenProps } from '../../navigation';
@@ -12,15 +12,15 @@ import {
   type DelegationCache,
   type DelegationTab,
 } from './delegationState';
-import { PrototypeButton, PrototypeCard, PrototypeField, Pill, PillText } from '../../ui/PrototypePrimitives';
-import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
+import { ActionButton, AppText, StatusBadge, Surface, TextField } from '../../ui/components';
+import { AppFrame, SectionHeader } from '../../ui/AppShell';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
 import { useScreenLoadingGate } from '../../ui/useScreenLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { formatBusinessInstant } from '../../businessDate';
 import { getMobileErrorMessage } from '../../api/mobileApiError';
 import { useLanguage } from '../../i18n/LanguageProvider';
-import { theme } from '../../theme';
+import { designTokens } from '../../ui/designTokens';
 
 type Tab = DelegationTab;
 type Props = ProfileStackScreenProps<'Delegation'>;
@@ -28,6 +28,8 @@ export function DelegationScreen({ navigation }: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
   const { locale, t } = useLanguage();
+  const { width, fontScale } = useWindowDimensions();
+  const compactLayout = width < 350 || fontScale > 1.2;
   const isFocused = useIsFocused();
   const [tab, setTab] = useState<Tab>('OUTGOING');
   const [searchQuery, setSearchQuery] = useState('');
@@ -107,27 +109,63 @@ export function DelegationScreen({ navigation }: Props) {
   const visible = getDelegationsForTab(dataByTab, tab).filter((delegation) => tab === 'INCOMING' || delegation.delegateUserId.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
-    <PrototypeFrame screenLoadingLabel={screenLoading ? t('delegation.loading') : undefined}>
-      <View style={styles.header}><Pressable accessibilityRole="button" accessibilityLabel={t('delegation.back')} onPress={() => navigation.goBack()} style={styles.back}><ArrowLeft size={20} color={theme.colors.fg} /></Pressable><View style={styles.headerCopy}><PrototypeSectionTitle title={t('delegation.title')} subtitle={t('delegation.subtitle')} /></View></View>
-      <View style={styles.tabs}><Pressable accessibilityRole="tab" accessibilityState={{ selected: tab === 'OUTGOING' }} onPress={() => selectTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'OUTGOING' && styles.activeTabText]}>{t('delegation.myRequests')}</Text></Pressable><Pressable accessibilityRole="tab" accessibilityState={{ selected: tab === 'INCOMING' }} onPress={() => selectTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}><Text style={[styles.tabText, tab === 'INCOMING' && styles.activeTabText]}>{t('delegation.incoming')}</Text></Pressable></View>
-      {tab === 'OUTGOING' && <PrototypeField icon={Search} accessibilityLabel={t('delegation.searchPlaceholder')} placeholder={t('delegation.searchPlaceholder')} value={searchQuery} onChangeText={setSearchQuery} style={styles.search} />}
-      {refreshing && activeCache.loaded && <Text style={styles.refreshing}>{t('delegation.refreshing')}</Text>}
+    <AppFrame screenLoadingLabel={screenLoading ? t('delegation.loading') : undefined}>
+      <View style={styles.header}>
+        <Pressable accessibilityRole="button" accessibilityLabel={t('delegation.back')} onPress={() => navigation.goBack()} style={styles.back}>
+          <ArrowLeft size={20} color={designTokens.color.text.strong} />
+        </Pressable>
+        <View style={styles.headerCopy}>
+          <SectionHeader title={t('delegation.title')} subtitle={t('delegation.subtitle')} />
+        </View>
+      </View>
+      <View style={styles.tabs}>
+        <Pressable accessibilityRole="tab" accessibilityState={{ selected: tab === 'OUTGOING' }} onPress={() => selectTab('OUTGOING')} style={[styles.tab, tab === 'OUTGOING' && styles.activeTab]}>
+          <AppText variant="buttonLabel" tone={tab === 'OUTGOING' ? 'information' : 'secondary'}>{t('delegation.myRequests')}</AppText>
+        </Pressable>
+        <Pressable accessibilityRole="tab" accessibilityState={{ selected: tab === 'INCOMING' }} onPress={() => selectTab('INCOMING')} style={[styles.tab, tab === 'INCOMING' && styles.activeTab]}>
+          <AppText variant="buttonLabel" tone={tab === 'INCOMING' ? 'information' : 'secondary'}>{t('delegation.incoming')}</AppText>
+        </Pressable>
+      </View>
+      {tab === 'OUTGOING' && <TextField label={t('delegation.searchPlaceholder')} icon={Search} accessibilityLabel={t('delegation.searchPlaceholder')} placeholder={t('delegation.searchPlaceholder')} value={searchQuery} onChangeText={setSearchQuery} containerStyle={styles.search} />}
+      {refreshing && activeCache.loaded && <AppText variant="caption" tone="secondary" style={styles.refreshing}>{t('delegation.refreshing')}</AppText>}
       <StateTransition stateKey={loadError && !activeCache.loaded ? 'error' : showTabLoading ? 'tab-loading' : visible.length === 0 ? 'empty' : 'list'}>
         {loadError && !activeCache.loaded ? (
-          <PrototypeCard style={styles.errorCard}>
-            <Text style={styles.errorTitle}>{t('delegation.unavailable')}</Text>
-            <Text style={styles.errorText}>{getMobileErrorMessage(loadError, t, 'errors.loadDelegations')}</Text>
-            <PrototypeButton variant="secondary" onPress={() => void loadDelegations(activeTabRef.current)} style={styles.retryButton}>{t('common.retry')}</PrototypeButton>
-          </PrototypeCard>
+          <Surface style={styles.errorCard}>
+            <AppText variant="cardTitle">{t('delegation.unavailable')}</AppText>
+            <AppText variant="body" tone="secondary">{getMobileErrorMessage(loadError, t, 'errors.loadDelegations')}</AppText>
+            <ActionButton variant="secondary" size="md" label={t('common.retry')} onPress={() => void loadDelegations(activeTabRef.current)} style={styles.retryButton} />
+          </Surface>
         ) : showTabLoading ? (
           <BrandLoader compact label={t(tab === 'INCOMING' ? 'delegation.loadingIncoming' : 'delegation.loadingOutgoing')} />
         ) : visible.length === 0 ? (
-          <Text style={styles.empty}>{t('delegation.empty')}</Text>
+          <AppText variant="body" tone="secondary" style={styles.empty}>{t('delegation.empty')}</AppText>
         ) : (
-          <View style={styles.list}>{visible.map((item) => <PrototypeCard key={item.id} style={styles.card}><View style={styles.cardHeader}><Text style={styles.cardTitle}>{t(tab === 'OUTGOING' ? 'delegation.to' : 'delegation.from', { id: item.delegateUserId })}</Text><Status status={item.status} /></View><Text style={styles.cardDate}>{t('delegation.createdAt', { date: formatBusinessInstant(item.createdAt, locale) })}</Text>{item.status === 'PENDING' && <View style={styles.actions}>{tab === 'INCOMING' ? <><Pressable accessibilityRole="button" disabled={actionId === item.id || refreshing} onPress={() => void handleAction('decline', item.id)} style={styles.secondaryAction}><Text style={styles.secondaryText}>{t('delegation.decline')}</Text></Pressable><Pressable accessibilityRole="button" disabled={actionId === item.id || refreshing} onPress={() => void handleAction('accept', item.id)} style={styles.primaryAction}><Text style={styles.primaryText}>{t('delegation.accept')}</Text></Pressable></> : <Pressable accessibilityRole="button" disabled={actionId === item.id || refreshing} onPress={() => void handleAction('revoke', item.id)} style={styles.dangerAction}><Text style={styles.dangerText}>{t('delegation.revoke')}</Text></Pressable>}</View>}</PrototypeCard>)}</View>
+          <View style={styles.list}>
+            {visible.map((item) => (
+              <Surface key={item.id} style={styles.card}>
+                <View style={[styles.cardHeader, compactLayout && styles.cardHeaderCompact]}>
+                  <AppText variant="cardTitle" style={styles.cardTitle}>{t(tab === 'OUTGOING' ? 'delegation.to' : 'delegation.from', { id: item.delegateUserId })}</AppText>
+                  <Status status={item.status} />
+                </View>
+                <AppText variant="supporting" tone="secondary" style={styles.cardDate}>{t('delegation.createdAt', { date: formatBusinessInstant(item.createdAt, locale) })}</AppText>
+                {item.status === 'PENDING' && (
+                  <View style={[styles.actions, compactLayout && styles.actionsCompact]}>
+                    {tab === 'INCOMING' ? (
+                      <>
+                        <ActionButton variant="secondary" size="md" disabled={actionId === item.id || refreshing} onPress={() => void handleAction('decline', item.id)} label={t('delegation.decline')} style={styles.secondaryAction} />
+                        <ActionButton variant="primary" size="md" disabled={actionId === item.id || refreshing} onPress={() => void handleAction('accept', item.id)} label={t('delegation.accept')} style={styles.primaryAction} />
+                      </>
+                    ) : (
+                      <ActionButton variant="critical" size="md" disabled={actionId === item.id || refreshing} onPress={() => void handleAction('revoke', item.id)} label={t('delegation.revoke')} style={styles.dangerAction} />
+                    )}
+                  </View>
+                )}
+              </Surface>
+            ))}
+          </View>
         )}
       </StateTransition>
-    </PrototypeFrame>
+    </AppFrame>
   );
 }
 
@@ -135,7 +173,7 @@ function Status({ status }: { status: DelegationResponse['status'] }) {
   const { t } = useLanguage();
   const pending = status === 'PENDING';
   const accepted = status === 'ACCEPTED';
-  const tone = pending ? 'warn' : accepted ? 'good' : 'bad';
+  const tone = pending ? 'warning' : accepted ? 'success' : 'critical';
   const Icon = pending ? Clock : accepted ? CheckCircle : XCircle;
   const label = pending
     ? t('delegation.pending')
@@ -144,36 +182,31 @@ function Status({ status }: { status: DelegationResponse['status'] }) {
       : status === 'DECLINED'
         ? t('delegation.declined')
         : t('delegation.revoked');
-  return <Pill tone={tone}><View style={styles.status}><Icon size={14} color={pending ? theme.colors.statusWarnDeep : accepted ? theme.colors.statusGoodDeep : theme.colors.statusBadDeep} /><PillText>{label}</PillText></View></Pill>;
+  return <StatusBadge label={label} tone={tone} icon={Icon} style={styles.statusBadge} />;
 }
 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center' },
-  back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerCopy: { flex: 1 },
-  tabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: theme.colors.border },
-  tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  activeTab: { borderBottomWidth: 2, borderBottomColor: theme.colors.accentDeep },
-  tabText: { color: theme.colors.muted, fontSize: 14, fontFamily: theme.typography.medium },
-  activeTabText: { color: theme.colors.accentDeep, fontFamily: theme.typography.bold },
-  search: { marginVertical: 16 },
-  refreshing: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular, marginBottom: 8 },
-  empty: { color: theme.colors.muted, fontFamily: theme.typography.regular, textAlign: 'center', marginTop: 24 },
-  errorCard: { marginTop: 20 },
-  errorTitle: { color: theme.colors.fg, fontSize: 17, fontFamily: theme.typography.bold },
-  errorText: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19, marginTop: 8 },
-  retryButton: { marginTop: 16 },
-  list: { gap: 12, paddingVertical: 8 },
-  card: { padding: 16 },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 8 },
-  cardTitle: { flex: 1, color: theme.colors.fg, fontSize: 15, fontFamily: theme.typography.bold },
-  status: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  cardDate: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, marginBottom: 14 },
-  actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 12 },
-  secondaryAction: { minHeight: 40, paddingHorizontal: 16, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.sm, alignItems: 'center', justifyContent: 'center' },
-  secondaryText: { color: theme.colors.fg, fontSize: 13, fontFamily: theme.typography.semiBold },
-  primaryAction: { minHeight: 40, paddingHorizontal: 16, borderRadius: theme.radii.sm, backgroundColor: theme.colors.accentDeep, alignItems: 'center', justifyContent: 'center' },
-  primaryText: { color: theme.colors.surface, fontSize: 13, fontFamily: theme.typography.bold },
-  dangerAction: { minHeight: 40, paddingHorizontal: 16, borderRadius: theme.radii.sm, backgroundColor: theme.colors.statusBadTint, alignItems: 'center', justifyContent: 'center' },
-  dangerText: { color: theme.colors.statusBadDeep, fontSize: 13, fontFamily: theme.typography.bold },
+  back: { width: designTokens.size.touchMin, height: designTokens.size.touchMin, alignItems: 'center', justifyContent: 'center' },
+  headerCopy: { flex: 1, minWidth: 0 },
+  tabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: designTokens.color.border.standard },
+  tab: { flex: 1, minHeight: designTokens.size.touchMin, paddingVertical: designTokens.space.sm, alignItems: 'center', justifyContent: 'center' },
+  activeTab: { borderBottomWidth: 2, borderBottomColor: designTokens.color.brand.primary },
+  search: { marginVertical: designTokens.space.lg },
+  refreshing: { marginBottom: designTokens.space.sm },
+  empty: { textAlign: 'center', marginTop: designTokens.space.xl },
+  errorCard: { marginTop: designTokens.space.xl, gap: designTokens.space.sm },
+  retryButton: { marginTop: designTokens.space.sm },
+  list: { gap: designTokens.space.md, paddingVertical: designTokens.space.sm },
+  card: { padding: designTokens.space.lg },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: designTokens.space.sm, marginBottom: designTokens.space.sm },
+  cardHeaderCompact: { flexDirection: 'column' },
+  cardTitle: { flex: 1, minWidth: 0 },
+  statusBadge: { flexDirection: 'row', alignItems: 'center', gap: designTokens.space.xs },
+  cardDate: { marginBottom: designTokens.space.md },
+  actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: designTokens.space.sm, borderTopWidth: 1, borderTopColor: designTokens.color.border.standard, paddingTop: designTokens.space.md },
+  actionsCompact: { flexDirection: 'column', alignItems: 'stretch' },
+  secondaryAction: { minWidth: 0 },
+  primaryAction: { minWidth: 0 },
+  dangerAction: { minWidth: 0 },
 });

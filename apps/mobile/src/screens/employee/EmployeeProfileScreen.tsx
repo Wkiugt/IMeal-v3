@@ -1,16 +1,25 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
-import { Bell, Check, ChevronRight, LogOut, Settings, UsersRound } from 'lucide-react-native';
+import { Alert, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Bell, Check, ChevronRight, Leaf, LogOut, Settings, UsersRound } from 'lucide-react-native';
 import type { ProfileStackScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { initials } from '../../businessDate';
-import { Avatar, Eyebrow, Pill, PillText, PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
-import { PrototypeFrame } from '../../ui/PrototypeShell';
+import { AppFrame, SectionHeader } from '../../ui/AppShell';
+import {
+  ActionButton,
+  AppText,
+  Divider,
+  IdentityCard,
+  StatisticsCard,
+  StatusBadge,
+  Surface,
+  Toggle,
+} from '../../ui/components';
 import { useNotice } from '../../ui/BrandNotice';
 import { useLanguage } from '../../i18n/LanguageProvider';
 import { notificationAPI } from '../../api/notificationAPI';
 import { useNotifications } from '../../notifications/NotificationProvider';
-import { theme } from '../../theme';
+import { designTokens, type SemanticTone } from '../../ui/designTokens';
 
 type Props = ProfileStackScreenProps<'ProfileHome'>;
 
@@ -19,7 +28,8 @@ export function EmployeeProfileScreen({ navigation }: Props) {
   const { showNotice } = useNotice();
   const { language, setLanguage, t } = useLanguage();
   const { permissionStatus, configurationError, enableNotifications, openSettings, revokeCurrentDevice } = useNotifications();
-  const [reminders, setReminders] = useState(true);
+  const { width, fontScale } = useWindowDimensions();
+  const compactLayout = width < 350 || fontScale > 1.2;
   const [confirmedReminders, setConfirmedReminders] = useState(true);
   const [reminderLoading, setReminderLoading] = useState(true);
   const displayName = profile?.name || profile?.email.split('@')[0] || t('profile.employeeAccount');
@@ -31,7 +41,6 @@ export function EmployeeProfileScreen({ navigation }: Props) {
     setReminderLoading(true);
     void notificationAPI.getPreferences(token).then((preferences) => {
       if (!mounted) return;
-      setReminders(preferences.remindersEnabled);
       setConfirmedReminders(preferences.remindersEnabled);
     }).catch(() => {
       if (mounted) showNotice({ title: t('common.error'), message: t('profile.preferenceLoadFailed'), tone: 'warning' });
@@ -50,9 +59,7 @@ export function EmployeeProfileScreen({ navigation }: Props) {
     try {
       const preferences = await notificationAPI.updatePreferences({ remindersEnabled: nextValue }, token);
       setConfirmedReminders(preferences.remindersEnabled);
-      setReminders(preferences.remindersEnabled);
     } catch {
-      setReminders(previousValue);
       setConfirmedReminders(previousValue);
       showNotice({ title: t('common.error'), message: t('profile.preferenceSaveFailed'), tone: 'warning' });
     } finally {
@@ -87,6 +94,7 @@ export function EmployeeProfileScreen({ navigation }: Props) {
       showNotice({ title: t('common.error'), message: t('profile.languagePersistenceFailed'), tone: 'warning' });
     }
   };
+
   const systemStatus = permissionStatus === 'granted'
     ? t('notifications.enabled')
     : permissionStatus === 'denied'
@@ -94,84 +102,264 @@ export function EmployeeProfileScreen({ navigation }: Props) {
       : permissionStatus === 'simulator'
         ? t('notifications.physicalDeviceRequired')
         : t('notifications.notEnabled');
+  const systemTone: SemanticTone = permissionStatus === 'granted'
+    ? 'success'
+    : permissionStatus === 'denied'
+      ? 'warning'
+      : permissionStatus === 'undetermined'
+        ? 'information'
+        : 'neutral';
   const systemAction = permissionStatus === 'denied' ? openSettings : enableNotifications;
   const systemActionLabel = permissionStatus === 'denied' ? t('notifications.openSettings') : t('notifications.enable');
 
   return (
-    <PrototypeFrame>
-      <View style={styles.title}><Text style={styles.heading}>{t('profile.title')}</Text><Text style={styles.subtitle}>{t('profile.subtitle')}</Text></View>
-      <PrototypeCard style={styles.identityCard}>
-        <Avatar initials={initials(profile?.name, 'ME')} large />
-        <View style={styles.identityInfo}><Text style={styles.identityName}>{displayName}</Text><Pill><PillText>{userCode}</PillText></Pill><Text style={styles.identityDept}>{t('profile.employeeAccount')}</Text></View>
-      </PrototypeCard>
-      <PrototypeCard style={styles.statsCard}>
-        <Eyebrow>{t('profile.thisMonth')}</Eyebrow>
-        <View style={styles.statsRow}><View style={styles.stat}><Text style={styles.statNumber}>—</Text><Text style={styles.statLabel}>{t('profile.mealsBooked')}</Text></View><View style={styles.statDivider} /><View style={styles.stat}><Text style={styles.statNumber}>—</Text><Text style={styles.statLabel}>{t('profile.mealsEnjoyed')}</Text></View></View>
-      </PrototypeCard>
-      <PrototypeCard style={styles.preferencesCard}>
-        <View style={styles.preferenceRow}><View><Text style={styles.preferenceLabel}>{t('profile.dietaryPreferences')}</Text><Text style={styles.preferenceSub}>{t('profile.managedByAccount')}</Text></View><Pill><PillText>{t('profile.notSet')}</PillText></Pill></View>
-        <View style={styles.divider} />
-        <View style={styles.preferenceRow}><View style={styles.preferenceCopy}><Text style={styles.preferenceLabel}>{t('profile.bookingReminders')}</Text><Text style={styles.preferenceSub}>{t('profile.remindersHint')}</Text></View><Switch accessibilityLabel={t('profile.bookingReminders')} disabled={reminderLoading} value={confirmedReminders} onValueChange={(value) => void handleReminderChange(value)} trackColor={{ false: theme.colors.border, true: theme.colors.accentDeep }} thumbColor={theme.colors.surface} /></View>
-        <View style={styles.divider} />
-        <View style={styles.preferenceRow}><View style={styles.preferenceCopy}><Text style={styles.preferenceLabel}>{t('profile.systemNotifications')}</Text><Text style={styles.preferenceSub}>{systemStatus}</Text></View><PrototypeButton icon={permissionStatus === 'denied' ? Settings : Bell} variant="secondary" disabled={permissionStatus === 'simulator' || permissionStatus === 'unavailable'} onPress={() => void systemAction()}>{systemActionLabel}</PrototypeButton></View>
-        {configurationError && <Text style={styles.recovery}>{configurationError}</Text>}
-        <View style={styles.divider} />
-        <View style={styles.languageRow}>
-          <View style={styles.preferenceCopy}><Text style={styles.preferenceLabel}>{t('profile.language')}</Text><Text style={styles.preferenceSub}>{t('profile.languageHint')}</Text></View>
-          <View accessibilityRole="radiogroup" accessibilityLabel={t('profile.language')} style={styles.languageSelector}>
+    <AppFrame>
+      <SectionHeader title={t('profile.title')} subtitle={t('profile.subtitle')} />
+
+      <IdentityCard
+        initials={initials(profile?.name, 'ME')}
+        name={displayName}
+        roleLabel={t('profile.employeeAccount')}
+        identifier={userCode}
+        style={styles.identityCard}
+      />
+
+      <StatisticsCard
+        eyebrow={t('profile.thisMonth')}
+        metrics={[
+          { label: t('profile.mealsBooked'), value: '—' },
+          { label: t('profile.mealsEnjoyed'), value: '—' },
+        ]}
+        style={styles.statsCard}
+      />
+
+      <Surface level={1} padding="xl" style={styles.preferencesCard}>
+        <View style={styles.preferenceGroup}>
+          <View style={[styles.preferenceRow, compactLayout && styles.preferenceRowCompact]}>
+            <View style={styles.preferenceCopy}>
+              <AppText variant="body">{t('profile.dietaryPreferences')}</AppText>
+              <AppText variant="supporting" tone="secondary" style={styles.preferenceHint}>
+                {t('profile.managedByAccount')}
+              </AppText>
+            </View>
+            <StatusBadge label={t('profile.notSet')} tone="neutral" icon={Leaf} />
+          </View>
+        </View>
+
+        <Divider style={styles.preferenceDivider} />
+
+        <View style={styles.preferenceGroup}>
+          <Toggle
+            value={confirmedReminders}
+            disabled={reminderLoading}
+            loading={reminderLoading}
+            label={t('profile.bookingReminders')}
+            onValueChange={(value) => void handleReminderChange(value)}
+          />
+          <AppText variant="supporting" tone="secondary" style={styles.preferenceHint}>
+            {t('profile.remindersHint')}
+          </AppText>
+        </View>
+
+        <View style={[styles.preferenceRow, compactLayout && styles.preferenceRowCompact]}>
+          <View style={styles.preferenceCopy}>
+            <AppText variant="body">{t('profile.systemNotifications')}</AppText>
+            <StatusBadge label={systemStatus} tone={systemTone} />
+          </View>
+          <ActionButton
+            variant="secondary"
+            size="md"
+            label={systemActionLabel}
+            icon={permissionStatus === 'denied' ? Settings : Bell}
+            disabled={permissionStatus === 'simulator' || permissionStatus === 'unavailable'}
+            onPress={() => void systemAction()}
+            style={[styles.systemAction, compactLayout && styles.systemActionCompact]}
+          />
+        </View>
+        {configurationError ? (
+          <AppText variant="supporting" tone="warning" style={styles.recovery}>
+            {configurationError}
+          </AppText>
+        ) : null}
+
+        <Divider style={styles.preferenceDivider} />
+
+        <View style={styles.languageSection}>
+          <View style={styles.preferenceCopy}>
+            <AppText variant="body">{t('profile.language')}</AppText>
+            <AppText variant="supporting" tone="secondary" style={styles.preferenceHint}>
+              {t('profile.languageHint')}
+            </AppText>
+          </View>
+          <View accessibilityRole="radiogroup" accessibilityLabel={t('profile.language')} style={[styles.languageSelector, compactLayout && styles.languageSelectorCompact]}>
             {([
               ['vi', 'profile.vietnamese'],
               ['en', 'profile.english'],
             ] as const).map(([nextLanguage, labelKey]) => {
               const selected = language === nextLanguage;
               return (
-                <Pressable key={nextLanguage} accessibilityRole="radio" accessibilityLabel={t(labelKey)} accessibilityState={{ checked: selected }} onPress={() => void handleLanguageChange(nextLanguage)} style={[styles.languageOption, selected && styles.languageOptionSelected]}>
-                  {selected && <Check size={14} color={theme.colors.accentDeep} strokeWidth={2.4} />}
-                  <Text style={[styles.languageOptionText, selected && styles.languageOptionTextSelected]}>{t(labelKey)}</Text>
+                <Pressable
+                  key={nextLanguage}
+                  accessibilityRole="radio"
+                  accessibilityLabel={t(labelKey)}
+                  accessibilityState={{ checked: selected }}
+                  onPress={() => void handleLanguageChange(nextLanguage)}
+                  style={[styles.languageOption, compactLayout && styles.languageOptionCompact, selected && styles.languageOptionSelected]}
+                >
+                  {selected ? <Check size={16} color={designTokens.color.brand.primary} strokeWidth={2.4} /> : null}
+                  <AppText variant="buttonLabel" tone={selected ? 'information' : 'secondary'}>
+                    {t(labelKey)}
+                  </AppText>
                 </Pressable>
               );
             })}
           </View>
         </View>
-      </PrototypeCard>
-      <Pressable accessibilityRole="button" accessibilityLabel={t('profile.delegations')} onPress={() => navigation.navigate('Delegation')} style={styles.delegationRow}><View style={styles.delegationIcon}><UsersRound size={18} color={theme.colors.accentDeep} /></View><View style={styles.delegationCopy}><Text style={styles.delegationLabel}>{t('profile.delegations')}</Text><Text style={styles.delegationSub}>{t('profile.delegationsHint')}</Text></View><ChevronRight size={18} color={theme.colors.muted} /></Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel={t('auth.logOut')} onPress={handleLogout} style={styles.logout}><LogOut size={18} color={theme.colors.statusBadDeep} strokeWidth={1.6} /><Text style={styles.logoutText}>{t('auth.logOut')}</Text></Pressable>
-    </PrototypeFrame>
+      </Surface>
+
+      <Divider style={styles.delegationDivider} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={t('profile.delegations')}
+        onPress={() => navigation.navigate('Delegation')}
+        style={({ pressed }) => [styles.delegationRow, pressed && styles.delegationPressed]}
+      >
+        <View style={styles.delegationIcon}>
+          <UsersRound size={18} color={designTokens.color.brand.primary} strokeWidth={1.9} />
+        </View>
+        <View style={styles.delegationCopy}>
+          <AppText variant="body">{t('profile.delegations')}</AppText>
+          <AppText variant="supporting" tone="secondary" style={styles.delegationHint}>
+            {t('profile.delegationsHint')}
+          </AppText>
+        </View>
+        <ChevronRight size={18} color={designTokens.color.text.secondary} strokeWidth={1.9} />
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={t('auth.logOut')}
+        onPress={handleLogout}
+        style={styles.logout}
+      >
+        <LogOut size={18} color={designTokens.color.semantic.critical.base} strokeWidth={1.8} />
+        <AppText variant="buttonLabel" tone="critical">{t('auth.logOut')}</AppText>
+      </Pressable>
+    </AppFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  title: { paddingVertical: 18, gap: 5 },
-  heading: { color: theme.colors.fg, fontSize: 24, fontFamily: theme.typography.bold },
-  subtitle: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular, lineHeight: 19 },
-  identityCard: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 16 },
-  identityInfo: { flex: 1, gap: 7 },
-  identityName: { color: theme.colors.fg, fontSize: 18, fontFamily: theme.typography.bold },
-  identityDept: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular },
-  statsCard: { marginBottom: 16 },
-  statsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 18 },
-  stat: { flex: 1, gap: 4 },
-  statNumber: { color: theme.colors.fg, fontSize: 30, fontFamily: theme.typography.bold },
-  statLabel: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular },
-  statDivider: { width: 1, height: 40, backgroundColor: theme.colors.border },
-  preferencesCard: { gap: 18, marginBottom: 16 },
-  preferenceRow: { minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  languageRow: { gap: 8 },
-  languageSelector: { flexDirection: 'row', borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.sm, overflow: 'hidden' },
-  languageOption: { flex: 1, minHeight: 44, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 },
-  languageOptionSelected: { backgroundColor: theme.colors.accentTint },
-  languageOptionText: { color: theme.colors.muted, fontSize: 13, fontFamily: theme.typography.regular },
-  languageOptionTextSelected: { color: theme.colors.accentDeep, fontFamily: theme.typography.bold },
-  preferenceCopy: { flex: 1 },
-  preferenceLabel: { color: theme.colors.fg, fontSize: 14, fontFamily: theme.typography.semiBold },
-  preferenceSub: { marginTop: 4, color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular },
-  recovery: { color: theme.colors.statusWarnDeep, fontSize: 12, lineHeight: 18, fontFamily: theme.typography.semiBold },
-  divider: { height: 1, backgroundColor: theme.colors.border },
-  delegationRow: { minHeight: 68, paddingHorizontal: 16, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.md, flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
-  delegationIcon: { width: 36, height: 36, borderRadius: theme.radii.sm, backgroundColor: theme.colors.accentTint, alignItems: 'center', justifyContent: 'center' },
-  delegationCopy: { flex: 1 },
-  delegationLabel: { color: theme.colors.fg, fontSize: 14, fontFamily: theme.typography.bold },
-  delegationSub: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular, marginTop: 3 },
-  logout: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 16 },
-  logoutText: { color: theme.colors.statusBadDeep, fontSize: 14, fontFamily: theme.typography.bold },
+  identityCard: {
+    marginBottom: designTokens.space.lg,
+  },
+  statsCard: {
+    marginBottom: designTokens.space.lg,
+  },
+  preferencesCard: {
+    gap: designTokens.space.lg,
+  },
+  preferenceGroup: {
+    gap: designTokens.space.xs,
+  },
+  preferenceRow: {
+    minHeight: designTokens.size.touchMin,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: designTokens.space.md,
+  },
+  preferenceRowCompact: {
+    alignItems: 'stretch',
+    flexDirection: 'column',
+  },
+  preferenceCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  preferenceHint: {
+    marginTop: designTokens.space.xs,
+  },
+  preferenceDivider: {
+    marginVertical: designTokens.space.xs,
+  },
+  systemAction: {
+    flexShrink: 0,
+  },
+  systemActionCompact: {
+    alignSelf: 'stretch',
+  },
+  recovery: {
+    marginTop: designTokens.space.xs,
+  },
+  languageSection: {
+    gap: designTokens.space.sm,
+  },
+  languageSelector: {
+    flexDirection: 'row',
+    borderWidth: designTokens.border.standard.width,
+    borderColor: designTokens.color.border.standard,
+    borderRadius: designTokens.radius.smallControl,
+    overflow: 'hidden',
+  },
+  languageSelectorCompact: {
+    flexDirection: 'column',
+  },
+  languageOption: {
+    flex: 1,
+    minHeight: designTokens.size.touchMin,
+    paddingHorizontal: designTokens.space.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: designTokens.space.xs,
+    borderWidth: designTokens.border.standard.width,
+    borderColor: designTokens.color.surface.standard,
+  },
+  languageOptionCompact: {
+    width: '100%',
+    flex: 0,
+  },
+  languageOptionSelected: {
+    backgroundColor: designTokens.color.brand.tint,
+    borderWidth: designTokens.border.selected.width,
+    borderColor: designTokens.color.border.selected,
+  },
+  delegationDivider: {
+    marginTop: designTokens.space.lg,
+  },
+  delegationRow: {
+    minHeight: designTokens.size.controlLg,
+    paddingVertical: designTokens.space.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: designTokens.space.md,
+  },
+  delegationPressed: {
+    transform: [{ scale: designTokens.motion.pressScale.compact }],
+  },
+  delegationIcon: {
+    width: designTokens.size.controlMd,
+    height: designTokens.size.controlMd,
+    borderRadius: designTokens.radius.smallControl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: designTokens.color.brand.tint,
+  },
+  delegationCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  delegationHint: {
+    marginTop: designTokens.space.xs,
+  },
+  logout: {
+    minHeight: designTokens.size.touchMin,
+    marginTop: designTokens.space.sm,
+    marginBottom: designTokens.space.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: designTokens.space.sm,
+  },
 });

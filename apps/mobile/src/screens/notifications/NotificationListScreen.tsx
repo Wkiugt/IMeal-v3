@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Bell, ChevronRight, Settings } from 'lucide-react-native';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -10,10 +10,10 @@ import { useLanguage } from '../../i18n/LanguageProvider';
 import { useNotifications } from '../../notifications/NotificationProvider';
 import type { NotificationStackParamList } from '../../navigation';
 import { getMobileErrorMessage } from '../../api/mobileApiError';
-import { PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
+import { ActionButton, AppText, Surface } from '../../ui/components';
 import { BrandLoader, StateTransition } from '../../ui/BrandMotion';
-import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
-import { theme } from '../../theme';
+import { AppFrame, SectionHeader } from '../../ui/AppShell';
+import { designTokens } from '../../ui/designTokens';
 
 type Props = NativeStackScreenProps<NotificationStackParamList, 'NotificationList'>;
 type NotificationGroup = { key: string; label: string; items: NotificationItem[] };
@@ -45,6 +45,8 @@ export function NotificationListScreen({ navigation }: Props) {
   const { locale, language, t } = useLanguage();
   const { unreadCount, permissionStatus, configurationError, openSettings, refreshUnread } = useNotifications();
   const isFocused = useIsFocused();
+  const { width, fontScale } = useWindowDimensions();
+  const compactLayout = width < 350 || fontScale > 1.2;
   const [items, setItems] = useState<NotificationItem[]>([]);
   const nextCursorRef = useRef<string | null>(null);
   const [hasNextPage, setHasNextPage] = useState(false);
@@ -95,38 +97,41 @@ export function NotificationListScreen({ navigation }: Props) {
         : null;
 
   return (
-    <PrototypeFrame
+    <AppFrame
       screenLoadingLabel={loading ? t('notifications.loading') : undefined}
       scrollProps={{
         refreshControl: <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(true); }} />,
       }}
     >
-      <PrototypeSectionTitle title={t('notifications.title')} subtitle={t('notifications.subtitle')} />
-      {unreadCount > 0 && <Text style={styles.unreadSummary}>{t('notifications.unreadCount', { count: unreadCount })}</Text>}
+      <SectionHeader title={t('notifications.title')} subtitle={t('notifications.subtitle')} />
+      {unreadCount > 0 && <AppText variant="caption" tone="information" style={styles.unreadSummary}>{t('notifications.unreadCount', { count: unreadCount })}</AppText>}
       {notificationStatus && (
-        <PrototypeCard style={styles.permissionCard}>
-          <View style={styles.permissionCopy}><Text style={styles.permissionTitle}>{t('notifications.systemStatus')}</Text><Text style={styles.permissionText}>{notificationStatus}</Text></View>
-          {permissionStatus === 'denied' && <PrototypeButton icon={Settings} variant="secondary" onPress={() => void openSettings()}>{t('notifications.openSettings')}</PrototypeButton>}
-        </PrototypeCard>
+        <Surface style={[styles.permissionCard, compactLayout && styles.permissionCardCompact]}>
+          <View style={styles.permissionCopy}>
+            <AppText variant="body">{t('notifications.systemStatus')}</AppText>
+            <AppText variant="supporting" tone="secondary">{notificationStatus}</AppText>
+          </View>
+          {permissionStatus === 'denied' && <ActionButton icon={Settings} variant="secondary" size="md" label={t('notifications.openSettings')} onPress={() => void openSettings()} style={compactLayout && styles.permissionAction} />}
+        </Surface>
       )}
-      {configurationError && <Text style={styles.errorText}>{configurationError}</Text>}
+      {configurationError && <AppText variant="supporting" tone="critical" style={styles.errorText}>{configurationError}</AppText>}
       <StateTransition stateKey={error && items.length === 0 ? 'error' : items.length === 0 ? 'empty' : 'ready'}>
         {error && items.length === 0 ? (
-          <PrototypeCard style={styles.stateCard}>
-            <Text style={styles.stateTitle}>{t('notifications.loadFailed')}</Text>
-            <Text style={styles.stateText}>{getMobileErrorMessage(error, t, 'errors.loadNotifications')}</Text>
-            <PrototypeButton onPress={() => void load(true)}>{t('common.retry')}</PrototypeButton>
-          </PrototypeCard>
+          <Surface style={styles.stateCard}>
+            <AppText variant="cardTitle">{t('notifications.loadFailed')}</AppText>
+            <AppText variant="body" tone="secondary">{getMobileErrorMessage(error, t, 'errors.loadNotifications')}</AppText>
+            <ActionButton variant="primary" size="md" label={t('common.retry')} onPress={() => void load(true)} />
+          </Surface>
         ) : items.length === 0 ? (
-          <PrototypeCard style={styles.stateCard}>
-            <Bell size={26} color={theme.colors.muted} />
-            <Text style={styles.stateTitle}>{t('notifications.empty')}</Text>
-            <Text style={styles.stateText}>{t('notifications.emptyHint')}</Text>
-          </PrototypeCard>
+          <Surface style={styles.stateCard}>
+            <Bell size={26} color={designTokens.color.text.secondary} />
+            <AppText variant="cardTitle">{t('notifications.empty')}</AppText>
+            <AppText variant="body" tone="secondary">{t('notifications.emptyHint')}</AppText>
+          </Surface>
         ) : (
           <View style={styles.groups}>{groups.map((group) => (
             <View key={group.key} style={styles.group}>
-              <Text style={styles.groupLabel}>{group.label}</Text>
+              <AppText variant="eyebrow" tone="secondary" style={styles.groupLabel}>{group.label}</AppText>
               {group.items.map((item) => {
                 const copy = item.copy[language];
                 const unread = item.readAt === null;
@@ -139,8 +144,12 @@ export function NotificationListScreen({ navigation }: Props) {
                     style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
                   >
                     <View style={styles.itemMarker}>{unread && <View style={styles.unreadDot} />}</View>
-                    <View style={styles.itemCopy}><Text style={[styles.itemTitle, unread && styles.itemTitleUnread]} numberOfLines={2}>{copy.title}</Text><Text style={styles.itemBody} numberOfLines={2}>{copy.body}</Text><Text style={styles.itemTime}>{new Date(item.createdAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })}</Text></View>
-                    <ChevronRight size={17} color={theme.colors.muted} />
+                    <View style={styles.itemCopy}>
+                      <AppText variant="cardTitle" style={unread && styles.itemTitleUnread}>{copy.title}</AppText>
+                      <AppText variant="supporting" tone="secondary">{copy.body}</AppText>
+                      <AppText variant="caption" tone="tertiary">{new Date(item.createdAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })}</AppText>
+                    </View>
+                    <ChevronRight size={17} color={designTokens.color.text.secondary} />
                   </Pressable>
                 );
               })}
@@ -149,34 +158,42 @@ export function NotificationListScreen({ navigation }: Props) {
         )}
       </StateTransition>
       {hasNextPage && !error && (
-        <PrototypeButton variant="secondary" disabled={loadingMore} onPress={() => void load(false)}>
-          {loadingMore ? t('notifications.loadingMore') : t('notifications.loadMore')}
-        </PrototypeButton>
+        <ActionButton variant="secondary" size="md" disabled={loadingMore} label={loadingMore ? t('notifications.loadingMore') : t('notifications.loadMore')} onPress={() => void load(false)} />
       )}
-    </PrototypeFrame>
+    </AppFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  unreadSummary: { color: theme.colors.accentDeep, fontSize: 12, fontFamily: theme.typography.bold, marginBottom: 12 },
-  permissionCard: { marginBottom: 14, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  permissionCopy: { flex: 1, gap: 4 },
-  permissionTitle: { color: theme.colors.fg, fontSize: 13, fontFamily: theme.typography.bold },
-  permissionText: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular, lineHeight: 18 },
-  errorText: { color: theme.colors.statusBadDeep, fontSize: 12, fontFamily: theme.typography.semiBold, marginBottom: 12 },
-  stateCard: { alignItems: 'center', gap: 12, marginTop: 20 },
-  stateTitle: { color: theme.colors.fg, fontSize: 16, fontFamily: theme.typography.bold, textAlign: 'center' },
-  stateText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, fontFamily: theme.typography.regular, textAlign: 'center' },
-  groups: { gap: 20 },
-  group: { gap: 8 },
-  groupLabel: { color: theme.colors.muted, fontSize: 11, fontFamily: theme.typography.bold, letterSpacing: 1 },
-  item: { minHeight: 84, padding: 14, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.md, backgroundColor: theme.colors.surface, flexDirection: 'row', alignItems: 'center', gap: 9 },
-  itemPressed: { backgroundColor: theme.colors.accentTint },
-  itemMarker: { width: 8, alignSelf: 'stretch', justifyContent: 'flex-start', paddingTop: 5 },
-  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accentDeep },
-  itemCopy: { flex: 1, gap: 3 },
-  itemTitle: { color: theme.colors.fg, fontSize: 14, fontFamily: theme.typography.semiBold },
-  itemTitleUnread: { fontFamily: theme.typography.bold },
-  itemBody: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontFamily: theme.typography.regular },
-  itemTime: { color: theme.colors.muted, fontSize: 11, fontFamily: theme.typography.regular },
+  unreadSummary: { marginBottom: designTokens.space.md },
+  permissionCard: {
+    marginBottom: designTokens.space.md,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: designTokens.space.md,
+  },
+  permissionCardCompact: { flexDirection: 'column' },
+  permissionAction: { alignSelf: 'stretch' },
+  permissionCopy: { flex: 1, minWidth: 0, gap: designTokens.space.xs },
+  errorText: { marginBottom: designTokens.space.md },
+  stateCard: { alignItems: 'center', gap: designTokens.space.md, marginTop: designTokens.space.xl },
+  groups: { gap: designTokens.space.xl },
+  group: { gap: designTokens.space.sm },
+  groupLabel: { letterSpacing: 0.8 },
+  item: {
+    minHeight: 84,
+    padding: designTokens.space.md,
+    borderWidth: designTokens.border.standard.width,
+    borderColor: designTokens.color.border.standard,
+    borderRadius: designTokens.radius.heroCard,
+    backgroundColor: designTokens.color.surface.standard,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: designTokens.space.sm,
+  },
+  itemPressed: { backgroundColor: designTokens.color.brand.tint },
+  itemMarker: { width: designTokens.space.sm, alignSelf: 'stretch', justifyContent: 'flex-start', paddingTop: designTokens.space.xs },
+  unreadDot: { width: designTokens.space.sm, height: designTokens.space.sm, borderRadius: designTokens.space.xs, backgroundColor: designTokens.color.brand.primary },
+  itemCopy: { flex: 1, minWidth: 0, gap: designTokens.space.xs },
+  itemTitleUnread: { fontFamily: designTokens.typography.family.bold },
 });

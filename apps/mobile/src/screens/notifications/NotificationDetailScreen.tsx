@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { ArrowLeft, ArrowRight, Bell, CalendarDays, Settings } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -11,10 +11,10 @@ import { useSession } from '../../auth/session';
 import { useLanguage } from '../../i18n/LanguageProvider';
 import { useNotifications } from '../../notifications/NotificationProvider';
 import type { AppTabParamList, NotificationStackParamList } from '../../navigation';
-import { PrototypeButton, PrototypeCard } from '../../ui/PrototypePrimitives';
+import { ActionButton, AppText, Surface } from '../../ui/components';
 import { StateTransition } from '../../ui/BrandMotion';
-import { PrototypeFrame, PrototypeSectionTitle } from '../../ui/PrototypeShell';
-import { theme } from '../../theme';
+import { AppFrame, SectionHeader } from '../../ui/AppShell';
+import { designTokens } from '../../ui/designTokens';
 
 type Props = NativeStackScreenProps<NotificationStackParamList, 'NotificationDetail'>;
 type TabNavigation = BottomTabNavigationProp<AppTabParamList>;
@@ -50,6 +50,8 @@ export function NotificationDetailScreen({ navigation, route }: Props) {
   const { language, locale, t } = useLanguage();
   const { openSettings, permissionStatus, configurationError, refreshUnread } = useNotifications();
   const tabNavigation = useNavigation<TabNavigation>();
+  const { width, fontScale } = useWindowDimensions();
+  const compactLayout = width < 350 || fontScale > 1.2;
   const [item, setItem] = useState<NotificationItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -101,53 +103,78 @@ export function NotificationDetailScreen({ navigation, route }: Props) {
         : null;
 
   return (
-    <PrototypeFrame screenLoadingLabel={loading ? t('notifications.loadingDetail') : undefined}>
-      <Pressable accessibilityRole="button" accessibilityLabel={t('common.back')} onPress={() => navigation.goBack()} style={styles.back}><ArrowLeft size={18} color={theme.colors.accentDeep} /><Text style={styles.backText}>{t('common.back')}</Text></Pressable>
-      <PrototypeSectionTitle title={t('notifications.detailTitle')} />
+    <AppFrame screenLoadingLabel={loading ? t('notifications.loadingDetail') : undefined}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={t('common.back')}
+        onPress={() => navigation.goBack()}
+        style={styles.back}
+      >
+        <ArrowLeft size={18} color={designTokens.color.brand.primary} />
+        <AppText variant="buttonLabel" tone="information">{t('common.back')}</AppText>
+      </Pressable>
+      <SectionHeader title={t('notifications.detailTitle')} />
       <StateTransition stateKey={error ? 'error' : item ? 'ready' : 'empty'}>
         {error ? (
-          <PrototypeCard style={styles.stateCard}>
-            <Bell size={27} color={theme.colors.statusBadDeep} />
-            <Text style={styles.stateTitle}>{t('notifications.detailLoadFailed')}</Text>
-            <Text style={styles.stateText}>{getMobileErrorMessage(error, t, 'errors.loadNotification')}</Text>
-            <PrototypeButton onPress={() => void load()}>{t('common.retry')}</PrototypeButton>
-          </PrototypeCard>
+          <Surface style={styles.stateCard}>
+            <Bell size={27} color={designTokens.color.semantic.critical.base} />
+            <AppText variant="cardTitle">{t('notifications.detailLoadFailed')}</AppText>
+            <AppText variant="body" tone="secondary">{getMobileErrorMessage(error, t, 'errors.loadNotification')}</AppText>
+            <ActionButton variant="primary" size="md" label={t('common.retry')} onPress={() => void load()} />
+          </Surface>
         ) : item ? (
           <View style={styles.content}>
-            <PrototypeCard style={styles.detailCard}>
-              <View style={styles.detailHeader}><View style={styles.icon}><Bell size={20} color={theme.colors.accentDeep} /></View><View style={styles.headerCopy}><Text style={styles.title}>{item.copy[language].title}</Text><Text style={styles.date}>{new Date(item.createdAt).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Ho_Chi_Minh' })}</Text></View></View>
-              <Text style={styles.body}>{item.copy[language].body}</Text>
-              {markReadError !== null && <Text style={styles.recovery}>{t('notifications.markReadFailed')}</Text>}
-            </PrototypeCard>
-            {actionLabel && <PrototypeButton icon={ArrowRight} onPress={performAction}>{actionLabel}</PrototypeButton>}
+            <Surface style={styles.detailCard}>
+              <View style={styles.detailHeader}>
+                <View style={styles.icon}><Bell size={20} color={designTokens.color.brand.primary} /></View>
+                <View style={styles.headerCopy}>
+                  <AppText variant="cardTitle">{item.copy[language].title}</AppText>
+                  <AppText variant="caption" tone="tertiary">
+                    {new Date(item.createdAt).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Ho_Chi_Minh' })}
+                  </AppText>
+                </View>
+              </View>
+              <AppText variant="body">{item.copy[language].body}</AppText>
+              {markReadError !== null && <AppText variant="supporting" tone="warning">{t('notifications.markReadFailed')}</AppText>}
+            </Surface>
+            {actionLabel && <ActionButton icon={ArrowRight} variant="primary" size="md" label={actionLabel} onPress={performAction} />}
           </View>
         ) : null}
       </StateTransition>
       {(permissionStatus === 'denied' || configurationError) && (
-        <PrototypeCard style={styles.permissionCard}>
-          <Text style={styles.permissionText}>{configurationError || t('notifications.denied')}</Text>
-          {permissionStatus === 'denied' && <PrototypeButton icon={Settings} variant="secondary" onPress={() => void openSettings()}>{t('notifications.openSettings')}</PrototypeButton>}
-        </PrototypeCard>
+        <Surface style={[styles.permissionCard, compactLayout && styles.permissionCardCompact]}>
+          <AppText variant="supporting" tone="warning" style={styles.permissionText}>
+            {configurationError || t('notifications.denied')}
+          </AppText>
+          {permissionStatus === 'denied' && <ActionButton icon={Settings} variant="secondary" size="md" label={t('notifications.openSettings')} onPress={() => void openSettings()} style={compactLayout && styles.permissionAction} />}
+        </Surface>
       )}
-    </PrototypeFrame>
+    </AppFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  back: { minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 7 },
-  backText: { color: theme.colors.accentDeep, fontSize: 13, fontFamily: theme.typography.semiBold },
-  content: { gap: 14 },
-  detailCard: { gap: 20 },
-  detailHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  icon: { width: 42, height: 42, borderRadius: theme.radii.md, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accentTint },
-  headerCopy: { flex: 1, gap: 5 },
-  title: { color: theme.colors.fg, fontSize: 18, fontFamily: theme.typography.bold, lineHeight: 24 },
-  date: { color: theme.colors.muted, fontSize: 12, fontFamily: theme.typography.regular },
-  body: { color: theme.colors.fg, fontSize: 15, lineHeight: 24, fontFamily: theme.typography.regular },
-  recovery: { color: theme.colors.statusWarnDeep, fontSize: 12, lineHeight: 18, fontFamily: theme.typography.semiBold },
-  stateCard: { alignItems: 'center', gap: 12, marginTop: 20 },
-  stateTitle: { color: theme.colors.fg, fontSize: 16, fontFamily: theme.typography.bold, textAlign: 'center' },
-  stateText: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, fontFamily: theme.typography.regular, textAlign: 'center' },
-  permissionCard: { marginTop: 18, gap: 10 },
-  permissionText: { color: theme.colors.statusWarnDeep, fontSize: 12, lineHeight: 18, fontFamily: theme.typography.semiBold },
+  back: {
+    minHeight: designTokens.size.touchMin,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: designTokens.space.sm,
+  },
+  content: { gap: designTokens.space.lg },
+  detailCard: { gap: designTokens.space.xl },
+  detailHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: designTokens.space.md },
+  icon: {
+    width: designTokens.size.controlMd,
+    height: designTokens.size.controlMd,
+    borderRadius: designTokens.radius.heroCard,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: designTokens.color.brand.tint,
+  },
+  headerCopy: { flex: 1, minWidth: 0, gap: designTokens.space.xs },
+  stateCard: { alignItems: 'center', gap: designTokens.space.md, marginTop: designTokens.space.xl },
+  permissionCard: { marginTop: designTokens.space.lg, gap: designTokens.space.md },
+  permissionCardCompact: { flexDirection: 'column' },
+  permissionText: { flexShrink: 1, minWidth: 0 },
+  permissionAction: { alignSelf: 'stretch' },
 });
