@@ -32,6 +32,11 @@ import {
 } from '../../businessDate';
 import { buildMonthRows } from './calendarGrid';
 import {
+  registrationDayIndexes,
+  weekHeadingCopyStyle,
+  weekHeadingRowStyle,
+} from './calendarLayout';
+import {
   CalendarMutationTracker,
   createWeekState,
   isDefaultNonServiceDate,
@@ -169,53 +174,53 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
 
   const applyCurrentWeek = useCallback(
     (
-    response: WeekRegistrationResponse,
-    receiptAt: number,
-    mutationIdsAtRequest: Readonly<Record<string, number>>,
-    inFlightAtRequest: ReadonlySet<string>,
-  ) => {
-    const snapshot = getWindowSnapshot(response, receiptAt);
-    if (!snapshot) {
-      setAvailabilityError({ key: 'calendar.registrationUnavailable' });
-      return false;
-    }
+      response: WeekRegistrationResponse,
+      receiptAt: number,
+      mutationIdsAtRequest: Readonly<Record<string, number>>,
+      inFlightAtRequest: ReadonlySet<string>,
+    ) => {
+      const snapshot = getWindowSnapshot(response, receiptAt);
+      if (!snapshot) {
+        setAvailabilityError({ key: 'calendar.registrationUnavailable' });
+        return false;
+      }
 
-    const serverState = createWeekState(response.registrations, weekStart);
-    const shouldPreserveDate = (dateKey: string) =>
+      const serverState = createWeekState(response.registrations, weekStart);
+      const shouldPreserveDate = (dateKey: string) =>
         (mutationIdsAtRequest[dateKey] ?? 0) !==
           mutationTracker.latestRequestId(dateKey) ||
         inFlightAtRequest.has(dateKey);
-    const reconciledWeekState = reconcileWeekState(
-      serverState,
-      draftChoiceRef.current,
-      response,
-      weekStart,
-    ).weekState;
-    setWeekState((current) => {
-      const reconciled = { ...reconciledWeekState };
-      for (const dateKey of Object.keys(reconciledWeekState)) {
+      const reconciledWeekState = reconcileWeekState(
+        serverState,
+        draftChoiceRef.current,
+        response,
+        weekStart,
+      ).weekState;
+      setWeekState((current) => {
+        const reconciled = { ...reconciledWeekState };
+        for (const dateKey of Object.keys(reconciledWeekState)) {
           if (shouldPreserveDate(dateKey) && current[dateKey])
             reconciled[dateKey] = current[dateKey];
-      }
-      return reconciled;
-    });
-    setDraftChoiceByDate((current) => {
+        }
+        return reconciled;
+      });
+      setDraftChoiceByDate((current) => {
         const reconciled = reconcileWeekState(
           serverState,
           current,
           response,
           weekStart,
         );
-      const next = { ...reconciled.draftChoiceByDate };
-      for (const dateKey of Object.keys(serverState)) {
+        const next = { ...reconciled.draftChoiceByDate };
+        for (const dateKey of Object.keys(serverState)) {
           if (shouldPreserveDate(dateKey) && current[dateKey])
             next[dateKey] = current[dateKey];
-      }
-      return next;
-    });
-    setWindowSnapshot(snapshot);
-    setAvailabilityError(null);
-    return true;
+        }
+        return next;
+      });
+      setWindowSnapshot(snapshot);
+      setAvailabilityError(null);
+      return true;
     },
     [t, weekStart],
   );
@@ -317,10 +322,10 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
   }, [loadMonth]);
   useFocusEffect(
     useCallback(() => {
-    void refreshCurrentWeek();
-    return () => {
-      weekRequestId.current += 1;
-    };
+      void refreshCurrentWeek();
+      return () => {
+        weekRequestId.current += 1;
+      };
     }, [refreshCurrentWeek]),
   );
 
@@ -347,69 +352,69 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
   const monthRows = useMemo(() => buildMonthRows(month), [month]);
   const handleCutoffFailure = useCallback(
     (
-    dateKey: string,
-    previousState: WeekState[string],
-    previousDraft: MealChoice | undefined,
-    requestId: number,
-  ) => {
-    if (!mutationTracker.isCurrent(dateKey, requestId)) return;
-    setWeekState((current) => ({ ...current, [dateKey]: previousState }));
-    setDraftChoiceByDate((current) => {
-      const next = { ...current };
-      if (previousDraft) next[dateKey] = previousDraft;
-      else delete next[dateKey];
-      return next;
-    });
+      dateKey: string,
+      previousState: WeekState[string],
+      previousDraft: MealChoice | undefined,
+      requestId: number,
+    ) => {
+      if (!mutationTracker.isCurrent(dateKey, requestId)) return;
+      setWeekState((current) => ({ ...current, [dateKey]: previousState }));
+      setDraftChoiceByDate((current) => {
+        const next = { ...current };
+        if (previousDraft) next[dateKey] = previousDraft;
+        else delete next[dateKey];
+        return next;
+      });
       setWindowSnapshot((current) =>
         current
           ? {
-      ...current,
-      days: {
-        ...current.days,
-        [dateKey]: {
-          ...(current.days[dateKey] || {
-            cutoffAt: Date.now(),
-            lunarDay: 0,
-            availableMealChoices: ['REGULAR'],
-            editable: false,
-          }),
-          editable: false,
-        },
-      },
+              ...current,
+              days: {
+                ...current.days,
+                [dateKey]: {
+                  ...(current.days[dateKey] || {
+                    cutoffAt: Date.now(),
+                    lunarDay: 0,
+                    availableMealChoices: ['REGULAR'],
+                    editable: false,
+                  }),
+                  editable: false,
+                },
+              },
             }
           : current,
       );
-    if (!cutoffWarnings.current.has(dateKey)) {
-      cutoffWarnings.current.add(dateKey);
+      if (!cutoffWarnings.current.has(dateKey)) {
+        cutoffWarnings.current.add(dateKey);
         showNotice({
           title: t('calendar.registrationLocked'),
           message: t('calendar.cutoffPassed'),
           tone: 'warning',
         });
-    }
-    void refreshCurrentWeek();
+      }
+      void refreshCurrentWeek();
     },
     [refreshCurrentWeek, showNotice, t],
   );
 
   const mutateRegistration = useCallback(
     async (
-    dateKey: string,
-    nextActive: boolean,
-    choiceOverride?: MealChoice,
-  ) => {
-    if (!token || mutationTracker.isInFlight(dateKey)) return;
-    const windowDay = windowSnapshot?.days[dateKey];
-    if (!windowDay?.editable) return;
+      dateKey: string,
+      nextActive: boolean,
+      choiceOverride?: MealChoice,
+    ) => {
+      if (!token || mutationTracker.isInFlight(dateKey)) return;
+      const windowDay = windowSnapshot?.days[dateKey];
+      if (!windowDay?.editable) return;
 
       const previousState = weekState[dateKey] || {
         active: false,
         mealChoice: 'REGULAR' as MealChoice,
       };
-    const previousDraft = draftChoiceByDate[dateKey];
-    const payloadDrafts = choiceOverride
-      ? { ...draftChoiceByDate, [dateKey]: choiceOverride }
-      : draftChoiceByDate;
+      const previousDraft = draftChoiceByDate[dateKey];
+      const payloadDrafts = choiceOverride
+        ? { ...draftChoiceByDate, [dateKey]: choiceOverride }
+        : draftChoiceByDate;
       const payload = getMutationPayload(
         dateKey,
         weekState,
@@ -424,68 +429,68 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
         active: nextActive,
         mealChoice: nextActive ? nextChoice : ('REGULAR' as MealChoice),
       };
-    const requestId = mutationTracker.begin(dateKey);
-    if (requestId === null) return;
-    setSavingDates((current) => new Set(current).add(dateKey));
-    setWeekState((current) => ({ ...current, [dateKey]: nextState }));
-    setDraftChoiceByDate((current) => {
-      const next = { ...current };
-      if (nextActive) delete next[dateKey];
+      const requestId = mutationTracker.begin(dateKey);
+      if (requestId === null) return;
+      setSavingDates((current) => new Set(current).add(dateKey));
+      setWeekState((current) => ({ ...current, [dateKey]: nextState }));
+      setDraftChoiceByDate((current) => {
+        const next = { ...current };
+        if (nextActive) delete next[dateKey];
         else if (
           nextChoice !== 'REGULAR' &&
           windowDay.availableMealChoices.includes(nextChoice)
         )
           next[dateKey] = nextChoice;
-      else delete next[dateKey];
-      return next;
-    });
-
-    const rollback = () => {
-      if (!mutationTracker.isCurrent(dateKey, requestId)) return false;
-      setWeekState((current) => ({ ...current, [dateKey]: previousState }));
-      setDraftChoiceByDate((current) => {
-        const next = { ...current };
-        if (previousDraft) next[dateKey] = previousDraft;
         else delete next[dateKey];
         return next;
       });
-      return true;
-    };
 
-    try {
-      const results = await registrationAPI.batchRegister([payload], token);
-      if (!mutationTracker.isCurrent(dateKey, requestId)) return;
-      const result = results.find((entry) => entry.date === dateKey);
-      if (!result?.success) {
+      const rollback = () => {
+        if (!mutationTracker.isCurrent(dateKey, requestId)) return false;
+        setWeekState((current) => ({ ...current, [dateKey]: previousState }));
+        setDraftChoiceByDate((current) => {
+          const next = { ...current };
+          if (previousDraft) next[dateKey] = previousDraft;
+          else delete next[dateKey];
+          return next;
+        });
+        return true;
+      };
+
+      try {
+        const results = await registrationAPI.batchRegister([payload], token);
+        if (!mutationTracker.isCurrent(dateKey, requestId)) return;
+        const result = results.find((entry) => entry.date === dateKey);
+        if (!result?.success) {
           const code =
             result && !result.success ? result.code : 'REGISTRATION_FAILED';
-        if (code === 'CUTOFF_PASSED') {
+          if (code === 'CUTOFF_PASSED') {
             handleCutoffFailure(
               dateKey,
               previousState,
               previousDraft,
               requestId,
             );
-        } else if (rollback()) {
-          showNotice({
-            title: t('calendar.registrationNotChanged'),
-            message: t(mobileErrorMessageKey(code)),
-            tone: 'error',
-          });
+          } else if (rollback()) {
+            showNotice({
+              title: t('calendar.registrationNotChanged'),
+              message: t(mobileErrorMessageKey(code)),
+              tone: 'error',
+            });
+          }
+          return;
         }
-        return;
-      }
-      setMonthRegistrations((current) => {
-        const updated = new Set(current);
-        if (nextActive) updated.add(dateKey);
-        else updated.delete(dateKey);
-        return updated;
-      });
-    } catch (error: unknown) {
-      if (!mutationTracker.isCurrent(dateKey, requestId)) return;
-      if (error instanceof MobileApiError && error.code === 'CUTOFF_PASSED') {
-        handleCutoffFailure(dateKey, previousState, previousDraft, requestId);
-      } else if (rollback()) {
+        setMonthRegistrations((current) => {
+          const updated = new Set(current);
+          if (nextActive) updated.add(dateKey);
+          else updated.delete(dateKey);
+          return updated;
+        });
+      } catch (error: unknown) {
+        if (!mutationTracker.isCurrent(dateKey, requestId)) return;
+        if (error instanceof MobileApiError && error.code === 'CUTOFF_PASSED') {
+          handleCutoffFailure(dateKey, previousState, previousDraft, requestId);
+        } else if (rollback()) {
           const message = getMobileErrorMessage(
             error,
             t,
@@ -496,25 +501,25 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
             message,
             tone: 'error',
           });
+        }
+      } finally {
+        if (mutationTracker.finish(dateKey, requestId)) {
+          setSavingDates((current) => {
+            const next = new Set(current);
+            next.delete(dateKey);
+            return next;
+          });
+        }
       }
-    } finally {
-      if (mutationTracker.finish(dateKey, requestId)) {
-        setSavingDates((current) => {
-          const next = new Set(current);
-          next.delete(dateKey);
-          return next;
-        });
-      }
-    }
     },
     [
-    draftChoiceByDate,
-    handleCutoffFailure,
-    showNotice,
-    t,
-    token,
-    weekState,
-    windowSnapshot,
+      draftChoiceByDate,
+      handleCutoffFailure,
+      showNotice,
+      t,
+      token,
+      weekState,
+      windowSnapshot,
     ],
   );
 
@@ -524,15 +529,15 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
         active: false,
         mealChoice: 'REGULAR' as MealChoice,
       };
-    void mutateRegistration(dateKey, !current.active);
+      void mutateRegistration(dateKey, !current.active);
     },
     [mutateRegistration, weekState],
   );
 
   const selectMealChoice = useCallback(
     (dateKey: string, choice: MealChoice) => {
-    if (mutationTracker.isInFlight(dateKey)) return;
-    const windowDay = windowSnapshot?.days[dateKey];
+      if (mutationTracker.isInFlight(dateKey)) return;
+      const windowDay = windowSnapshot?.days[dateKey];
       if (
         !windowDay?.editable ||
         !windowDay.availableMealChoices.includes(choice)
@@ -542,15 +547,15 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
         active: false,
         mealChoice: 'REGULAR' as MealChoice,
       };
-    if (!current.active) {
-      setDraftChoiceByDate((drafts) => ({ ...drafts, [dateKey]: choice }));
+      if (!current.active) {
+        setDraftChoiceByDate((drafts) => ({ ...drafts, [dateKey]: choice }));
         setWeekState((states) => ({
           ...states,
           [dateKey]: { active: false, mealChoice: 'REGULAR' },
         }));
-      return;
-    }
-    void mutateRegistration(dateKey, true, choice);
+        return;
+      }
+      void mutateRegistration(dateKey, true, choice);
     },
     [mutateRegistration, weekState, windowSnapshot],
   );
@@ -842,16 +847,13 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
             )}
             <View style={styles.weekHeader}>
               <Divider />
-              <View
-                style={[
-                  styles.weekHeadingRow,
-                  compactLayout && styles.weekHeadingRowCompact,
-                ]}
-              >
-                <SectionHeader
-                  title={t('calendar.weeklyRegistration')}
-                  subtitle={`${formatShortDate(weekStart, locale)}–${formatShortDate(addDays(weekStart, 6), locale)} · ${t('calendar.toggleHint')}`}
-                />
+              <View style={[styles.weekHeadingRow, weekHeadingRowStyle]}>
+                <View style={weekHeadingCopyStyle}>
+                  <SectionHeader
+                    title={t('calendar.weeklyRegistration')}
+                    subtitle={`${formatShortDate(weekStart, locale)}–${formatShortDate(addDays(weekStart, 6), locale)} · ${t('calendar.toggleHint')}`}
+                  />
+                </View>
                 {windowSnapshot ? (
                   <StatusBadge
                     label={t('pickup.selectedCount', { count: selectedCount })}
@@ -861,7 +863,7 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
                 ) : null}
               </View>
             </View>
-            {Array.from({ length: 7 }, (_, index) => {
+            {registrationDayIndexes.map((index) => {
               const date = addDays(weekStart, index);
               const dateKey = toDateKey(date);
               const state = weekState[dateKey] || {
@@ -950,7 +952,7 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
                   onPress={
                     rowDisabled ? undefined : () => toggleRegistration(dateKey)
                   }
-                  trailing={(
+                  trailing={
                     <Toggle
                       value={active}
                       disabled={rowDisabled}
@@ -961,7 +963,7 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
                         if (nextValue !== active) toggleRegistration(dateKey);
                       }}
                     />
-                  )}
+                  }
                   style={styles.weekCard}
                 />
               );
@@ -1188,10 +1190,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: designTokens.space.md,
     paddingTop: designTokens.space.lg,
-  },
-  weekHeadingRowCompact: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
   },
   weekCard: {
     marginBottom: designTokens.space.xs,
