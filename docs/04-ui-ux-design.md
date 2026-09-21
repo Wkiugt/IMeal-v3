@@ -23,6 +23,8 @@ IMeal v2 là mobile-first operational product. UI phải ưu tiên:
 
 Giữ IEC brand nhưng redesign thành native-mobile system, không port nguyên web shell.
 
+Visual-system authority now lives in [`08-imeal-design-system.md`](./08-imeal-design-system.md). Use that guideline for visual tokens, surfaces, reusable component contracts, semantic indicators, motion, and accessibility consistency. This document remains authoritative for workflow and recovery behavior, including cutoff, QR expiry, service-window, mutation rollback, delegation, scanner, and permission states. `docs/System-design-UI/DESIGN.md` remains preserved prototype provenance rather than a new runtime contract.
+
 ### 3.1 Palette baseline
 
 Chưa phát triển

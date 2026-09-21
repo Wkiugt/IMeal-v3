@@ -35,11 +35,14 @@ IMeal v2 là một re-platforming so với hệ thống web Firebase/Firestore h
 | [01 — Product Requirements](./01-product-requirements.md)     | Product goal, role, weekly registration, menu, serving, delegation, penalty và scope   |
 | [02 — Technical Requirements](./02-technical-requirements.md) | Mobile/backend stack, Entra auth, API, network, Linux deployment và NFR                |
 | [03 — Product Flows](./03-product-flows.md)                   | User journey Staff/Kitchen/Admin, weekly flow, QR, delegation và serving flow          |
-| [04 — UI/UX Design](./04-ui-ux-design.md)                     | Mobile-first design system, weekly picker, QR, Kitchen dashboard và interaction states |
+| [04 — UI/UX Design](./04-ui-ux-design.md)                     | Workflow, recovery behavior, and mobile interaction requirements; remains authoritative for those behaviors |
 | [05 — Backend Structure](./05-backend-structure.md)           | PostgreSQL schema, constraints, transactions, authz, idempotency và data flows         |
 | [06 — Execution Plan](./06-execution-plan.md)                 | Kế hoạch clean-slate re-platform và rollout IMeal v2                                   |
 | [07 — Architecture Decisions](./07-architecture-decisions.md) | Quyết định kiến trúc, đánh giá rủi ro (Risk Assessment) và Trade-offs                  |
-| [Local Role Testing Guide](./local-role-testing.md)                  | Local Docker, API, mobile, Admin Web setup and role smoke checklist      |
+| [08 — IMeal Design System](./08-imeal-design-system.md)       | Canonical visual tokens, surfaces, components, indicators, motion, and accessibility contract |
+| [Local Role Testing Guide](./local-role-testing.md)            | Local Docker, API, mobile, Admin Web setup and role smoke checklist                    |
+
+`08-imeal-design-system.md` is authoritative for visual tokens and reusable component contracts. `04-ui-ux-design.md` remains authoritative for workflow and recovery behavior; `System-design-UI/**` is preserved prototype provenance, not a competing runtime contract.
 
 ## Thuật ngữ canonical
 
