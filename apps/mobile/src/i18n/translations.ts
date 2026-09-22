@@ -40,13 +40,15 @@ export const vi = {
   'common.meal': 'suất ăn',
   'common.meals': 'suất ăn',
   'auth.welcome': 'Chào mừng',
-  'auth.noMobileAccess': 'Tài khoản này chưa được cấp quyền truy cập trên thiết bị di động.',
+  'auth.noMobileAccess':
+    'Tài khoản này chưa được cấp quyền truy cập trên thiết bị di động.',
   'auth.localSignInHint': 'Đăng nhập bằng tài khoản nhân viên hoặc bếp nội bộ.',
   'auth.username': 'Tên đăng nhập',
   'auth.password': 'Mật khẩu',
   'auth.signIn': 'Đăng nhập',
   'auth.logOut': 'Đăng xuất',
-  'auth.credentialsHint': 'Thông tin đăng nhập được lấy từ cấu hình .env nội bộ của máy chủ.',
+  'auth.credentialsHint':
+    'Thông tin đăng nhập được lấy từ cấu hình .env nội bộ của máy chủ.',
   'auth.restoreSession': 'Đang khôi phục phiên đăng nhập…',
   'auth.signingIn': 'Đang đăng nhập…',
   'bootstrap.restoringLanguage': 'Đang khôi phục tùy chọn ngôn ngữ…',
@@ -74,8 +76,10 @@ export const vi = {
   'calendar.toggleHint': 'Bật một ngày để đăng ký bữa trưa',
   'calendar.toggleAccessibility': 'Bật đăng ký bữa trưa cho %{day}',
   'calendar.toggleEnabledAccessibility': 'Tắt đăng ký bữa trưa cho %{day}',
-  'calendar.toggleLockedAccessibility': 'Xem đăng ký bữa trưa cho %{day}, đã khóa sau giờ chốt',
-  'calendar.toggleUnavailableAccessibility': 'Xem ngày %{day}, không khả dụng để đăng ký',
+  'calendar.toggleLockedAccessibility':
+    'Xem đăng ký bữa trưa cho %{day}, đã khóa sau giờ chốt',
+  'calendar.toggleUnavailableAccessibility':
+    'Xem ngày %{day}, không khả dụng để đăng ký',
   'calendar.registrationLocked': 'Đăng ký đã khóa',
   'calendar.cutoffPassed': 'Đã quá giờ chốt cho ngày này.',
   'calendar.registrationNotChanged': 'Đăng ký chưa được thay đổi',
@@ -104,8 +108,10 @@ export const vi = {
   'profile.languageHint': 'Chọn ngôn ngữ ứng dụng',
   'profile.vietnamese': 'Tiếng Việt',
   'profile.english': 'English',
-  'profile.languagePersistenceFailed': 'Đã đổi ngôn ngữ nhưng không thể lưu cho lần mở sau.',
-  'profile.languagePreferenceSyncFailed': 'Đã đổi ngôn ngữ nhưng không thể đồng bộ tùy chọn với tài khoản.',
+  'profile.languagePersistenceFailed':
+    'Đã đổi ngôn ngữ nhưng không thể lưu cho lần mở sau.',
+  'profile.languagePreferenceSyncFailed':
+    'Đã đổi ngôn ngữ nhưng không thể đồng bộ tùy chọn với tài khoản.',
   'delegation.createdAt': 'Tạo: %{date}',
   'delegation.to': 'Đến: %{id}',
   'delegation.from': 'Từ: %{id}',
@@ -113,26 +119,26 @@ export const vi = {
   'delegation.loadingOutgoing': 'Đang tải ủy quyền đi…',
   'profile.mealsBooked': 'Suất đã đặt',
   'profile.mealsEnjoyed': 'Suất đã dùng',
-  'profile.dietaryPreferences': 'Tùy chọn suất ăn',
-  'profile.notSet': 'Chưa thiết lập',
+  'profile.progressUsed': 'Đã dùng %{completed} / %{total}',
   'profile.bookingReminders': 'Nhắc hạn đăng ký',
-  'profile.remindersHint': 'Nhắc trước hạn đăng ký hằng tuần',
+  'profile.remindersHint': 'Nhắc trước hạn hàng tuần',
   'profile.delegations': 'Ủy quyền',
   'profile.delegationsHint': 'Quản lý quyền nhận suất ăn',
-  'profile.groupMeal': 'SUẤT ĂN',
   'profile.groupNotifications': 'THÔNG BÁO',
   'profile.groupApp': 'ỨNG DỤNG',
   'profile.groupPermissionsSharing': 'QUYỀN & CHIA SẺ',
-  'profile.mealPreferencesHint': 'Chọn loại suất cho các ngày đăng ký phù hợp',
-  'profile.systemNotificationsHint': 'Cho phép IMeal gửi thông báo',
+  'profile.systemNotificationsHint': 'Cho phép thông báo từ IMeal',
   'profile.notificationEnabled': 'Đã bật',
   'profile.notificationDisabled': 'Đã tắt',
   'profile.notificationNotConfigured': 'Chưa thiết lập',
   'profile.notificationUnavailable': 'Không khả dụng',
-  'profile.notificationsDisabledWarning': 'Thông báo đang bị tắt trên thiết bị này',
-  'profile.notificationsUnavailableHint': 'Thông báo hệ thống không khả dụng trên nền tảng này',
+  'profile.notificationsDisabledWarning': 'Thông báo thiết bị đang tắt',
+  'profile.openSettings': 'Cài đặt',
+  'profile.notificationsUnavailableHint':
+    'Thông báo hệ thống không khả dụng trên nền tảng này',
   'profile.signOut': 'Đăng xuất',
   'profile.signOutConfirm': 'Đăng xuất khỏi thiết bị này?',
+  'profile.signOutHint': 'Mở xác nhận để đăng xuất khỏi thiết bị này',
   'profile.closeLanguage': 'Đóng phần chọn ngôn ngữ',
   'profile.logOutConfirm': 'Đăng xuất khỏi thiết bị này?',
   'delegation.title': 'Ủy quyền',
@@ -182,14 +188,14 @@ export const vi = {
   'kitchen.served': 'Đã phục vụ',
   'kitchen.noShow': 'Không đến',
   'scanner.toServe': 'cần phục vụ',
-  'scanner.processing': 'Đang xử lý…',
   'scanner.cancelAndScanAgain': 'Hủy và quét lại',
   'delegation.actionFailed': 'Thao tác thất bại',
   'pickup.title': 'Vé suất ăn',
   'pickup.subtitle': 'Xuất trình mã QR động này cho nhân viên bếp',
   'pickup.loading': 'Đang tải lựa chọn nhận suất…',
   'pickup.windowClosed': 'Hiện đang ngoài giờ nhận suất',
-  'pickup.windowClosedHint': 'Vé suất ăn có hiệu lực từ 10:30 đến 13:30 theo giờ Việt Nam.',
+  'pickup.windowClosedHint':
+    'Vé suất ăn có hiệu lực từ 10:30 đến 13:30 theo giờ Việt Nam.',
   'pickup.notReady': 'Bếp đang chuẩn bị nhận suất',
   'pickup.loadFailed': 'Không thể tải vé suất ăn',
   'pickup.noMeals': 'Không có suất ăn sẵn sàng để nhận',
@@ -227,37 +233,39 @@ export const vi = {
   'kitchen.searchPlaceholder': 'Tìm theo tên hoặc email…',
   'scanner.preparingCamera': 'Đang chuẩn bị máy ảnh…',
   'scanner.cameraRequired': 'Cần quyền truy cập máy ảnh',
-  'scanner.cameraHint': 'Cho phép truy cập máy ảnh để quét vé suất ăn của nhân viên.',
+  'scanner.cameraHint':
+    'Cho phép truy cập máy ảnh để quét vé suất ăn của nhân viên.',
   'scanner.grantPermission': 'Cấp quyền',
   'scanner.backToDashboard': 'Quay lại bảng điều khiển',
   'scanner.scanEmployeeTicket': 'Quét vé nhân viên',
-  'scanner.scanHint': 'Căn mã QR động vào khung để xác thực TOTP',
-  'scanner.cameraPreview': 'Xem trước máy ảnh',
-  'scanner.resolvingTicket': 'Đang kiểm tra vé…',
-  'scanner.ticketDetected': 'Đã phát hiện vé',
-  'scanner.alignQr': 'Căn mã QR vào khung',
-  'scanner.resolveEmployeeTicket': 'Đang kiểm tra vé nhân viên…',
-  'scanner.scanAnotherTicket': 'Quét vé khác',
+  'scanner.helper': 'Giữ mã QR trong khung để xác thực',
+  'scanner.searchingQr': 'Đang tìm mã QR...',
+  'scanner.flashlightOn': 'Bật đèn',
+  'scanner.flashlightOff': 'Tắt đèn',
+  'scanner.verificationSuccess': '✓ Xác thực thành công',
+  'scanner.verificationFailed': 'Không thể xác thực',
+  'scanner.employee': 'Nhân viên',
+  'scanner.servedAt': 'Đã phục vụ lúc %{time}',
+  'scanner.retryScan': 'Quét lại',
   'scanner.servingConfirmation': 'Xác nhận phục vụ',
   'scanner.itemCount': '%{count} món',
   'scanner.itemCount.one': '%{count} món',
   'scanner.itemCount.other': '%{count} món',
   'scanner.proxyPickup': 'Nhận thay',
   'scanner.confirmServing': 'Xác nhận phục vụ',
-  'scanner.servingConfirmed': 'Đã xác nhận phục vụ thành công!',
-  'scanner.confirmationExpired': 'Xác nhận đã hết hạn',
-  'scanner.confirmationError': 'Lỗi xác nhận',
-  'scanner.errorResolving': 'Lỗi kiểm tra phục vụ',
   'scanner.pickupSessionExpired': 'Phiên nhận suất đã hết hạn',
   'notice.dismiss': 'Đóng thông báo',
-  'errors.apiTimeout': 'Máy chủ không phản hồi. Hãy kiểm tra kết nối và thử lại.',
+  'errors.apiTimeout':
+    'Máy chủ không phản hồi. Hãy kiểm tra kết nối và thử lại.',
   'errors.invalidResponse': 'Phản hồi từ máy chủ không hợp lệ.',
-  'errors.requestFailed': 'Không thể kết nối dịch vụ. Hãy kiểm tra kết nối và thử lại.',
+  'errors.requestFailed':
+    'Không thể kết nối dịch vụ. Hãy kiểm tra kết nối và thử lại.',
   'errors.duplicateServing': 'Suất ăn này đã được xác nhận phục vụ.',
   'errors.pickupSessionExpired': 'Phiên nhận suất đã hết hạn.',
   'errors.invalidMealDate': 'Ngày nhận suất không hợp lệ.',
   'errors.cutoffPassed': 'Đã quá giờ chốt đăng ký cho ngày này.',
-  'errors.mealChoiceUnavailable': 'Lựa chọn suất ăn này không khả dụng trong ngày này.',
+  'errors.mealChoiceUnavailable':
+    'Lựa chọn suất ăn này không khả dụng trong ngày này.',
   'errors.registrationFinalized': 'Đăng ký này đã được chốt.',
   'errors.registrationFailed': 'Không thể cập nhật đăng ký suất ăn.',
   'errors.pickupWindowClosed': 'Hiện đang ngoài giờ nhận suất.',
@@ -282,8 +290,10 @@ export const vi = {
   'errors.registerPushDevice': 'Không thể đăng ký thiết bị nhận thông báo.',
   'errors.revokePushDevice': 'Không thể thu hồi thiết bị nhận thông báo.',
   'nav.notifications': 'Thông báo',
-  'profile.preferenceLoadFailed': 'Không thể tải tùy chọn thông báo. Vui lòng thử lại.',
-  'profile.preferenceSaveFailed': 'Không thể lưu thay đổi. Giá trị trước đó đã được khôi phục.',
+  'profile.preferenceLoadFailed':
+    'Không thể tải tùy chọn thông báo. Vui lòng thử lại.',
+  'profile.preferenceSaveFailed':
+    'Không thể lưu thay đổi. Giá trị trước đó đã được khôi phục.',
   'profile.systemNotifications': 'Thông báo hệ thống',
   'notifications.title': 'Thông báo',
   'notifications.subtitle': 'Cập nhật về đăng ký, nhận suất và ủy quyền',
@@ -297,12 +307,14 @@ export const vi = {
   'notifications.detailTitle': 'Chi tiết thông báo',
   'notifications.loadingDetail': 'Đang tải chi tiết thông báo…',
   'notifications.detailLoadFailed': 'Không thể tải thông báo',
-  'notifications.markReadFailed': 'Không thể đánh dấu đã đọc. Bạn có thể thử lại sau.',
+  'notifications.markReadFailed':
+    'Không thể đánh dấu đã đọc. Bạn có thể thử lại sau.',
   'notifications.openCalendar': 'Mở lịch đăng ký',
   'notifications.openPickup': 'Mở vé nhận suất',
   'notifications.openDelegation': 'Mở ủy quyền',
   'notifications.explainerTitle': 'Bật thông báo IMeal?',
-  'notifications.explainerBody': 'Nhận nhắc lịch đăng ký, giờ nhận suất và cập nhật ủy quyền ngay trên thiết bị này.',
+  'notifications.explainerBody':
+    'Nhận nhắc lịch đăng ký, giờ nhận suất và cập nhật ủy quyền ngay trên thiết bị này.',
   'notifications.enable': 'Bật thông báo',
   'notifications.notNow': 'Để sau',
   'notifications.openSettings': 'Mở cài đặt',
@@ -310,10 +322,13 @@ export const vi = {
   'notifications.denied': 'Đang tắt trong cài đặt hệ thống',
   'notifications.notEnabled': 'Chưa bật',
   'notifications.systemStatus': 'Trạng thái thông báo',
-  'notifications.physicalDeviceRequired': 'Cần thiết bị thật để bật thông báo đẩy.',
-  'notifications.projectConfigurationError': 'Thiếu EXPO_PUBLIC_EAS_PROJECT_ID nên chưa thể đăng ký thông báo đẩy.',
+  'notifications.physicalDeviceRequired':
+    'Cần thiết bị thật để bật thông báo đẩy.',
+  'notifications.projectConfigurationError':
+    'Thiếu EXPO_PUBLIC_EAS_PROJECT_ID nên chưa thể đăng ký thông báo đẩy.',
   'notifications.tokenConfigurationError': 'Mã thông báo từ Expo không hợp lệ.',
-  'notifications.registrationError': 'Không thể đăng ký thông báo đẩy. Hộp thư vẫn hoạt động bình thường.',
+  'notifications.registrationError':
+    'Không thể đăng ký thông báo đẩy. Hộp thư vẫn hoạt động bình thường.',
 } as const;
 
 export type TranslationKey = keyof typeof vi;
@@ -360,7 +375,8 @@ export const en: Record<TranslationKey, string> = {
   'bootstrap.restoringLanguage': 'Restoring your language preference…',
   'bootstrap.fontErrorTitle': 'Unable to load the app font',
   'bootstrap.fontErrorText': 'Please close and reopen the app to try again.',
-  'auth.credentialsHint': 'Credentials are loaded from the backend local .env configuration.',
+  'auth.credentialsHint':
+    'Credentials are loaded from the backend local .env configuration.',
   'auth.restoreSession': 'Restoring your session…',
   'auth.signingIn': 'Signing in…',
   'auth.greeting': 'Hi, %{name}',
@@ -384,13 +400,16 @@ export const en: Record<TranslationKey, string> = {
   'dashboard.lunchService': 'Lunch · 12:00–13:00',
   'dashboard.location': 'Canteen A · Counter 2',
   'dashboard.mealName': 'Grilled Chicken Rice Bowl',
-  'dashboard.mealDescription': 'Steamed rice, grilled chicken thigh, stir-fried greens',
+  'dashboard.mealDescription':
+    'Steamed rice, grilled chicken thigh, stir-fried greens',
   'profile.language': 'Language',
   'profile.languageHint': 'Choose the app language',
   'profile.vietnamese': 'Tiếng Việt',
   'profile.english': 'English',
-  'profile.languagePersistenceFailed': 'Language changed, but could not be saved for the next launch.',
-  'profile.languagePreferenceSyncFailed': 'Language changed, but the preference could not be synced to your account.',
+  'profile.languagePersistenceFailed':
+    'Language changed, but could not be saved for the next launch.',
+  'profile.languagePreferenceSyncFailed':
+    'Language changed, but the preference could not be synced to your account.',
   'delegation.createdAt': 'Created: %{date}',
   'delegation.to': 'To: %{id}',
   'delegation.from': 'From: %{id}',
@@ -399,13 +418,17 @@ export const en: Record<TranslationKey, string> = {
   'calendar.weeklyRegistration': 'Weekly Meal Registration',
   'calendar.toggleHint': 'Toggle a day on to register lunch',
   'calendar.toggleAccessibility': 'Toggle lunch registration for %{day}',
-  'calendar.toggleEnabledAccessibility': 'Disable lunch registration for %{day}',
-  'calendar.toggleLockedAccessibility': 'View lunch registration for %{day}, locked after cutoff',
-  'calendar.toggleUnavailableAccessibility': 'View %{day}, unavailable for registration',
+  'calendar.toggleEnabledAccessibility':
+    'Disable lunch registration for %{day}',
+  'calendar.toggleLockedAccessibility':
+    'View lunch registration for %{day}, locked after cutoff',
+  'calendar.toggleUnavailableAccessibility':
+    'View %{day}, unavailable for registration',
   'calendar.registrationLocked': 'Registration locked',
   'calendar.cutoffPassed': 'The cutoff time has passed for this day.',
   'calendar.registrationNotChanged': 'Registration not changed',
-  'calendar.registrationUnavailable': 'Cutoff availability could not be loaded.',
+  'calendar.registrationUnavailable':
+    'Cutoff availability could not be loaded.',
   'dashboard.loadingRegistration': 'Loading today’s registration…',
   'dashboard.openProfile': 'Open profile',
   'dashboard.confirmed': 'Confirmed',
@@ -424,26 +447,27 @@ export const en: Record<TranslationKey, string> = {
   'profile.thisMonth': 'THIS MONTH',
   'profile.mealsBooked': 'Meals booked',
   'profile.mealsEnjoyed': 'Meals enjoyed',
-  'profile.dietaryPreferences': 'Meal preferences',
-  'profile.notSet': 'Not set up',
+  'profile.progressUsed': 'Used %{completed} / %{total}',
   'profile.bookingReminders': 'Registration reminder',
-  'profile.remindersHint': 'Notify before the weekly booking deadline',
+  'profile.remindersHint': 'Weekly deadline reminder',
   'profile.delegations': 'Delegation',
   'profile.delegationsHint': 'Manage permissions for receiving meals',
-  'profile.groupMeal': 'MEAL',
   'profile.groupNotifications': 'NOTIFICATIONS',
   'profile.groupApp': 'APP',
   'profile.groupPermissionsSharing': 'PERMISSIONS & SHARING',
-  'profile.mealPreferencesHint': 'Choose meal types for eligible registration dates',
-  'profile.systemNotificationsHint': 'Allow IMeal to send notifications',
+  'profile.systemNotificationsHint': 'Allow notifications from IMeal',
   'profile.notificationEnabled': 'Enabled',
   'profile.notificationDisabled': 'Disabled',
   'profile.notificationNotConfigured': 'Not configured',
   'profile.notificationUnavailable': 'Unavailable',
-  'profile.notificationsDisabledWarning': 'Notifications are disabled on this device',
-  'profile.notificationsUnavailableHint': 'System notifications are unavailable on this platform',
+  'profile.notificationsDisabledWarning': 'Device notifications are off',
+  'profile.openSettings': 'Settings',
+  'profile.notificationsUnavailableHint':
+    'System notifications are unavailable on this platform',
   'profile.signOut': 'Sign out',
   'profile.signOutConfirm': 'Sign out of this device?',
+  'profile.signOutHint':
+    'Opens a confirmation before signing out of this device',
   'profile.closeLanguage': 'Close language selection',
   'pickup.checkAgain': 'Check again',
   'pickup.pauseTicket': 'Pause ticket',
@@ -474,7 +498,6 @@ export const en: Record<TranslationKey, string> = {
   'kitchen.served': 'Served',
   'kitchen.noShow': 'No-show',
   'scanner.toServe': 'to serve',
-  'scanner.processing': 'Processing…',
   'scanner.cancelAndScanAgain': 'Cancel and scan again',
   'profile.logOutConfirm': 'Log out of this device?',
   'delegation.title': 'Delegations',
@@ -500,11 +523,13 @@ export const en: Record<TranslationKey, string> = {
   'pickup.subtitle': 'Show this dynamic QR code to the kitchen staff',
   'pickup.loading': 'Loading pickup options…',
   'pickup.windowClosed': 'Pickup is currently closed',
-  'pickup.windowClosedHint': 'Meal tickets are available from 10:30 to 13:30 Vietnam time.',
+  'pickup.windowClosedHint':
+    'Meal tickets are available from 10:30 to 13:30 Vietnam time.',
   'pickup.notReady': 'The kitchen is preparing pickup',
   'pickup.loadFailed': 'Unable to load meal tickets',
   'pickup.noMeals': 'No meals ready to pick up',
-  'pickup.noMealsHint': 'Register a meal in Calendar before generating a ticket.',
+  'pickup.noMealsHint':
+    'Register a meal in Calendar before generating a ticket.',
   'pickup.mealsToPickUp': 'MEALS TO PICK UP',
   'pickup.selectOneOrMore': 'Select one or more',
   'pickup.myMeal': 'My meal',
@@ -542,34 +567,36 @@ export const en: Record<TranslationKey, string> = {
   'scanner.grantPermission': 'Grant permission',
   'scanner.backToDashboard': 'Back to dashboard',
   'scanner.scanEmployeeTicket': 'Scan Employee Ticket',
-  'scanner.scanHint': 'Align the dynamic QR code within the frame to verify TOTP',
-  'scanner.cameraPreview': 'Camera preview',
-  'scanner.resolvingTicket': 'Resolving ticket…',
-  'scanner.ticketDetected': 'Ticket detected',
-  'scanner.alignQr': 'Align QR code within frame',
-  'scanner.resolveEmployeeTicket': 'Resolving employee ticket…',
-  'scanner.scanAnotherTicket': 'Scan another ticket',
+  'scanner.helper': 'Keep the QR code in the frame to verify',
+  'scanner.searchingQr': 'Looking for QR code...',
+  'scanner.flashlightOn': 'Turn on light',
+  'scanner.flashlightOff': 'Turn off light',
+  'scanner.verificationSuccess': '✓ Verification successful',
+  'scanner.verificationFailed': 'Unable to verify',
+  'scanner.employee': 'Employee',
+  'scanner.servedAt': 'Served at %{time}',
+  'scanner.retryScan': 'Scan again',
   'scanner.servingConfirmation': 'Serving Confirmation',
   'scanner.itemCount': '%{count} items',
   'scanner.itemCount.one': '%{count} item',
   'scanner.itemCount.other': '%{count} items',
   'scanner.proxyPickup': 'Proxy pickup',
   'scanner.confirmServing': 'Confirm serving',
-  'scanner.servingConfirmed': 'Serving confirmed successfully!',
-  'scanner.confirmationExpired': 'Confirmation expired',
-  'scanner.confirmationError': 'Confirmation error',
-  'scanner.errorResolving': 'Error resolving serving',
   'scanner.pickupSessionExpired': 'Pickup session has expired',
   'notice.dismiss': 'Dismiss notification',
-  'errors.apiTimeout': 'The API did not respond. Check the connection and try again.',
+  'errors.apiTimeout':
+    'The API did not respond. Check the connection and try again.',
   'errors.invalidResponse': 'The server response was invalid.',
-  'errors.requestFailed': 'Unable to reach the service. Check your connection and try again.',
+  'errors.requestFailed':
+    'Unable to reach the service. Check your connection and try again.',
   'errors.duplicateServing': 'This serving has already been fulfilled.',
   'errors.pickupSessionExpired': 'Pickup session has expired.',
   'errors.invalidMealDate': 'This meal date is invalid.',
   'errors.cutoffPassed': 'The registration cutoff has passed for this day.',
-  'errors.mealChoiceUnavailable': 'That meal choice is not available for this day.',
-  'errors.registrationFinalized': 'This registration has already been finalized.',
+  'errors.mealChoiceUnavailable':
+    'That meal choice is not available for this day.',
+  'errors.registrationFinalized':
+    'This registration has already been finalized.',
   'errors.registrationFailed': 'The meal registration could not be updated.',
   'errors.pickupWindowClosed': 'Pickup is currently closed.',
   'errors.pickupNotReady': 'The kitchen is not ready for pickup.',
@@ -590,14 +617,18 @@ export const en: Record<TranslationKey, string> = {
   'errors.updateNotification': 'Unable to update this notification.',
   'errors.loadPreferences': 'Unable to load notification preferences.',
   'errors.updatePreferences': 'Unable to save notification preferences.',
-  'errors.registerPushDevice': 'Unable to register this device for notifications.',
+  'errors.registerPushDevice':
+    'Unable to register this device for notifications.',
   'errors.revokePushDevice': 'Unable to revoke this notification device.',
   'nav.notifications': 'Notifications',
-  'profile.preferenceLoadFailed': 'Unable to load notification preferences. Please try again.',
-  'profile.preferenceSaveFailed': 'Unable to save the change. The previous value was restored.',
+  'profile.preferenceLoadFailed':
+    'Unable to load notification preferences. Please try again.',
+  'profile.preferenceSaveFailed':
+    'Unable to save the change. The previous value was restored.',
   'profile.systemNotifications': 'System notifications',
   'notifications.title': 'Notifications',
-  'notifications.subtitle': 'Updates about registration, pickup, and delegation',
+  'notifications.subtitle':
+    'Updates about registration, pickup, and delegation',
   'notifications.unreadCount': '%{count} unread notifications',
   'notifications.loading': 'Loading notifications…',
   'notifications.loadingMore': 'Loading more…',
@@ -608,12 +639,14 @@ export const en: Record<TranslationKey, string> = {
   'notifications.detailTitle': 'Notification details',
   'notifications.loadingDetail': 'Loading notification details…',
   'notifications.detailLoadFailed': 'Unable to load notification',
-  'notifications.markReadFailed': 'Unable to mark this as read. Try again later.',
+  'notifications.markReadFailed':
+    'Unable to mark this as read. Try again later.',
   'notifications.openCalendar': 'Open registration calendar',
   'notifications.openPickup': 'Open pickup ticket',
   'notifications.openDelegation': 'Open delegations',
   'notifications.explainerTitle': 'Enable IMeal notifications?',
-  'notifications.explainerBody': 'Get registration reminders, pickup updates, and delegation changes on this device.',
+  'notifications.explainerBody':
+    'Get registration reminders, pickup updates, and delegation changes on this device.',
   'notifications.enable': 'Enable notifications',
   'notifications.notNow': 'Not now',
   'notifications.openSettings': 'Open settings',
@@ -621,14 +654,21 @@ export const en: Record<TranslationKey, string> = {
   'notifications.denied': 'Disabled in system settings',
   'notifications.notEnabled': 'Not enabled',
   'notifications.systemStatus': 'Notification status',
-  'notifications.physicalDeviceRequired': 'A physical device is required for push notifications.',
-  'notifications.projectConfigurationError': 'EXPO_PUBLIC_EAS_PROJECT_ID is missing, so push registration is unavailable.',
-  'notifications.tokenConfigurationError': 'Expo returned an invalid push token.',
-  'notifications.registrationError': 'Unable to register push notifications. Your inbox remains available.',
+  'notifications.physicalDeviceRequired':
+    'A physical device is required for push notifications.',
+  'notifications.projectConfigurationError':
+    'EXPO_PUBLIC_EAS_PROJECT_ID is missing, so push registration is unavailable.',
+  'notifications.tokenConfigurationError':
+    'Expo returned an invalid push token.',
+  'notifications.registrationError':
+    'Unable to register push notifications. Your inbox remains available.',
 };
 
 export type TranslationOptions = Record<string, unknown>;
-export type Translate = (key: TranslationKey, options?: TranslationOptions) => string;
+export type Translate = (
+  key: TranslationKey,
+  options?: TranslationOptions,
+) => string;
 
 export const i18n = new I18n({ vi, en });
 i18n.defaultLocale = 'vi';
@@ -640,17 +680,20 @@ function baseLanguage(locale: string): AppLanguage {
   return locale.toLowerCase().startsWith('en') ? 'en' : 'vi';
 }
 
-export function translate(key: TranslationKey, options?: TranslationOptions): string {
+export function translate(
+  key: TranslationKey,
+  options?: TranslationOptions,
+): string {
   const currentLocale = i18n.locale;
   const locale = baseLanguage(currentLocale);
   if (currentLocale !== locale) i18n.locale = locale;
 
   const count = options?.count;
-  const pluralSuffix = typeof count === 'number' ? (count === 1 ? 'one' : 'other') : null;
-  const pluralKey = pluralSuffix
-    ? `${key}.${pluralSuffix}`
-    : undefined;
-  const resolvedKey = pluralKey && pluralKey in vi ? (pluralKey as TranslationKey) : key;
+  const pluralSuffix =
+    typeof count === 'number' ? (count === 1 ? 'one' : 'other') : null;
+  const pluralKey = pluralSuffix ? `${key}.${pluralSuffix}` : undefined;
+  const resolvedKey =
+    pluralKey && pluralKey in vi ? (pluralKey as TranslationKey) : key;
   const result = String(i18n.t(resolvedKey, options));
 
   if (currentLocale !== locale) i18n.locale = currentLocale;
