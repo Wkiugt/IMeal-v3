@@ -37,6 +37,8 @@ import { useNotifications } from '../../notifications/NotificationProvider';
 import { designTokens } from '../../ui/designTokens';
 import { useReducedMotion } from '../../ui/useReducedMotion';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getNotificationPresentation } from './profilePresentation';
+
 
 type Props = ProfileStackScreenProps<'ProfileHome'>;
 type TabNavigation = BottomTabNavigationProp<AppTabParamList>;
@@ -44,20 +46,23 @@ type TabNavigation = BottomTabNavigationProp<AppTabParamList>;
 type SettingsGroupProps = {
   label: string;
   children: React.ReactNode;
+  surface?: boolean;
+  surfacePadding?: keyof typeof designTokens.space;
 };
 
-function SettingsGroup({ label, children }: SettingsGroupProps): React.JSX.Element {
+
+function SettingsGroup({ label, children, surface = true, surfacePadding = 'lg' }: SettingsGroupProps): React.JSX.Element {
   return (
     <View style={styles.settingsGroup}>
       <AppText variant="eyebrow" tone="tertiary" accessibilityRole="header">
         {label}
       </AppText>
-      <Surface level={1} padding="lg">
-        {children}
-      </Surface>
+      {surface ? <Surface level={1} padding={surfacePadding}>{children}</Surface> : children}
     </View>
   );
 }
+
+
 
 type SettingRowLayoutProps = {
   icon: LucideIcon;
@@ -362,39 +367,42 @@ export function EmployeeProfileScreen({ navigation }: Props) {
     try {
       await notificationAPI.updatePreferences({ locale: nextLanguage }, token);
     } catch {
-      showNotice({ title: t('common.error'), message: t('profile.languagePersistenceFailed'), tone: 'warning' });
+      showNotice({ title: t('common.error'), message: t('profile.languagePreferenceSyncFailed'), tone: 'warning' });
     }
   };
 
-  const systemStatus = permissionStatus === 'granted'
-    ? { status: 'active' as const, label: t('profile.notificationEnabled') }
-    : permissionStatus === 'denied'
-      ? { status: 'inactive' as const, label: t('profile.notificationDisabled') }
-      : permissionStatus === 'undetermined'
-        ? { status: 'pending' as const, label: t('profile.notificationNotConfigured') }
-        : { status: 'inactive' as const, label: t('profile.notificationUnavailable') };
+  const systemStatus = getNotificationPresentation(permissionStatus, {
+    enabled: t('profile.notificationEnabled'),
+    disabled: t('profile.notificationDisabled'),
+    notConfigured: t('profile.notificationNotConfigured'),
+    unavailable: t('profile.notificationUnavailable'),
+  });
+
 
   return (
     <AppFrame>
       <SectionHeader title={t('profile.title')} subtitle={t('profile.subtitle')} />
 
-      <IdentityCard
-        initials={initials(profile?.name, 'ME')}
-        name={displayName}
-        roleLabel={t('profile.employeeAccount')}
-        identifier={userCode}
-        style={styles.identityCard}
-      />
+      <SettingsGroup label={t('profile.groupAccount')} surface={false}>
+        <IdentityCard
+          initials={initials(profile?.name, 'ME')}
+          name={displayName}
+          roleLabel={t('profile.employeeAccount')}
+          identifier={userCode}
+          style={styles.identityCard}
+        />
+      </SettingsGroup>
 
-      <StatisticsCard
-        eyebrow={t('profile.thisMonth')}
-        metrics={[
-          { label: t('profile.mealsBooked'), value: '—' },
-          { label: t('profile.mealsEnjoyed'), value: '—' },
-        ]}
-        style={styles.statsCard}
-      />
-
+      <SettingsGroup label={t('profile.groupStatistics')} surface={false}>
+        <StatisticsCard
+          eyebrow={t('profile.thisMonth')}
+          metrics={[
+            { label: t('profile.mealsBooked'), value: '—' },
+            { label: t('profile.mealsEnjoyed'), value: '—' },
+          ]}
+          style={styles.statsCard}
+        />
+      </SettingsGroup>
       <SettingsGroup label={t('profile.groupMeal')}>
         <NavigationSettingRow
           icon={Leaf}
@@ -405,6 +413,7 @@ export function EmployeeProfileScreen({ navigation }: Props) {
           compactLayout={compactLayout}
         />
       </SettingsGroup>
+
 
       <SettingsGroup label={t('profile.groupNotifications')}>
         <ToggleSettingRow
@@ -425,7 +434,7 @@ export function EmployeeProfileScreen({ navigation }: Props) {
           statusLabel={systemStatus.label}
           compactLayout={compactLayout}
         />
-        {permissionStatus === 'denied' ? (
+        {systemStatus.showWarning ? (
           <WarningSurface
             message={t('profile.notificationsDisabledWarning')}
             actionLabel={`${t('notifications.openSettings')} →`}
@@ -474,16 +483,21 @@ export function EmployeeProfileScreen({ navigation }: Props) {
           compactLayout={compactLayout}
         />
       </SettingsGroup>
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={t('profile.signOut')}
-        onPress={handleLogout}
-        style={({ pressed }) => [styles.logout, pressed && styles.logoutPressed]}
-      >
-        <LogOut size={18} color={designTokens.color.semantic.critical.base} strokeWidth={1.8} />
-        <AppText variant="buttonLabel" tone="critical">{t('profile.signOut')}</AppText>
-      </Pressable>
+      <View style={styles.logoutSection}>
+        <SettingsGroup label={t('profile.groupAccount')} surfacePadding="xs">
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('profile.signOut')}
+            onPress={handleLogout}
+            style={({ pressed }) => [styles.logoutRow, pressed && styles.logoutPressed]}
+          >
+            <View style={[styles.settingIconTile, styles.logoutIconTile]}>
+              <LogOut size={18} color={designTokens.color.semantic.critical.base} strokeWidth={1.8} />
+            </View>
+            <AppText variant="buttonLabel" tone="critical">{t('profile.signOut')}</AppText>
+          </Pressable>
+        </SettingsGroup>
+      </View>
 
       <ProfileSheet
         visible={languageSheetVisible}
@@ -553,10 +567,10 @@ export function EmployeeProfileScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   identityCard: {
-    marginBottom: designTokens.space.lg,
+    marginBottom: 0,
   },
   statsCard: {
-    marginBottom: designTokens.space.lg,
+    marginBottom: 0,
   },
   settingsGroup: {
     gap: designTokens.space.xs,
@@ -636,11 +650,15 @@ const styles = StyleSheet.create({
   warningSurface: {
     marginTop: designTokens.space.md,
     padding: designTokens.space.md,
+    flexDirection: 'row',
+    alignItems: 'center',
     borderRadius: designTokens.radius.smallControl,
     backgroundColor: designTokens.color.semantic.warning.tint,
     gap: designTokens.space.sm,
   },
   warningCopy: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: designTokens.space.sm,
@@ -651,7 +669,6 @@ const styles = StyleSheet.create({
   },
   warningAction: {
     minHeight: designTokens.size.touchMin,
-    alignSelf: 'flex-end',
     justifyContent: 'center',
   },
   warningActionPressed: {
@@ -663,20 +680,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: designTokens.space.xs,
   },
-  quietLinkPressed: {
-    opacity: 0.7,
-  },
   unavailableHint: {
     marginTop: designTokens.space.md,
   },
-  logout: {
-    minHeight: designTokens.size.touchMin,
-    marginTop: designTokens.space['3xl'],
-    marginBottom: designTokens.space.lg,
+  quietLinkPressed: {
+    opacity: 0.7,
+  },
+  logoutSection: {
+    marginTop: designTokens.space['2xl'],
+    marginBottom: designTokens.space['2xl'],
+  },
+  logoutRow: {
+    minHeight: designTokens.size.controlLg,
+    borderRadius: designTokens.radius.smallControl,
+    paddingVertical: designTokens.space.xs,
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: designTokens.space.sm,
+    gap: designTokens.space.md,
+  },
+  logoutIconTile: {
+    backgroundColor: designTokens.color.semantic.critical.tint,
   },
   logoutPressed: {
     opacity: 0.7,
