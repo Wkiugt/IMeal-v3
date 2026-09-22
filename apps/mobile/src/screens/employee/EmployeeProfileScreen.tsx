@@ -1,7 +1,15 @@
-import React, { useEffect, useState } from 'react';
-import { Modal, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Animated,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import {
   AlertTriangle,
   Bell,
@@ -9,21 +17,18 @@ import {
   ChevronRight,
   Clock3,
   Languages,
-  Leaf,
-  LogOut,
   UsersRound,
   X,
   type LucideIcon,
 } from 'lucide-react-native';
-import type { AppTabParamList, ProfileStackScreenProps } from '../../navigation';
+import type { ProfileStackScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
 import { initials } from '../../businessDate';
 import { AppFrame, SectionHeader } from '../../ui/AppShell';
 import {
-  ActionButton,
   AppText,
+  Avatar,
   Divider,
-  IdentityCard,
   StatisticsCard,
   StatusDot,
   Surface,
@@ -34,35 +39,77 @@ import { useNotice } from '../../ui/BrandNotice';
 import { useLanguage } from '../../i18n/LanguageProvider';
 import { notificationAPI } from '../../api/notificationAPI';
 import { useNotifications } from '../../notifications/NotificationProvider';
-import { designTokens } from '../../ui/designTokens';
+import { designTokens, getElevationStyle } from '../../ui/designTokens';
 import { useReducedMotion } from '../../ui/useReducedMotion';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getNotificationPresentation } from './profilePresentation';
 
 
 type Props = ProfileStackScreenProps<'ProfileHome'>;
-type TabNavigation = BottomTabNavigationProp<AppTabParamList>;
 
 type SettingsGroupProps = {
   label: string;
   children: React.ReactNode;
   surface?: boolean;
   surfacePadding?: keyof typeof designTokens.space;
+  surfaceStyle?: StyleProp<ViewStyle>;
 };
 
-
-function SettingsGroup({ label, children, surface = true, surfacePadding = 'lg' }: SettingsGroupProps): React.JSX.Element {
+function SettingsGroup({
+  label,
+  children,
+  surface = true,
+  surfacePadding = 'md',
+  surfaceStyle,
+}: SettingsGroupProps): React.JSX.Element {
   return (
     <View style={styles.settingsGroup}>
-      <AppText variant="eyebrow" tone="tertiary" accessibilityRole="header">
+      <AppText variant="eyebrow" tone="tertiary" accessibilityRole="header" style={styles.settingsGroupLabel}>
         {label}
       </AppText>
-      {surface ? <Surface level={1} padding={surfacePadding}>{children}</Surface> : children}
+      {surface ? (
+        <Surface level={1} padding={surfacePadding} style={surfaceStyle}>
+          {children}
+        </Surface>
+      ) : (
+        children
+      )}
     </View>
   );
 }
 
+type ProfileIdentityProps = {
+  initials: string;
+  name: string;
+  roleLabel: string;
+  identifier?: string;
+};
 
+function ProfileIdentity({ initials: profileInitials, name, roleLabel, identifier }: ProfileIdentityProps): React.JSX.Element {
+  return (
+    <View style={styles.identityCard}>
+      <Avatar
+        initials={profileInitials}
+        size="lg"
+        accessibilityLabel={name}
+        style={styles.identityAvatar}
+      />
+      <View style={styles.identityCopy}>
+        <AppText variant="cardTitle" tone="strong" style={styles.identityName}>
+          {name}
+        </AppText>
+        <AppText variant="supporting" tone="secondary" style={styles.identityRole}>
+          {roleLabel}
+        </AppText>
+        {identifier ? (
+          <AppText variant="monoCaption" tone="tertiary" style={styles.identityIdentifier}>
+            {identifier}
+          </AppText>
+        ) : null}
+      </View>
+    </View>
+  );
+}
 
 type SettingRowLayoutProps = {
   icon: LucideIcon;
@@ -70,6 +117,7 @@ type SettingRowLayoutProps = {
   supportingText?: string;
   trailing: React.ReactNode;
   compactLayout: boolean;
+  tallLayout?: boolean;
 };
 
 function SettingRowLayout({
@@ -78,18 +126,30 @@ function SettingRowLayout({
   supportingText,
   trailing,
   compactLayout,
+  tallLayout = false,
 }: SettingRowLayoutProps): React.JSX.Element {
   return (
     <View style={[styles.settingRowLayout, compactLayout && styles.settingRowLayoutCompact]}>
       <View style={styles.settingIconTile}>
-        <Icon size={18} color={designTokens.color.brand.primary} strokeWidth={1.9} />
+        <Icon size={20} color={designTokens.color.brand.primary} strokeWidth={1.9} />
       </View>
       <View style={styles.settingContent}>
-        <View style={[styles.settingMain, compactLayout && styles.settingMainCompact]}>
+        <View style={[
+          styles.settingMain,
+          compactLayout && styles.settingMainCompact,
+          tallLayout && styles.settingMainTall,
+        ]}>
           <View style={styles.settingCopy}>
-            <AppText variant="body">{title}</AppText>
+            <AppText variant="body" style={styles.settingTitle}>
+              {title}
+            </AppText>
             {supportingText ? (
-              <AppText variant="supporting" tone="secondary" style={styles.settingSupporting}>
+              <AppText
+                variant="supporting"
+                tone="secondary"
+                style={styles.settingSupporting}
+                numberOfLines={2}
+              >
                 {supportingText}
               </AppText>
             ) : null}
@@ -111,6 +171,7 @@ type NavigationSettingRowProps = {
   onPress: () => void;
   accessibilityHint?: string;
   compactLayout: boolean;
+  tallLayout?: boolean;
 };
 
 function NavigationSettingRow({
@@ -121,6 +182,7 @@ function NavigationSettingRow({
   onPress,
   accessibilityHint,
   compactLayout,
+  tallLayout = false,
 }: NavigationSettingRowProps): React.JSX.Element {
   return (
     <Pressable
@@ -135,6 +197,7 @@ function NavigationSettingRow({
         title={title}
         supportingText={supportingText}
         compactLayout={compactLayout}
+        tallLayout={tallLayout}
         trailing={
           <View style={styles.navigationTrailing}>
             {currentValue ? (
@@ -149,6 +212,7 @@ function NavigationSettingRow({
     </Pressable>
   );
 }
+
 
 type ToggleSettingRowProps = {
   icon: LucideIcon;
@@ -227,8 +291,12 @@ function WarningSurface({ message, actionLabel, onAction }: WarningSurfaceProps)
   return (
     <View style={styles.warningSurface}>
       <View style={styles.warningCopy}>
-        <AlertTriangle size={17} color={designTokens.color.semantic.warning.base} strokeWidth={1.9} />
-        <AppText variant="supporting" tone="warning" style={styles.warningMessage}>
+        <AlertTriangle size={18} color={designTokens.color.semantic.warning.base} strokeWidth={1.9} />
+        <AppText
+          variant="caption"
+          tone="warning"
+          style={styles.warningMessage}
+        >
           {message}
         </AppText>
       </View>
@@ -239,11 +307,53 @@ function WarningSurface({ message, actionLabel, onAction }: WarningSurfaceProps)
           onPress={onAction}
           style={({ pressed }) => [styles.warningAction, pressed && styles.warningActionPressed]}
         >
-          <AppText variant="buttonLabel" tone="warning">
+          <AppText variant="caption" tone="warning" style={styles.warningActionLabel}>
             {actionLabel}
           </AppText>
         </Pressable>
       ) : null}
+    </View>
+  );
+}
+type ProfileProgressMeterProps = {
+  completed: number;
+  total: number;
+  label: string;
+};
+
+function ProfileProgressMeter({
+  completed,
+  total,
+  label,
+}: ProfileProgressMeterProps): React.JSX.Element {
+  const safeTotal = Math.max(1, total);
+  const safeCompleted = Math.min(safeTotal, Math.max(0, completed));
+  const percentage = Math.round((safeCompleted / safeTotal) * 100);
+
+  return (
+    <View style={styles.progressMeter}>
+      <View style={styles.progressHeading}>
+        <AppText variant="caption" tone="secondary">
+          {label}
+        </AppText>
+        <AppText variant="caption" tone="secondary">
+          {percentage}%
+        </AppText>
+      </View>
+      <View
+        accessible
+        accessibilityRole="progressbar"
+        accessibilityLabel={label}
+        accessibilityValue={{
+          min: 0,
+          max: safeTotal,
+          now: safeCompleted,
+          text: `${safeCompleted}/${safeTotal} · ${percentage}%`,
+        }}
+        style={styles.progressTrack}
+      >
+        <View style={[styles.progressFill, { width: `${percentage}%` }]} />
+      </View>
     </View>
   );
 }
@@ -295,20 +405,256 @@ function ProfileSheet({
   );
 }
 
+type LogoutCardProps = {
+  label: string;
+  accessibilityHint: string;
+  onPress: () => void;
+};
+
+function LogoutCard({ label, accessibilityHint, onPress }: LogoutCardProps): React.JSX.Element {
+  const reduceMotion = useReducedMotion();
+  const pressScale = useRef(new Animated.Value(1)).current;
+
+  const animatePress = (pressed: boolean) => {
+    if (reduceMotion) {
+      pressScale.setValue(1);
+      return;
+    }
+    Animated.timing(pressScale, {
+      toValue: pressed ? designTokens.motion.pressScale.button : 1,
+      duration: designTokens.motion.duration.fast,
+      easing: designTokens.motion.easing.standard,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return (
+    <Animated.View style={[styles.logoutCardAnimated, { transform: [{ scale: pressScale }] }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityHint={accessibilityHint}
+        onPress={onPress}
+        onPressIn={() => animatePress(true)}
+        onPressOut={() => animatePress(false)}
+        style={({ pressed }) => [styles.logoutCard, pressed && styles.logoutCardPressed]}
+      >
+        <AppText variant="buttonLabel" tone="critical" style={styles.logoutLabel}>
+          {label}
+        </AppText>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+type ProfileLogoutModalProps = {
+  visible: boolean;
+  title: string;
+  message: string;
+  cancelLabel: string;
+  confirmLabel: string;
+  processingLabel: string;
+  processing: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+};
+
+function ProfileLogoutModal({
+  visible,
+  title,
+  message,
+  cancelLabel,
+  confirmLabel,
+  processingLabel,
+  processing,
+  onClose,
+  onConfirm,
+}: ProfileLogoutModalProps): React.JSX.Element | null {
+  const reduceMotion = useReducedMotion();
+  const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
+  const modalMaxHeight = Math.max(
+    designTokens.size.controlLg * 3,
+    height - insets.top - insets.bottom - designTokens.space['2xl'],
+  );
+  const [rendered, setRendered] = useState(visible);
+  const renderedRef = useRef(visible);
+  const animationGeneration = useRef(0);
+  const backdropOpacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
+  const modalScale = useRef(new Animated.Value(visible ? 1 : designTokens.motion.pressScale.compact)).current;
+
+  useEffect(() => {
+    const generation = animationGeneration.current + 1;
+    animationGeneration.current = generation;
+    backdropOpacity.stopAnimation();
+    modalScale.stopAnimation();
+
+    if (visible) {
+      renderedRef.current = true;
+      setRendered(true);
+      if (reduceMotion) {
+        backdropOpacity.setValue(1);
+        modalScale.setValue(1);
+        return;
+      }
+      backdropOpacity.setValue(0);
+      modalScale.setValue(designTokens.motion.pressScale.compact);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, {
+          toValue: 1,
+          duration: designTokens.motion.duration.standard,
+          easing: designTokens.motion.easing.standard,
+          useNativeDriver: true,
+        }),
+        Animated.timing(modalScale, {
+          toValue: 1,
+          duration: designTokens.motion.duration.standard,
+          easing: designTokens.motion.easing.standard,
+          useNativeDriver: true,
+        }),
+      ]).start();
+      return;
+    }
+
+    if (!renderedRef.current) return;
+    if (reduceMotion) {
+      backdropOpacity.setValue(0);
+      modalScale.setValue(designTokens.motion.pressScale.compact);
+      renderedRef.current = false;
+      setRendered(false);
+      return;
+    }
+
+    Animated.parallel([
+      Animated.timing(backdropOpacity, {
+        toValue: 0,
+        duration: designTokens.motion.duration.fast,
+        easing: designTokens.motion.easing.standard,
+        useNativeDriver: true,
+      }),
+      Animated.timing(modalScale, {
+        toValue: designTokens.motion.pressScale.compact,
+        duration: designTokens.motion.duration.fast,
+        easing: designTokens.motion.easing.standard,
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished && animationGeneration.current === generation) {
+        renderedRef.current = false;
+        setRendered(false);
+      }
+    });
+  }, [backdropOpacity, modalScale, reduceMotion, visible]);
+
+  const handleClose = () => {
+    if (!processing) onClose();
+  };
+
+  if (!rendered) return null;
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="none"
+      onRequestClose={handleClose}
+    >
+      <Pressable
+        accessibilityRole="none"
+        onPress={handleClose}
+        style={[
+          styles.logoutModalBackdrop,
+          {
+            paddingTop: insets.top + designTokens.space.md,
+            paddingBottom: insets.bottom + designTokens.space.md,
+            paddingHorizontal: designTokens.space.md,
+          },
+        ]}
+      >
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.logoutModalScrim, { opacity: backdropOpacity }]}
+        />
+        <Animated.View
+          style={[
+            styles.logoutModalCard,
+            { maxHeight: modalMaxHeight, opacity: backdropOpacity, transform: [{ scale: modalScale }] },
+          ]}
+          onStartShouldSetResponder={() => true}
+        >
+          <ScrollView
+            bounces={false}
+            showsVerticalScrollIndicator={false}
+            style={styles.logoutModalScroll}
+            contentContainerStyle={styles.logoutModalContent}
+          >
+          <AppText
+            variant="cardTitle"
+            tone="critical"
+            accessibilityRole="header"
+            style={styles.logoutModalTitle}
+          >
+            {title}
+          </AppText>
+          <AppText variant="body" tone="secondary" style={styles.logoutModalMessage}>
+            {message}
+          </AppText>
+          <Divider style={styles.logoutModalDivider} />
+          <View style={styles.logoutModalActions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={cancelLabel}
+              accessibilityState={{ disabled: processing }}
+              disabled={processing}
+              onPress={handleClose}
+              style={({ pressed }) => [
+                styles.logoutModalAction,
+                pressed && !processing && styles.logoutModalActionPressed,
+              ]}
+            >
+              <AppText variant="buttonLabel" tone="secondary">
+                {cancelLabel}
+              </AppText>
+            </Pressable>
+            <View style={styles.logoutModalActionDivider} />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={processing ? processingLabel : confirmLabel}
+              accessibilityState={{ busy: processing, disabled: processing }}
+              disabled={processing}
+              onPress={onConfirm}
+              style={({ pressed }) => [
+                styles.logoutModalAction,
+                pressed && !processing && styles.logoutModalActionPressed,
+              ]}
+            >
+              <AppText variant="buttonLabel" tone="critical">
+                {processing ? processingLabel : confirmLabel}
+              </AppText>
+            </Pressable>
+          </View>
+          </ScrollView>
+        </Animated.View>
+      </Pressable>
+    </Modal>
+  );
+}
+
 export function EmployeeProfileScreen({ navigation }: Props) {
   const { token, profile, logout } = useSession();
   const { showNotice } = useNotice();
   const { language, setLanguage, t } = useLanguage();
   const { permissionStatus, configurationError, enableNotifications, openSettings, revokeCurrentDevice } = useNotifications();
-  const tabNavigation = useNavigation<TabNavigation>();
   const { width, fontScale } = useWindowDimensions();
   const compactLayout = width < 350 || fontScale > 1.2;
   const [confirmedReminders, setConfirmedReminders] = useState(true);
   const [reminderLoading, setReminderLoading] = useState(true);
   const [languageSheetVisible, setLanguageSheetVisible] = useState(false);
-  const [signOutSheetVisible, setSignOutSheetVisible] = useState(false);
-  const displayName = profile?.name || profile?.email.split('@')[0] || t('profile.employeeAccount');
-  const userCode = profile?.userId || profile?.id || '—';
+  const [signOutModalVisible, setSignOutModalVisible] = useState(false);
+  const [logoutProcessing, setLogoutProcessing] = useState(false);
+  const mealStats = { booked: 12, used: 8 };
+  const displayName = profile?.name || profile?.email.split('@')[0] || 'Staff 01';
+  const userCode = profile?.userId || profile?.id || 'local-staff-staff01';
 
   useEffect(() => {
     if (!token) return;
@@ -341,14 +687,26 @@ export function EmployeeProfileScreen({ navigation }: Props) {
       setReminderLoading(false);
     }
   };
-
   const performLogout = async () => {
     await revokeCurrentDevice().catch(() => undefined);
     await logout();
   };
 
   const handleLogout = () => {
-    setSignOutSheetVisible(true);
+    if (!logoutProcessing) setSignOutModalVisible(true);
+  };
+
+  const handleConfirmLogout = async () => {
+    if (logoutProcessing) return;
+    setLogoutProcessing(true);
+    try {
+      await performLogout();
+      setSignOutModalVisible(false);
+    } catch {
+      showNotice({ title: t('common.error'), message: t('profile.signOut'), tone: 'warning' });
+    } finally {
+      setLogoutProcessing(false);
+    }
   };
 
   const handleLanguageChange = async (nextLanguage: 'vi' | 'en') => {
@@ -383,39 +741,39 @@ export function EmployeeProfileScreen({ navigation }: Props) {
     <AppFrame>
       <SectionHeader title={t('profile.title')} subtitle={t('profile.subtitle')} />
 
-      <SettingsGroup label={t('profile.groupAccount')} surface={false}>
-        <IdentityCard
-          initials={initials(profile?.name, 'ME')}
-          name={displayName}
-          roleLabel={t('profile.employeeAccount')}
-          identifier={userCode}
-          style={styles.identityCard}
-        />
-      </SettingsGroup>
+      <ProfileIdentity
+        initials={initials(profile?.name, 'S0')}
+        name={displayName}
+        roleLabel={t('profile.employeeAccount')}
+        identifier={userCode}
+      />
 
       <SettingsGroup label={t('profile.groupStatistics')} surface={false}>
-        <StatisticsCard
-          eyebrow={t('profile.thisMonth')}
-          metrics={[
-            { label: t('profile.mealsBooked'), value: '—' },
-            { label: t('profile.mealsEnjoyed'), value: '—' },
-          ]}
-          style={styles.statsCard}
-        />
-      </SettingsGroup>
-      <SettingsGroup label={t('profile.groupMeal')}>
-        <NavigationSettingRow
-          icon={Leaf}
-          title={t('profile.dietaryPreferences')}
-          supportingText={t('profile.mealPreferencesHint')}
-          currentValue={t('profile.notSet')}
-          onPress={() => tabNavigation.navigate('EmployeeCalendar')}
-          compactLayout={compactLayout}
-        />
+        <View style={[styles.statsHero, compactLayout && styles.statsHeroCompact]}>
+          <StatisticsCard
+            eyebrow={t('profile.thisMonth')}
+            metrics={[
+              { label: t('profile.mealsBooked'), value: mealStats.booked },
+              { label: t('profile.mealsEnjoyed'), value: mealStats.used },
+            ]}
+            style={[styles.statsCard, compactLayout && styles.statsCardCompact]}
+          />
+          <ProfileProgressMeter
+            completed={mealStats.used}
+            total={mealStats.booked}
+            label={t('profile.progressUsed', {
+              completed: mealStats.used,
+              total: mealStats.booked,
+            })}
+          />
+        </View>
       </SettingsGroup>
 
-
-      <SettingsGroup label={t('profile.groupNotifications')}>
+      <SettingsGroup
+        label={t('profile.groupNotifications')}
+        surfacePadding="sm"
+        surfaceStyle={styles.settingsGroupSurface}
+      >
         <ToggleSettingRow
           icon={Clock3}
           title={t('profile.bookingReminders')}
@@ -437,7 +795,7 @@ export function EmployeeProfileScreen({ navigation }: Props) {
         {systemStatus.showWarning ? (
           <WarningSurface
             message={t('profile.notificationsDisabledWarning')}
-            actionLabel={`${t('notifications.openSettings')} →`}
+            actionLabel={`${t('profile.openSettings')} →`}
             onAction={() => void openSettings()}
           />
         ) : null}
@@ -464,7 +822,11 @@ export function EmployeeProfileScreen({ navigation }: Props) {
         {configurationError ? <WarningSurface message={configurationError} /> : null}
       </SettingsGroup>
 
-      <SettingsGroup label={t('profile.groupApp')}>
+      <SettingsGroup
+        label={t('profile.groupApp')}
+        surfacePadding="sm"
+        surfaceStyle={styles.settingsGroupSurface}
+      >
         <NavigationSettingRow
           icon={Languages}
           title={t('profile.language')}
@@ -474,30 +836,29 @@ export function EmployeeProfileScreen({ navigation }: Props) {
         />
       </SettingsGroup>
 
-      <SettingsGroup label={t('profile.groupPermissionsSharing')}>
+      <SettingsGroup
+        label={t('profile.groupPermissionsSharing')}
+        surfacePadding="sm"
+        surfaceStyle={styles.settingsGroupSurface}
+      >
         <NavigationSettingRow
           icon={UsersRound}
           title={t('profile.delegations')}
           supportingText={t('profile.delegationsHint')}
           onPress={() => navigation.navigate('Delegation')}
           compactLayout={compactLayout}
+          tallLayout
         />
       </SettingsGroup>
       <View style={styles.logoutSection}>
-        <SettingsGroup label={t('profile.groupAccount')} surfacePadding="xs">
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t('profile.signOut')}
-            onPress={handleLogout}
-            style={({ pressed }) => [styles.logoutRow, pressed && styles.logoutPressed]}
-          >
-            <View style={[styles.settingIconTile, styles.logoutIconTile]}>
-              <LogOut size={18} color={designTokens.color.semantic.critical.base} strokeWidth={1.8} />
-            </View>
-            <AppText variant="buttonLabel" tone="critical">{t('profile.signOut')}</AppText>
-          </Pressable>
-        </SettingsGroup>
+        <LogoutCard
+          label={t('profile.signOut')}
+          accessibilityHint={t('profile.signOutHint')}
+          onPress={handleLogout}
+        />
       </View>
+
+
 
       <ProfileSheet
         visible={languageSheetVisible}
@@ -534,47 +895,117 @@ export function EmployeeProfileScreen({ navigation }: Props) {
         </View>
       </ProfileSheet>
 
-      <ProfileSheet
-        visible={signOutSheetVisible}
+      <ProfileLogoutModal
+        visible={signOutModalVisible}
         title={t('profile.signOut')}
-        closeLabel={t('common.close')}
-        onClose={() => setSignOutSheetVisible(false)}
-      >
-        <AppText variant="body" tone="secondary" style={styles.signOutMessage}>
-          {t('profile.signOutConfirm')}
-        </AppText>
-        <ActionButton
-          variant="critical"
-          size="lg"
-          label={t('profile.signOut')}
-          icon={LogOut}
-          onPress={() => {
-            setSignOutSheetVisible(false);
-            void performLogout();
-          }}
-        />
-        <ActionButton
-          variant="ghost"
-          size="md"
-          label={t('common.cancel')}
-          onPress={() => setSignOutSheetVisible(false)}
-          style={styles.cancelButton}
-        />
-      </ProfileSheet>
+        message={t('profile.signOutConfirm')}
+        cancelLabel={t('common.cancel')}
+        confirmLabel={t('profile.signOut')}
+        processingLabel={t('common.processing')}
+        processing={logoutProcessing}
+        onClose={() => setSignOutModalVisible(false)}
+        onConfirm={() => void handleConfirmLogout()}
+      />
     </AppFrame>
   );
 }
 
 const styles = StyleSheet.create({
   identityCard: {
-    marginBottom: 0,
+    marginTop: designTokens.space.xs,
+    marginBottom: designTokens.space['2xl'],
+    padding: 0,
+    gap: designTokens.space.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  identityAvatar: {
+    width: designTokens.size.avatarLg - designTokens.space.xs,
+    height: designTokens.size.avatarLg - designTokens.space.xs,
+    flexShrink: 0,
+  },
+  identityCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  identityName: {
+    fontSize: 19,
+    lineHeight: 25,
+  },
+  identityRole: {
+    marginTop: 2,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  identityIdentifier: {
+    marginTop: designTokens.space.xs,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  statsHero: {
+    position: 'relative',
+  },
+  statsHeroCompact: {
+    minHeight: 240,
   },
   statsCard: {
+    minHeight: 160,
     marginBottom: 0,
+    paddingTop: designTokens.space.xl,
+    paddingHorizontal: designTokens.space.xl,
+    paddingBottom: designTokens.space.xl,
+    backgroundColor: designTokens.color.surface.elevated,
+    borderRadius: designTokens.radius.floating,
+    borderWidth: designTokens.border.subtle.width,
+    borderColor: designTokens.color.border.subtle,
+    shadowOpacity: 0.04,
+    elevation: 1,
+  },
+  statsCardCompact: {
+    minHeight: 240,
+  },
+  progressMeter: {
+    position: 'absolute',
+    left: designTokens.space.xl,
+    right: designTokens.space.xl,
+    bottom: designTokens.space.md,
+    gap: designTokens.space.xs,
+  },
+  progressHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: designTokens.space.sm,
+  },
+  progressTrack: {
+    height: designTokens.space.sm,
+    borderRadius: designTokens.radius.full,
+    overflow: 'hidden',
+    backgroundColor: designTokens.color.semantic.neutral.tint,
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: designTokens.radius.full,
+    backgroundColor: designTokens.color.brand.primary,
   },
   settingsGroup: {
-    gap: designTokens.space.xs,
-    marginBottom: designTokens.space.lg,
+    gap: designTokens.space.sm,
+    marginBottom: designTokens.space['2xl'],
+  },
+  settingsGroupLabel: {
+    marginLeft: designTokens.space.xs,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: designTokens.typography.family.semiBold,
+    letterSpacing: 0.8,
+    opacity: 0.9,
+  },
+  settingsGroupSurface: {
+    borderRadius: designTokens.radius.card + designTokens.space.xs / 2,
+    borderWidth: designTokens.border.subtle.width,
+    borderColor: designTokens.color.border.subtle,
+    shadowOpacity: 0.04,
+    elevation: 1,
   },
   settingPressable: {
     minHeight: designTokens.size.touchMin,
@@ -584,19 +1015,20 @@ const styles = StyleSheet.create({
     backgroundColor: designTokens.color.brand.tint,
   },
   settingRowLayout: {
-    minHeight: designTokens.size.touchMin,
-    paddingVertical: designTokens.space.md,
+    minHeight: 48,
+    paddingHorizontal: designTokens.space.sm,
+    paddingVertical: designTokens.space.xs,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: designTokens.space.md,
   },
   settingRowLayoutCompact: {
     alignItems: 'flex-start',
   },
   settingIconTile: {
-    width: designTokens.size.controlSm,
-    height: designTokens.size.controlSm,
-    borderRadius: designTokens.radius.smallControl,
+    width: 40,
+    height: 40,
+    borderRadius: designTokens.radius.inputButton,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: designTokens.color.brand.tint,
@@ -607,10 +1039,13 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   settingMain: {
-    minHeight: designTokens.size.touchMin,
+    minHeight: 40,
     flexDirection: 'row',
     alignItems: 'center',
     gap: designTokens.space.md,
+  },
+  settingMainTall: {
+    minHeight: 48,
   },
   settingMainCompact: {
     alignItems: 'stretch',
@@ -621,8 +1056,15 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  settingTitle: {
+    fontSize: 16,
+    lineHeight: 22,
+    fontFamily: designTokens.typography.family.medium,
+  },
   settingSupporting: {
-    marginTop: designTokens.space.xs,
+    marginTop: 0,
+    fontSize: 13,
+    lineHeight: 18,
   },
   settingTrailing: {
     flexShrink: 0,
@@ -633,26 +1075,32 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   navigationTrailing: {
-    minHeight: designTokens.size.touchMin,
+    minHeight: 40,
     flexDirection: 'row',
     alignItems: 'center',
     gap: designTokens.space.xs,
+    flexShrink: 0,
   },
   navigationValue: {
     flexShrink: 1,
     textAlign: 'right',
+    fontSize: 14,
+    lineHeight: 20,
   },
   settingsDivider: {
-    marginTop: designTokens.space.xs,
-    marginBottom: designTokens.space.xs,
-    marginLeft: designTokens.size.controlSm + designTokens.space.md,
+    marginTop: 0,
+    marginBottom: 0,
+    marginLeft: designTokens.space.sm * 2 + 40 + designTokens.space.md,
   },
   warningSurface: {
-    marginTop: designTokens.space.md,
-    padding: designTokens.space.md,
+    minHeight: 44,
+    marginTop: designTokens.space.sm,
+    paddingHorizontal: designTokens.space.md,
+    paddingVertical: designTokens.space.xs,
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: designTokens.radius.smallControl,
+    flexWrap: 'nowrap',
+    borderRadius: designTokens.radius.chip,
     backgroundColor: designTokens.color.semantic.warning.tint,
     gap: designTokens.space.sm,
   },
@@ -660,16 +1108,24 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: designTokens.space.sm,
   },
   warningMessage: {
     flex: 1,
     minWidth: 0,
+    fontSize: 13,
+    lineHeight: 18,
   },
   warningAction: {
     minHeight: designTokens.size.touchMin,
     justifyContent: 'center',
+    flexShrink: 0,
+  },
+  warningActionLabel: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: designTokens.typography.family.semiBold,
   },
   warningActionPressed: {
     opacity: 0.7,
@@ -681,28 +1137,37 @@ const styles = StyleSheet.create({
     marginTop: designTokens.space.xs,
   },
   unavailableHint: {
-    marginTop: designTokens.space.md,
+    marginTop: designTokens.space.sm,
   },
   quietLinkPressed: {
     opacity: 0.7,
   },
   logoutSection: {
-    marginTop: designTokens.space['2xl'],
-    marginBottom: designTokens.space['2xl'],
+    marginTop: designTokens.space.sm,
+    marginBottom: designTokens.space.xl,
   },
-  logoutRow: {
-    minHeight: designTokens.size.controlLg,
-    borderRadius: designTokens.radius.smallControl,
-    paddingVertical: designTokens.space.xs,
-    flexDirection: 'row',
+  logoutCardAnimated: {
+    width: '100%',
+  },
+  logoutCard: {
+    minHeight: 60,
+    width: '100%',
     alignItems: 'center',
-    gap: designTokens.space.md,
+    justifyContent: 'center',
+    borderRadius: designTokens.radius.card,
+    borderWidth: designTokens.border.subtle.width,
+    borderColor: designTokens.color.border.subtle,
+    backgroundColor: designTokens.color.surface.standard,
+    ...getElevationStyle(1),
   },
-  logoutIconTile: {
-    backgroundColor: designTokens.color.semantic.critical.tint,
+  logoutCardPressed: {
+    backgroundColor: designTokens.color.brand.tint,
   },
-  logoutPressed: {
-    opacity: 0.7,
+  logoutLabel: {
+    fontSize: 16,
+    lineHeight: 22,
+    fontFamily: designTokens.typography.family.semiBold,
+    color: designTokens.color.semantic.critical.base,
   },
   sheetBackdrop: {
     flex: 1,
@@ -740,6 +1205,62 @@ const styles = StyleSheet.create({
   sheetClosePressed: {
     backgroundColor: designTokens.color.brand.tint,
   },
+  logoutModalBackdrop: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoutModalScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15,23,42,0.32)',
+  },
+  logoutModalCard: {
+    width: '84%',
+    maxWidth: 390,
+    padding: designTokens.space.xl,
+    borderRadius: designTokens.radius.heroCard,
+    borderWidth: designTokens.border.subtle.width,
+    borderColor: designTokens.color.border.subtle,
+    backgroundColor: designTokens.color.surface.standard,
+    ...getElevationStyle(2),
+  },
+  logoutModalScroll: {
+    flexShrink: 1,
+  },
+  logoutModalContent: {
+    flexGrow: 1,
+  },
+  logoutModalTitle: {
+    textAlign: 'center',
+    fontFamily: designTokens.typography.family.semiBold,
+  },
+  logoutModalMessage: {
+    marginTop: designTokens.space.sm,
+    textAlign: 'center',
+  },
+  logoutModalDivider: {
+    marginTop: designTokens.space.xl,
+  },
+  logoutModalActions: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  logoutModalAction: {
+    flex: 1,
+    minHeight: designTokens.size.controlLg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: designTokens.space.sm,
+    borderRadius: designTokens.radius.smallControl,
+  },
+  logoutModalActionPressed: {
+    backgroundColor: designTokens.color.brand.tint,
+  },
+  logoutModalActionDivider: {
+    width: designTokens.border.subtle.width,
+    minHeight: designTokens.size.controlLg,
+    backgroundColor: designTokens.color.divider,
+  },
   languageOptions: {
     gap: designTokens.space.sm,
   },
@@ -760,12 +1281,5 @@ const styles = StyleSheet.create({
   },
   languageOptionPressed: {
     backgroundColor: designTokens.color.brand.tint,
-  },
-  signOutMessage: {
-    marginBottom: designTokens.space.xs,
-  },
-  cancelButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });
