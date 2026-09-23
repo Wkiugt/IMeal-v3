@@ -117,25 +117,76 @@ Calling a protected endpoint without a Bearer token must also return `401`.
 
 ## 5. Test the mobile app
 
-### Same development machine, emulator, or phone
+Use one of these connectivity modes. Start the API first; it listens on `0.0.0.0:3000`.
 
-Start Expo without setting an API IP value:
+### Android Emulator or Android over USB
 
-```powershell
-corepack yarn workspace @imeal/mobile start --lan
-```
-
-Expo derives `http://<Metro-host>:3000/api` once from the Metro session; every connected device uses that endpoint. The phone and development machine must be on the same network, the API must listen on `0.0.0.0:3000`, and Windows Firewall must allow inbound TCP port `3000` plus Metro port `8081`.
-
-If the phone is outside the LAN or the LAN QR resolves to `127.0.0.1`, use the workspace tunnel command:
+Install Expo Go SDK 51 from [expo.dev/go](https://expo.dev/go); the current store build may only support the latest SDK. With one ADB target, run:
 
 ```powershell
-corepack yarn workspace @imeal/mobile start:tunnel
+corepack yarn workspace @imeal/mobile android:local
 ```
 
-The command loads `../../.env` before starting Expo. Set `EXPO_PUBLIC_API_URL` in the repository-root `.env` to the API tunnel origin with `/api`, for example `https://<api-tunnel>.ngrok-free.app/api`. The Expo tunnel URL serves the JavaScript bundle only; it is not the API URL. Restart Metro whenever the API tunnel URL changes.
+The script reverses Metro `8081` and API `3000` through ADB, then runs Expo with `--localhost`. Requirements: `adb` on `PATH`, one connected target, and Expo Go SDK 51.
 
-The tunnel requires Internet access on both devices. `@expo/ngrok` is a mobile workspace development dependency.
+For multiple targets, choose a serial and reverse ports explicitly:
+
+```powershell
+adb devices
+adb -s <serial> reverse tcp:8081 tcp:8081
+adb -s <serial> reverse tcp:3000 tcp:3000
+corepack yarn workspace @imeal/mobile start --localhost
+```
+
+Select the target that was reversed from the Expo terminal. Verify with:
+
+```powershell
+adb -s <serial> reverse --list
+```
+
+The app should load its bundle and call `http://127.0.0.1:3000/api` through the reverse.
+
+### Android phone on the same LAN
+
+Leave `EXPO_PUBLIC_API_URL` empty for this session. Allow inbound TCP `3000` and `8081` in Windows Firewall, confirm the phone and workstation share a LAN, and run:
+
+```powershell
+corepack yarn workspace @imeal/mobile start:lan
+```
+
+Scan the QR code. Expo discovery makes the app use `http://<Metro-host>:3000/api`. Do not run ngrok or cloudflared for this mode.
+
+### Android phone outside the LAN
+
+Remote mode uses two independent user-owned endpoints:
+
+- ngrok v3 for the API on port `3000`; its URL ends with `/api`.
+- A public HTTP/WebSocket proxy for Metro on port `8081`; Cloudflare Quick Tunnel is the documented fallback.
+
+Start a temporary LAN Metro session, create both endpoints, and keep both tunnels alive:
+
+```powershell
+ngrok http 3000
+corepack yarn workspace @imeal/mobile start:lan
+cloudflared tunnel --url http://localhost:8081
+```
+
+Set the resulting origins in the ignored root `.env`:
+
+```dotenv
+EXPO_PUBLIC_API_URL=https://<api-id>.ngrok-free.app/api
+EXPO_PACKAGER_PROXY_URL=https://<metro-id>.trycloudflare.com
+```
+
+Stop the temporary Metro session, then restart it with:
+
+```powershell
+corepack yarn workspace @imeal/mobile start:remote
+```
+
+The API ngrok URL and Metro proxy URL are different endpoints. Restart `start:remote` whenever either URL changes. Cloudflare Quick Tunnel is for Metro only; do not use it for the API because kitchen realtime requires SSE. If `cloudflared` is unavailable, use another user-owned public HTTP/WebSocket reverse proxy to `localhost:8081`.
+
+Never use Expo's built-in tunnel mode or restore its removed tunnel dependency. `Cannot read properties of undefined (reading 'body')` identifies the Expo shared-tunnel failure, not an API ngrok outage.
 
 For web, Android, or iOS targets, use the corresponding Expo command:
 
@@ -145,7 +196,7 @@ corepack yarn workspace @imeal/mobile android
 corepack yarn workspace @imeal/mobile ios
 ```
 
-Set `EXPO_PUBLIC_API_URL` only for production or when using an Expo tunnel, reverse proxy, or non-default API port.
+Set `EXPO_PUBLIC_API_URL` only for production, remote mode, a reverse proxy, or a non-default API port.
 
 ### Staff checklist
 
