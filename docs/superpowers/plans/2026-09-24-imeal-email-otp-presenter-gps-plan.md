@@ -44,7 +44,7 @@
 | File | Action | Responsibility after implementation |
 | --- | --- | --- |
 | `packages/domain/prisma/schema.prisma` | Modify | OTP allowlist/challenge/outbox, opaque sessions, locations, roster assignments, serving verification and immutable attribution models; preserve effective/history relations. |
-| `packages/domain/prisma/migrations/<timestamp>_email_otp_presenter_gps/migration.sql` | Create via Prisma migration | Relational tables, enums, indexes, constraints, and no fabricated location/employee rows. |
+| `packages/domain/prisma/migrations/20260924000000_email_otp_presenter_gps/migration.sql` | Create via Prisma migration | Relational tables, enums, indexes, constraints, and no fabricated location/employee rows. |
 | `packages/contracts/src/v1/auth.ts` | Create | OTP request/verify, session/logout, safe auth errors, and current-user response schemas. |
 | `packages/contracts/src/v1/locations.ts` | Create | Four-location records, roster import rows/results, GPS policy and admin import contracts. |
 | `packages/contracts/src/v1/pickup.ts` | Modify | Exact intent, QR, resolve/confirm, presenter evidence, location context, stable GPS/session/idempotency errors. |
@@ -72,7 +72,7 @@
 | `apps/api/src/admin/allowlist/allowlist.controller.ts` | Create | Authorized allowlist management without admin-role lifecycle. |
 | `apps/api/src/admin/**/*.spec.ts` | Create/Modify | Permission, atomic import, audit, no-fabricated-data tests. |
 | `apps/api/src/pickup/pickup.service.ts` | Modify | Exact QR/intent resolution, presenter GPS verification, location binding, transaction revalidation, actor snapshots, idempotency. |
-| `apps/api/src/pickup/pickup.controller.ts` | Modify | Resolve and confirm request contracts, authenticated presenter evidence, stable errors. |
+| `apps/api/src/pickup/pickup.controller.ts` | Modify | Generate QR accepts authenticated presenter evidence; resolve/confirm accept authenticated Kitchen actor and stable errors. |
 | `apps/api/src/pickup/pickup.module.ts` | Modify | Inject location, session, roster, and audit collaborators. |
 | `apps/api/src/pickup/pickup.service.spec.ts` | Modify | Exact-set, GPS, location, timing, delegation, race, idempotency and all-or-nothing tests. |
 | `apps/api/test/pickup.e2e-spec.ts` | Modify | HTTP contract and authorization coverage for resolve/confirm. |
@@ -86,7 +86,9 @@
 | `apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx` | Modify | Resolve/confirm exact intent; Kitchen sends no GPS and reviews verification status. |
 | `apps/mobile/src/i18n/translations.ts` | Modify | Safe OTP, GPS explanation, Retry/Refresh, conflict and privacy copy. |
 | `apps/mobile/src/api/*.test.ts` and pickup screen tests | Modify/Create | Transport and observable recovery behavior. |
-| `apps/admin-web/src/**` | Create/Modify | Location, allowlist, roster import, scanner assignment and audit views under explicit permissions; never admin-role grant/revoke. |
+| `apps/admin-web/src/main.ts` | Modify | Admin Web entry point for location, allowlist, roster, scanner and audit operations. |
+| `apps/admin-web/src/styles.css` | Modify | Admin operation layout, validation states and redacted evidence presentation. |
+| `apps/admin-web/src/admin-operations.ts` | Create | Named pure functions for roster preview rendering data, safe audit projection and operation request shaping. |
 | `.env.example` | Modify | OTP provider/config, session secrets/expiry, GPS thresholds defaults/overrides and production bypass guard, without secrets. |
 | `apps/api/src/config/environment.ts` and worker config | Modify | Validate production-safe configuration and reject unsafe bypass/provider settings. |
 | `docs/05-backend-structure.md` | Modify | Canonical auth/session/location/serving table and flow updates. |
@@ -161,13 +163,15 @@ export type ExactPickupIntent = {
   registrationIds: string[]; // sorted, unique, non-empty
   nonce: string;
 };
+export type GenerateQrInput = {
+  registrationIds: string[];
+  presenterEvidence: PresenterLocationEvidence;
+};
 export type ResolvePickupInput = {
   qr: string;
-  presenterEvidence: PresenterLocationEvidence;
 };
 export type ConfirmPickupInput = {
   pickupSessionId: string;
-  registrationIds: string[]; // must byte-for-byte match resolved sorted set
   idempotencyKey: string;
 };
 export type ServingVerification = {
@@ -194,7 +198,7 @@ export type ServingVerification = {
 
 **Interfaces:**
 - Consumes: existing `MealDateSchema`, UTC schema conventions, existing pickup option schemas and envelope/error conventions.
-- Produces: `RequestOtpInput`, `RequestOtpResponse`, `VerifyOtpInput`, `VerifyOtpResponse`, `LogoutResponse`, `PresenterLocationEvidence`, `LocationPolicy`, `RosterImportRow`, `ExactPickupIntent`, `ResolvePickupInput`, `ConfirmPickupInput`, and stable codes consumed by all API/mobile/Admin tasks.
+- Produces: `RequestOtpInput`, `RequestOtpResponse`, `VerifyOtpInput`, `VerifyOtpResponse`, `LogoutResponse`, `PresenterLocationEvidence`, `LocationPolicy`, `RosterImportRow`, `ExactPickupIntent`, `GenerateQrInput`, `ResolvePickupInput`, `ConfirmPickupInput`, and stable codes consumed by all API/mobile/Admin tasks.
 
 - [ ] **Step 1: Write the failing contract tests**
 
@@ -211,7 +215,7 @@ expect(v1.PresenterLocationEvidenceSchema.parse({
   longitude: 106.69,
   accuracyMeters: 12,
 })).toMatchObject({ accuracyMeters: 12 });
-expect(() => v1.ConfirmPickupSchema.parse({ pickupSessionId: 's', registrationIds: [], idempotencyKey: 'k' })).toThrow();
+expect(() => v1.ConfirmPickupSchema.parse({ pickupSessionId: 's', idempotencyKey: '' })).toThrow();
 expect(v1.PickupErrorCodeSchema.options).toEqual(expect.arrayContaining([
   'OTP_REQUEST_ACCEPTED',
   'OTP_INVALID_OR_EXPIRED',
@@ -268,7 +272,7 @@ git commit -m "feat(contracts): add otp location and exact pickup schemas"
 
 **Files:**
 - Modify: `packages/domain/prisma/schema.prisma`
-- Create via Prisma: `packages/domain/prisma/migrations/<timestamp>_email_otp_presenter_gps/migration.sql`
+- Create: `packages/domain/prisma/migrations/20260924000000_email_otp_presenter_gps/migration.sql`
 - Modify: `packages/domain/test/db-connection.spec.ts` if migration fixtures require assertions
 - Test: `packages/domain/test/registration.test.ts`, new `packages/domain/test/emailOtpLocationServing.test.ts`
 
@@ -670,23 +674,28 @@ git commit -m "feat(admin): add approved locations roster imports and snapshots"
 **Files:**
 - Modify: `apps/api/src/pickup/pickup.service.ts`
 - Modify: `apps/api/src/pickup/pickup.controller.ts`, `apps/api/src/pickup/pickup.module.ts`
-- Modify: `apps/api/src/pickup/pickup.service.spec.ts`
-- Modify: `apps/api/test/pickup.e2e-spec.ts`
-
-**Interfaces:**
-- Consumes: `SessionService`, `LocationsService`, registration snapshots, accepted delegations, `ResolvePickupInput`, and QR timing helpers.
+- Consumes: `SessionService`, `LocationsService`, registration snapshots, accepted delegations, `GenerateQrInput`, `ResolvePickupInput`, and QR timing helpers.
 - Produces:
   - `PickupService.getPickupOptions(presenterUserId: string): Promise<PickupOptionsResponse>`
-  - `PickupService.generateQr(presenterUserId: string, registrationIds: string[]): Promise<GenerateQrResponse>`
-  - `PickupService.resolvePickup(input: ResolvePickupInput, presenterUserId: string): Promise<ResolveServingResponse>`
+  - `PickupService.generateQr(presenterUserId: string, input: GenerateQrInput): Promise<GenerateQrResponse>`
+  - `PickupService.resolvePickup(input: ResolvePickupInput, kitchenActor: AuthenticatedUser): Promise<ResolveServingResponse>`
   - `PickupService.verifyExactIntent(qr: SignedQr, current: EligiblePickupSet): ExactPickupIntent`
-  - `PickupService.verifyPresenterEvidence(intent: ExactPickupIntent, evidence: PresenterLocationEvidence): Promise<ServingVerification>`
-
+  - `PickupService.verifyStoredPresenterEvidence(sessionOrIntentId: string, at: Date): Promise<ServingVerification>`
 - [ ] **Step 1: Write failing exact-intent/GPS tests**
 
 ```ts
 it('rejects zero selection and does not issue a usable QR', async () => {
-  await expect(service.generateQr('presenter-1', [])).rejects.toMatchObject({ response: { code: 'PICKUP_INTENT_REQUIRED' } });
+  await expect(service.generateQr('presenter-1', {
+    registrationIds: [],
+    presenterEvidence: validEvidence,
+  })).rejects.toMatchObject({ response: { code: 'PICKUP_INTENT_REQUIRED' } });
+});
+
+it('requires presenter evidence on every QR generation or refresh', async () => {
+  await expect(service.generateQr('presenter-1', {
+    registrationIds: ['reg-a'],
+    presenterEvidence: staleEvidence,
+  })).rejects.toMatchObject({ response: { code: 'GPS_RETRY_REQUIRED' } });
 });
 
 it('preserves the signed sorted set and rejects a stale item without substitution', async () => {
@@ -694,14 +703,23 @@ it('preserves the signed sorted set and rejects a stale item without substitutio
   // entire intent instead of returning reg-a.
 });
 
-it('rejects a subset or expansion at confirm time', async () => {
-  await expect(service.confirmPickup({ pickupSessionId: 's', registrationIds: ['reg-a'], idempotencyKey: 'k' }, 'kitchen-1'))
-    .rejects.toMatchObject({ response: { code: 'PICKUP_INTENT_CONFLICT' } });
+it('resolve accepts only a QR and authenticated Kitchen actor, then revalidates stored evidence', async () => {
+  const resolved = await service.resolvePickup({ qr }, kitchenActor);
+  expect(resolved.items.map((item) => item.registrationId)).toEqual(['reg-a']);
+  // No presenter evidence is sent by Kitchen; stored evidence and current policy
+  // are revalidated server-side.
 });
 
-it('requires valid fresh presenter evidence for the registration location', async () => {
+it('rejects a changed resolved intent at confirm time', async () => {
+  await expect(service.confirmPickup({
+    pickupSessionId: 's',
+    idempotencyKey: 'k',
+  }, kitchenActor)).rejects.toMatchObject({ response: { code: 'PICKUP_INTENT_CONFLICT' } });
+});
+
+it('requires valid fresh presenter evidence before QR generation', async () => {
   // stale, inaccurate, denied/missing and outside-geofence evidence all return
-  // GPS_RETRY_REQUIRED; Kitchen principal supplies no GPS and is not evaluated.
+  // GPS_RETRY_REQUIRED at generate/refresh; Kitchen supplies no GPS.
 });
 ```
 
@@ -713,21 +731,23 @@ Run:
 yarn workspace @imeal/api exec vitest run src/pickup/pickup.service.spec.ts test/pickup.e2e-spec.ts
 ```
 
-Expected: FAIL because current verification filters intent, permits confirm subsets, has no presenter evidence, and does not bind server-resolved location.
+Expected: FAIL because current QR generation accepts only registration IDs, resolve accepts no authenticated Kitchen actor, presenter evidence is not stored at generate/refresh, and confirm still accepts arbitrary registration ID bodies.
 
 - [ ] **Step 3: Implement exact-set and presenter-only verification**
 
-Canonicalize registration IDs by sorting and rejecting duplicates before signing. Include presenter, meal date, exact set, expiry, nonce and signature in the QR. At resolve:
+Canonicalize registration IDs by sorting and rejecting duplicates before signing. Require `GenerateQrInput = { registrationIds, presenterEvidence }` on every generate/refresh call. Include presenter, meal date, exact set, expiry, nonce and signature in the QR, while persisting the validated presenter evidence result against the generated intent/session context.
 
-1. Authenticate the presenter via opaque session.
+At resolve, accept only `{ qr }` plus the authenticated Kitchen actor. Do not accept presenter GPS from Kitchen. The server must:
+
+1. Authenticate Kitchen and require `kitchen.serve`.
 2. Revalidate every signed item, current registration/delegation state, presenter/receiver relationship, registration service-location snapshot and serving eligibility.
 3. Resolve one exact location from server-side registration/roster context; never accept client location selection.
-4. Evaluate fresh foreground evidence using the effective location policy.
+4. Revalidate the stored presenter evidence against the current effective location policy, freshness and accuracy rules.
 5. Persist only safe verification result/timestamp/accuracy/location ID according to retention controls.
 6. Create a 30-second session bound to exact set, QR hash, presenter, location and verification record.
 7. Reject all stale, changed, missing, invalid, replayed or mismatched state with stable recovery codes and no substitution.
 
-Require one item to be auto-selected only in the mobile presentation layer; the API must always receive an explicit non-empty exact set.
+Require one item to be auto-selected only in the mobile presentation layer; the API must always receive an explicit non-empty exact set and fresh presenter evidence at generate/refresh.
 
 - [ ] **Step 4: Run the GREEN pickup tests**
 
@@ -737,13 +757,13 @@ Run:
 yarn workspace @imeal/api exec vitest run src/pickup/pickup.service.spec.ts test/pickup.e2e-spec.ts
 ```
 
-Expected: PASS for QR 5-second TTL/2-second skew, exact-set rejection, 30-second session binding, presenter-only GPS, server-side location selection and safe failure codes.
+Expected: PASS for QR 5-second TTL/2-second skew, exact-set rejection, 30-second session binding, presenter-only GPS captured at generate/refresh, Kitchen resolve without GPS, server-side location selection and safe failure codes.
 
 - [ ] **Step 5: Commit exact intent and resolve**
 
 ```sh
 git add apps/api/src/pickup apps/api/test/pickup.e2e-spec.ts
- git commit -m "feat(pickup): enforce exact intent and presenter gps at resolve"
+git commit -m "feat(pickup): enforce exact intent and presenter gps at qr generation"
 ```
 
 ---
@@ -796,7 +816,7 @@ Expected: FAIL because confirm currently accepts arbitrary session subsets, reco
 
 - [ ] **Step 3: Implement the transaction cutover**
 
-Require `kitchen.serve` on the current Kitchen principal. Bind idempotency to caller and canonical request body/intent hash. In one transaction, lock registrations and relevant delegations in deterministic order, revalidate account status, exact set, session expiry, serving window, menu/registration/delegation state, location evidence, and duplicate serving constraints. Insert either all serving/audit rows or none. Mark accepted delegation completed only in the same transaction. Set session consumed/expired atomically. Return the original result on exact idempotent retry and an idempotency conflict for changed body.
+Require `kitchen.serve` on the current Kitchen principal. Bind idempotency to caller and the canonical pickup session/intent body. In one transaction, load the exact sorted registration set from `pickupSessionId`, lock registrations and relevant delegations in deterministic order, revalidate account status, exact set, session expiry, serving window, menu/registration/delegation state, stored presenter evidence, and duplicate serving constraints. Insert either all serving/audit rows or none. Mark accepted delegation completed only in the same transaction. Set session consumed/expired atomically. Return the original result on exact idempotent retry and an idempotency conflict for a changed key/body.
 
 Do not require Kitchen GPS or Kitchen-to-location match. Preserve owner attribution for proxy pickup and record presenter/receiver separately. Emit realtime events only after commit.
 
@@ -834,14 +854,14 @@ git add apps/api/src/pickup apps/api/test/pickup.e2e-spec.ts packages/domain/tes
 - Modify: `apps/mobile/app.config.ts`, `apps/mobile/package.json` only if the approved Expo location dependency is not already present
 - Test: `apps/mobile/src/api/pickupAPI.test.ts`, new `apps/mobile/src/screens/pickup/PickupIntentScreen.test.tsx`
 
-**Interfaces:**
 - Consumes: auth/location/pickup contracts from Tasks 1, 3, 6–8.
 - Produces:
   - `authAPI.requestOtp(email): Promise<RequestOtpResponse>`
   - `authAPI.verifyOtp(input): Promise<VerifyOtpResponse>`
-  - `pickupAPI.resolvePickup(token, input): Promise<ResolveServingResponse>`
-  - `pickupAPI.confirmPickup(token, input): Promise<ConfirmPickupResponse>`
-  - `PickupIntentScreen` foreground lifecycle that starts/stops location collection only while actively presenting/confirming.
+  - `pickupAPI.generateQr(token, input: GenerateQrInput): Promise<GenerateQrResponse>`
+  - `pickupAPI.resolvePickup(token, input: ResolvePickupInput): Promise<ResolveServingResponse>` for Kitchen QR scanning; `input` contains only `qr`
+  - `pickupAPI.confirmPickup(token, input: ConfirmPickupInput): Promise<ConfirmPickupResponse>` where `input` contains only `pickupSessionId` and `idempotencyKey`
+  - `PickupIntentScreen` foreground lifecycle that captures presenter evidence before every QR generate/refresh and stops location collection after leaving the flow or completion.
 
 - [ ] **Step 1: Write failing mobile tests**
 
@@ -850,11 +870,16 @@ it('auto-selects exactly one option but requires explicit selection for multiple
   // render options and assert no QR request is made until a multi-item selection is explicit
 });
 
+it('sends presenter evidence with every QR generation and refresh', async () => {
+  // assert generateQr receives { registrationIds, presenterEvidence } and refresh repeats
+  // the evidence capture; no evidence is sent from KitchenScannerScreen.
+});
+
 it.each(['GPS_RETRY_REQUIRED', 'GPS_UNAVAILABLE', 'GPS_STALE', 'GPS_INACCURATE'])('offers only Retry and Refresh for %s', async (code) => {
   // assert no manual bypass, alternate location, or successful confirm action is rendered
 });
 
-it('stops foreground location collection when screen loses focus or request completes', async () => {
+it('stops foreground location collection when screen loses focus or QR generation completes', async () => {
   // mock Expo location subscription and assert cleanup on blur/completion
 });
 ```
@@ -867,7 +892,7 @@ Run:
 yarn workspace @imeal/mobile exec vitest run src/api/pickupAPI.test.ts src/screens/pickup/PickupIntentScreen.test.tsx
 ```
 
-Expected: FAIL because auth/resolve/confirm wrappers, foreground evidence lifecycle, and explicit multi-item/recovery behavior are not implemented.
+Expected: FAIL because `generateQr` does not accept presenter evidence, resolve/confirm wrappers have not adopted their reduced request bodies, and foreground evidence lifecycle is not implemented.
 
 - [ ] **Step 3: Implement mobile transport and foreground flow**
 
@@ -875,14 +900,16 @@ Add thin authenticated fetch wrappers with strict response parsing and stable `M
 
 - Keep one eligible item auto-selected.
 - For multiple options, require an explicit selection before QR generation.
+- Capture a fresh foreground presenter fix and call `pickupAPI.generateQr(token, { registrationIds, presenterEvidence })` on initial generation and every refresh.
+- Keep KitchenScannerScreen's `pickupAPI.resolvePickup(token, { qr })` request free of GPS/evidence; the API revalidates evidence stored during presenter generation.
+- Call `pickupAPI.confirmPickup(token, { pickupSessionId, idempotencyKey })`; never send registration IDs in the confirm body because the server loads the exact set from the session.
 - Sort selected IDs and clear the QR whenever selection, focus, registration/delegation state, GPS verification state, or eligibility changes.
-- Use the approved Expo foreground location API only while the presenter is actively in the pickup flow; request permission just-in-time and stop watch/collection on blur, cancel, successful completion or unmount.
-- Send fresh timestamp, latitude, longitude and accuracy to resolve.
+- Use the approved Expo foreground location API only while the presenter is actively generating/refreshing the QR; request permission just-in-time and stop watch/collection on blur, cancel, successful completion or unmount.
 - Render only Retry and Refresh after unavailable/denied/stale/inaccurate/outside-geofence results; never offer a manual bypass or silent location/item fallback.
 - Do not collect owner GPS for delegated items.
 - Explain foreground GPS purpose and retention in Vietnamese/English copy.
 
-Kitchen scanner calls resolve/confirm with the presenter-provided verification context and sends no Kitchen GPS. Confirm submits the exact resolved set and a stable idempotency key.
+Kitchen scanner calls resolve with only the QR and authenticated Kitchen session, then confirms only the resolved pickup session ID and idempotency key. Kitchen sends no GPS.
 
 - [ ] **Step 4: Run the GREEN mobile tests**
 
@@ -892,76 +919,68 @@ Run:
 yarn workspace @imeal/mobile exec vitest run src/api/pickupAPI.test.ts src/screens/pickup/PickupIntentScreen.test.tsx
 ```
 
-Expected: PASS for explicit intent, foreground-only collection, cleanup, safe recovery and exact transport.
+Expected: PASS for explicit intent, evidence-at-generate/refresh, foreground-only collection, cleanup, safe recovery, Kitchen no-GPS resolve and session-only confirm transport.
 
-- [ ] **Step 5: Commit mobile OTP/GPS flow**
-
-```sh
-git add apps/mobile/src/api apps/mobile/src/auth apps/mobile/src/screens/auth apps/mobile/src/screens/pickup apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx apps/mobile/src/i18n/translations.ts apps/mobile/app.config.ts apps/mobile/package.json
- git commit -m "feat(mobile): add otp and presenter gps pickup flow"
-```
 
 ---
 
 ### Task 10: Add Admin Web operations, audit views, and no-admin-role boundary
 
 **Files:**
-- Create/Modify: `apps/admin-web/src/**/locations*`
-- Create/Modify: `apps/admin-web/src/**/roster*`
-- Create/Modify: `apps/admin-web/src/**/allowlist*`
-- Create/Modify: `apps/admin-web/src/**/audit*`
-- Modify: `apps/admin-web/src/**/api*`
-- Test: existing Admin Web test locations or new focused component/API tests matching repository convention
+- Modify: `apps/admin-web/src/main.ts`
+- Modify: `apps/admin-web/src/styles.css`
+- Create: `apps/admin-web/src/admin-operations.ts`
+- Modify: `apps/api/test/admin-operations.e2e-spec.ts`
+- Verification: `apps/admin-web/src/main.ts`, `apps/admin-web/src/styles.css`, `apps/admin-web/src/admin-operations.ts`, `yarn workspace @imeal/admin-web typecheck`, `yarn workspace @imeal/admin-web build`, and manual browser smoke
 
 **Interfaces:**
 - Consumes: admin contracts and endpoints from Task 6, current authenticated session from Task 4.
-- Produces: authorized UI/API calls for location configuration, allowlist records, roster preview/commit, scanner assignments and audit views; no admin-role grant/revoke action.
+- Produces: named pure functions in `admin-operations.ts` for shaping roster preview rows, safe audit projections and operation request payloads; `main.ts` and `styles.css` render authorized location, allowlist, roster, scanner and audit operations without admin-role grant/revoke.
 
-- [ ] **Step 1: Write failing Admin Web contract/UI tests**
+- [ ] **Step 1: Define pure Admin Web operation functions and API/e2e RED coverage**
+
+Create these named pure functions with explicit types:
 
 ```ts
-it('shows roster validation results before commit and blocks partial commit on any failed row', async () => {
-  // assert preview rows, reasons and disabled commit state
-});
-
-it('does not render an admin-role grant or revoke action', () => {
-  // assert role management surface contains staff/kitchen capability management only
-});
-
-it('does not expose raw OTP, session secrets or raw GPS coordinates in audit views', () => {
-  // assert redacted fields and safe verification result are shown
-});
+export function toRosterPreviewRows(result: RosterPreview): ReadonlyArray<RosterPreviewRow>;
+export function toSafeAuditEntry(entry: AuditEntry): SafeAuditEntry;
+export function toRosterImportRequest(rows: ReadonlyArray<RosterImportRow>): RosterImportRequest;
 ```
 
-- [ ] **Step 2: Run the RED Admin Web checks**
+Add or extend `apps/api/test/admin-operations.e2e-spec.ts` for preview-before-commit, atomic row failure, permission denial, redaction and no admin-role mutation. Do not add a Vitest setup or dependency to Admin Web; its package currently provides only `dev`, `build`, and `typecheck`.
 
-Run the focused command matching the Admin Web test runner, for example:
+- [ ] **Step 2: Run the RED API/e2e and Admin Web checks**
+
+Run:
 
 ```sh
-yarn workspace admin-web exec vitest run src/<focused-admin-test>.test.tsx
+yarn workspace @imeal/api exec vitest run test/admin-operations.e2e-spec.ts
+yarn workspace @imeal/admin-web typecheck
 ```
 
-Expected: FAIL because location/allowlist/roster/audit views and redaction rules are absent.
+Expected: API/e2e assertions fail until admin endpoints and pure operation projections exist; Admin Web typecheck fails until the named functions and UI are implemented. There is no Admin Web unit-test command in the current package.
 
 - [ ] **Step 3: Implement the authorized administrative surfaces**
 
-Add forms/tables for approved location records, effective dates/policies, allowlist A, roster preview/commit, scanner assignment and audit results. Require explicit permissions in the API and display row-level import outcomes. Do not provide admin-role lifecycle controls. Do not provide arbitrary exports, fabricated location seed actions, or raw OTP/session/GPS evidence dashboards.
+Add forms/tables in `main.ts` and styles in `styles.css` for approved location records, effective dates/policies, allowlist A, roster preview/commit, scanner assignment and audit results. Use `admin-operations.ts` for pure request shaping and redaction. Require explicit permissions in the API and display row-level import outcomes. Do not provide admin-role lifecycle controls, arbitrary exports, fabricated location seed actions, or raw OTP/session/GPS evidence dashboards.
 
 - [ ] **Step 4: Run the GREEN Admin Web checks**
 
 Run:
 
 ```sh
-yarn workspace admin-web exec vitest run src/<focused-admin-test>.test.tsx
+yarn workspace @imeal/api exec vitest run test/admin-operations.e2e-spec.ts
+yarn workspace @imeal/admin-web typecheck
+yarn workspace @imeal/admin-web build
 ```
 
-Expected: PASS for preview-before-commit, atomic import messaging, permission boundaries, no admin-role action and redacted security evidence.
+Expected: API/e2e coverage passes; Admin Web typecheck and build pass. Then perform a manual browser smoke covering preview-before-commit, atomic import messaging, permission boundaries, no admin-role action and redacted security evidence.
 
 - [ ] **Step 5: Commit Admin Web operations**
 
 ```sh
-git add apps/admin-web/src
- git commit -m "feat(admin-web): manage locations roster allowlist and audit"
+git add apps/admin-web/src/main.ts apps/admin-web/src/styles.css apps/admin-web/src/admin-operations.ts apps/api/test/admin-operations.e2e-spec.ts
+git commit -m "feat(admin-web): manage locations roster allowlist and audit"
 ```
 
 ---
@@ -1072,16 +1091,16 @@ The reviewer must verify observable behavior for every approved acceptance crite
 
 ## Self-review and scope guard
 
-- [ ] Spec sections 1–2 are covered by Tasks 3–5 and the global constraints.
-- [ ] Spec sections 3–4 are covered by Task 6 and Task 2, with no fabricated operational data.
-- [ ] Spec sections 5–6 are covered by Tasks 7–9, including exact intent, GPS, QR/session timing, delegation and atomic confirm.
-- [ ] Spec section 7 is covered by Tasks 6, 8 and 10–11, including audit and account/session disable boundaries.
-- [ ] Spec section 8 is covered by Tasks 3, 5, 7, 9 and 11, including minimization and residual risk.
-- [ ] All 15 acceptance criteria have an explicit task and verification assertion.
-- [ ] No task contains an unassigned type/function name; cross-task interfaces above are canonical.
-- [ ] No implementation step invents location names, addresses, coordinates, employee identities or roster assignments.
-- [ ] No implementation step adds password auth, domain auth, background GPS, owner GPS, network auth, biometric proof, hardware attestation, serving reversal, admin-role grant, or Firebase dual-write.
-- [ ] No production code, build, or test is changed or run as part of creating this plan.
+- [x] Spec sections 1–2 are covered by Tasks 3–5 and the global constraints.
+- [x] Spec sections 3–4 are covered by Task 6 and Task 2, with no fabricated operational data.
+- [x] Spec sections 5–6 are covered by Tasks 7–9, including evidence at QR generate/refresh, exact intent, GPS, QR/session timing, delegation and atomic confirm.
+- [x] Spec section 7 is covered by Tasks 6, 8 and 10–11, including audit and account/session disable boundaries.
+- [x] Spec section 8 is covered by Tasks 3, 5, 7, 9 and 11, including minimization and residual risk.
+- [x] All 15 acceptance criteria have an explicit task and verification assertion.
+- [x] No task contains an unassigned type/function name; cross-task interfaces above are canonical.
+- [x] No implementation step invents location names, addresses, coordinates, employee identities or roster assignments.
+- [x] No implementation step adds password auth, domain auth, background GPS, owner GPS, network auth, biometric proof, hardware attestation, serving reversal, admin-role grant, or Firebase dual-write.
+- [x] No production code, build, or test is changed or run as part of creating this plan.
 
 Plan complete and saved to `docs/superpowers/plans/2026-09-24-imeal-email-otp-presenter-gps-plan.md`. Two execution options:
 
