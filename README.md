@@ -113,13 +113,58 @@ Chọn target đã reverse từ terminal Expo.
 
 ### Điện thoại Android cùng LAN
 
-Để trống `EXPO_PUBLIC_API_URL`, giữ API bind `0.0.0.0:3000`, cho phép inbound TCP `3000` và `8081` trong Windows Firewall, rồi chạy:
+Điện thoại và máy Windows phải ở cùng một LAN. API phải bind trên `0.0.0.0:3000`; cài đúng Expo Go SDK 51, cho phép inbound TCP `3000` và `8081` trong Windows Firewall, và để trống `EXPO_PUBLIC_API_URL`. Chế độ LAN không dùng ngrok hoặc cloudflared.
+
+Lệnh chuẩn và duy nhất cho flow này là:
 
 ```powershell
 corepack yarn workspace @imeal/mobile start:lan
 ```
 
-Quét QR trên điện thoại. Không dùng ngrok trong chế độ LAN.
+Không dùng `corepack yarn workspace @imeal/mobile start --lan` cho điện thoại vật lý. Launcher `start:lan` tự chọn địa chỉ LAN và đặt `REACT_NATIVE_PACKAGER_HOSTNAME` để Expo quảng bá đúng host. Trước khi quét QR, output Expo phải có:
+
+```text
+Metro waiting on exp://<LAN-IP>:8081
+```
+
+`<LAN-IP>` là IPv4 của máy Windows trên LAN đang dùng. `exp://127.0.0.1:8081` là sai đối với điện thoại vật lý; điện thoại sẽ không truy cập được Metro.
+
+Thông thường không cần đặt `IMEAL_LAN_HOST`. Chỉ đặt biến này khi launcher báo có nhiều IPv4 ứng viên (ví dụ Wi-Fi, VPN, Tailscale hoặc Hyper-V). Khi đó, xem danh sách địa chỉ và chọn IPv4 của interface LAN hiện tại:
+
+```powershell
+Get-NetIPAddress -AddressFamily IPv4 |
+  Where-Object { $_.IPAddress -notlike '127.*' } |
+  Format-Table InterfaceAlias, IPAddress
+$env:IMEAL_LAN_HOST = '<LAN IPv4>'
+corepack yarn workspace @imeal/mobile start:lan
+```
+
+### Smoke test thủ công Android LAN
+
+Sau khi quét QR và Expo Go mở ứng dụng, kiểm tra ngắn theo thứ tự:
+
+1. Đăng nhập vai trò staff bằng `staff01` (mật khẩu lấy từ `LOCAL_AUTH_USERS`).
+2. Tạo đăng ký và mở QR đăng ký/nhận suất.
+3. Đăng nhập vai trò kitchen bằng `kitchen01`.
+4. Mở scanner và cấp quyền camera khi được hỏi.
+5. Quét QR nhận suất của staff.
+6. Kiểm tra lại thông tin trong màn hình review.
+7. Xác nhận serving và kiểm tra trạng thái thành công.
+
+### Khắc phục nhanh Android LAN
+
+- **`Something went wrong`:** kiểm tra output có `Metro waiting on exp://<LAN-IP>:8081`, điện thoại và máy ở cùng LAN, Expo Go SDK 51 và Firewall đã mở TCP `3000`/`8081`. Dừng Metro bằng `Ctrl+C`, rồi chạy lại `start:lan`.
+- **QR có host sai:** nếu QR là `exp://127.0.0.1:8081` hoặc IPv4 không thuộc LAN đang dùng, dừng Metro và chạy lại lệnh chuẩn. Chỉ khi launcher báo nhiều ứng viên mới đặt `IMEAL_LAN_HOST` theo hướng dẫn trên.
+- **Không kết nối được API:** bảo đảm API đang chạy, `EXPO_PUBLIC_API_URL` để trống, kiểm tra `curl.exe http://localhost:3000/health`, rồi kiểm tra Firewall TCP `3000` và cùng LAN trước khi chạy lại `start:lan`.
+- **Metro cũ hoặc port `8081` bị chiếm:** dừng terminal Metro bằng `Ctrl+C`. Nếu vẫn còn listener, xem process và dừng đúng PID của Metro:
+
+  ```powershell
+  Get-NetTCPConnection -LocalPort 8081 -State Listen |
+    Select-Object OwningProcess
+  Stop-Process -Id <PID>
+  ```
+
+  Sau đó chạy lại `corepack yarn workspace @imeal/mobile start:lan`.
 
 ### Điện thoại ngoài LAN
 

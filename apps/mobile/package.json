@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "expo start",
-    "start:lan": "expo start --lan",
+    "start:lan": "node ../../scripts/start-imeal-lan.js",
     "android:local": "adb reverse tcp:8081 tcp:8081 && adb reverse tcp:3000 tcp:3000 && expo start --localhost --android",
     "start:remote": "dotenv -e ../../.env -- expo start --lan",
     "android": "expo start --android",

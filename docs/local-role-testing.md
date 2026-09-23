@@ -148,13 +148,27 @@ The app should load its bundle and call `http://127.0.0.1:3000/api` through the 
 
 ### Android phone on the same LAN
 
-Leave `EXPO_PUBLIC_API_URL` empty for this session. Allow inbound TCP `3000` and `8081` in Windows Firewall, confirm the phone and workstation share a LAN, and run:
+Expo SDK 51 on Windows can advertise the wrong Metro URL, `exp://127.0.0.1:8081`, because its older `internal-ip`/`default-gateway` path expects WMIC, which may be missing. The phone cannot fetch Metro and Expo Go shows `Something went wrong`.
+
+Install Expo Go SDK 51 from [expo.dev/go](https://expo.dev/go). Keep `EXPO_PUBLIC_API_URL` empty, ensure the API binds to `0.0.0.0:3000`, allow inbound TCP `3000` and `8081` in Windows Firewall, and run the normal command:
 
 ```powershell
 corepack yarn workspace @imeal/mobile start:lan
 ```
 
-Scan the QR code. Expo discovery makes the app use `http://<Metro-host>:3000/api`. Do not run ngrok or cloudflared for this mode.
+The root Node launcher used by `start:lan` selects the LAN IPv4 and sets `REACT_NATIVE_PACKAGER_HOSTNAME=<LAN-IP>`, which fixes the advertised host. Expo output must show `exp://<LAN-IP>:8081`, never `exp://127.0.0.1:8081`; stop and rerun if it shows the loopback address.
+
+If the launcher reports multiple candidate IPv4 addresses, list Windows IPv4 addresses and select the address for the active LAN:
+
+```powershell
+Get-NetIPAddress -AddressFamily IPv4 |
+  Where-Object { $_.IPAddress -notlike '127.*' } |
+  Format-Table InterfaceAlias, IPAddress
+$env:IMEAL_LAN_HOST = "<LAN IPv4>"
+corepack yarn workspace @imeal/mobile start:lan
+```
+
+Do not use ngrok or cloudflared for LAN mode.
 
 ### Android phone outside the LAN
 
@@ -336,9 +350,11 @@ Then restart the API.
 
 ### Mobile phone cannot reach the API
 
-- Start Expo with `corepack yarn workspace @imeal/mobile start --lan`; no API IP value is required.
-- Expo derives `http://<Metro-host>:3000/api` once for every connected device.
-- Confirm the phone and development machine share a LAN, Windows Firewall allows port `3000`, and the API listens on `0.0.0.0`.
+- Run `corepack yarn workspace @imeal/mobile start:lan`; do not use `start --lan`.
+- Keep `EXPO_PUBLIC_API_URL` empty. The launcher sets `REACT_NATIVE_PACKAGER_HOSTNAME`; Expo output must show `exp://<LAN-IP>:8081`, not `exp://127.0.0.1:8081`.
+- If the launcher reports multiple candidate IPv4 addresses, set `IMEAL_LAN_HOST` to the active LAN IPv4 before rerunning.
+- Confirm the phone and development machine share a LAN, Windows Firewall allows inbound TCP `3000` and `8081`, and the API listens on `0.0.0.0:3000`.
+- Do not use ngrok or cloudflared for LAN mode.
 
 ### Login returns `401`
 

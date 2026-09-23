@@ -57,7 +57,7 @@ Run local Expo targets without setting an API IP value:
 corepack yarn workspace @imeal/mobile web
 corepack yarn workspace @imeal/mobile android
 corepack yarn workspace @imeal/mobile ios
-corepack yarn workspace @imeal/mobile start --lan
+corepack yarn workspace @imeal/mobile start:lan
 ```
 
 The phone and development machine must be on the same LAN. The API listens on `0.0.0.0:3000`; allow inbound TCP port `3000` and Metro port `8081` in the firewall.
