@@ -104,8 +104,8 @@ export interface LocationConfigurationInput {
   networkNotes?: string | null;
   policy: {
     id?: string;
-    latitude: number;
-    longitude: number;
+    latitude?: number;
+    longitude?: number;
     accuracySource: string;
     geofenceRadiusMeters: number;
     maxFixAgeSeconds: number;
@@ -316,21 +316,35 @@ export class LocationsService {
         : asDate(input.policy.effectiveTo);
     validateDateRange(effectiveFrom, effectiveTo);
     validateDateRange(policyEffectiveFrom, policyEffectiveTo);
-    validatePolicy(input.policy);
+    validatePolicyThresholds(input.policy);
 
     return this.prisma.$transaction(async (tx) => {
-      if (input.policy.id) {
-        const existingPolicy = await tx.locationPolicy.findUnique({
-          where: { id: input.policy.id },
-          select: { locationId: true },
+      const existingPolicy = input.policy.id
+        ? await tx.locationPolicy.findUnique({
+            where: { id: input.policy.id },
+            select: { locationId: true, latitude: true, longitude: true },
+          })
+        : null;
+      if (
+        input.policy.id &&
+        (!existingPolicy || existingPolicy.locationId !== locationId)
+      ) {
+        throw new BadRequestException({
+          code: 'INVALID_LOCATION_POLICY',
+          message: 'Location policy does not belong to location.',
         });
-        if (!existingPolicy || existingPolicy.locationId !== locationId) {
-          throw new BadRequestException({
-            code: 'INVALID_LOCATION_POLICY',
-            message: 'Location policy does not belong to location.',
-          });
-        }
       }
+
+      const latitude = input.policy.latitude ?? existingPolicy?.latitude;
+      const longitude = input.policy.longitude ?? existingPolicy?.longitude;
+      if (latitude === undefined || longitude === undefined) {
+        throw new BadRequestException({
+          code: 'LOCATION_COORDINATES_REQUIRED',
+          message: 'Location policy coordinates are required for a new policy.',
+        });
+      }
+      const resolvedPolicy = { ...input.policy, latitude, longitude };
+      validatePolicy(resolvedPolicy);
 
       const locationData = {
         shortCode: normalizeCode(input.shortCode),
@@ -373,8 +387,8 @@ export class LocationsService {
           });
 
       const policyData = {
-        latitude: input.policy.latitude,
-        longitude: input.policy.longitude,
+        latitude: resolvedPolicy.latitude,
+        longitude: resolvedPolicy.longitude,
         accuracySource: input.policy.accuracySource.trim(),
         geofenceRadiusMeters: input.policy.geofenceRadiusMeters,
         maxFixAgeSeconds: input.policy.maxFixAgeSeconds,
@@ -443,14 +457,28 @@ function validateDateRange(from: Date, to: Date | null): void {
   }
 }
 
-function validatePolicy(policy: LocationConfigurationInput['policy']): void {
+type ResolvedLocationPolicy = Omit<
+  LocationConfigurationInput['policy'],
+  'latitude' | 'longitude'
+> & {
+  latitude: number;
+  longitude: number;
+};
+
+function invalidLocationPolicy(): never {
+  throw new BadRequestException({
+    code: 'VALIDATION_ERROR',
+    message: 'Invalid location policy.',
+  });
+}
+
+function validatePolicyThresholds(
+  policy: Pick<
+    LocationConfigurationInput['policy'],
+    'geofenceRadiusMeters' | 'maxFixAgeSeconds' | 'maxAccuracyMeters'
+  >,
+): void {
   if (
-    !Number.isFinite(policy.latitude) ||
-    policy.latitude < -90 ||
-    policy.latitude > 90 ||
-    !Number.isFinite(policy.longitude) ||
-    policy.longitude < -180 ||
-    policy.longitude > 180 ||
     !Number.isFinite(policy.geofenceRadiusMeters) ||
     policy.geofenceRadiusMeters <= 0 ||
     !Number.isInteger(policy.geofenceRadiusMeters) ||
@@ -460,9 +488,20 @@ function validatePolicy(policy: LocationConfigurationInput['policy']): void {
     !Number.isFinite(policy.maxAccuracyMeters) ||
     policy.maxAccuracyMeters < 0
   ) {
-    throw new BadRequestException({
-      code: 'VALIDATION_ERROR',
-      message: 'Invalid location policy.',
-    });
+    invalidLocationPolicy();
   }
+}
+
+function validatePolicy(policy: ResolvedLocationPolicy): void {
+  if (
+    !Number.isFinite(policy.latitude) ||
+    policy.latitude < -90 ||
+    policy.latitude > 90 ||
+    !Number.isFinite(policy.longitude) ||
+    policy.longitude < -180 ||
+    policy.longitude > 180
+  ) {
+    invalidLocationPolicy();
+  }
+  validatePolicyThresholds(policy);
 }

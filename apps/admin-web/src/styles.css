@@ -102,6 +102,9 @@ button {
   gap: 6px;
   min-width: 180px;
 }
+.field[hidden] {
+  display: none;
+}
 .field label {
   color: #4c5b70;
   font-size: 0.85rem;
@@ -216,6 +219,135 @@ button {
 }
 .amount {
   font-weight: 750;
+}
+
+.operation-section {
+  margin-bottom: 28px;
+}
+.operation-card {
+  overflow: hidden;
+}
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.section-heading h2,
+.section-heading h3 {
+  margin: 0;
+}
+.section-heading p {
+  width: 100%;
+  margin: 4px 0 0;
+}
+.operation-form {
+  display: grid;
+  gap: 14px;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+.form-grid .field {
+  min-width: 0;
+}
+.check-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #334258;
+  font-weight: 650;
+}
+.check-field input {
+  width: 18px;
+  height: 18px;
+}
+.notice {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 4px solid #d29b16;
+  color: #6b4b00;
+  background: #fff8e5;
+}
+.form-feedback {
+  min-height: 1.4em;
+  color: #17663f;
+  font-weight: 650;
+}
+.stack {
+  display: grid;
+  gap: 10px;
+}
+.operation-row {
+  align-items: center;
+  margin: 0;
+}
+.json-input {
+  width: 100%;
+  min-height: 180px;
+  border: 1px solid #bdc9d8;
+  border-radius: 7px;
+  padding: 10px;
+  color: #172033;
+  background: white;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.9rem;
+  resize: vertical;
+}
+.preview-target {
+  display: grid;
+  gap: 12px;
+}
+.preview-card {
+  margin-top: 12px;
+}
+.table-wrap {
+  overflow-x: auto;
+  margin-top: 14px;
+  border: 1px solid #dce4ef;
+  border-radius: 8px;
+}
+.table-row {
+  display: grid;
+  grid-template-columns: 52px minmax(190px, 1.3fr) minmax(180px, 1fr) 100px minmax(120px, 0.7fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 680px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e5eaf2;
+}
+.table-row:last-child {
+  border-bottom: 0;
+}
+.table-header {
+  color: #4c5b70;
+  background: #f7f9fc;
+  font-size: 0.8rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+.commit-button {
+  margin-top: 14px;
+}
+.audit-card {
+  margin: 0;
+}
+.audit-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 10px;
+}
+.otp-form {
+  display: grid;
+  gap: 14px;
+  text-align: left;
+}
+.otp-form .button {
+  width: 100%;
 }
 
 @media (max-width: 720px) {

@@ -1,0 +1,2093 @@
+diff --git a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md
+index 4958dd2..e5c2c85 100644
+--- a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md
++++ b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md
+@@ -127,3 +127,12 @@
+ - [x] Task 9 review-fix round 2 focused suite — 7 files, 28 tests passed; full mobile suite — 25 files, 89 tests passed; mobile TypeScript passed.
+ - [x] Task 9 review-fix round 3: Kitchen Scanner focus cleanup invalidates stale operations on blur, while focused retries preserve session/idempotency state; duplicate confirm attempts are rejected synchronously and feedback retry is disabled during loading.
+ - [x] Task 9 review-fix round 3 verification — focused suite 7 files/30 tests, full mobile suite 25 files/91 tests, mobile TypeScript, Expo web export, and diff-check passed; native GPS/permission runtime remains unavailable.
++
++- [x] Official Task 10 brief generated/read from plan lines 934–991; artifact: `task-10-brief.md`.
++- [x] RED Task 10 API e2e/projection coverage was authored before `admin-operations.ts`; review regressions failed as expected for missing effective-policy selection, sensitive audit redaction, API coordinate response redaction, and coordinate-free policy updates.
++- [x] Task 10 implemented: current opaque-session OTP Admin Web bootstrap; permission-gated approved location/policy and scanner assignment; allowlist A; strict roster preview and valid-preview-only atomic commit; row-level outcomes; safe in-session audit projection; server-side policy-coordinate preservation/redaction.
++- [x] Review fixes removed raw latitude/longitude from Admin Web state/request/render, removed free-form audit `reason` from the safe allowlist, and selected only active/current policies.
++- [x] Focused Task 10 controller suite — 1 file, 7 tests passed with a throwaway no-DB Vitest config.
++- [x] Admin Web typecheck/build, API TypeScript, full API unit suite (20 files/169 tests), root lint (0 errors, 9 pre-existing warnings), and diff-check passed.
++- [!] Live API e2e and authenticated operations browser smoke remain unavailable because PostgreSQL/API session infrastructure is not running; OTP login surface browser smoke passed with safe generic backend failure copy.
++- [x] Task 10 review package/report prepared; commit pending.
+diff --git a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-10-brief.md b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-10-brief.md
+new file mode 100644
+index 0000000..2af6805
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-10-brief.md
+@@ -0,0 +1,26 @@
++### Task 10: Add Admin Web operations, audit views, and no-admin-role boundary
++
++**Files:**
++- Modify: `apps/admin-web/src/main.ts`
++- Modify: `apps/admin-web/src/styles.css`
++- Create: `apps/admin-web/src/admin-operations.ts`
++- Modify: `apps/api/src/admin/locations/locations.controller.ts` and `apps/api/src/locations/locations.service.ts` only to keep policy coordinates server-side while supporting coordinate-free existing-policy updates
++- Modify: `apps/api/test/admin-operations.e2e-spec.ts`
++- SDD: `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-10-brief.md`, `task-10-report.md`, `progress.md`
++
++**Interfaces:**
++- Consumes Task 6 authorized location, allowlist, roster preview/commit endpoints and Task 4 opaque authenticated session (`/auth/otp/request`, `/auth/otp/verify`, `/auth/me`, `/auth/logout`).
++- Produces named pure functions `toRosterPreviewRows`, `toSafeAuditEntry`, `toRosterImportRequest`, and `selectEffectiveLocationPolicy` with explicit types.
++- Admin Web exposes only permission-gated location/policy/scanner, allowlist, roster preview/atomic commit, and redacted audit-result surfaces. It does not add admin-role lifecycle, seed actions, arbitrary exports, or raw OTP/session/GPS evidence views.
++- Admin API location responses omit policy latitude/longitude. Existing policy update requests may omit coordinates; the service resolves and validates existing coordinates inside the same transaction. New policy creation still requires coordinates and remains server-only.
++
++**Acceptance and verification:**
++1. API e2e coverage proves permission denial, preview-before-commit, rejected-row/no-partial-commit behavior, policy coordinate redaction, coordinate-free existing-policy update, and absence of an admin-role lifecycle route.
++2. OTP login requests and verifies the current opaque session; allowlist existence is not disclosed in copy; logout revokes the session.
++3. Location forms update only approved records and effective policies, preserve server-provided optional fields, and assign scanner devices without carrying raw coordinates in Admin Web state/request/render.
++4. Roster input is strict JSON, shaped through `toRosterImportRequest`, displayed with row-level preview outcomes, and commit is enabled only for a valid server preview with a batch ID.
++5. `toSafeAuditEntry` is fail-closed for arbitrary/free-form details and sensitive values; audit cards show only scalar operation outcomes.
++6. Future location policies are not treated as current; `selectEffectiveLocationPolicy` requires active/effective date bounds.
++7. Admin Web has no Vitest setup or dependency; use typecheck/build plus browser smoke. API e2e tests use the repository's existing Vitest/Nest patterns.
++
++**Known verification limitation:** the repository default API Vitest config includes only `**/*.spec.ts`, while this required file is `admin-operations.e2e-spec.ts`; focused execution therefore uses a throwaway equivalent config without the DB setup. The repository e2e config requires `DATABASE_URL` before discovery, unavailable in this workspace.
+diff --git a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-10-report.md b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-10-report.md
+new file mode 100644
+index 0000000..93e2a42
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-10-report.md
+@@ -0,0 +1,61 @@
++# Task 10 Report — Admin Web operations, audit views, and no-admin-role boundary
++
++## Status
++
++DONE_WITH_RUNTIME_LIMITATION — Task 10 implementation and review-fix round are complete. Admin Web static verification and API unit/focused controller verification are green. A live PostgreSQL-backed API e2e run and authenticated operations browser smoke were unavailable in this workspace.
++
++## Scope implemented
++
++- Added `apps/admin-web/src/admin-operations.ts` with explicit types and named pure functions:
++  - `toRosterPreviewRows` preserves server row outcomes while adding render-safe accepted/rejected status.
++  - `toSafeAuditEntry` parses a narrow scalar allowlist and fail-closes unknown/free-form fields; sensitive OTP/code/token/session/QR/GPS/coordinate/raw keys and values are not rendered.
++  - `toRosterImportRequest` normalizes allowlisted roster fields and drops unknown UI properties.
++  - `selectEffectiveLocationPolicy` selects only an active policy effective at the current time, never a future policy.
++- Replaced Admin Web local username/password bootstrap with non-enumerating email OTP request/verify and opaque session `/auth/me` bootstrap plus logout.
++- Added permission-gated operations navigation and surfaces for approved location records/policy thresholds, scanner assignment, allowlist A, strict roster JSON preview, valid-preview-only atomic commit, row-level outcomes, and redacted in-session audit results.
++- Removed raw latitude/longitude from Admin Web location state, render, and update requests. The authorized Admin API now redacts policy coordinates from location responses and preserves existing coordinates server-side when an existing policy is updated without coordinates. New policies still require coordinates at the server boundary.
++- Kept existing menu and penalty surfaces; no admin-role grant/revoke controls, fabricated location/roster seeds, arbitrary exports, or raw OTP/session/GPS evidence dashboards were added.
++- Added `apps/api/test/admin-operations.e2e-spec.ts` covering permission denial, preview-before-commit, rejected rows without partial commit, coordinate redaction, coordinate-free policy update, API commit error preservation, and no admin-role route.
++
++## TDD / verification
++
++### RED
++
++- The initial Task 10 e2e/projection suite was authored before `admin-operations.ts`; the default API Vitest config does not discover the required `.e2e-spec.ts` filename.
++- Review regression tests then failed as expected for missing effective-policy selection, sensitive free-form audit redaction, API coordinate response redaction, and coordinate-free policy update. The focused run showed 4 failing/5 passing before the fixes.
++- The repository's configured e2e runner stops before discovery because `packages/domain/test/setup.ts` requires unavailable `DATABASE_URL`/PostgreSQL.
++
++### GREEN / static verification
++
++- Focused Admin operations controller suite with a throwaway no-DB config: **1 file, 7 tests passed**.
++- `corepack yarn workspace @imeal/admin-web typecheck`: passed.
++- `corepack yarn workspace @imeal/admin-web build`: passed.
++- `corepack yarn workspace @imeal/api exec tsc --noEmit -p tsconfig.json`: passed.
++- `corepack yarn workspace @imeal/api test`: **20 files, 169 tests passed**.
++- `corepack yarn lint`: exited 0; API reported the repository's existing 9 warnings and no errors.
++- `git diff --check`: passed; Git reported only existing Windows LF/CRLF conversion warnings.
++- Manual browser smoke: OTP login page rendered with the OTP code field hidden until requested, non-enumerating copy was visible, and an unavailable backend produced only safe generic login failure copy. A live authenticated operations/API smoke was not possible without a running API/session backend.
++
++## Limitations
++
++- No live PostgreSQL-backed Admin API e2e run was possible because the shared e2e setup requires `DATABASE_URL` and a disposable PostgreSQL schema. The focused controller suite uses Nest guards and mocked Task 6 service boundaries.
++- Admin Web has no Vitest setup by design; typecheck/build and browser smoke are the package verification surfaces.
++- The browser smoke used the Vite surface only; no real OTP provider, authenticated session, location policy, roster, scanner, or fabricated operational data was introduced.
++
++## Files changed
++
++- `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-10-brief.md`
++- `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-10-report.md`
++- `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md`
++- `apps/admin-web/src/admin-operations.ts`
++- `apps/admin-web/src/main.ts`
++- `apps/admin-web/src/styles.css`
++- `apps/api/src/admin/locations/locations.controller.ts`
++- `apps/api/src/locations/locations.service.ts`
++- `apps/api/test/admin-operations.e2e-spec.ts`
++
++## Review fixes
++
++- P1: removed raw policy coordinates from Admin Web parse/state/request/render; the API response now redacts them and existing policy coordinates are preserved by the API transaction.
++- P1: removed free-form `reason` from the safe audit detail allowlist; arbitrary detail keys remain fail-closed.
++- P2: policy selection now filters active effective windows at the current instant before choosing the newest effective policy.
+diff --git a/apps/admin-web/src/admin-operations.ts b/apps/admin-web/src/admin-operations.ts
+new file mode 100644
+index 0000000..5d3f2ea
+--- /dev/null
++++ b/apps/admin-web/src/admin-operations.ts
+@@ -0,0 +1,211 @@
++export interface RosterImportRow {
++  email: string;
++  name: string;
++  employeeCode: string;
++  isActive: boolean;
++  role: string;
++  serviceLocationCode: string;
++  effectiveFrom: string;
++  effectiveTo: string | null;
++}
++
++export interface RosterPreviewInputRow extends RosterImportRow {
++  rowNumber: number;
++  normalizedEmail: string;
++  locationId?: string;
++  reason?: string;
++}
++
++export interface RosterPreview {
++  batchId?: string;
++  source: string;
++  rows: ReadonlyArray<RosterPreviewInputRow>;
++  valid: boolean;
++  acceptedCount: number;
++  rejectedCount: number;
++}
++
++export type RosterPreviewRowOutcome = 'ACCEPTED' | 'REJECTED';
++
++export interface RosterPreviewRow extends RosterPreviewInputRow {
++  outcome: RosterPreviewRowOutcome;
++}
++
++export interface RosterImportRequest {
++  source: 'admin-web';
++  rows: ReadonlyArray<RosterImportRow>;
++}
++
++export interface AuditEntry {
++  id?: string | null;
++  action: string;
++  userId?: string | null;
++  createdAt?: string | Date | null;
++  details?: unknown;
++}
++
++export interface SafeAuditEntry {
++  id: string | null;
++  action: string;
++  actorId: string | null;
++  occurredAt: string | null;
++  result: string | null;
++  details: Readonly<Record<string, string | number | boolean | null>>;
++  redactedFields: ReadonlyArray<string>;
++}
++
++const SAFE_DETAIL_KEYS: Record<string, true> = {
++  acceptedCount: true,
++  assignmentId: true,
++  batchId: true,
++  idempotent: true,
++  locationId: true,
++  rejectedCount: true,
++  result: true,
++  rowNumber: true,
++  source: true,
++  state: true,
++  status: true,
++};
++
++const SENSITIVE_DETAIL_KEY =
++  /(?:otp|code|token|secret|password|session|qr|gps|latitude|longitude|accuracy|coordinate|locationclaim|raw)/i;
++
++function cleanText(value: string): string {
++  return value.normalize('NFKC').trim();
++}
++
++function normalizeEmail(value: string): string {
++  return cleanText(value).toLowerCase();
++}
++
++function safeDate(value: string | Date | null | undefined): string | null {
++  if (value === null || value === undefined) return null;
++  const parsed = value instanceof Date ? value : new Date(value);
++  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
++}
++
++function parseDetails(details: unknown): Record<string, unknown> {
++  if (typeof details === 'string') {
++    try {
++      const parsed: unknown = JSON.parse(details);
++      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
++        ? (parsed as Record<string, unknown>)
++        : {};
++    } catch {
++      return {};
++    }
++  }
++  return details && typeof details === 'object' && !Array.isArray(details)
++    ? (details as Record<string, unknown>)
++    : {};
++}
++
++function safeScalar(value: unknown): string | number | boolean | null | undefined {
++  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
++    return value;
++  }
++  return undefined;
++}
++
++export interface EffectiveLocationPolicy {
++  effectiveFrom: string;
++  effectiveTo?: string | null;
++  isActive: boolean;
++}
++
++export function selectEffectiveLocationPolicy<T extends EffectiveLocationPolicy>(
++  policies: ReadonlyArray<T>,
++  at: Date = new Date(),
++): T | undefined {
++  const atMillis = at.getTime();
++  return policies
++    .filter((policy) => {
++      const effectiveFrom = new Date(policy.effectiveFrom).getTime();
++      const effectiveTo = policy.effectiveTo
++        ? new Date(policy.effectiveTo).getTime()
++        : Number.POSITIVE_INFINITY;
++      return (
++        policy.isActive &&
++        Number.isFinite(effectiveFrom) &&
++        effectiveFrom <= atMillis &&
++        effectiveTo > atMillis
++      );
++    })
++    .sort(
++      (left, right) =>
++        new Date(right.effectiveFrom).getTime() -
++        new Date(left.effectiveFrom).getTime(),
++    )[0];
++}
++
++/**
++ * Maps the API's preview into rows that can be rendered without deriving or
++ * changing server validation outcomes.
++ */
++export function toRosterPreviewRows(
++  result: RosterPreview,
++): ReadonlyArray<RosterPreviewRow> {
++  return result.rows.map((row) => ({
++    ...row,
++    email: normalizeEmail(row.email),
++    normalizedEmail: normalizeEmail(row.normalizedEmail || row.email),
++    outcome: row.reason ? 'REJECTED' : 'ACCEPTED',
++  }));
++}
++
++/**
++ * Keeps audit cards useful while dropping secrets and raw device/location
++ * evidence before data reaches the DOM.
++ */
++export function toSafeAuditEntry(entry: AuditEntry): SafeAuditEntry {
++  const source = parseDetails(entry.details);
++  const details: Record<string, string | number | boolean | null> = {};
++  const redactedFields: string[] = [];
++
++  for (const [key, value] of Object.entries(source)) {
++    if (SENSITIVE_DETAIL_KEY.test(key) || SAFE_DETAIL_KEYS[key] !== true) {
++      redactedFields.push(key);
++      continue;
++    }
++    const scalar = safeScalar(value);
++    if (scalar === undefined) {
++      redactedFields.push(key);
++      continue;
++    }
++    details[key] = scalar;
++  }
++
++  const result = typeof details.result === 'string' ? details.result : null;
++  return {
++    id: typeof entry.id === 'string' ? entry.id : null,
++    action: cleanText(entry.action),
++    actorId: typeof entry.userId === 'string' ? entry.userId : null,
++    occurredAt: safeDate(entry.createdAt),
++    result,
++    details,
++    redactedFields,
++  };
++}
++
++/**
++ * Creates the exact allowlisted request accepted by the roster endpoint.
++ * Unknown UI fields are deliberately not forwarded to the API.
++ */
++export function toRosterImportRequest(
++  rows: ReadonlyArray<RosterImportRow>,
++): RosterImportRequest {
++  return {
++    source: 'admin-web',
++    rows: rows.map((row) => ({
++      email: normalizeEmail(row.email),
++      name: cleanText(row.name),
++      employeeCode: cleanText(row.employeeCode),
++      isActive: row.isActive === true,
++      role: cleanText(row.role),
++      serviceLocationCode: cleanText(row.serviceLocationCode).toUpperCase(),
++      effectiveFrom: cleanText(row.effectiveFrom),
++      effectiveTo: row.effectiveTo === null ? null : cleanText(row.effectiveTo),
++    })),
++  };
++}
+diff --git a/apps/admin-web/src/main.ts b/apps/admin-web/src/main.ts
+index 6324f80..046afd8 100644
+--- a/apps/admin-web/src/main.ts
++++ b/apps/admin-web/src/main.ts
+@@ -1,8 +1,20 @@
+ import { z } from 'zod';
++import {
++  selectEffectiveLocationPolicy,
++  toRosterImportRequest,
++  toRosterPreviewRows,
++  toSafeAuditEntry,
++  type AuditEntry,
++  type RosterImportRow,
++  type RosterPreview,
++  type SafeAuditEntry,
++} from './admin-operations';
+ import './styles.css';
+
+ const UserProfileSchema = z.object({
+-  name: z.string().optional(),
++  id: z.string().optional(),
++  userId: z.string().optional(),
++  name: z.string().nullable().optional(),
+   email: z.string(),
+   roles: z.array(z.string()),
+   permissions: z.array(z.string()),
+@@ -62,36 +74,149 @@ const PenaltyPageSchema = z.object({
+   total: z.number().optional(),
+ });
+
+-const ErrorResponseSchema = z.object({ message: z.string() });
+-class AdminDisplayError extends Error {}
++const ErrorResponseSchema = z.object({
++  code: z.string().optional(),
++  message: z.string().optional(),
++});
++const OtpRequestResponseSchema = z.object({
++  accepted: z.literal(true),
++  retryAfterSeconds: z.number().optional(),
++});
++const OtpVerifyResponseSchema = z.object({
++  sessionToken: z.string().min(1),
++  expiresAt: z.string(),
++  user: z.object({
++    id: z.string(),
++    email: z.string(),
++    name: z.string().nullable(),
++  }),
++});
+
+-function userFacingMessage(error: unknown, fallback: string): string {
+-  if (error instanceof AdminDisplayError) {
+-    return error.message;
++const LocationPolicySchema = z.object({
++  id: z.string().optional(),
++  accuracySource: z.string(),
++  geofenceRadiusMeters: z.number(),
++  maxFixAgeSeconds: z.number(),
++  maxAccuracyMeters: z.number(),
++  effectiveFrom: z.string(),
++  effectiveTo: z.string().nullable().optional(),
++  isActive: z.boolean(),
++});
++const LocationSchema = z.object({
++  id: z.string(),
++  shortCode: z.string(),
++  displayName: z.string(),
++  servingPointName: z.string(),
++  address: z.string(),
++  building: z.string(),
++  floor: z.string(),
++  roomOrCounter: z.string(),
++  localContact: z.string(),
++  timeZone: z.string().optional(),
++  isActive: z.boolean(),
++  effectiveFrom: z.string(),
++  effectiveTo: z.string().nullable().optional(),
++  capacityNotes: z.string().nullable().optional(),
++  accessibilityInstructions: z.string().nullable().optional(),
++  emergencyInstructions: z.string().nullable().optional(),
++  kitchenTeam: z.string().nullable().optional(),
++  approvedScannerDeviceIds: z.array(z.string()).optional(),
++  networkNotes: z.string().nullable().optional(),
++  policies: z.array(LocationPolicySchema).optional(),
++});
++type Location = z.infer<typeof LocationSchema>;
++type LocationPolicy = z.infer<typeof LocationPolicySchema>;
++
++const AllowlistEntrySchema = z.object({
++  id: z.string(),
++  normalizedEmail: z.string(),
++  userId: z.string().nullable().optional(),
++  state: z.enum(['ACTIVE', 'DISABLED']),
++  purpose: z.string(),
++  effectiveFrom: z.string(),
++  effectiveTo: z.string().nullable().optional(),
++  reason: z.string().nullable().optional(),
++});
++type AllowlistEntry = z.infer<typeof AllowlistEntrySchema>;
++
++const RosterInputRowSchema = z
++  .object({
++    email: z.string(),
++    name: z.string(),
++    employeeCode: z.string(),
++    isActive: z.boolean(),
++    role: z.string(),
++    serviceLocationCode: z.string(),
++    effectiveFrom: z.string(),
++    effectiveTo: z.string().nullable(),
++  })
++  .strict();
++const RosterPreviewSchema = z.object({
++  batchId: z.string().optional(),
++  source: z.string(),
++  rows: z.array(
++    z.object({
++      email: z.string(),
++      name: z.string(),
++      employeeCode: z.string(),
++      isActive: z.boolean(),
++      role: z.string(),
++      serviceLocationCode: z.string(),
++      effectiveFrom: z.string(),
++      effectiveTo: z.string().nullable(),
++      rowNumber: z.number(),
++      normalizedEmail: z.string(),
++      locationId: z.string().optional(),
++      reason: z.string().optional(),
++    }),
++  ),
++  valid: z.boolean(),
++  acceptedCount: z.number(),
++  rejectedCount: z.number(),
++});
++const RosterImportResultSchema = z.object({
++  batchId: z.string(),
++  rows: z.array(
++    z.object({
++      rowNumber: z.number(),
++      normalizedEmail: z.string(),
++      assignmentId: z.string(),
++      outcome: z.literal('ACCEPTED'),
++    }),
++  ),
++  acceptedCount: z.number(),
++  idempotent: z.boolean(),
++});
++
++class AdminDisplayError extends Error {
++  readonly code?: string;
++
++  constructor(message: string, code?: string) {
++    super(message);
++    this.name = 'AdminDisplayError';
++    this.code = code;
+   }
+-  return fallback;
+ }
+
++function userFacingMessage(error: unknown, fallback: string): string {
++  if (error instanceof AdminDisplayError) return error.message;
++  return fallback;
++}
+
+-type ViewName = 'menus' | 'penalties';
++type ViewName = 'menus' | 'penalties' | 'operations';
+
+ const API_URL = (
+   import.meta.env.VITE_API_URL || window.location.origin
+ ).replace(/\/$/, '');
+-const SESSION_KEY = 'imeal.local.access-token';
+-const LocalLoginSchema = z.object({
+-  accessToken: z.string(),
+-  user: UserProfileSchema,
+-});
++const SESSION_KEY = 'imeal.session-token';
+ const appRoot = document.querySelector<HTMLElement>('#app');
+-if (!appRoot) {
+-  throw new Error('Admin Web root element is missing');
+-}
++if (!appRoot) throw new Error('Admin Web root element is missing');
+ const app = appRoot;
+
+ let localToken: string | null = null;
+ let profile: UserProfile | null = null;
+-let currentView: ViewName = 'menus';
++let currentView: ViewName = 'operations';
++let auditEntries: SafeAuditEntry[] = [];
+
+ function element<K extends keyof HTMLElementTagNameMap>(
+   tag: K,
+@@ -121,8 +246,7 @@ function actionButton(
+
+ function showError(error: unknown): void {
+   const message = userFacingMessage(error, 'Đã xảy ra lỗi không xác định.');
+-  const existing = document.querySelector('.error');
+-  existing?.remove();
++  document.querySelector('.error')?.remove();
+   const target = document.querySelector('.layout') ?? app;
+   target.prepend(element('div', 'error', message));
+ }
+@@ -146,18 +270,81 @@ async function api(path: string, init?: RequestInit): Promise<unknown> {
+   const payload: unknown = await response.json().catch(() => null);
+   if (!response.ok) {
+     const parsedError = ErrorResponseSchema.safeParse(payload);
+-    const message = parsedError.success
+-      ? parsedError.data.message
+-      : `Yêu cầu thất bại với mã trạng thái ${response.status}.`;
+-    throw new AdminDisplayError(message);
++    throw new AdminDisplayError(
++      parsedError.success && parsedError.data.message
++        ? parsedError.data.message
++        : `Yêu cầu thất bại với mã trạng thái ${response.status}.`,
++      parsedError.success ? parsedError.data.code : undefined,
++    );
+   }
+   return payload;
+ }
+
+-function formatDate(value: string): string {
+-  return new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium' }).format(
+-    new Date(value),
+-  );
++async function publicApi(path: string, init: RequestInit): Promise<unknown> {
++  const response = await fetch(`${API_URL}${path}`, {
++    ...init,
++    headers: {
++      Accept: 'application/json',
++      'Content-Type': 'application/json',
++      ...init.headers,
++    },
++  });
++  const payload: unknown = await response.json().catch(() => null);
++  if (!response.ok) {
++    const parsedError = ErrorResponseSchema.safeParse(payload);
++    throw new AdminDisplayError(
++      parsedError.success && parsedError.data.message
++        ? parsedError.data.message
++        : 'Không thể hoàn tất yêu cầu OTP.',
++      parsedError.success ? parsedError.data.code : undefined,
++    );
++  }
++  return payload;
++}
++
++function formatDate(value: string | Date): string {
++  const date = value instanceof Date ? value : new Date(value);
++  if (!Number.isFinite(date.getTime())) return '—';
++  return new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium' }).format(date);
++}
++
++function formatDateTime(value: string | Date): string {
++  const date = value instanceof Date ? value : new Date(value);
++  if (!Number.isFinite(date.getTime())) return '—';
++  return new Intl.DateTimeFormat('vi-VN', {
++    dateStyle: 'medium',
++    timeStyle: 'short',
++  }).format(date);
++}
++
++function dateTimeInputValue(value: string | Date | null | undefined): string {
++  if (!value) return '';
++  const date = value instanceof Date ? value : new Date(value);
++  if (!Number.isFinite(date.getTime())) return '';
++  const iso = date.toISOString();
++  return `${iso.slice(0, 16)}`;
++}
++
++function isoOrFallback(value: string, fallback: string): string {
++  if (!value.trim()) return fallback;
++  const date = new Date(value);
++  return Number.isFinite(date.getTime()) ? date.toISOString() : fallback;
++}
++
++function inputField(
++  labelText: string,
++  value: string,
++  type = 'text',
++  required = false,
++): { wrapper: HTMLDivElement; input: HTMLInputElement } {
++  const wrapper = element('div', 'field');
++  const label = element('label', '', labelText);
++  const input = element('input');
++  input.type = type;
++  input.value = value;
++  input.required = required;
++  wrapper.append(label, input);
++  return { wrapper, input };
+ }
+
+ function renderShell(): HTMLElement {
+@@ -179,16 +366,19 @@ function renderShell(): HTMLElement {
+     nav.append(menuButton);
+   }
+   if (profile?.permissions.includes('penalty.read')) {
+-    const penaltyButton = actionButton(
+-      'Khoản phạt',
+-      () => void renderPenalties(),
+-    );
+-    penaltyButton.setAttribute(
+-      'aria-pressed',
+-      String(currentView === 'penalties'),
+-    );
++    const penaltyButton = actionButton('Khoản phạt', () => void renderPenalties());
++    penaltyButton.setAttribute('aria-pressed', String(currentView === 'penalties'));
+     nav.append(penaltyButton);
+   }
++  if (
++    profile?.permissions.some((permission) =>
++      ['location.manage', 'allowlist.manage', 'roster.manage'].includes(permission),
++    )
++  ) {
++    const operationsButton = actionButton('Vận hành & kiểm toán', () => void renderOperations());
++    operationsButton.setAttribute('aria-pressed', String(currentView === 'operations'));
++    nav.append(operationsButton);
++  }
+   layout.append(nav, element('section', 'content'));
+   shell.append(header, layout);
+   return shell;
+@@ -200,6 +390,21 @@ function contentRoot(): HTMLElement {
+   return root;
+ }
+
++function operationHeading(title: string, description: string): HTMLElement {
++  const heading = element('div', 'section-heading');
++  heading.append(element('h2', '', title), element('p', 'muted', description));
++  return heading;
++}
++
++function recordAudit(action: string, details: unknown): void {
++  const safe = toSafeAuditEntry({
++    action,
++    createdAt: new Date(),
++    details,
++  });
++  auditEntries = [safe, ...auditEntries].slice(0, 25);
++}
++
+ async function updateDailyMenu(
+   date: string,
+   update: Record<string, boolean | string>,
+@@ -253,18 +458,9 @@ async function renderMenus(): Promise<void> {
+       const card = element('article', 'card');
+       const heading = element('div', 'week-header');
+       heading.append(
+-        element(
+-          'h2',
+-          '',
+-          `${formatDate(week.startDate)} – ${formatDate(week.endDate)}`,
+-        ),
++        element('h2', '', `${formatDate(week.startDate)} – ${formatDate(week.endDate)}`),
+         actionButton('Đăng thực đơn tuần', () => {
+-          void api(
+-            `/admin/weekly-menus/${week.startDate.slice(0, 10)}/publish`,
+-            {
+-              method: 'POST',
+-            },
+-          )
++          void api(`/admin/weekly-menus/${week.startDate.slice(0, 10)}/publish`, { method: 'POST' })
+             .then(() => renderMenus())
+             .catch(showError);
+         }),
+@@ -283,42 +479,25 @@ async function renderMenus(): Promise<void> {
+         contentInput.rows = 3;
+         contentInput.value = day.content || '';
+         contentInput.placeholder = 'Mô tả món ăn';
+-        contentInput.setAttribute(
+-          'aria-label',
+-          `Mô tả món ăn ngày ${formatDate(day.date)}`,
+-        );
++        contentInput.setAttribute('aria-label', `Mô tả món ăn ngày ${formatDate(day.date)}`);
+         const actions = element('div', 'row-actions menu-actions');
+         actions.append(
+           contentInput,
+-          actionButton(
+-            'Lưu món',
+-            () => {
+-              void updateDailyMenu(day.date, {
+-                content: contentInput.value,
+-              }).catch(showError);
+-            },
+-            'secondary',
+-          ),
+-          actionButton(
+-            day.isEnabled ? 'Tắt' : 'Bật',
+-            () => {
+-              void updateDailyMenu(day.date, {
+-                isEnabled: !day.isEnabled,
+-                ...(!day.isEnabled ? { isHoliday: false } : {}),
+-              }).catch(showError);
+-            },
+-            'secondary',
+-          ),
+-          actionButton(
+-            day.isHoliday ? 'Ngày làm việc' : 'Ngày nghỉ',
+-            () => {
+-              void updateDailyMenu(day.date, {
+-                isHoliday: !day.isHoliday,
+-                ...(!day.isHoliday ? { isEnabled: false } : {}),
+-              }).catch(showError);
+-            },
+-            'secondary',
+-          ),
++          actionButton('Lưu món', () => {
++            void updateDailyMenu(day.date, { content: contentInput.value }).catch(showError);
++          }, 'secondary'),
++          actionButton(day.isEnabled ? 'Tắt' : 'Bật', () => {
++            void updateDailyMenu(day.date, {
++              isEnabled: !day.isEnabled,
++              ...(!day.isEnabled ? { isHoliday: false } : {}),
++            }).catch(showError);
++          }, 'secondary'),
++          actionButton(day.isHoliday ? 'Ngày làm việc' : 'Ngày nghỉ', () => {
++            void updateDailyMenu(day.date, {
++              isHoliday: !day.isHoliday,
++              ...(!day.isHoliday ? { isEnabled: false } : {}),
++            }).catch(showError);
++          }, 'secondary'),
+         );
+         row.append(actions);
+         days.append(row);
+@@ -354,72 +533,36 @@ async function renderPenalties(): Promise<void> {
+   root.append(toolbar);
+
+   const load = async () => {
+-    root
+-      .querySelectorAll('.penalty-card, .empty')
+-      .forEach((node) => node.remove());
+-    const query = new URLSearchParams({
+-      status: status.value,
+-      search: search.value,
+-    });
+-    const page = PenaltyPageSchema.parse(
+-      await api(`/admin/penalties?${query}`),
+-    );
++    root.querySelectorAll('.penalty-card, .empty').forEach((node) => node.remove());
++    const query = new URLSearchParams({ status: status.value, search: search.value });
++    const page = PenaltyPageSchema.parse(await api(`/admin/penalties?${query}`));
+     if (page.items.length === 0) {
+-      root.append(
+-        element('div', 'card empty', 'Không có khoản phạt phù hợp với bộ lọc.'),
+-      );
++      root.append(element('div', 'card empty', 'Không có khoản phạt phù hợp với bộ lọc.'));
+       return;
+     }
+     for (const penalty of page.items) {
+       const card = element('article', 'card penalty-card row');
+       const details = element('div', 'row-main');
+       details.append(
+-        element(
+-          'strong',
+-          '',
+-          penalty.userName || penalty.userEmail || 'Người dùng không xác định',
+-        ),
+-        element(
+-          'div',
+-          'muted',
+-          `${penalty.reason} · ${formatDate(penalty.createdAt)}`,
+-        ),
++        element('strong', '', penalty.userName || penalty.userEmail || 'Người dùng không xác định'),
++        element('div', 'muted', `${penalty.reason} · ${formatDate(penalty.createdAt)}`),
+         element('div', 'amount', `${penalty.amount.toLocaleString('vi-VN')} ₫`),
+       );
+       const actions = element('div', 'row-actions');
+-      actions.append(
+-        element(
+-          'span',
+-          `status ${penalty.status.toLowerCase()}`,
+-          penaltyStatusLabels[penalty.status],
+-        ),
+-      );
+-      if (
+-        penalty.status === 'PENDING' &&
+-        profile?.permissions.includes('penalty.resolve')
+-      ) {
++      actions.append(element('span', `status ${penalty.status.toLowerCase()}`, penaltyStatusLabels[penalty.status]));
++      if (penalty.status === 'PENDING' && profile?.permissions.includes('penalty.resolve')) {
+         actions.append(
+           actionButton('Đánh dấu đã thanh toán', () => {
+-            void api(`/admin/penalties/${penalty.id}/paid`, { method: 'POST' })
+-              .then(load)
+-              .catch(showError);
++            void api(`/admin/penalties/${penalty.id}/paid`, { method: 'POST' }).then(load).catch(showError);
+           }),
+-          actionButton(
+-            'Miễn phạt',
+-            () => {
+-              const reason = window.prompt(
+-                'Lý do miễn phạt (ít nhất 5 ký tự)',
+-              );
+-              if (!reason || reason.trim().length < 5) return;
+-              void api(`/admin/penalties/${penalty.id}/waive`, {
+-                method: 'POST',
+-                body: JSON.stringify({ reason }),
+-              })
+-                .then(load)
+-                .catch(showError);
+-            },
+-            'danger',
+-          ),
++          actionButton('Miễn phạt', () => {
++            const reason = window.prompt('Lý do miễn phạt (ít nhất 5 ký tự)');
++            if (!reason || reason.trim().length < 5) return;
++            void api(`/admin/penalties/${penalty.id}/waive`, {
++              method: 'POST',
++              body: JSON.stringify({ reason }),
++            }).then(load).catch(showError);
++          }, 'danger'),
+         );
+       }
+       card.append(details, actions);
+@@ -433,89 +576,518 @@ async function renderPenalties(): Promise<void> {
+   await load().catch(showError);
+ }
+
+-async function signIn(username: string, password: string): Promise<void> {
+-  const response = await fetch(`${API_URL}/auth/local-login`, {
+-    method: 'POST',
+-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+-    body: JSON.stringify({ username, password }),
++function renderLocationCard(location: Location): HTMLElement {
++  const card = element('article', 'card operation-card');
++  const policy = selectEffectiveLocationPolicy(location.policies ?? []);
++  const title = element('div', 'section-heading');
++  title.append(
++    element('h3', '', `${location.shortCode} · ${location.displayName}`),
++    element('span', `status ${location.isActive ? 'paid' : 'waived'}`, location.isActive ? 'Đang bật' : 'Đã tắt'),
++  );
++  const summary = element(
++    'p',
++    'muted',
++    `${location.servingPointName} · ${location.address} · hiệu lực từ ${formatDate(location.effectiveFrom)}`,
++  );
++  const form = element('form', 'operation-form');
++  const grid = element('div', 'form-grid');
++  const displayName = inputField('Tên hiển thị', location.displayName, 'text', true);
++  const servingPoint = inputField('Điểm phục vụ', location.servingPointName, 'text', true);
++  const address = inputField('Địa chỉ đã phê duyệt', location.address, 'text', true);
++  const building = inputField('Tòa nhà', location.building, 'text', true);
++  const floor = inputField('Tầng', location.floor, 'text', true);
++  const room = inputField('Phòng/quầy', location.roomOrCounter, 'text', true);
++  const localContact = inputField('Liên hệ tại điểm', location.localContact, 'text', true);
++  const effectiveFrom = inputField('Hiệu lực từ', dateTimeInputValue(location.effectiveFrom), 'datetime-local', true);
++  const effectiveTo = inputField('Hiệu lực đến', dateTimeInputValue(location.effectiveTo), 'datetime-local');
++  const scannerIds = inputField(
++    'Thiết bị scanner được phép (phân cách bằng dấu phẩy)',
++    (location.approvedScannerDeviceIds ?? []).join(', '),
++  );
++  const radius = inputField('Bán kính geofence (m)', String(policy?.geofenceRadiusMeters ?? ''), 'number', true);
++  const maxAge = inputField('Tuổi fix tối đa (giây)', String(policy?.maxFixAgeSeconds ?? ''), 'number', true);
++  const maxAccuracy = inputField('Độ chính xác tối đa (m)', String(policy?.maxAccuracyMeters ?? ''), 'number', true);
++  const accuracySource = inputField('Nguồn chính sách độ chính xác', policy?.accuracySource ?? '', 'text', true);
++  for (const field of [
++    displayName,
++    servingPoint,
++    address,
++    building,
++    floor,
++    room,
++    localContact,
++    effectiveFrom,
++    effectiveTo,
++    scannerIds,
++    radius,
++    maxAge,
++    maxAccuracy,
++    accuracySource,
++  ]) grid.append(field.wrapper);
++  const active = element('label', 'check-field');
++  const activeInput = element('input');
++  activeInput.type = 'checkbox';
++  activeInput.checked = location.isActive;
++  active.append(activeInput, element('span', '', 'Cho phép phục vụ ở điểm này'));
++  const policyActive = element('label', 'check-field');
++  const policyActiveInput = element('input');
++  policyActiveInput.type = 'checkbox';
++  policyActiveInput.checked = policy?.isActive ?? false;
++  policyActive.append(policyActiveInput, element('span', '', 'Chính sách GPS đang hoạt động'));
++  const policyNote = element(
++    'p',
++    'notice',
++    policy
++      ? `Chính sách hiện tại: bán kính ${policy.geofenceRadiusMeters} m · fix tối đa ${policy.maxFixAgeSeconds} giây · sai số tối đa ${policy.maxAccuracyMeters} m. Tọa độ không hiển thị trong Admin Web.`
++      : 'Điểm này chưa có chính sách GPS hiệu lực.',
++  );
++  const save = actionButton('Lưu cấu hình điểm và scanner', () => undefined);
++  save.type = 'submit';
++  const feedback = element('div', 'form-feedback');
++  form.append(grid, active, policyActive, policyNote, save, feedback);
++  form.addEventListener('submit', (event) => {
++    event.preventDefault();
++    if (!policy) {
++      feedback.textContent = 'Không thể lưu khi điểm chưa có chính sách GPS.';
++      return;
++    }
++    save.disabled = true;
++    const payload = {
++      id: location.id,
++      shortCode: location.shortCode,
++      displayName: displayName.input.value.trim(),
++      servingPointName: servingPoint.input.value.trim(),
++      address: address.input.value.trim(),
++      building: building.input.value.trim(),
++      floor: floor.input.value.trim(),
++      roomOrCounter: room.input.value.trim(),
++      localContact: localContact.input.value.trim(),
++      timeZone: 'Asia/Ho_Chi_Minh',
++      isActive: activeInput.checked,
++      effectiveFrom: isoOrFallback(effectiveFrom.input.value, location.effectiveFrom),
++      effectiveTo: effectiveTo.input.value
++        ? isoOrFallback(effectiveTo.input.value, location.effectiveTo ?? location.effectiveFrom)
++        : null,
++      approvedScannerDeviceIds: scannerIds.input.value
++        .split(',')
++        .map((value) => value.trim())
++        .filter(Boolean),
++      capacityNotes: location.capacityNotes ?? null,
++      accessibilityInstructions: location.accessibilityInstructions ?? null,
++      emergencyInstructions: location.emergencyInstructions ?? null,
++      kitchenTeam: location.kitchenTeam ?? null,
++      networkNotes: location.networkNotes ?? null,
++      policy: {
++        id: policy.id,
++        accuracySource: accuracySource.input.value.trim(),
++        geofenceRadiusMeters: Number(radius.input.value),
++        maxFixAgeSeconds: Number(maxAge.input.value),
++        maxAccuracyMeters: Number(maxAccuracy.input.value),
++        effectiveFrom: policy.effectiveFrom,
++        effectiveTo: policy.effectiveTo ?? null,
++        isActive: policyActiveInput.checked,
++      },
++    };
++    void api(`/admin/locations/${location.id}`, {
++      method: 'PUT',
++      body: JSON.stringify(payload),
++    })
++      .then((result) => {
++        recordAudit('LOCATION_CONFIGURATION_UPDATED', {
++          result: 'ACCEPTED',
++          locationId: location.id,
++          scannerCount: payload.approvedScannerDeviceIds.length,
++        });
++        feedback.textContent = 'Đã lưu cấu hình điểm và danh sách scanner.';
++        return result;
++      })
++      .then(() => renderOperations())
++      .catch((error: unknown) => {
++        feedback.textContent = userFacingMessage(error, 'Không thể lưu cấu hình điểm.');
++      })
++      .finally(() => {
++        save.disabled = false;
++      });
+   });
+-  const payload: unknown = await response.json().catch(() => null);
+-  if (!response.ok) {
+-    const parsedError = ErrorResponseSchema.safeParse(payload);
+-    throw new AdminDisplayError(
+-      parsedError.success
+-        ? parsedError.data.message
+-        : `Đăng nhập thất bại với mã trạng thái ${response.status}.`,
++  card.append(title, summary, form);
++  return card;
++}
++
++async function renderLocations(root: HTMLElement): Promise<void> {
++  const section = element('section', 'operation-section');
++  section.append(
++    operationHeading(
++      'Điểm phục vụ và chính sách',
++      'Chỉ hiển thị các bản ghi đã được tổ chức phê duyệt. Không có thao tác tạo seed hoặc nhập tọa độ tùy ý.',
++    ),
++  );
++  try {
++    const locations = z.array(LocationSchema).parse(await api('/admin/locations'));
++    if (locations.length === 0) {
++      section.append(element('div', 'card empty', 'Chưa có điểm phục vụ được phê duyệt.'));
++    } else {
++      for (const location of locations) section.append(renderLocationCard(location));
++    }
++  } catch (error: unknown) {
++    section.append(element('div', 'error', userFacingMessage(error, 'Không thể tải cấu hình điểm phục vụ.')));
++  }
++  root.append(section);
++}
++
++function renderAllowlistEntry(entry: AllowlistEntry): HTMLElement {
++  const card = element('article', 'row operation-row');
++  const details = element('div', 'row-main');
++  details.append(
++    element('strong', '', entry.normalizedEmail),
++    element('div', 'muted', `${entry.purpose} · ${formatDate(entry.effectiveFrom)} – ${entry.effectiveTo ? formatDate(entry.effectiveTo) : 'không hết hạn'}`),
++    entry.reason ? element('div', 'muted', `Lý do: ${entry.reason}`) : element('div', 'muted', 'Không có ghi chú'),
++  );
++  const actions = element('div', 'row-actions');
++  const toggle = actionButton(entry.state === 'ACTIVE' ? 'Tắt allowlist' : 'Bật allowlist', () => {
++    void api(`/admin/allowlist/${entry.id}`, {
++      method: 'PUT',
++      body: JSON.stringify({
++        email: entry.normalizedEmail,
++        userId: entry.userId ?? null,
++        state: entry.state === 'ACTIVE' ? 'DISABLED' : 'ACTIVE',
++        effectiveFrom: entry.effectiveFrom,
++        effectiveTo: entry.effectiveTo ?? null,
++        reason: entry.reason ?? null,
++      }),
++    })
++      .then(() => {
++        recordAudit('ALLOWLIST_UPDATED', {
++          result: 'ACCEPTED',
++          state: entry.state === 'ACTIVE' ? 'DISABLED' : 'ACTIVE',
++        });
++        return renderOperations();
++      })
++      .catch(showError);
++  });
++  actions.append(
++    element('span', `status ${entry.state === 'ACTIVE' ? 'paid' : 'waived'}`, entry.state === 'ACTIVE' ? 'Đang cho phép' : 'Đã tắt'),
++    toggle,
++  );
++  return card;
++}
++
++async function renderAllowlist(root: HTMLElement): Promise<void> {
++  const section = element('section', 'operation-section');
++  section.append(
++    operationHeading(
++      'Allowlist A',
++      'Chỉ tài khoản được allowlist mới nhận OTP. Thao tác này không cấp, thu hồi hoặc thay đổi vai trò quản trị.',
++    ),
++  );
++  const form = element('form', 'card operation-form');
++  const grid = element('div', 'form-grid');
++  const email = inputField('Email', '', 'email', true);
++  const userId = inputField('User ID (nếu đã liên kết)', '');
++  const stateField = element('div', 'field');
++  const stateLabel = element('label', '', 'Trạng thái');
++  const state = element('select');
++  for (const value of ['ACTIVE', 'DISABLED'] as const) {
++    const option = element('option', '', value === 'ACTIVE' ? 'Đang cho phép' : 'Đã tắt');
++    option.value = value;
++    state.append(option);
++  }
++  stateField.append(stateLabel, state);
++  const effectiveFrom = inputField('Hiệu lực từ', dateTimeInputValue(new Date()), 'datetime-local', true);
++  const effectiveTo = inputField('Hiệu lực đến', '','datetime-local');
++  const reason = inputField('Lý do (tùy chọn)', '');
++  for (const field of [email, userId, stateField, effectiveFrom, effectiveTo, reason]) {
++    grid.append('wrapper' in field ? field.wrapper : field);
++  }
++  const submit = actionButton('Lưu allowlist', () => undefined);
++  submit.type = 'submit';
++  const feedback = element('div', 'form-feedback');
++  form.append(grid, submit, feedback);
++  form.addEventListener('submit', (event) => {
++    event.preventDefault();
++    submit.disabled = true;
++    void api('/admin/allowlist', {
++      method: 'POST',
++      body: JSON.stringify({
++        email: email.input.value,
++        userId: userId.input.value.trim() || null,
++        state: state.value,
++        effectiveFrom: isoOrFallback(effectiveFrom.input.value, new Date().toISOString()),
++        effectiveTo: effectiveTo.input.value ? isoOrFallback(effectiveTo.input.value, new Date().toISOString()) : null,
++        reason: reason.input.value.trim() || null,
++      }),
++    })
++      .then((result) => {
++        recordAudit('ALLOWLIST_UPSERTED', { result: 'ACCEPTED', state: state.value });
++        feedback.textContent = 'Đã lưu allowlist. OTP vẫn không được hiển thị trong Admin Web.';
++        return result;
++      })
++      .then(() => renderOperations())
++      .catch((error: unknown) => {
++        feedback.textContent = userFacingMessage(error, 'Không thể lưu allowlist.');
++      })
++      .finally(() => {
++        submit.disabled = false;
++      });
++  });
++  section.append(form);
++
++  const list = element('div', 'stack');
++  try {
++    const entries = z.array(AllowlistEntrySchema).parse(await api('/admin/allowlist'));
++    if (entries.length === 0) list.append(element('div', 'card empty', 'Chưa có allowlist record.'));
++    else for (const entry of entries) list.append(renderAllowlistEntry(entry));
++  } catch (error: unknown) {
++    list.append(element('div', 'error', userFacingMessage(error, 'Không thể tải allowlist.')));
++  }
++  section.append(list);
++  root.append(section);
++}
++
++function renderRosterPreview(
++  preview: RosterPreview,
++  onCommit: () => void,
++): HTMLElement {
++  const card = element('article', 'card preview-card');
++  const summary = element('div', 'section-heading');
++  summary.append(
++    element('h3', '', 'Kết quả xem trước'),
++    element('span', `status ${preview.valid ? 'paid' : 'waived'}`, preview.valid ? 'Có thể commit' : 'Cần sửa dữ liệu'),
++  );
++  summary.append(element('p', 'muted', `${preview.acceptedCount} dòng hợp lệ · ${preview.rejectedCount} dòng bị từ chối`));
++  const table = element('div', 'table-wrap');
++  const header = element('div', 'table-row table-header');
++  for (const label of ['Dòng', 'Email', 'Nhân viên', 'Điểm', 'Kết quả']) header.append(element('span', '', label));
++  table.append(header);
++  for (const row of toRosterPreviewRows(preview)) {
++    const line = element('div', 'table-row');
++    line.append(
++      element('span', '', String(row.rowNumber)),
++      element('span', '', row.normalizedEmail),
++      element('span', '', `${row.name} · ${row.employeeCode}`),
++      element('span', '', row.serviceLocationCode),
++      element('span', `status ${row.outcome === 'ACCEPTED' ? 'paid' : 'waived'}`, row.outcome === 'ACCEPTED' ? 'Hợp lệ' : row.reason || 'Từ chối'),
+     );
++    table.append(line);
++  }
++  card.append(summary, table);
++  if (preview.valid && preview.batchId) {
++    const commit = actionButton('Commit toàn bộ dòng hợp lệ', onCommit);
++    commit.classList.add('commit-button');
++    card.append(commit, element('p', 'notice', 'Commit là thao tác all-or-nothing; không có commit một phần hoặc thay thế dòng lỗi.'));
++  } else {
++    card.append(element('p', 'notice', 'Chưa thể commit. Sửa tất cả dòng bị từ chối rồi xem trước lại.'));
+   }
+-  const login = LocalLoginSchema.parse(payload);
+-  localToken = login.accessToken;
+-  profile = login.user;
++  return card;
++}
++
++async function renderRoster(root: HTMLElement): Promise<void> {
++  const section = element('section', 'operation-section');
++  section.append(
++    operationHeading(
++      'Import roster',
++      'Dán JSON của roster đã được phê duyệt để xem trước. Chỉ commit sau khi mọi dòng hợp lệ; kết quả từng dòng sẽ được hiển thị.',
++    ),
++  );
++  const form = element('form', 'card operation-form');
++  const rows = element('textarea', 'json-input');
++  rows.rows = 10;
++  rows.placeholder = '[{"email":"employee@example.test","name":"...","employeeCode":"...","isActive":true,"role":"PRESENTER","serviceLocationCode":"LOC-A","effectiveFrom":"2026-09-24T00:00:00.000Z","effectiveTo":null}]';
++  rows.required = true;
++  const label = element('label', '', 'Roster JSON');
++  label.append(rows);
++  const previewButton = actionButton('Xem trước import', () => undefined);
++  previewButton.type = 'submit';
++  const feedback = element('div', 'form-feedback');
++  const previewTarget = element('div', 'preview-target');
++  let latestPreview: RosterPreview | null = null;
++  form.append(label, previewButton, feedback);
++  form.addEventListener('submit', (event) => {
++    event.preventDefault();
++    previewButton.disabled = true;
++    void (async () => {
++      try {
++        const parsed = JSON.parse(rows.value) as unknown;
++        const inputRows = z.array(RosterInputRowSchema).min(1).parse(parsed) as ReadonlyArray<RosterImportRow>;
++        const request = toRosterImportRequest(inputRows);
++        const preview = RosterPreviewSchema.parse(await api('/admin/roster/preview', {
++          method: 'POST',
++          body: JSON.stringify(request),
++        }));
++        latestPreview = preview;
++        previewTarget.replaceChildren(
++          renderRosterPreview(preview, () => {
++            if (!latestPreview?.valid || !latestPreview.batchId) return;
++            const batchId = latestPreview.batchId;
++            void api(`/admin/roster/${batchId}/commit`, { method: 'POST' })
++              .then((result) => {
++                const committed = RosterImportResultSchema.parse(result);
++                recordAudit('ROSTER_IMPORT_COMMITTED', {
++                  result: 'ACCEPTED',
++                  batchId: committed.batchId,
++                  acceptedCount: committed.acceptedCount,
++                  idempotent: committed.idempotent,
++                });
++                feedback.textContent = `Đã commit ${committed.acceptedCount} dòng trong một giao dịch.`;
++                return renderOperations();
++              })
++              .catch((error: unknown) => {
++                feedback.textContent = userFacingMessage(error, 'Import bị từ chối; không có dòng nào được commit.');
++              });
++          }),
++        );
++        feedback.textContent = preview.valid ? 'Xem trước hoàn tất; hãy kiểm tra trước khi commit.' : 'Có dòng lỗi; chưa cho phép commit.';
++      } catch (error: unknown) {
++        feedback.textContent = error instanceof SyntaxError ? 'JSON không hợp lệ.' : userFacingMessage(error, 'Không thể xem trước roster.');
++      } finally {
++        previewButton.disabled = false;
++      }
++    })();
++  });
++  section.append(form, previewTarget);
++  root.append(section);
++}
++
++function renderAudit(): HTMLElement {
++  const section = element('section', 'operation-section');
++  section.append(
++    operationHeading(
++      'Kết quả kiểm toán an toàn',
++      'Hiển thị các thao tác trong phiên này sau khi loại bỏ OTP, session token, QR và dữ liệu GPS thô. Không có xuất dữ liệu tùy ý.',
++    ),
++  );
++  if (auditEntries.length === 0) {
++    section.append(element('div', 'card empty', 'Chưa có thao tác vận hành trong phiên hiện tại.'));
++    return section;
++  }
++  const list = element('div', 'stack');
++  for (const entry of auditEntries) {
++    const card = element('article', 'card audit-card');
++    const heading = element('div', 'section-heading');
++    heading.append(element('h3', '', entry.action), element('span', 'muted', formatDateTime(entry.occurredAt ?? '')));
++    const details = element('div', 'audit-details');
++    if (entry.result) details.append(element('span', 'status paid', entry.result));
++    if (entry.actorId) details.append(element('span', 'muted', `Actor: ${entry.actorId}`));
++    for (const [key, value] of Object.entries(entry.details)) {
++      details.append(element('span', 'muted', `${key}: ${String(value)}`));
++    }
++    if (entry.redactedFields.length > 0) {
++      details.append(element('span', 'notice', `${entry.redactedFields.length} trường nhạy cảm đã được ẩn.`));
++    }
++    card.append(heading, details);
++    list.append(card);
++  }
++  section.append(list);
++  return section;
++}
++
++async function renderOperations(): Promise<void> {
++  currentView = 'operations';
++  app.replaceChildren(renderShell());
++  const root = contentRoot();
++  const permissions = profile?.permissions ?? [];
++  if (!permissions.some((permission) => ['location.manage', 'allowlist.manage', 'roster.manage'].includes(permission))) {
++    root.append(element('div', 'card empty', 'Tài khoản không có quyền vận hành được cấp.'));
++    return;
++  }
++  if (permissions.includes('location.manage')) await renderLocations(root);
++  if (permissions.includes('allowlist.manage')) await renderAllowlist(root);
++  if (permissions.includes('roster.manage')) await renderRoster(root);
++  root.append(renderAudit());
++}
++
++async function verifyOtp(email: string, code: string): Promise<void> {
++  const result = OtpVerifyResponseSchema.parse(await publicApi('/auth/otp/verify', {
++    method: 'POST',
++    body: JSON.stringify({ email, purpose: 'SESSION_LOGIN', code }),
++  }));
++  localToken = result.sessionToken;
+   sessionStorage.setItem(SESSION_KEY, localToken);
+-  const defaultView = profile.permissions.includes('menu.manage')
+-    ? 'menus'
+-    : 'penalties';
+-  if (defaultView === 'menus') await renderMenus();
+-  else await renderPenalties();
++  profile = UserProfileSchema.parse(await api('/auth/me'));
++  await renderDefaultView();
+ }
+
+-function signOut(error?: unknown): void {
++async function requestOtp(email: string): Promise<void> {
++  OtpRequestResponseSchema.parse(await publicApi('/auth/otp/request', {
++    method: 'POST',
++    body: JSON.stringify({ email, purpose: 'SESSION_LOGIN' }),
++  }));
++}
++
++async function signOut(error?: unknown): Promise<void> {
++  const token = localToken;
+   localToken = null;
+   profile = null;
++  auditEntries = [];
+   sessionStorage.removeItem(SESSION_KEY);
++  if (token) {
++    await fetch(`${API_URL}/auth/logout`, {
++      method: 'POST',
++      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
++    }).catch(() => undefined);
++  }
+   renderLogin(error);
+ }
+
+-function renderLogin(error?: unknown): void {
++function renderLogin(error?: unknown, requestedEmail = '', codeRequested = false): void {
+   const login = element('div', 'login');
+   const card = element('section', 'card');
+-  const form = element('form');
+-  const username = element('input');
+-  username.type = 'text';
+-  username.name = 'username';
+-  username.placeholder = 'Tên đăng nhập';
+-  username.autocomplete = 'username';
+-  username.required = true;
+-  const password = element('input');
+-  password.type = 'password';
+-  password.name = 'password';
+-  password.placeholder = 'Mật khẩu';
+-  password.autocomplete = 'current-password';
+-  password.required = true;
+-  const submit = actionButton('Đăng nhập', () => undefined);
++  const form = element('form', 'otp-form');
++  const email = inputField('Email công việc', requestedEmail, 'email', true);
++  email.input.autocomplete = 'email';
++  const code = inputField('Mã OTP', '', 'text', codeRequested);
++  code.input.inputMode = 'numeric';
++  code.input.autocomplete = 'one-time-code';
++  code.input.maxLength = 6;
++  if (!codeRequested) code.wrapper.hidden = true;
++  const submit = actionButton(codeRequested ? 'Xác nhận OTP' : 'Nhận mã OTP', () => undefined);
+   submit.type = 'submit';
+-  form.append(username, password, submit);
++  const feedback = element('div', 'form-feedback');
++  form.append(email.wrapper, code.wrapper, submit, feedback);
+   form.addEventListener('submit', (event) => {
+     event.preventDefault();
+     submit.disabled = true;
+-    void signIn(username.value, password.value)
+-      .catch((signInError) => renderLogin(signInError))
++    const normalizedEmail = email.input.value.trim().toLowerCase();
++    void (async () => {
++      if (!codeRequested) {
++        await requestOtp(normalizedEmail);
++        renderLogin(undefined, normalizedEmail, true);
++        return;
++      }
++      await verifyOtp(normalizedEmail, code.input.value.trim());
++    })()
++      .catch((loginError: unknown) => {
++        feedback.textContent = userFacingMessage(loginError, 'Không thể hoàn tất đăng nhập.');
++      })
+       .finally(() => {
+         submit.disabled = false;
+       });
+   });
+   card.append(
+     element('h1', '', 'Quản trị IMeal'),
+-    element(
+-      'p',
+-      'muted',
+-      'Sử dụng thông tin đăng nhập quản trị nội bộ được cấu hình trong .env.',
+-    ),
++    element('p', 'muted', 'Nhập email công việc trong allowlist A để nhận mã OTP. Trạng thái allowlist không được tiết lộ.'),
+     form,
+   );
+-  if (error) {
+-    card.append(
+-      element(
+-        'div',
+-        'error',
+-        userFacingMessage(error, 'Đăng nhập thất bại.'),
+-      ),
+-    );
+-  }
++  if (error) card.append(element('div', 'error', userFacingMessage(error, 'Phiên đăng nhập không còn hợp lệ.')));
+   login.append(card);
+   app.replaceChildren(login);
+ }
+
++async function renderDefaultView(): Promise<void> {
++  if (!profile) {
++    renderLogin();
++    return;
++  }
++  if (profile.permissions.some((permission) => ['location.manage', 'allowlist.manage', 'roster.manage'].includes(permission))) {
++    await renderOperations();
++  } else if (profile.permissions.includes('menu.manage')) {
++    await renderMenus();
++  } else if (profile.permissions.includes('penalty.read')) {
++    await renderPenalties();
++  } else {
++    throw new AdminDisplayError('Tài khoản không có quyền quản trị.');
++  }
++}
++
+ async function bootstrap(): Promise<void> {
+   const savedToken = sessionStorage.getItem(SESSION_KEY);
+   if (!savedToken) {
+@@ -525,14 +1097,9 @@ async function bootstrap(): Promise<void> {
+   localToken = savedToken;
+   try {
+     profile = UserProfileSchema.parse(await api('/auth/me'));
+-    if (profile.permissions.includes('menu.manage')) await renderMenus();
+-    else if (profile.permissions.includes('penalty.read')) {
+-      await renderPenalties();
+-    } else {
+-      throw new AdminDisplayError('Tài khoản không có quyền quản trị.');
+-    }
++    await renderDefaultView();
+   } catch (error: unknown) {
+-    signOut(error);
++    await signOut(error);
+   }
+ }
+
+diff --git a/apps/admin-web/src/styles.css b/apps/admin-web/src/styles.css
+index 199dfc2..1b3cae4 100644
+--- a/apps/admin-web/src/styles.css
++++ b/apps/admin-web/src/styles.css
+@@ -102,6 +102,9 @@ button {
+   gap: 6px;
+   min-width: 180px;
+ }
++.field[hidden] {
++  display: none;
++}
+ .field label {
+   color: #4c5b70;
+   font-size: 0.85rem;
+@@ -218,6 +221,135 @@ button {
+   font-weight: 750;
+ }
+
++.operation-section {
++  margin-bottom: 28px;
++}
++.operation-card {
++  overflow: hidden;
++}
++.section-heading {
++  display: flex;
++  align-items: baseline;
++  justify-content: space-between;
++  gap: 12px;
++  flex-wrap: wrap;
++}
++.section-heading h2,
++.section-heading h3 {
++  margin: 0;
++}
++.section-heading p {
++  width: 100%;
++  margin: 4px 0 0;
++}
++.operation-form {
++  display: grid;
++  gap: 14px;
++}
++.form-grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
++  gap: 12px;
++}
++.form-grid .field {
++  min-width: 0;
++}
++.check-field {
++  display: inline-flex;
++  align-items: center;
++  gap: 8px;
++  color: #334258;
++  font-weight: 650;
++}
++.check-field input {
++  width: 18px;
++  height: 18px;
++}
++.notice {
++  margin: 0;
++  padding: 10px 12px;
++  border-left: 4px solid #d29b16;
++  color: #6b4b00;
++  background: #fff8e5;
++}
++.form-feedback {
++  min-height: 1.4em;
++  color: #17663f;
++  font-weight: 650;
++}
++.stack {
++  display: grid;
++  gap: 10px;
++}
++.operation-row {
++  align-items: center;
++  margin: 0;
++}
++.json-input {
++  width: 100%;
++  min-height: 180px;
++  border: 1px solid #bdc9d8;
++  border-radius: 7px;
++  padding: 10px;
++  color: #172033;
++  background: white;
++  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
++  font-size: 0.9rem;
++  resize: vertical;
++}
++.preview-target {
++  display: grid;
++  gap: 12px;
++}
++.preview-card {
++  margin-top: 12px;
++}
++.table-wrap {
++  overflow-x: auto;
++  margin-top: 14px;
++  border: 1px solid #dce4ef;
++  border-radius: 8px;
++}
++.table-row {
++  display: grid;
++  grid-template-columns: 52px minmax(190px, 1.3fr) minmax(180px, 1fr) 100px minmax(120px, 0.7fr);
++  gap: 10px;
++  align-items: center;
++  min-width: 680px;
++  padding: 10px 12px;
++  border-bottom: 1px solid #e5eaf2;
++}
++.table-row:last-child {
++  border-bottom: 0;
++}
++.table-header {
++  color: #4c5b70;
++  background: #f7f9fc;
++  font-size: 0.8rem;
++  font-weight: 750;
++  text-transform: uppercase;
++}
++.commit-button {
++  margin-top: 14px;
++}
++.audit-card {
++  margin: 0;
++}
++.audit-details {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 8px 14px;
++  margin-top: 10px;
++}
++.otp-form {
++  display: grid;
++  gap: 14px;
++  text-align: left;
++}
++.otp-form .button {
++  width: 100%;
++}
++
+ @media (max-width: 720px) {
+   .header,
+   .week-header,
+diff --git a/apps/api/src/admin/locations/locations.controller.ts b/apps/api/src/admin/locations/locations.controller.ts
+index f58672d..a5cc626 100644
+--- a/apps/api/src/admin/locations/locations.controller.ts
++++ b/apps/api/src/admin/locations/locations.controller.ts
+@@ -42,8 +42,8 @@ const LocationConfigurationSchema = z
+     policy: z
+       .object({
+         id: z.string().min(1).optional(),
+-        latitude: z.number().finite().min(-90).max(90),
+-        longitude: z.number().finite().min(-180).max(180),
++        latitude: z.number().finite().min(-90).max(90).optional(),
++        longitude: z.number().finite().min(-180).max(180).optional(),
+         accuracySource: z.string().min(1),
+         geofenceRadiusMeters: z.number().finite().int().positive(),
+         maxFixAgeSeconds: z.number().finite().int().nonnegative(),
+@@ -63,8 +63,18 @@ export class LocationsController {
+
+   @Get()
+   @RequirePermission('location.manage')
+-  list() {
+-    return this.locationsService.listConfiguredLocations();
++  async list() {
++    const locations = await this.locationsService.listConfiguredLocations();
++    return locations.map((location) => ({
++      ...location,
++      policies: location.policies.map((policy) =>
++        Object.fromEntries(
++          Object.entries(policy).filter(
++            ([key]) => key !== 'latitude' && key !== 'longitude',
++          ),
++        ),
++      ),
++    }));
+   }
+
+   @Post()
+diff --git a/apps/api/src/locations/locations.service.ts b/apps/api/src/locations/locations.service.ts
+index 202d870..cd6c3c0 100644
+--- a/apps/api/src/locations/locations.service.ts
++++ b/apps/api/src/locations/locations.service.ts
+@@ -104,8 +104,8 @@ export interface LocationConfigurationInput {
+   networkNotes?: string | null;
+   policy: {
+     id?: string;
+-    latitude: number;
+-    longitude: number;
++    latitude?: number;
++    longitude?: number;
+     accuracySource: string;
+     geofenceRadiusMeters: number;
+     maxFixAgeSeconds: number;
+@@ -316,22 +316,36 @@ export class LocationsService {
+         : asDate(input.policy.effectiveTo);
+     validateDateRange(effectiveFrom, effectiveTo);
+     validateDateRange(policyEffectiveFrom, policyEffectiveTo);
+-    validatePolicy(input.policy);
++    validatePolicyThresholds(input.policy);
+
+     return this.prisma.$transaction(async (tx) => {
+-      if (input.policy.id) {
+-        const existingPolicy = await tx.locationPolicy.findUnique({
+-          where: { id: input.policy.id },
+-          select: { locationId: true },
++      const existingPolicy = input.policy.id
++        ? await tx.locationPolicy.findUnique({
++            where: { id: input.policy.id },
++            select: { locationId: true, latitude: true, longitude: true },
++          })
++        : null;
++      if (
++        input.policy.id &&
++        (!existingPolicy || existingPolicy.locationId !== locationId)
++      ) {
++        throw new BadRequestException({
++          code: 'INVALID_LOCATION_POLICY',
++          message: 'Location policy does not belong to location.',
+         });
+-        if (!existingPolicy || existingPolicy.locationId !== locationId) {
+-          throw new BadRequestException({
+-            code: 'INVALID_LOCATION_POLICY',
+-            message: 'Location policy does not belong to location.',
+-          });
+-        }
+       }
+
++      const latitude = input.policy.latitude ?? existingPolicy?.latitude;
++      const longitude = input.policy.longitude ?? existingPolicy?.longitude;
++      if (latitude === undefined || longitude === undefined) {
++        throw new BadRequestException({
++          code: 'LOCATION_COORDINATES_REQUIRED',
++          message: 'Location policy coordinates are required for a new policy.',
++        });
++      }
++      const resolvedPolicy = { ...input.policy, latitude, longitude };
++      validatePolicy(resolvedPolicy);
++
+       const locationData = {
+         shortCode: normalizeCode(input.shortCode),
+         displayName: input.displayName.trim(),
+@@ -373,8 +387,8 @@ export class LocationsService {
+           });
+
+       const policyData = {
+-        latitude: input.policy.latitude,
+-        longitude: input.policy.longitude,
++        latitude: resolvedPolicy.latitude,
++        longitude: resolvedPolicy.longitude,
+         accuracySource: input.policy.accuracySource.trim(),
+         geofenceRadiusMeters: input.policy.geofenceRadiusMeters,
+         maxFixAgeSeconds: input.policy.maxFixAgeSeconds,
+@@ -443,14 +457,28 @@ function validateDateRange(from: Date, to: Date | null): void {
+   }
+ }
+
+-function validatePolicy(policy: LocationConfigurationInput['policy']): void {
++type ResolvedLocationPolicy = Omit<
++  LocationConfigurationInput['policy'],
++  'latitude' | 'longitude'
++> & {
++  latitude: number;
++  longitude: number;
++};
++
++function invalidLocationPolicy(): never {
++  throw new BadRequestException({
++    code: 'VALIDATION_ERROR',
++    message: 'Invalid location policy.',
++  });
++}
++
++function validatePolicyThresholds(
++  policy: Pick<
++    LocationConfigurationInput['policy'],
++    'geofenceRadiusMeters' | 'maxFixAgeSeconds' | 'maxAccuracyMeters'
++  >,
++): void {
+   if (
+-    !Number.isFinite(policy.latitude) ||
+-    policy.latitude < -90 ||
+-    policy.latitude > 90 ||
+-    !Number.isFinite(policy.longitude) ||
+-    policy.longitude < -180 ||
+-    policy.longitude > 180 ||
+     !Number.isFinite(policy.geofenceRadiusMeters) ||
+     policy.geofenceRadiusMeters <= 0 ||
+     !Number.isInteger(policy.geofenceRadiusMeters) ||
+@@ -460,9 +488,20 @@ function validatePolicy(policy: LocationConfigurationInput['policy']): void {
+     !Number.isFinite(policy.maxAccuracyMeters) ||
+     policy.maxAccuracyMeters < 0
+   ) {
+-    throw new BadRequestException({
+-      code: 'VALIDATION_ERROR',
+-      message: 'Invalid location policy.',
+-    });
++    invalidLocationPolicy();
++  }
++}
++
++function validatePolicy(policy: ResolvedLocationPolicy): void {
++  if (
++    !Number.isFinite(policy.latitude) ||
++    policy.latitude < -90 ||
++    policy.latitude > 90 ||
++    !Number.isFinite(policy.longitude) ||
++    policy.longitude < -180 ||
++    policy.longitude > 180
++  ) {
++    invalidLocationPolicy();
+   }
++  validatePolicyThresholds(policy);
+ }
+diff --git a/apps/api/test/admin-operations.e2e-spec.ts b/apps/api/test/admin-operations.e2e-spec.ts
+new file mode 100644
+index 0000000..5c5fa66
+--- /dev/null
++++ b/apps/api/test/admin-operations.e2e-spec.ts
+@@ -0,0 +1,332 @@
++import { BadRequestException, INestApplication } from '@nestjs/common';
++import { Reflector } from '@nestjs/core';
++import { Test, TestingModule } from '@nestjs/testing';
++import request from 'supertest';
++import type { Server } from 'node:http';
++import { vi, type Mock } from 'vitest';
++import { LocationsController } from '../src/admin/locations/locations.controller.js';
++import { RosterController } from '../src/admin/roster/roster.controller.js';
++import { LocationsService } from '../src/locations/locations.service.js';
++import { RosterImportService } from '../src/admin/roster/roster-import.service.js';
++import { PermissionsGuard } from '../src/auth/permissions.guard.js';
++import { SessionGuard } from '../src/auth/session.guard.js';
++import { SessionService } from '../src/auth/session.service.js';
++import type { AuthenticatedUser } from '../src/auth/authenticated-user.js';
++
++type RosterServiceMock = {
++  preview: Mock;
++  commit: Mock;
++};
++
++type LocationServiceMock = {
++  listConfiguredLocations: Mock;
++  saveConfiguration: Mock;
++};
++
++const rosterRow = {
++  email: 'employee@example.test',
++  name: 'Employee',
++  employeeCode: 'EMP-001',
++  isActive: true,
++  role: 'PRESENTER',
++  serviceLocationCode: 'LOC-A',
++  effectiveFrom: '2026-09-24T00:00:00.000Z',
++  effectiveTo: null,
++};
++
++const adminUser: AuthenticatedUser = {
++  id: 'admin-1',
++  userId: 'admin-1',
++  email: 'admin@example.test',
++  name: 'Admin',
++  roles: ['operations'],
++  permissions: ['roster.manage', 'location.manage'],
++  sessionId: 'session-admin',
++  isActive: true,
++};
++
++async function createRosterApp(
++  user: AuthenticatedUser,
++  rosterService: RosterServiceMock,
++): Promise<INestApplication<Server>> {
++  const moduleFixture: TestingModule = await Test.createTestingModule({
++    controllers: [RosterController],
++    providers: [
++      Reflector,
++      SessionGuard,
++      PermissionsGuard,
++      { provide: SessionService, useValue: { resolve: vi.fn().mockResolvedValue(user) } },
++      { provide: RosterImportService, useValue: rosterService },
++    ],
++  }).compile();
++
++  const app = moduleFixture.createNestApplication();
++  await app.init();
++  return app;
++}
++
++async function createLocationApp(
++  user: AuthenticatedUser,
++  locationsService: LocationServiceMock,
++): Promise<INestApplication<Server>> {
++  const moduleFixture: TestingModule = await Test.createTestingModule({
++    controllers: [LocationsController],
++    providers: [
++      Reflector,
++      SessionGuard,
++      PermissionsGuard,
++      { provide: SessionService, useValue: { resolve: vi.fn().mockResolvedValue(user) } },
++      { provide: LocationsService, useValue: locationsService },
++    ],
++  }).compile();
++
++  const app = moduleFixture.createNestApplication();
++  await app.init();
++  return app;
++}
++
++describe('Admin operations (e2e)', () => {
++  beforeEach(() => {
++    process.env.NODE_ENV = 'test';
++    process.env.REQUIRE_AUTH = 'true';
++  });
++
++  afterEach(() => {
++    delete process.env.REQUIRE_AUTH;
++  });
++
++  it('previews a roster before allowing the client to submit a commit request', async () => {
++    const rosterService: RosterServiceMock = {
++      preview: vi.fn().mockResolvedValue({
++        batchId: 'batch-1',
++        source: 'admin-web',
++        rows: [{ ...rosterRow, rowNumber: 1, normalizedEmail: rosterRow.email }],
++        valid: true,
++        acceptedCount: 1,
++        rejectedCount: 0,
++      }),
++      commit: vi.fn().mockResolvedValue({
++        batchId: 'batch-1',
++        rows: [{ rowNumber: 1, normalizedEmail: rosterRow.email, assignmentId: 'assignment-1', outcome: 'ACCEPTED' }],
++        acceptedCount: 1,
++        idempotent: false,
++      }),
++    };
++    const app = await createRosterApp(adminUser, rosterService);
++
++    try {
++      const preview = await request(app.getHttpServer())
++        .post('/admin/roster/preview')
++        .set('Authorization', 'Bearer session-admin')
++        .send({ source: 'admin-web', rows: [rosterRow] });
++
++      expect(preview.status).toBe(201);
++      expect(preview.body).toMatchObject({ batchId: 'batch-1', valid: true });
++      expect(rosterService.commit).not.toHaveBeenCalled();
++
++      const commit = await request(app.getHttpServer())
++        .post('/admin/roster/batch-1/commit')
++        .set('Authorization', 'Bearer session-admin');
++
++      expect(commit.status).toBe(201);
++      expect(rosterService.commit).toHaveBeenCalledWith('batch-1', 'admin-1');
++    } finally {
++      await app.close();
++    }
++  });
++
++  it('returns row failures without invoking a partial commit', async () => {
++    const rosterService: RosterServiceMock = {
++      preview: vi.fn().mockResolvedValue({
++        source: 'admin-web',
++        rows: [{ ...rosterRow, rowNumber: 1, normalizedEmail: rosterRow.email, reason: 'UNKNOWN_SERVICE_LOCATION' }],
++        valid: false,
++        acceptedCount: 0,
++        rejectedCount: 1,
++      }),
++      commit: vi.fn(),
++    };
++    const app = await createRosterApp(adminUser, rosterService);
++
++    try {
++      const preview = await request(app.getHttpServer())
++        .post('/admin/roster/preview')
++        .set('Authorization', 'Bearer session-admin')
++        .send({ source: 'admin-web', rows: [rosterRow] });
++
++      expect(preview.status).toBe(201);
++      expect(preview.body).toMatchObject({ valid: false, acceptedCount: 0, rejectedCount: 1 });
++      expect(preview.body.rows[0]).toMatchObject({ reason: 'UNKNOWN_SERVICE_LOCATION' });
++      expect(rosterService.commit).not.toHaveBeenCalled();
++    } finally {
++      await app.close();
++    }
++  });
++
++  it('denies roster operations without the explicit roster permission', async () => {
++    const rosterService: RosterServiceMock = {
++      preview: vi.fn(),
++      commit: vi.fn(),
++    };
++    const app = await createRosterApp({ ...adminUser, permissions: [] }, rosterService);
++
++    try {
++      const response = await request(app.getHttpServer())
++        .post('/admin/roster/preview')
++        .set('Authorization', 'Bearer session-admin')
++        .send({ source: 'admin-web', rows: [rosterRow] });
++
++      expect(response.status).toBe(403);
++      expect(rosterService.preview).not.toHaveBeenCalled();
++    } finally {
++      await app.close();
++    }
++  });
++
++
++
++  it('redacts policy coordinates from Admin Web location responses', async () => {
++    const locationsService: LocationServiceMock = {
++      listConfiguredLocations: vi.fn().mockResolvedValue([
++        {
++          id: 'location-1',
++          shortCode: 'LOC-A',
++          displayName: 'Approved location',
++          servingPointName: 'Serving point',
++          address: 'Approved address',
++          building: 'Building',
++          floor: '1',
++          roomOrCounter: 'Counter',
++          localContact: 'Contact',
++          isActive: true,
++          effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
++          effectiveTo: null,
++          policies: [
++            {
++              id: 'policy-1',
++              locationId: 'location-1',
++              latitude: 10.77,
++              longitude: 106.69,
++              accuracySource: 'survey',
++              geofenceRadiusMeters: 100,
++              maxFixAgeSeconds: 60,
++              maxAccuracyMeters: 30,
++              effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
++              effectiveTo: null,
++              isActive: true,
++            },
++          ],
++        },
++      ]),
++      saveConfiguration: vi.fn(),
++    };
++    const app = await createLocationApp(adminUser, locationsService);
++
++    try {
++      const response = await request(app.getHttpServer())
++        .get('/admin/locations')
++        .set('Authorization', 'Bearer session-admin');
++
++      expect(response.status).toBe(200);
++      expect(response.body[0].policies[0]).not.toHaveProperty('latitude');
++      expect(response.body[0].policies[0]).not.toHaveProperty('longitude');
++      expect(JSON.stringify(response.body)).not.toContain('10.77');
++      expect(JSON.stringify(response.body)).not.toContain('106.69');
++    } finally {
++      await app.close();
++    }
++  });
++
++  it('accepts policy updates without coordinates because the API preserves them server-side', async () => {
++    const locationsService: LocationServiceMock = {
++      listConfiguredLocations: vi.fn(),
++      saveConfiguration: vi.fn().mockResolvedValue({ id: 'location-1' }),
++    };
++    const app = await createLocationApp(adminUser, locationsService);
++
++    try {
++      const response = await request(app.getHttpServer())
++        .put('/admin/locations/location-1')
++        .set('Authorization', 'Bearer session-admin')
++        .send({
++          shortCode: 'LOC-A',
++          displayName: 'Approved location',
++          servingPointName: 'Serving point',
++          address: 'Approved address',
++          building: 'Building',
++          floor: '1',
++          roomOrCounter: 'Counter',
++          localContact: 'Contact',
++          isActive: true,
++          effectiveFrom: '2026-01-01T00:00:00.000Z',
++          effectiveTo: null,
++          approvedScannerDeviceIds: ['scanner-1'],
++          policy: {
++            id: 'policy-1',
++            accuracySource: 'survey',
++            geofenceRadiusMeters: 100,
++            maxFixAgeSeconds: 60,
++            maxAccuracyMeters: 30,
++            effectiveFrom: '2026-01-01T00:00:00.000Z',
++            effectiveTo: null,
++            isActive: true,
++          },
++        });
++
++      expect(response.status).toBe(200);
++      expect(locationsService.saveConfiguration).toHaveBeenCalledWith(
++        expect.objectContaining({
++          policy: expect.not.objectContaining({
++            latitude: expect.anything(),
++            longitude: expect.anything(),
++          }),
++        }),
++        'admin-1',
++      );
++    } finally {
++      await app.close();
++    }
++  });
++
++  it('does not expose an admin-role lifecycle route', async () => {
++    const app = await createRosterApp(adminUser, {
++      preview: vi.fn(),
++      commit: vi.fn(),
++    });
++
++    try {
++      const response = await request(app.getHttpServer())
++        .post('/admin/roles')
++        .set('Authorization', 'Bearer session-admin')
++        .send({ userId: 'employee-1', role: 'admin' });
++
++      expect(response.status).toBe(404);
++    } finally {
++      await app.close();
++    }
++  });
++
++  it('preserves API row-validation errors instead of pretending a commit succeeded', async () => {
++    const rosterService: RosterServiceMock = {
++      preview: vi.fn(),
++      commit: vi.fn().mockRejectedValue(
++        new BadRequestException({
++          code: 'ROSTER_IMPORT_INVALID',
++          message: 'Roster batch contains rejected rows.',
++        }),
++      ),
++    };
++    const app = await createRosterApp(adminUser, rosterService);
++
++    try {
++      const response = await request(app.getHttpServer())
++        .post('/admin/roster/batch-invalid/commit')
++        .set('Authorization', 'Bearer session-admin');
++
++      expect(response.status).toBe(400);
++      expect(response.body).toMatchObject({ code: 'ROSTER_IMPORT_INVALID' });
++    } finally {
++      await app.close();
++    }
++  });
++});

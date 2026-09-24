@@ -127,3 +127,12 @@
 - [x] Task 9 review-fix round 2 focused suite — 7 files, 28 tests passed; full mobile suite — 25 files, 89 tests passed; mobile TypeScript passed.
 - [x] Task 9 review-fix round 3: Kitchen Scanner focus cleanup invalidates stale operations on blur, while focused retries preserve session/idempotency state; duplicate confirm attempts are rejected synchronously and feedback retry is disabled during loading.
 - [x] Task 9 review-fix round 3 verification — focused suite 7 files/30 tests, full mobile suite 25 files/91 tests, mobile TypeScript, Expo web export, and diff-check passed; native GPS/permission runtime remains unavailable.
+
+- [x] Official Task 10 brief generated/read from plan lines 934–991; artifact: `task-10-brief.md`.
+- [x] RED Task 10 API e2e/projection coverage was authored before `admin-operations.ts`; review regressions failed as expected for missing effective-policy selection, sensitive audit redaction, API coordinate response redaction, and coordinate-free policy updates.
+- [x] Task 10 implemented: current opaque-session OTP Admin Web bootstrap; permission-gated approved location/policy and scanner assignment; allowlist A; strict roster preview and valid-preview-only atomic commit; row-level outcomes; safe in-session audit projection; server-side policy-coordinate preservation/redaction.
+- [x] Review fixes removed raw latitude/longitude from Admin Web state/request/render, removed free-form audit `reason` from the safe allowlist, and selected only active/current policies.
+- [x] Focused Task 10 controller suite — 1 file, 7 tests passed with a throwaway no-DB Vitest config.
+- [x] Admin Web typecheck/build, API TypeScript, full API unit suite (20 files/169 tests), root lint (0 errors, 9 pre-existing warnings), and diff-check passed.
+- [!] Live API e2e and authenticated operations browser smoke remain unavailable because PostgreSQL/API session infrastructure is not running; OTP login surface browser smoke passed with safe generic backend failure copy.
+- [x] Task 10 commit `feat(admin-web): manage locations roster allowlist and audit` at current HEAD; scoped review package: `review-57c6f1b..7873a7d.diff`.

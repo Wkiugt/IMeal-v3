@@ -42,8 +42,8 @@ const LocationConfigurationSchema = z
     policy: z
       .object({
         id: z.string().min(1).optional(),
-        latitude: z.number().finite().min(-90).max(90),
-        longitude: z.number().finite().min(-180).max(180),
+        latitude: z.number().finite().min(-90).max(90).optional(),
+        longitude: z.number().finite().min(-180).max(180).optional(),
         accuracySource: z.string().min(1),
         geofenceRadiusMeters: z.number().finite().int().positive(),
         maxFixAgeSeconds: z.number().finite().int().nonnegative(),
@@ -63,8 +63,18 @@ export class LocationsController {
 
   @Get()
   @RequirePermission('location.manage')
-  list() {
-    return this.locationsService.listConfiguredLocations();
+  async list() {
+    const locations = await this.locationsService.listConfiguredLocations();
+    return locations.map((location) => ({
+      ...location,
+      policies: location.policies.map((policy) =>
+        Object.fromEntries(
+          Object.entries(policy).filter(
+            ([key]) => key !== 'latitude' && key !== 'longitude',
+          ),
+        ),
+      ),
+    }));
   }
 
   @Post()
