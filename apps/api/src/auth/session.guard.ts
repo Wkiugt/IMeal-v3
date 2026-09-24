@@ -8,6 +8,11 @@ import { isTestAuthBypassEnabled } from '../config/environment.js';
 import type { AuthenticatedUser } from './authenticated-user.js';
 import { SessionService } from './session.service.js';
 
+const SESSION_INVALID_ERROR = {
+  code: 'SESSION_INVALID' as const,
+  message: 'Invalid or expired session.',
+};
+
 interface SessionRequest {
   headers?: Record<string, string | string[] | undefined>;
   user?: AuthenticatedUser;
@@ -52,12 +57,12 @@ export class SessionGuard implements CanActivate {
 
     const token = extractSessionToken(request);
     if (!token) {
-      throw new UnauthorizedException('Bearer session token is required');
+      throw new UnauthorizedException(SESSION_INVALID_ERROR);
     }
 
     const user = await this.sessionService.resolve(token);
     if (!user) {
-      throw new UnauthorizedException('Invalid or expired session');
+      throw new UnauthorizedException(SESSION_INVALID_ERROR);
     }
 
     request.user = user;

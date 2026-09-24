@@ -50,18 +50,23 @@ describe('SessionGuard', () => {
     expect(request.user).toBe(resolvedUser);
   });
 
-  it('fails closed when the bearer session is absent or invalid', async () => {
+  it('returns the canonical structured SESSION_INVALID error for absent or invalid bearer sessions', async () => {
     const resolve = vi.fn().mockResolvedValue(null);
     const guard = new SessionGuard({ resolve } as never);
+    const expectedError = {
+      code: 'SESSION_INVALID',
+      message: 'Invalid or expired session.',
+    };
 
     await expect(
       guard.canActivate(executionContext({ headers: {} })),
-    ).rejects.toBeInstanceOf(UnauthorizedException);
+    ).rejects.toMatchObject({ response: expectedError });
     await expect(
       guard.canActivate(
         executionContext({ headers: { authorization: 'Bearer expired-session' } }),
       ),
-    ).rejects.toBeInstanceOf(UnauthorizedException);
+    ).rejects.toMatchObject({ response: expectedError });
+    expect(resolve).toHaveBeenCalledWith('expired-session');
   });
 
   it('uses only the explicitly configured non-production harness bypass', async () => {
