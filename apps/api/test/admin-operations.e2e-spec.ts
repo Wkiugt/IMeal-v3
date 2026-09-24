@@ -1,3 +1,8 @@
+// Dynamic import keeps the API tsconfig rootDir from including the Admin Web source;
+// this test intentionally exercises the browser-side privacy projection at runtime.
+const { toSafeAuditEntry } = await import(
+  new URL('../../admin-web/src/admin-operations.ts', import.meta.url).href,
+);
 import { BadRequestException, INestApplication } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -328,5 +333,37 @@ describe('Admin operations (e2e)', () => {
     } finally {
       await app.close();
     }
+  });
+
+  it('retains constrained audit values but redacts sensitive-looking values', () => {
+    const safe = toSafeAuditEntry({
+      id: 'audit-1',
+      action: 'roster.preview',
+      userId: 'admin-1',
+      createdAt: '2026-09-24T00:00:00.000Z',
+      details: {
+        acceptedCount: 2,
+        state: 'ACTIVE',
+        batchId: 'batch-1',
+        locationId: 'location-1',
+        result: 'session-token-secret',
+        source: 'gps://lat=10.77, lon=106.69',
+        status: 'OTP 654321',
+      },
+    });
+
+    expect(safe.details).toMatchObject({
+      acceptedCount: 2,
+      state: 'ACTIVE',
+      batchId: 'batch-1',
+      locationId: 'location-1',
+    });
+    expect(safe.details).not.toHaveProperty('result');
+    expect(safe.details).not.toHaveProperty('source');
+    expect(safe.details).not.toHaveProperty('status');
+    expect(safe.result).toBeNull();
+    expect(safe.redactedFields).toEqual(
+      expect.arrayContaining(['result', 'source', 'status']),
+    );
   });
 });

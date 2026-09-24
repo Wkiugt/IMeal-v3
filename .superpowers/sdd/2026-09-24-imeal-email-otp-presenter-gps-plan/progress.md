@@ -131,8 +131,9 @@
 - [x] Official Task 10 brief generated/read from plan lines 934–991; artifact: `task-10-brief.md`.
 - [x] RED Task 10 API e2e/projection coverage was authored before `admin-operations.ts`; review regressions failed as expected for missing effective-policy selection, sensitive audit redaction, API coordinate response redaction, and coordinate-free policy updates.
 - [x] Task 10 implemented: current opaque-session OTP Admin Web bootstrap; permission-gated approved location/policy and scanner assignment; allowlist A; strict roster preview and valid-preview-only atomic commit; row-level outcomes; safe in-session audit projection; server-side policy-coordinate preservation/redaction.
-- [x] Review fixes removed raw latitude/longitude from Admin Web state/request/render, removed free-form audit `reason` from the safe allowlist, and selected only active/current policies.
-- [x] Focused Task 10 controller suite — 1 file, 7 tests passed with a throwaway no-DB Vitest config.
+- [x] Review fixes removed raw latitude/longitude from Admin Web state/request/render, removed free-form audit `reason`, added constrained value-level redaction for audit result/status/source and suspicious secrets/coordinates/OTPs, and selected only active/current policies.
+- [x] Residual audit-value regression reproduced (1 failing/7 passing), then fixed with field-specific enums/patterns and sensitive-substring/coordinate detection.
+- [x] Focused Task 10 controller/projection suite — 1 file, 8 tests passed with a throwaway no-DB Vitest config.
 - [x] Admin Web typecheck/build, API TypeScript, full API unit suite (20 files/169 tests), root lint (0 errors, 9 pre-existing warnings), and diff-check passed.
 - [!] Live API e2e and authenticated operations browser smoke remain unavailable because PostgreSQL/API session infrastructure is not running; OTP login surface browser smoke passed with safe generic backend failure copy.
-- [x] Task 10 commit `feat(admin-web): manage locations roster allowlist and audit` at current HEAD; scoped review package: `review-57c6f1b..7873a7d.diff`.
+- [x] Task 10 privacy review-fix commit `feat(admin-web): manage locations roster allowlist and audit` at current HEAD; exact package: `review-57c6f1b..final.diff`.

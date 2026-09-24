@@ -54,22 +54,35 @@ export interface SafeAuditEntry {
   redactedFields: ReadonlyArray<string>;
 }
 
-const SAFE_DETAIL_KEYS: Record<string, true> = {
-  acceptedCount: true,
-  assignmentId: true,
-  batchId: true,
-  idempotent: true,
-  locationId: true,
-  rejectedCount: true,
-  result: true,
-  rowNumber: true,
-  source: true,
-  state: true,
-  status: true,
+type SafeDetailKind = 'boolean' | 'code' | 'count' | 'id' | 'source';
+
+const SAFE_DETAIL_KINDS: Record<string, SafeDetailKind> = {
+  acceptedCount: 'count',
+  assignmentId: 'id',
+  batchId: 'id',
+  idempotent: 'boolean',
+  locationId: 'id',
+  rejectedCount: 'count',
+  result: 'code',
+  rowNumber: 'count',
+  source: 'source',
+  state: 'code',
+  status: 'code',
 };
 
+const SAFE_CODE_VALUE = /^[A-Z][A-Z0-9_:-]{0,31}$/;
+const SAFE_ID_VALUE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/;
+const SAFE_SOURCE_VALUES = new Set([
+  'admin-api',
+  'admin-web',
+  'import',
+  'scanner',
+  'system',
+]);
 const SENSITIVE_DETAIL_KEY =
   /(?:otp|code|token|secret|password|session|qr|gps|latitude|longitude|accuracy|coordinate|locationclaim|raw)/i;
+const SENSITIVE_DETAIL_VALUE =
+  /(?:\b(?:otp|one[-\s]?time(?:[-\s]?pass(?:word)?)?|token|secret|password|session|csrf|bearer|authorization|cookie|qr|gps|latitude|longitude|accuracy|coordinate|locationclaim|raw)\b|(?:\b(?:lat(?:itude)?|lon(?:gitude)?)\s*[:=])|(?:[-+]?\d{1,3}\.\d+\s*[,;]\s*[-+]?\d{1,3}\.\d+)|(?:\b\d{4,8}\b))/i;
 
 function cleanText(value: string): string {
   return value.normalize('NFKC').trim();
@@ -101,11 +114,43 @@ function parseDetails(details: unknown): Record<string, unknown> {
     : {};
 }
 
-function safeScalar(value: unknown): string | number | boolean | null | undefined {
-  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return value;
+function safeDetailValue(
+  key: string,
+  value: unknown,
+): string | number | boolean | null | undefined {
+  const kind = SAFE_DETAIL_KINDS[key];
+  if (!kind) return undefined;
+  if (value === null) return null;
+
+  if (kind === 'boolean') {
+    return typeof value === 'boolean' ? value : undefined;
   }
-  return undefined;
+
+  if (kind === 'count') {
+    return typeof value === 'number' &&
+      Number.isSafeInteger(value) &&
+      value >= 0 &&
+      value <= 1_000_000
+      ? value
+      : undefined;
+  }
+
+  if (typeof value !== 'string') return undefined;
+  const normalized = cleanText(value);
+  if (
+    normalized.length === 0 ||
+    SENSITIVE_DETAIL_VALUE.test(normalized)
+  ) {
+    return undefined;
+  }
+
+  if (kind === 'source') {
+    return SAFE_SOURCE_VALUES.has(normalized) ? normalized : undefined;
+  }
+  if (kind === 'code') {
+    return SAFE_CODE_VALUE.test(normalized) ? normalized : undefined;
+  }
+  return SAFE_ID_VALUE.test(normalized) ? normalized : undefined;
 }
 
 export interface EffectiveLocationPolicy {
@@ -164,11 +209,11 @@ export function toSafeAuditEntry(entry: AuditEntry): SafeAuditEntry {
   const redactedFields: string[] = [];
 
   for (const [key, value] of Object.entries(source)) {
-    if (SENSITIVE_DETAIL_KEY.test(key) || SAFE_DETAIL_KEYS[key] !== true) {
+    if (SENSITIVE_DETAIL_KEY.test(key)) {
       redactedFields.push(key);
       continue;
     }
-    const scalar = safeScalar(value);
+    const scalar = safeDetailValue(key, value);
     if (scalar === undefined) {
       redactedFields.push(key);
       continue;
