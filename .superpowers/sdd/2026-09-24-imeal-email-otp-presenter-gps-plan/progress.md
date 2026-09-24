@@ -168,3 +168,7 @@
 - [x] Follow-up review fixes: provider URL parsing now rejects malformed,
   non-HTTPS and hostname-empty production values; worker provider/env regressions
   cover missing URL/API key/sender and malformed URL. Commit: `2886d37`.
+- [x] Final metadata chain recorded for package regeneration: implementation
+  `2886d37`, ledger handoff `4e7cb68`, prior report HEAD `854b406`;
+  Compose healthchecks now use `CHANGE_ME_LOCAL`, and the final package excludes
+  only its own ignored artifact while covering every tracked handoff file.

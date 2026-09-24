@@ -16,7 +16,7 @@ services:
       test:
         [
           'CMD-SHELL',
-          'pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-imeal}',
+          'pg_isready -U ${POSTGRES_USER:-CHANGE_ME_LOCAL} -d ${POSTGRES_DB:-imeal}',
         ]
       interval: 5s
       timeout: 5s
@@ -44,7 +44,7 @@ services:
       test:
         [
           'CMD-SHELL',
-          'pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-imeal}',
+          'pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_USER:-CHANGE_ME_LOCAL} -d ${POSTGRES_DB:-imeal}',
         ]
       interval: 5s
       timeout: 5s
