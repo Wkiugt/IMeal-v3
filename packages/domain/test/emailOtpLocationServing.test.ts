@@ -162,4 +162,22 @@ describe('Task 2 persistence boundaries', () => {
       }),
     ).rejects.toMatchObject({ code: 'P2002' });
   });
+
+  it('requires finite accuracy for a valid serving verification', async () => {
+    const user = await createUser('verification@example.test');
+    const location = await createLocation('TEST-E');
+
+    await expect(
+      prisma.servingVerification.create({
+        data: {
+          presenterUserId: user.id,
+          locationId: location.id,
+          result: 'VALID',
+          capturedAt: TEST_DATE,
+          safeVerificationCode: 'GPS_VALID',
+          accuracyMeters: null,
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'P2004' });
+  });
 });

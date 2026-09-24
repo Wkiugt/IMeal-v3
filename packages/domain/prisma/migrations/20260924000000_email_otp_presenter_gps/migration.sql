@@ -291,13 +291,18 @@ CREATE TABLE "serving_verifications" (
   "retention_until" TIMESTAMP(3),
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-  CONSTRAINT "serving_verifications_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "serving_verifications_accuracy_check"
     CHECK (
-      "accuracy_meters" IS NULL
-      OR (
-        "accuracy_meters" NOT IN ('NaN'::double precision, 'Infinity'::double precision, '-Infinity'::double precision)
-        AND "accuracy_meters" >= 0
+      (
+        "result" <> 'VALID'::"ServingVerificationResult"
+        OR "accuracy_meters" IS NOT NULL
+      )
+      AND (
+        "accuracy_meters" IS NULL
+        OR (
+          "accuracy_meters" NOT IN ('NaN'::double precision, 'Infinity'::double precision, '-Infinity'::double precision)
+          AND "accuracy_meters" >= 0
+        )
       )
     )
 );
