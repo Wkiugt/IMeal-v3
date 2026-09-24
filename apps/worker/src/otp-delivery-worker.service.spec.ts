@@ -4,8 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   OtpDeliveryWorker,
   type ClaimedOtpDelivery,
+  type OtpClaimValidation,
   type OtpDeliveryOutboxPort,
   type OtpProvider,
+  validateWorkerEnvironment,
 } from './otp-delivery-worker.service.js';
 
 const NOW = new Date('2026-09-24T03:00:00.000Z');
@@ -49,7 +51,13 @@ function delivery(overrides: Partial<ClaimedOtpDelivery> = {}): ClaimedOtpDelive
   };
 }
 
-function fakeOutbox(rows: ClaimedOtpDelivery[]): OtpDeliveryOutboxPort & {
+function fakeOutbox(
+  rows: ClaimedOtpDelivery[],
+  validation?: (
+    row: ClaimedOtpDelivery,
+    now: Date,
+  ) => OtpClaimValidation,
+): OtpDeliveryOutboxPort & {
   processed: Array<{ id: string; now: Date }>;
   failures: Array<{ id: string; now: Date; code: string; retryAt: Date | null }>;
 } {
@@ -64,6 +72,19 @@ function fakeOutbox(rows: ClaimedOtpDelivery[]): OtpDeliveryOutboxPort & {
     processed,
     failures,
     claimBatch: vi.fn(async () => rows),
+    validateClaim: vi.fn(async (id: string, now: Date): Promise<OtpClaimValidation> => {
+      const row = rows.find((candidate) => candidate.id === id);
+      if (!row) return { valid: false, reason: 'CLAIM_LOST' as const };
+      if (row.expiresAt <= now) {
+        return { valid: false, reason: 'EXPIRED' as const };
+      }
+      return validation?.(row, now) ?? {
+        valid: true,
+        destination: row.destination,
+        purpose: row.purpose,
+        expiresAt: row.expiresAt,
+      };
+    }),
     markProcessed: vi.fn(async (id: string, now: Date) => {
       outbox.processed.push({ id, now });
       return true;
@@ -91,6 +112,17 @@ afterEach(() => {
 });
 
 describe('OtpDeliveryWorker', () => {
+  it('fails worker startup when the encrypted payload key is missing', () => {
+    const env = {
+      NODE_ENV: 'production',
+      OTP_PROVIDER_URL: 'https://provider.example.test/send',
+      OTP_PROVIDER_API_KEY: 'provider-key',
+    } as NodeJS.ProcessEnv;
+
+    expect(() => validateWorkerEnvironment(env)).toThrow(
+      'OTP_DELIVERY_ENCRYPTION_KEY',
+    );
+  });
   it('claims and sends only at the provider boundary without logging the code or message', async () => {
     process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
     const provider: OtpProvider = { send: vi.fn().mockResolvedValue(undefined) };
@@ -99,7 +131,7 @@ describe('OtpDeliveryWorker', () => {
     const warn = vi.spyOn(Logger.prototype, 'warn');
     const error = vi.spyOn(Logger.prototype, 'error');
 
-    const result = await new OtpDeliveryWorker(undefined, provider, outbox).processOnce(NOW);
+    const result = await new OtpDeliveryWorker(undefined, provider, outbox, () => NOW).processOnce(NOW);
 
     expect(result).toMatchObject({ claimed: 1, sent: 1, retried: 0, failed: 0, suppressed: 0 });
     expect(provider.send).toHaveBeenCalledWith({
@@ -127,7 +159,7 @@ describe('OtpDeliveryWorker', () => {
     };
     const outbox = fakeOutbox([delivery({ attemptCount: 1 })]);
 
-    const result = await new OtpDeliveryWorker(undefined, provider, outbox).processOnce(NOW);
+    const result = await new OtpDeliveryWorker(undefined, provider, outbox, () => NOW).processOnce(NOW);
 
     expect(result).toMatchObject({ claimed: 1, sent: 0, retried: 1, failed: 0, suppressed: 0 });
     expect(outbox.failures).toEqual([
@@ -139,15 +171,65 @@ describe('OtpDeliveryWorker', () => {
       },
     ]);
 
-    const terminalOutbox = fakeOutbox([delivery({ attemptCount: 3 })]);
-    const terminalResult = await new OtpDeliveryWorker(
+  });
+  it('does not send a delivery whose attempt count is already at the configured maximum', async () => {
+    process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
+    process.env.OTP_DELIVERY_MAX_ATTEMPTS = '3';
+    const provider: OtpProvider = { send: vi.fn().mockResolvedValue(undefined) };
+    const outbox = fakeOutbox([delivery({ attemptCount: 3 })]);
+
+    const result = await new OtpDeliveryWorker(undefined, provider, outbox, () => NOW).processOnce(NOW);
+
+    expect(result).toMatchObject({ claimed: 1, sent: 0, retried: 0, failed: 1, suppressed: 0 });
+    expect(provider.send).not.toHaveBeenCalled();
+    expect(outbox.failures[0]).toMatchObject({
+      code: 'MAX_ATTEMPTS',
+      retryAt: null,
+    });
+  });
+
+  it('revalidates the current challenge state after a batch delay before sending', async () => {
+    process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
+    const delayedNow = new Date(NOW.getTime() + 6 * 60_000);
+    const provider: OtpProvider = { send: vi.fn().mockResolvedValue(undefined) };
+    const outbox = fakeOutbox(
+      [delivery({ expiresAt: new Date(NOW.getTime() + 60_000) })],
+      (_row, currentNow) => {
+        expect(currentNow).toEqual(delayedNow);
+        return { valid: false, reason: 'EXPIRED' };
+      },
+    );
+
+    const result = await new OtpDeliveryWorker(
       undefined,
       provider,
-      terminalOutbox,
+      outbox,
+      () => delayedNow,
     ).processOnce(NOW);
-    expect(terminalResult).toMatchObject({ claimed: 1, sent: 0, retried: 0, failed: 1 });
-    expect(terminalOutbox.failures[0]).toMatchObject({
-      code: 'PROVIDER_TRANSIENT_MAX_ATTEMPTS',
+
+    expect(result).toMatchObject({ claimed: 1, sent: 0, retried: 0, failed: 0, suppressed: 1 });
+    expect(provider.send).not.toHaveBeenCalled();
+    expect(outbox.failures[0]).toMatchObject({
+      code: 'OTP_EXPIRED',
+      retryAt: null,
+      now: delayedNow,
+    });
+  });
+
+  it('suppresses a challenge consumed after claim before the provider call', async () => {
+    process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
+    const provider: OtpProvider = { send: vi.fn().mockResolvedValue(undefined) };
+    const outbox = fakeOutbox([delivery()], () => ({
+      valid: false,
+      reason: 'CONSUMED',
+    }));
+
+    const result = await new OtpDeliveryWorker(undefined, provider, outbox, () => NOW).processOnce(NOW);
+
+    expect(result).toMatchObject({ claimed: 1, sent: 0, retried: 0, failed: 0, suppressed: 1 });
+    expect(provider.send).not.toHaveBeenCalled();
+    expect(outbox.failures[0]).toMatchObject({
+      code: 'OTP_CONSUMED',
       retryAt: null,
     });
   });
@@ -159,7 +241,7 @@ describe('OtpDeliveryWorker', () => {
       delivery({ expiresAt: new Date(NOW.getTime() - 1) }),
     ]);
 
-    const result = await new OtpDeliveryWorker(undefined, provider, outbox).processOnce(NOW);
+    const result = await new OtpDeliveryWorker(undefined, provider, outbox, () => NOW).processOnce(NOW);
 
     expect(result).toMatchObject({ claimed: 1, sent: 0, retried: 0, failed: 0, suppressed: 1 });
     expect(provider.send).not.toHaveBeenCalled();
