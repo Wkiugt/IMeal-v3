@@ -16,20 +16,28 @@ export const PickupErrorCodeSchema = z.enum([
   'OTP_INVALID_OR_EXPIRED',
   'SESSION_REVOKED',
   'GPS_RETRY_REQUIRED',
+  'GPS_UNAVAILABLE',
+  'GPS_STALE',
+  'GPS_INACCURATE',
+  'PICKUP_INTENT_REQUIRED',
   'PICKUP_INTENT_CONFLICT',
   'PICKUP_SESSION_EXPIRED',
   'IDEMPOTENCY_CONFLICT',
   'GPS_SESSION_REQUIRED',
-  'GPS_FIX_TOO_OLD',
-  'GPS_ACCURACY_TOO_LOW',
   'SERVING_WINDOW_CLOSED',
   'QR_EXPIRED',
   'QR_INVALID',
-  'EXACT_INTENT_REQUIRED',
   'SESSION_INVALID',
   'OTP_RATE_LIMITED',
 ]);
 export type PickupErrorCode = z.infer<typeof PickupErrorCodeSchema>;
+export const GpsRecoveryActionSchema = z.enum(['RETRY', 'REFRESH']);
+export type GpsRecoveryAction = z.infer<typeof GpsRecoveryActionSchema>;
+
+export const GpsFailureDetailsSchema = z.object({
+  action: GpsRecoveryActionSchema,
+}).strict();
+export type GpsFailureDetails = z.infer<typeof GpsFailureDetailsSchema>;
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
 export const ErrorDetailSchema = z.object({

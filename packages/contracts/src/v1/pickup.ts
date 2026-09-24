@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MealChoiceSchema, MealDateSchema } from './registrations';
+import { PresenterLocationEvidenceSchema } from './locations';
 
 const UtcDateTimeSchema = z
   .string()
@@ -113,19 +114,21 @@ export type PickupAvailabilityCode = z.infer<
 export type PickupAvailabilityError = z.infer<
   typeof PickupAvailabilityErrorSchema
 >;
+const CanonicalRegistrationIdsSchema = z.array(z.string().min(1)).min(1).superRefine((ids, ctx) => {
+  const unique = new Set(ids);
+  if (unique.size !== ids.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Registration IDs must be unique' });
+  }
+  if (ids.some((id, index) => index > 0 && ids[index - 1] >= id)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Registration IDs must be sorted' });
+  }
+});
+
 export const ExactPickupIntentSchema = z
   .object({
     presenterUserId: z.string().min(1),
     mealDate: MealDateSchema,
-    registrationIds: z.array(z.string().min(1)).min(1).superRefine((ids, ctx) => {
-      const unique = new Set(ids);
-      if (unique.size !== ids.length) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Registration IDs must be unique' });
-      }
-      if (ids.some((id, index) => index > 0 && ids[index - 1] >= id)) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Registration IDs must be sorted' });
-      }
-    }),
+    registrationIds: CanonicalRegistrationIdsSchema,
     nonce: z.string().min(1),
   })
   .strict();
@@ -133,13 +136,8 @@ export type ExactPickupIntent = z.infer<typeof ExactPickupIntentSchema>;
 
 export const GenerateQrSchema = z
   .object({
-    registrationIds: z.array(z.string().min(1)).min(1),
-    presenterEvidence: z.object({
-      capturedAt: UtcDateTimeSchema,
-      latitude: z.number().finite().min(-90).max(90),
-      longitude: z.number().finite().min(-180).max(180),
-      accuracyMeters: z.number().finite().nonnegative(),
-    }).strict(),
+    registrationIds: CanonicalRegistrationIdsSchema,
+    presenterEvidence: PresenterLocationEvidenceSchema,
   })
   .strict();
 export type GenerateQrInput = z.infer<typeof GenerateQrSchema>;
@@ -163,3 +161,4 @@ export const ServingVerificationSchema = z.object({
     accuracyMeters: z.number().finite().nonnegative(),
   }).strict(),
 }).strict();
+export type ServingVerification = z.infer<typeof ServingVerificationSchema>;

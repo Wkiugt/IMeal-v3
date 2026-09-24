@@ -725,7 +725,7 @@ describe('Contracts v1', () => {
     });
   });
   describe('Email OTP, location, and exact pickup contracts', () => {
-    it('accepts the versioned examples and rejects unsafe shapes', () => {
+    it('accepts the exact OTP and evidence examples', () => {
       expect(v1.RequestOtpSchema.parse({
         email: 'employee@example.test',
         purpose: 'SESSION_LOGIN',
@@ -739,6 +739,69 @@ describe('Contracts v1', () => {
         longitude: 106.69,
         accuracyMeters: 12,
       })).toMatchObject({ accuracyMeters: 12 });
+    });
+
+    it('rejects invalid timestamps, coordinates, accuracy, and unknown fields', () => {
+      expect(() => v1.PresenterLocationEvidenceSchema.parse({
+        capturedAt: '2026-09-24T03:00:00.000+07:00',
+        latitude: 10.77,
+        longitude: 106.69,
+        accuracyMeters: 12,
+      })).toThrow();
+      expect(() => v1.PresenterLocationEvidenceSchema.parse({
+        capturedAt: '2026-09-24T03:00:00.000Z',
+        latitude: 91,
+        longitude: 106.69,
+        accuracyMeters: 12,
+      })).toThrow();
+      expect(() => v1.PresenterLocationEvidenceSchema.parse({
+        capturedAt: '2026-09-24T03:00:00.000Z',
+        latitude: 10.77,
+        longitude: 181,
+        accuracyMeters: 12,
+      })).toThrow();
+      expect(() => v1.PresenterLocationEvidenceSchema.parse({
+        capturedAt: '2026-09-24T03:00:00.000Z',
+        latitude: 10.77,
+        longitude: 106.69,
+        accuracyMeters: -1,
+        extra: true,
+      })).toThrow();
+      expect(() => v1.RequestOtpSchema.parse({
+        email: 'employee@example.test',
+        purpose: 'SESSION_LOGIN',
+        extra: true,
+      })).toThrow();
+    });
+
+    it('requires canonical sorted unique registration IDs for Generate QR', () => {
+      const evidence = {
+        capturedAt: '2026-09-24T03:00:00.000Z',
+        latitude: 10.77,
+        longitude: 106.69,
+        accuracyMeters: 12,
+      };
+      expect(v1.GenerateQrSchema.parse({
+        registrationIds: ['a', 'b'],
+        presenterEvidence: evidence,
+      }).registrationIds).toEqual(['a', 'b']);
+      expect(() => v1.GenerateQrSchema.parse({
+        registrationIds: ['a', 'a'],
+        presenterEvidence: evidence,
+      })).toThrow();
+      expect(() => v1.GenerateQrSchema.parse({
+        registrationIds: ['b', 'a'],
+        presenterEvidence: evidence,
+      })).toThrow();
+      expect(() => v1.GenerateQrSchema.parse({
+        registrationIds: ['a', ''],
+        presenterEvidence: evidence,
+      })).toThrow();
+    });
+
+    it('keeps resolve QR-only and confirm session-only', () => {
+      expect(v1.ResolvePickupSchema.parse({ qr: 'signed-qr' })).toEqual({ qr: 'signed-qr' });
+      expect(() => v1.ResolvePickupSchema.parse({ qr: 'signed-qr', presenterEvidence: {} })).toThrow();
       expect(v1.ConfirmPickupSchema.parse({
         pickupSessionId: 's',
         idempotencyKey: 'k',
@@ -746,29 +809,49 @@ describe('Contracts v1', () => {
         pickupSessionId: 's',
         idempotencyKey: 'k',
       });
-      expect(() => v1.RequestOtpSchema.parse({
-        email: 'employee@example.test',
-        purpose: 'SESSION_LOGIN',
-        extra: true,
-      })).toThrow();
-      expect(() => v1.ConfirmPickupSchema.parse({
-        pickupSessionId: '',
-        idempotencyKey: 'k',
-      })).toThrow();
+      expect(() => v1.ConfirmPickupSchema.parse({ pickupSessionId: '', idempotencyKey: 'k' })).toThrow();
+      expect(() => v1.ConfirmPickupSchema.parse({ pickupSessionId: 's', idempotencyKey: '' })).toThrow();
       expect(() => v1.ConfirmPickupSchema.parse({
         pickupSessionId: 's',
-        idempotencyKey: '',
+        idempotencyKey: 'k',
+        registrationIds: ['r'],
       })).toThrow();
+    });
+
+    it('accepts safe GPS recovery details and canonical stable error codes', () => {
+      expect(v1.GpsFailureDetailsSchema.parse({ action: 'RETRY' })).toEqual({ action: 'RETRY' });
+      const verification: v1.ServingVerification = {
+        presenterUserId: 'presenter',
+        receiverType: 'SELF',
+        locationId: 'location',
+        gps: {
+          result: 'VALID',
+          capturedAt: '2026-09-24T03:00:00.000Z',
+          accuracyMeters: 12,
+        },
+      };
+      expect(verification.gps.result).toBe('VALID');
+      expect(v1.GpsFailureDetailsSchema.parse({ action: 'REFRESH' })).toEqual({ action: 'REFRESH' });
+      expect(() => v1.GpsFailureDetailsSchema.parse({ action: 'RETRY', latitude: 10.77 })).toThrow();
+      expect(() => v1.GpsFailureDetailsSchema.parse({ action: 'RETRY', distanceMeters: 1 })).toThrow();
       expect(v1.PickupErrorCodeSchema.options).toEqual(expect.arrayContaining([
         'OTP_REQUEST_ACCEPTED',
         'OTP_INVALID_OR_EXPIRED',
         'SESSION_REVOKED',
         'GPS_RETRY_REQUIRED',
+        'GPS_UNAVAILABLE',
+        'GPS_STALE',
+        'GPS_INACCURATE',
+        'PICKUP_INTENT_REQUIRED',
         'PICKUP_INTENT_CONFLICT',
         'PICKUP_SESSION_EXPIRED',
         'IDEMPOTENCY_CONFLICT',
       ]));
+      expect(v1.PickupErrorCodeSchema.options).not.toEqual(expect.arrayContaining([
+        'EXACT_INTENT_REQUIRED',
+        'GPS_FIX_TOO_OLD',
+        'GPS_ACCURACY_TOO_LOW',
+      ]));
     });
   });
-
 });
