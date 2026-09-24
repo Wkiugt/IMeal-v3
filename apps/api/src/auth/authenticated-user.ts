@@ -7,6 +7,15 @@ export interface AuthenticatedUser {
   permissions: string[];
 }
 
+export interface VerifiedOtpPrincipal {
+  userId: string;
+  email: string;
+  name: string | null;
+  challengeId: string;
+  requestId: string;
+  user: AuthenticatedUser;
+}
+
 export interface EntraIdentity {
   userId: string;
   email: string;

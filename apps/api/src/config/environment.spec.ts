@@ -19,16 +19,39 @@ describe('API environment validation', () => {
     expect(validateApiEnvironment()).toBeUndefined();
   });
 
-  it('allows local authentication outside tests', () => {
+  it('allows local authentication outside tests when OTP settings are present', () => {
     process.env.NODE_ENV = 'development';
     process.env.AUTH_MODE = 'local';
     process.env.DATABASE_URL = 'postgresql://localhost/imeal';
     process.env.QR_SIGNING_SECRET = 'q'.repeat(32);
+    process.env.OTP_HASH_SECRET = 'o'.repeat(32);
     process.env.LOCAL_AUTH_JWT_SECRET = 'j'.repeat(32);
     process.env.LOCAL_AUTH_USERS =
       '[{"username":"admin01","password":"secret","email":"admin01@imeal.local","name":"Admin 01","role":"admin"}]';
 
     expect(() => validateApiEnvironment()).not.toThrow();
+  });
+
+  it('rejects production when the OTP verifier secret is missing', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.AUTH_MODE = 'entra';
+    process.env.DATABASE_URL = 'postgresql://localhost/imeal';
+    process.env.QR_SIGNING_SECRET = 'q'.repeat(32);
+    delete process.env.OTP_HASH_SECRET;
+    process.env.ENTRA_TENANT_ID = 'tenant';
+    process.env.ENTRA_CLIENT_ID = 'client';
+
+    expect(() => validateApiEnvironment()).toThrow('OTP_HASH_SECRET');
+  });
+
+  it('rejects the local auth bypass outside tests', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.AUTH_MODE = 'local';
+    process.env.REQUIRE_AUTH = 'false';
+
+    expect(() => validateApiEnvironment()).toThrow(
+      'REQUIRE_AUTH=false is only allowed in tests',
+    );
   });
 
   it('rejects missing local authentication settings', () => {
