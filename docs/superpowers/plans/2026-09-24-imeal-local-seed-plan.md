@@ -484,7 +484,14 @@ expect(await prisma.registration.count()).toBe(126);
 expect(await prisma.mealServing.count()).toBe(40);
 expect(await prisma.penalty.count()).toBe(10);
 expect(await prisma.registration.count({ where: { status: 'SERVED', mealServing: { isNot: null } } })).toBe(40);
-expect(await prisma.registration.count({ where: { status: 'NO_SHOW', penalties: { some: { amount: 50000, status: 'PENDING' } } } })).toBe(10);
+expect(await prisma.registration.count({ where: { status: 'NO_SHOW' } })).toBe(10);
+expect(await prisma.penalty.count({
+  where: {
+    amount: 50000,
+    status: 'PENDING',
+    reason: { startsWith: 'NO_SHOW_PENALTY_' },
+  },
+})).toBe(10);
 ```
 
 Add a second test that calls the writer twice and asserts the second result has no created rows, counts remain unchanged, and the sorted user/location/registration/serving IDs from both reads are identical. Add a third test that inserts an unrelated user/location with non-seed IDs, reruns the plan, and asserts both unrelated rows remain unchanged.
