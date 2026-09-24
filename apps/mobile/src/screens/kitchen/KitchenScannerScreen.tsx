@@ -37,7 +37,11 @@ import { useReducedMotion } from '../../ui/useReducedMotion';
 import { useLanguage } from '../../i18n/LanguageProvider';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { designTokens, getElevationStyle } from '../../ui/designTokens';
-import { getConfirmAttempt } from './kitchenScannerRules';
+import {
+  canResetScan,
+  getConfirmAttempt,
+  isCurrentScanOperation,
+} from './kitchenScannerRules';
 
 type Props = AppTabScreenProps<'KitchenScanner'>;
 type ScanFeedback = {
@@ -66,6 +70,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [feedback, setFeedback] = useState<ScanFeedback | null>(null);
   const idempotencyKey = useRef<string | null>(null);
+  const scanGeneration = useRef(0);
   const reduceMotion = useReducedMotion();
   const scanProgress = useRef(new Animated.Value(0)).current;
   const feedbackTimer = useRef<NodeJS.Timeout | undefined>(undefined);
@@ -104,6 +109,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
 
   useEffect(() => {
     return () => {
+      scanGeneration.current += 1;
       clearTimeout(feedbackTimer.current);
     };
   }, []);
@@ -155,6 +161,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
 
   const expired = Boolean(expiresAt && secondsLeft === 0);
   const resetScan = () => {
+    scanGeneration.current += 1;
     dismissFeedback();
     setServingIntent(null);
     setExpiresAt(null);
@@ -163,17 +170,27 @@ export function KitchenScannerScreen({ navigation }: Props) {
     setLoading(false);
     idempotencyKey.current = null;
   };
-
   const resolveCode = async (payload: string) => {
     if (!token) return;
+    const operationGeneration = ++scanGeneration.current;
     setLoading(true);
     try {
       idempotencyKey.current = null;
       const response = await pickupAPI.resolvePickup(token, { qr: payload });
+      if (
+        !isCurrentScanOperation(scanGeneration.current, operationGeneration)
+      ) {
+        return;
+      }
       const expiry = new Date(response.session.expiresAt).getTime();
       setServingIntent(response);
       setExpiresAt(Number.isFinite(expiry) ? expiry : Date.now() + 30_000);
     } catch (error: unknown) {
+      if (
+        !isCurrentScanOperation(scanGeneration.current, operationGeneration)
+      ) {
+        return;
+      }
       presentFeedback({
         title: t('scanner.verificationFailed'),
         message: getMobileErrorMessage(error, t, 'errors.resolvePickup'),
@@ -182,7 +199,9 @@ export function KitchenScannerScreen({ navigation }: Props) {
       });
       setScanned(false);
     } finally {
-      setLoading(false);
+      if (isCurrentScanOperation(scanGeneration.current, operationGeneration)) {
+        setLoading(false);
+      }
     }
   };
 
@@ -195,6 +214,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
 
   const confirmServing = async () => {
     if (!token || !servingIntent || expired) return;
+    const operationGeneration = ++scanGeneration.current;
     const confirmedIntent = servingIntent;
     const request = getConfirmAttempt(
       confirmedIntent.session.id,
@@ -205,6 +225,11 @@ export function KitchenScannerScreen({ navigation }: Props) {
     setLoading(true);
     try {
       await pickupAPI.confirmPickup(token, request);
+      if (
+        !isCurrentScanOperation(scanGeneration.current, operationGeneration)
+      ) {
+        return;
+      }
       const delegatedItem = confirmedIntent.items.find(
         (item) => item.type === 'DELEGATED',
       );
@@ -230,6 +255,11 @@ export function KitchenScannerScreen({ navigation }: Props) {
         autoDismissMs: 1400,
       });
     } catch (error: unknown) {
+      if (
+        !isCurrentScanOperation(scanGeneration.current, operationGeneration)
+      ) {
+        return;
+      }
       const message =
         error instanceof MobileApiError &&
         error.code === 'PICKUP_SESSION_EXPIRED'
@@ -243,7 +273,9 @@ export function KitchenScannerScreen({ navigation }: Props) {
         onRetry: () => void confirmServing(),
       });
     } finally {
-      setLoading(false);
+      if (isCurrentScanOperation(scanGeneration.current, operationGeneration)) {
+        setLoading(false);
+      }
     }
   };
 
@@ -511,7 +543,9 @@ export function KitchenScannerScreen({ navigation }: Props) {
             visible={Boolean(servingIntent)}
             animationType="slide"
             transparent
-            onRequestClose={resetScan}
+            onRequestClose={() => {
+              if (canResetScan(loading)) resetScan();
+            }}
           >
             <View
               style={[styles.modalBackdrop, { paddingBottom: insets.bottom }]}
@@ -612,6 +646,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
                 <ActionButton
                   variant="ghost"
                   size="md"
+                  disabled={!canResetScan(loading)}
                   onPress={resetScan}
                   label={t('scanner.cancelAndScanAgain')}
                   style={styles.cancelButton}

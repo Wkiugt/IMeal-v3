@@ -85,3 +85,10 @@ No Admin Web Task 10, docs Task 11, or fabricated operational location/roster da
 - Focused review-fix run — **7 files, 26 tests passed**.
 - Full mobile run — **25 files, 87 tests passed**.
 - Mobile TypeScript, Expo web export, root lint (9 existing API warnings, 0 errors), configured root build (4 successful tasks), and diff-check passed. Native GPS/permission runtime remains unavailable in this workspace.
+
+## Review fix round 2
+
+- Kitchen Scanner now disables Cancel/Scan Again while confirmation is in flight and guards resolve/confirm continuations with a scan-operation generation. A stale response/rejection after cancel, navigation, or a newer scan cannot clear newer state, feedback, loading, or idempotency data.
+- Focused race-fix run — **7 files, 28 tests passed**.
+- Full mobile run — **25 files, 89 tests passed**.
+- Mobile TypeScript passed; prior Expo web export, root lint/build, and committed-range diff-check remain green. Native GPS/permission runtime remains unavailable in this workspace.

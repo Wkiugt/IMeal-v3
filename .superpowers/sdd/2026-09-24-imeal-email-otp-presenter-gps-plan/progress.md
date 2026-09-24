@@ -123,3 +123,5 @@
 - [x] Task 9 review-fix RED/GREEN: scanner idempotent retry, generation-safe foreground cleanup, QR invalidation, eligibility state, strict QR/confirm response invariants, location cancellation, secure OTP masking, foreground-only permission config, roleless logout, and storage failure boundaries.
 - [x] Task 9 review-fix focused suite — 7 files, 26 tests passed; full mobile suite — 25 files, 87 tests passed.
 - [x] Task 9 review-fix mobile TypeScript, Expo web export, root lint/build, and diff-check passed; native GPS/permission runtime remains unavailable.
+- [x] Task 9 review-fix round 2: Scanner Cancel/Scan Again is disabled during confirm; scan-operation generation guards ignore stale resolve/confirm success, rejection, and finally paths after cancel/navigation/new scan.
+- [x] Task 9 review-fix round 2 focused suite — 7 files, 28 tests passed; full mobile suite — 25 files, 89 tests passed; mobile TypeScript passed.

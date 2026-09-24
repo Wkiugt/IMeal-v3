@@ -13,3 +13,14 @@ export function getConfirmAttempt(
     idempotencyKey: existingIdempotencyKey ?? createIdempotencyKey(),
   };
 }
+
+export function isCurrentScanOperation(
+  currentGeneration: number,
+  operationGeneration: number,
+): boolean {
+  return currentGeneration === operationGeneration;
+}
+
+export function canResetScan(isConfirming: boolean): boolean {
+  return !isConfirming;
+}
