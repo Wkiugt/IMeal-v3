@@ -65,12 +65,12 @@ describe('local seed CLI', () => {
       'I_UNDERSTAND_LOCAL_ONLY',
     );
   });
-
   it('returns a written result and disconnects the owned client', async () => {
     const disconnect = vi.fn(async () => undefined);
     const fakePrisma = { $disconnect: disconnect } as unknown as PrismaClient;
     const config = parseLocalSeedConfig(VALID_ARGS, VALID_ENV);
     const plan = buildLocalSeedPlan(config);
+    const createPrisma = vi.fn(() => fakePrisma);
     const writePlan = vi.fn(async () => ({
       created: 1,
       updated: 0,
@@ -79,11 +79,12 @@ describe('local seed CLI', () => {
     }));
 
     const result = await runLocalSeed(VALID_ARGS, VALID_ENV, {
-      createPrisma: () => fakePrisma,
+      createPrisma,
       writePlan,
     });
 
     expect(result.kind).toBe('written');
+    expect(createPrisma).toHaveBeenCalledWith(VALID_ENV.DATABASE_URL);
     expect(writePlan).toHaveBeenCalledTimes(1);
     expect(disconnect).toHaveBeenCalledTimes(1);
     expect(result.kind === 'written' && result.summary).toContain('LOCAL/TEST ONLY');
@@ -91,6 +92,34 @@ describe('local seed CLI', () => {
     expect(result.kind === 'written' && result.summary).not.toContain(
       'I_UNDERSTAND_LOCAL_ONLY',
     );
+  });
+
+  it('rejects the removed database URL flag', () => {
+    const args = ['--base-email', 'seed@example.test', '--database-url', VALID_ENV.DATABASE_URL];
+
+    expect(() => parseLocalSeedConfig(args, VALID_ENV)).toThrowError(LocalSeedConfigError);
+    try {
+      parseLocalSeedConfig(args, VALID_ENV);
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'MISSING_ARGUMENT' });
+    }
+  });
+
+  it('rejects missing DATABASE_URL before creating Prisma or writing', async () => {
+    const createPrisma = vi.fn(() => {
+      throw new Error('must not create Prisma');
+    });
+    const writePlan = vi.fn();
+
+    await expect(
+      runLocalSeed(
+        ['--base-email', 'seed@example.test', '--dry-run'],
+        { ...VALID_ENV, DATABASE_URL: undefined },
+        { createPrisma, writePlan },
+      ),
+    ).rejects.toMatchObject({ name: 'LocalSeedConfigError', code: 'MISSING_ARGUMENT' });
+    expect(createPrisma).not.toHaveBeenCalled();
+    expect(writePlan).not.toHaveBeenCalled();
   });
 
   it('disconnects the owned client when writing fails', async () => {

@@ -41,7 +41,6 @@ type ParsedArguments = {
   readonly baseEmail?: string;
   readonly weekStart?: string;
   readonly serveDate?: string;
-  readonly databaseUrl?: string;
   readonly dryRun: boolean;
 };
 
@@ -95,12 +94,11 @@ export function parseLocalSeedConfig(
     throw new LocalSeedConfigError('INVALID_DATE');
   }
 
-  const databaseUrl = resolveInput(args.databaseUrl, env.DATABASE_URL, (value) => value);
+  const databaseUrl = env.DATABASE_URL;
   if (!databaseUrl) {
     throw new LocalSeedConfigError('MISSING_ARGUMENT');
   }
   const target = parseDatabaseTarget(databaseUrl);
-
   const dryRun = resolveDryRun(args.dryRun, env.IMEAL_LOCAL_SEED_DRY_RUN);
   return {
     baseEmail: normalizedEmail,
@@ -146,7 +144,6 @@ function parseArguments(argv: readonly string[]): ParsedArguments {
     baseEmail?: string;
     weekStart?: string;
     serveDate?: string;
-    databaseUrl?: string;
     dryRun: boolean;
   } = { dryRun: false };
 
@@ -163,8 +160,7 @@ function parseArguments(argv: readonly string[]): ParsedArguments {
     if (
       name !== '--base-email' &&
       name !== '--week-start' &&
-      name !== '--serve-date' &&
-      name !== '--database-url'
+      name !== '--serve-date'
     ) {
       throw new LocalSeedConfigError('MISSING_ARGUMENT');
     }
@@ -178,7 +174,6 @@ function parseArguments(argv: readonly string[]): ParsedArguments {
     if (name === '--base-email') parsed.baseEmail = value;
     if (name === '--week-start') parsed.weekStart = value;
     if (name === '--serve-date') parsed.serveDate = value;
-    if (name === '--database-url') parsed.databaseUrl = value;
   }
 
   return parsed;

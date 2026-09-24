@@ -15,7 +15,7 @@ import type {
 import { writeLocalSeed } from './writer.js';
 
 export interface LocalSeedCliDeps {
-  readonly createPrisma?: () => PrismaClient;
+  readonly createPrisma?: (databaseUrl: string) => PrismaClient;
   readonly writePlan?: (
     prisma: PrismaClient,
     plan: LocalSeedPlan,
@@ -44,9 +44,16 @@ export async function runLocalSeed(
     };
   }
 
-  const createPrisma = deps.createPrisma ?? (() => new PrismaClient());
+  const createPrisma =
+    deps.createPrisma ??
+    ((databaseUrl: string) =>
+      new PrismaClient({
+        datasources: {
+          db: { url: databaseUrl },
+        },
+      }));
   const writePlan = deps.writePlan ?? writeLocalSeed;
-  const prisma = createPrisma();
+  const prisma = createPrisma(config.databaseUrl);
 
   try {
     const result = await writePlan(prisma, plan);
