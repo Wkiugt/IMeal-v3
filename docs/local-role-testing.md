@@ -76,6 +76,7 @@ $env:NODE_ENV='test'
 $env:IMEAL_LOCAL_SEED='1'
 $env:IMEAL_LOCAL_SEED_CONFIRM='I_UNDERSTAND_LOCAL_ONLY'
 $env:IMEAL_LOCAL_SEED_BASE_EMAIL='imeal.seed@example.test'
+yarn workspace @imeal/core seed:local --dry-run
 yarn workspace @imeal/core seed:local
 ```
 
