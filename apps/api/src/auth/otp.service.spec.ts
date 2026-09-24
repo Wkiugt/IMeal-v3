@@ -7,6 +7,7 @@ type MockFunction = Mock;
 
 interface OtpPrismaMock {
   $transaction: MockFunction;
+  $queryRaw: MockFunction;
   otpAllowlist: { findFirst: MockFunction };
   otpChallenge: {
     findFirst: MockFunction;
@@ -35,9 +36,10 @@ const ALLOWLIST: AllowlistResolution = {
   user: USER,
 };
 
-function createPrisma(): OtpPrismaMock {
+function createPrisma() {
   const prisma = {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn().mockResolvedValue([]),
     otpAllowlist: { findFirst: vi.fn() },
     otpChallenge: {
       findFirst: vi.fn(),
@@ -163,7 +165,7 @@ describe('OtpService', () => {
     );
   });
 
-  it('returns a safe resend response while an active challenge is throttled', async () => {
+  it('returns the same safe request shape while an active challenge is throttled', async () => {
     const { service, allowlist, prisma } = installService();
     vi.spyOn(allowlist, 'findEligible').mockResolvedValue(ALLOWLIST);
     prisma.otpChallenge.findFirst.mockResolvedValue({
@@ -175,8 +177,49 @@ describe('OtpService', () => {
 
     await expect(
       service.request({ email: EMAIL, purpose: 'SESSION_LOGIN' }, context),
-    ).resolves.toEqual({ accepted: true, retryAfterSeconds: 30 });
+    ).resolves.toEqual({ accepted: true });
     expect(prisma.otpChallenge.create).not.toHaveBeenCalled();
+  });
+
+  it('uses one transactional client limiter lock across different allowlisted addresses', async () => {
+    const { service, allowlist, prisma } = installService();
+    const first = {
+      ...ALLOWLIST,
+      id: 'allow-1',
+      normalizedEmail: 'first@example.test',
+      user: { ...USER, email: 'first@example.test' },
+    };
+    const second = {
+      ...ALLOWLIST,
+      id: 'allow-2',
+      normalizedEmail: 'second@example.test',
+      user: { ...USER, email: 'second@example.test' },
+    };
+    vi.spyOn(allowlist, 'findEligible').mockImplementation(async (email) =>
+      email === first.normalizedEmail ? first : second,
+    );
+
+    await Promise.all([
+      service.request(
+        { email: first.normalizedEmail, purpose: 'SESSION_LOGIN' },
+        { ...context, clientFingerprint: undefined, requestId: 'request-1' },
+      ),
+      service.request(
+        { email: second.normalizedEmail, purpose: 'SESSION_LOGIN' },
+        { ...context, clientFingerprint: undefined, requestId: 'request-2' },
+      ),
+    ]);
+
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(prisma.$queryRaw.mock.calls[0][1]).toBe(
+      prisma.$queryRaw.mock.calls[1][1],
+    );
+    expect(JSON.stringify(prisma.$queryRaw.mock.calls)).toContain(
+      'pg_advisory_xact_lock',
+    );
+    expect(JSON.stringify(prisma.$queryRaw.mock.calls)).not.toContain(
+      context.clientIp,
+    );
   });
 
   it('atomically consumes a valid code and resolves the current user', async () => {

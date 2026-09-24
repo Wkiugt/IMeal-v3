@@ -88,9 +88,6 @@ function hashMetadata(value: string | undefined, secret: string): string | null 
   return createHash('sha256').update(`${secret}\n${value}`, 'utf8').digest('hex');
 }
 
-function retryAfterSeconds(now: Date, until: Date): number {
-  return Math.max(1, Math.ceil((until.getTime() - now.getTime()) / 1000));
-}
 
 @Injectable()
 export class OtpService {
@@ -176,7 +173,20 @@ export class OtpService {
 
     return this.prisma.$transaction(async (tx) => {
       if (typeof tx.$queryRaw === 'function') {
-        await tx.$queryRaw`SELECT id FROM "otp_allowlists" WHERE id = ${eligible.id} FOR UPDATE`;
+        const clientLockKeys = [
+          clientIpHash,
+          clientFingerprintHash,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .sort();
+        if (clientLockKeys.length > 0) {
+          for (const identityHash of clientLockKeys) {
+            const lockKey = `otp-rate-limit:${input.purpose}:${identityHash}`;
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+          }
+        } else {
+          await tx.$queryRaw`SELECT id FROM "otp_allowlists" WHERE id = ${eligible.id} FOR UPDATE`;
+        }
       }
       const activeChallenge = await tx.otpChallenge.findFirst({
         where: {
@@ -190,7 +200,6 @@ export class OtpService {
       });
 
       if (activeChallenge?.resendAfter && activeChallenge.resendAfter > now) {
-        const retryAfter = retryAfterSeconds(now, activeChallenge.resendAfter);
         await this.recordAudit(tx, {
           userId: eligible.userId,
           action: 'OTP_REQUEST_THROTTLED',
@@ -198,7 +207,7 @@ export class OtpService {
           requestId,
           normalizedEmail,
         });
-        return { accepted: true, retryAfterSeconds: retryAfter };
+        return { accepted: true };
       }
 
       const windowStart = new Date(
@@ -235,10 +244,7 @@ export class OtpService {
           requestId,
           normalizedEmail,
         });
-        return {
-          accepted: true,
-          retryAfterSeconds: config.rateWindowSeconds,
-        };
+        return { accepted: true };
       }
 
       const code = this.generateCode();
