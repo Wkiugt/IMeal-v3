@@ -31,9 +31,11 @@ const APPROVED_HOSTS: Record<string, true> = {
   '::1': true,
   db: true,
 };
+const DEPLOYMENT_ENVIRONMENT_KEYS = ['APP_ENV', 'RUNTIME_ENV', 'DEPLOYMENT_ENV'] as const;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
-const PRODUCTION_MARKER = /production|staging|preview|(?:^|[_.-])prod(?:$|[_.-])/i;
+const PRODUCTION_MARKER =
+  /production|staging|preview|(?:^|[_.-])(prod|live)(?:$|[_.-])/i;
 
 type ParsedArguments = {
   readonly baseEmail?: string;
@@ -53,6 +55,13 @@ export function parseLocalSeedConfig(
     throw new LocalSeedConfigError('INVALID_ENVIRONMENT');
   }
   if (env.IMEAL_LOCAL_SEED !== '1' || env.IMEAL_LOCAL_SEED_CONFIRM !== LOCAL_CONFIRMATION) {
+    throw new LocalSeedConfigError('INVALID_ENVIRONMENT');
+  }
+  if (
+    DEPLOYMENT_ENVIRONMENT_KEYS.some(
+      (key) => env[key]?.trim().toLowerCase() === 'production',
+    )
+  ) {
     throw new LocalSeedConfigError('INVALID_ENVIRONMENT');
   }
 
@@ -227,7 +236,7 @@ function parseDatabaseTarget(databaseUrl: string): {
     throw new LocalSeedConfigError('INVALID_DATABASE_URL');
   }
   const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (!APPROVED_HOSTS[host]) {
+  if (!Object.hasOwn(APPROVED_HOSTS, host)) {
     throw new LocalSeedConfigError('REMOTE_DATABASE');
   }
 
@@ -240,13 +249,16 @@ function parseDatabaseTarget(databaseUrl: string): {
   if (!database || database.includes('/')) {
     throw new LocalSeedConfigError('INVALID_DATABASE_URL');
   }
-  const schema = parsed.searchParams.get('schema');
-  if (schema !== null && !schema) {
+  const schemas = parsed.searchParams.getAll('schema');
+  if (schemas.some((schema) => !schema)) {
     throw new LocalSeedConfigError('INVALID_DATABASE_URL');
   }
-  if (PRODUCTION_MARKER.test(database) || (schema !== null && PRODUCTION_MARKER.test(schema))) {
+  if (
+    [database, ...schemas].some((component) => PRODUCTION_MARKER.test(component))
+  ) {
     throw new LocalSeedConfigError('PRODUCTION_MARKER');
   }
+  const schema = schemas[0] ?? null;
 
   return { host, database, schema };
 }

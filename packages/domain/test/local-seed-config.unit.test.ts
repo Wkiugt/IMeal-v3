@@ -81,6 +81,52 @@ describe('local seed safety configuration', () => {
     ).toThrow('PRODUCTION_MARKER');
   });
 
+  it('rejects production values in explicit deployment environment markers', () => {
+    for (const variable of ['APP_ENV', 'RUNTIME_ENV', 'DEPLOYMENT_ENV'] as const) {
+      expect(() =>
+        parseLocalSeedConfig([], {
+          ...SAFE_ENV,
+          [variable]: 'PrOdUcTiOn',
+        }),
+      ).toThrow('INVALID_ENVIRONMENT');
+    }
+  });
+
+  it('rejects production, prod, and live markers in database and schema', () => {
+    for (const marker of ['production', 'prod', 'live']) {
+      expect(() =>
+        parseLocalSeedConfig([], {
+          ...SAFE_ENV,
+          DATABASE_URL: `postgresql://u:p@localhost/imeal_${marker}`,
+        }),
+      ).toThrow('PRODUCTION_MARKER');
+      expect(() =>
+        parseLocalSeedConfig([], {
+          ...SAFE_ENV,
+          DATABASE_URL: `postgresql://u:p@localhost/imeal?schema=test_${marker}`,
+        }),
+      ).toThrow('PRODUCTION_MARKER');
+    }
+  });
+
+  it('rejects inherited host names and repeated schema markers', () => {
+    for (const host of ['constructor', '__proto__']) {
+      expect(() =>
+        parseLocalSeedConfig([], {
+          ...SAFE_ENV,
+          DATABASE_URL: `postgresql://u:p@${host}/imeal`,
+        }),
+      ).toThrow('REMOTE_DATABASE');
+    }
+
+    expect(() =>
+      parseLocalSeedConfig([], {
+        ...SAFE_ENV,
+        DATABASE_URL: 'postgresql://u:p@localhost/imeal?schema=public&schema=live',
+      }),
+    ).toThrow('PRODUCTION_MARKER');
+  });
+
   it('reports typed stable errors for invalid dates and conflicting inputs', () => {
     expect(() =>
       parseLocalSeedConfig(['--week-start', '2026-09-29'], SAFE_ENV),
