@@ -83,6 +83,51 @@ enum NotificationLocale {
   EN
 }
 
+enum OtpPurpose {
+  SESSION_LOGIN
+}
+
+enum OtpAllowlistState {
+  ACTIVE
+  DISABLED
+}
+
+enum AuthSessionPurpose {
+  SESSION_LOGIN
+}
+
+enum AuthSessionMethod {
+  EMAIL_OTP
+}
+
+enum SessionRevocationReason {
+  LOGOUT
+  ACCOUNT_DISABLED
+  COMPROMISED
+  OTP_REPLAY
+  ADMIN_REVOKED
+  EXPIRED
+}
+
+enum RosterImportRowOutcome {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum ServingVerificationResult {
+  VALID
+  GPS_UNAVAILABLE
+  GPS_STALE
+  GPS_INACCURATE
+  OUTSIDE_GEOFENCE
+}
+
+enum PickupReceiverType {
+  SELF
+  PROXY
+}
+
 model User {
   id                String   @id @default(uuid())
   email             String   @unique
@@ -93,14 +138,25 @@ model User {
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
-  userRoles         UserRole[]
-  userPermissions   UserPermission[]
-  registrations     Registration[]
-  delegations       PickupDelegation[] @relation("DelegateUser")
-  penalties         Penalty[]
-  notifications     Notification[]
-  pushDevices       PushDevice[]
-  auditLogs         AuditLog[]
+  userRoles              UserRole[]
+  userPermissions        UserPermission[]
+  registrations          Registration[]
+  delegations            PickupDelegation[] @relation("DelegateUser")
+  penalties              Penalty[]
+  notifications          Notification[]
+  pushDevices            PushDevice[]
+  auditLogs              AuditLog[]
+  otpAllowlistRecords    OtpAllowlist[]
+  authSessions           AuthSession[]
+  employeeAssignments   EmployeeLocationAssignment[]
+  rosterImportBatches    RosterImportBatch[]
+  pickupSessions         PickupSession[] @relation("PickupSessionUser")
+  presentedPickupSessions PickupSession[] @relation("PickupSessionPresenter")
+  servingVerifications   ServingVerification[] @relation("ServingVerificationPresenter")
+  ownedMealServings      MealServing[] @relation("MealServingOwner")
+  presentedMealServings  MealServing[] @relation("MealServingPresenter")
+  kitchenMealServings    MealServing[] @relation("MealServingKitchen")
+
   @@map("users")
 }
 
@@ -213,21 +269,32 @@ model MealDay {
 }
 
 model Registration {
-  id         String         @id @default(uuid())
-  userId     String         @map("user_id")
-  mealDate   DateTime       @db.Date @map("meal_date")
-  status     RegistrationStatus
-  mealChoice MealChoice     @default(REGULAR) @map("meal_choice")
-  createdAt  DateTime       @default(now()) @map("created_at")
-  updatedAt  DateTime       @default(now()) @updatedAt @map("updated_at")
-  version    Int            @default(1)
+  id                           String   @id @default(uuid())
+  userId                       String   @map("user_id")
+  mealDate                     DateTime @db.Date @map("meal_date")
+  status                       RegistrationStatus
+  mealChoice                   MealChoice @default(REGULAR) @map("meal_choice")
+  serviceLocationId            String?  @map("service_location_id")
+  serviceLocationAssignmentId  String?  @map("service_location_assignment_id")
+  serviceLocationCode          String?  @map("service_location_code")
+  serviceLocationName          String?  @map("service_location_name")
+  serviceLocationAddress       String?  @map("service_location_address")
+  serviceLocationEffectiveFrom DateTime? @map("service_location_effective_from")
+  serviceLocationSnapshotAt    DateTime? @map("service_location_snapshot_at")
+  createdAt                    DateTime @default(now()) @map("created_at")
+  updatedAt                    DateTime @default(now()) @updatedAt @map("updated_at")
+  version                      Int      @default(1)
 
-  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  delegations PickupDelegation[]
-  mealServing MealServing?
+  user                       User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  serviceLocation            Location?                  @relation("RegistrationServiceLocation", fields: [serviceLocationId], references: [id], onDelete: SetNull)
+  serviceLocationAssignment  EmployeeLocationAssignment? @relation(fields: [serviceLocationAssignmentId], references: [id], onDelete: SetNull)
+  delegations                PickupDelegation[]
+  mealServing                MealServing?
 
   @@unique([userId, mealDate])
   @@index([userId, mealDate])
+  @@index([serviceLocationId, mealDate])
+  @@index([serviceLocationAssignmentId])
   @@map("registrations")
 }
 
@@ -241,29 +308,79 @@ model PickupDelegation {
 
   registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   delegateUser User         @relation("DelegateUser", fields: [delegateUserId], references: [id], onDelete: Cascade)
+  mealServing  MealServing?
 
   @@map("pickup_delegations")
 }
 
 model ServingConfirmRequest {
-  id             String   @id @default(uuid())
-  callerUserId   String   @map("caller_user_id")
-  idempotencyKey String   @map("idempotency_key")
-  status         ServingConfirmStatus
-  createdAt      DateTime @default(now()) @map("created_at")
+  id                    String   @id @default(uuid())
+  callerUserId          String   @map("caller_user_id")
+  idempotencyKey        String   @map("idempotency_key")
+  status                ServingConfirmStatus
+  requestBodyHash       String?  @map("request_body_hash")
+  intentHash            String?  @map("intent_hash")
+  pickupSessionId       String?  @map("pickup_session_id")
+  resultServingIds      String[] @default([]) @map("result_serving_ids")
+  resultSnapshot        Json?    @map("result_snapshot")
+  originalResultRequestId String? @map("original_result_request_id")
+  completedAt           DateTime? @map("completed_at")
+  conflictCode          String?  @map("conflict_code")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  pickupSession        PickupSession?         @relation("ServingConfirmPickupSession", fields: [pickupSessionId], references: [id], onDelete: SetNull)
+  originalResultRequest ServingConfirmRequest? @relation("ServingConfirmOriginalResult", fields: [originalResultRequestId], references: [id], onDelete: SetNull)
+  replayedRequests     ServingConfirmRequest[] @relation("ServingConfirmOriginalResult")
 
   @@unique([callerUserId, idempotencyKey])
+  @@index([pickupSessionId])
+  @@index([intentHash])
   @@map("serving_confirm_requests")
 }
 
 model MealServing {
-  id             String   @id @default(uuid())
-  registrationId String   @unique @map("registration_id")
-  servedAt       DateTime @default(now()) @map("served_at")
+  id                       String              @id @default(uuid())
+  registrationId           String              @unique @map("registration_id")
+  ownerUserId              String?             @map("owner_user_id")
+  ownerEmailSnapshot       String?             @map("owner_email_snapshot")
+  ownerNameSnapshot        String?             @map("owner_name_snapshot")
+  presenterUserId          String?             @map("presenter_user_id")
+  receiverType             PickupReceiverType? @map("receiver_type")
+  kitchenUserId            String?             @map("kitchen_user_id")
+  kitchenPermissionContext String?             @map("kitchen_permission_context")
+  scannerDeviceId          String?             @map("scanner_device_id")
+  locationId               String?             @map("location_id")
+  locationShortCode        String?             @map("location_short_code")
+  locationNameSnapshot     String?             @map("location_name_snapshot")
+  locationAddressSnapshot  String?             @map("location_address_snapshot")
+  mealDate                 DateTime?           @db.Date @map("meal_date")
+  menuRevisionId           String?             @map("menu_revision_id")
+  requestId                String?             @map("request_id")
+  pickupSessionId          String?             @map("pickup_session_id")
+  intentHash               String?             @map("intent_hash")
+  verificationOutcome      String?             @map("verification_outcome")
+  servingVerificationId    String?             @map("serving_verification_id")
+  delegationId             String?             @unique @map("delegation_id")
+  servedAt                 DateTime            @default(now()) @map("served_at")
 
-  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
-  events       MealEvent[]
+  registration         Registration          @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  ownerUser            User?                 @relation("MealServingOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  presenterUser        User?                 @relation("MealServingPresenter", fields: [presenterUserId], references: [id], onDelete: SetNull)
+  kitchenUser          User?                 @relation("MealServingKitchen", fields: [kitchenUserId], references: [id], onDelete: SetNull)
+  serviceLocation      Location?             @relation("MealServingLocation", fields: [locationId], references: [id], onDelete: SetNull)
+  pickupSession         PickupSession?        @relation("PickupSessionServings", fields: [pickupSessionId], references: [id], onDelete: SetNull)
+  servingVerification  ServingVerification?  @relation("ServingVerificationServings", fields: [servingVerificationId], references: [id], onDelete: SetNull)
+  delegation           PickupDelegation?     @relation(fields: [delegationId], references: [id], onDelete: SetNull)
+  events               MealEvent[]
 
+  @@index([ownerUserId, servedAt])
+  @@index([presenterUserId, servedAt])
+  @@index([kitchenUserId, servedAt])
+  @@index([locationId, mealDate])
+  @@index([pickupSessionId])
+  @@index([requestId])
+  @@index([intentHash])
+  @@index([servedAt])
   @@map("meal_servings")
 }
 
@@ -404,13 +521,281 @@ model AppSetting {
 }
 
 model PickupSession {
-  id              String   @id @default(uuid())
-  userId          String   @map("user_id")
-  registrationIds String[] @map("registration_ids")
-  qrHash          String   @unique @map("qr_hash")
-  expiresAt       DateTime @map("expires_at")
-  createdAt       DateTime @default(now()) @map("created_at")
+  id                     String   @id @default(uuid())
+  userId                 String   @map("user_id")
+  presenterUserId        String?  @map("presenter_user_id")
+  mealDate               DateTime? @db.Date @map("meal_date")
+  registrationIds        String[] @map("registration_ids")
+  intentRegistrationIds  String[] @default([]) @map("intent_registration_ids")
+  intentHash             String?  @map("intent_hash")
+  intentNonce            String?  @map("intent_nonce")
+  qrHash                 String   @unique @map("qr_hash")
+  locationId             String?  @map("location_id")
+  servingVerificationId  String?  @map("serving_verification_id")
+  expiresAt              DateTime @map("expires_at")
+  consumedAt             DateTime? @map("consumed_at")
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  user                User                  @relation("PickupSessionUser", fields: [userId], references: [id], onDelete: Cascade)
+  presenterUser       User?                 @relation("PickupSessionPresenter", fields: [presenterUserId], references: [id], onDelete: SetNull)
+  location            Location?             @relation("PickupSessionLocation", fields: [locationId], references: [id], onDelete: SetNull)
+  servingVerification ServingVerification?  @relation("PickupSessionVerification", fields: [servingVerificationId], references: [id], onDelete: SetNull)
+  servings            MealServing[]         @relation("PickupSessionServings")
+  confirmRequests     ServingConfirmRequest[] @relation("ServingConfirmPickupSession")
 
   @@index([expiresAt])
+  @@index([presenterUserId, mealDate])
+  @@index([locationId, mealDate])
+  @@index([servingVerificationId])
+  @@index([intentHash])
   @@map("pickup_sessions")
+}
+
+model OtpAllowlist {
+  id             String             @id @default(uuid())
+  normalizedEmail String            @map("normalized_email")
+  userId         String?            @map("user_id")
+  state          OtpAllowlistState  @default(ACTIVE)
+  purpose        OtpPurpose         @default(SESSION_LOGIN)
+  effectiveFrom  DateTime           @map("effective_from")
+  effectiveTo    DateTime?          @map("effective_to")
+  reason         String?
+  createdBy      String?            @map("created_by")
+  updatedBy      String?            @map("updated_by")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  user       User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  challenges OtpChallenge[]
+
+  @@unique([normalizedEmail, purpose])
+  @@index([normalizedEmail, state, effectiveFrom, effectiveTo])
+  @@map("otp_allowlists")
+}
+
+model OtpChallenge {
+  id                   String     @id @default(uuid())
+  allowlistId          String     @map("allowlist_id")
+  normalizedEmail      String     @map("normalized_email")
+  purpose              OtpPurpose
+  verifierHash         String     @map("verifier_hash")
+  expiresAt            DateTime   @map("expires_at")
+  attemptCount         Int        @default(0) @map("attempt_count")
+  attemptLimit         Int        @default(5) @map("attempt_limit")
+  consumedAt           DateTime?  @map("consumed_at")
+  resendAfter          DateTime?  @map("resend_after")
+  lastSentAt           DateTime?  @map("last_sent_at")
+  clientFingerprintHash String?   @map("client_fingerprint_hash")
+  clientIpHash         String?    @map("client_ip_hash")
+  requestId            String?    @map("request_id")
+  auditEventId         String?    @map("audit_event_id")
+  createdAt            DateTime   @default(now()) @map("created_at")
+
+  allowlist OtpAllowlist       @relation(fields: [allowlistId], references: [id], onDelete: Cascade)
+  deliveries OtpDeliveryOutbox[]
+
+  @@index([normalizedEmail, purpose, expiresAt])
+  @@index([allowlistId, consumedAt, expiresAt])
+  @@index([expiresAt, consumedAt])
+  @@map("otp_challenges")
+}
+
+model OtpDeliveryOutbox {
+  id                 String      @id @default(uuid())
+  challengeId        String      @map("challenge_id")
+  providerPayloadRef String      @map("provider_payload_ref")
+  status             OutboxStatus @default(PENDING)
+  attemptCount       Int         @default(0) @map("attempt_count")
+  nextAttemptAt      DateTime    @default(now()) @map("next_attempt_at")
+  processedAt        DateTime?   @map("processed_at")
+  lastError          String?     @map("last_error")
+  createdAt          DateTime    @default(now()) @map("created_at")
+  updatedAt          DateTime    @updatedAt @map("updated_at")
+
+  challenge OtpChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([challengeId, status])
+  @@map("otp_delivery_outboxes")
+}
+
+model AuthSession {
+  id               String                  @id @default(uuid())
+  userId           String                  @map("user_id")
+  tokenHash        String                  @unique @map("token_hash")
+  purpose          AuthSessionPurpose      @default(SESSION_LOGIN)
+  authMethod       AuthSessionMethod       @default(EMAIL_OTP) @map("auth_method")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  lastUsedAt       DateTime?               @map("last_used_at")
+  idleExpiresAt    DateTime?               @map("idle_expires_at")
+  absoluteExpiresAt DateTime               @map("absolute_expires_at")
+  revokedAt        DateTime?               @map("revoked_at")
+  revokedReason    SessionRevocationReason? @map("revoked_reason")
+  deviceIdHash     String?                 @map("device_id_hash")
+  clientIpHash     String?                 @map("client_ip_hash")
+  userAgentHash    String?                 @map("user_agent_hash")
+  requestId        String?                 @map("request_id")
+  auditEventId     String?                 @map("audit_event_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([absoluteExpiresAt, revokedAt])
+  @@index([idleExpiresAt, revokedAt])
+  @@map("auth_sessions")
+}
+
+model Location {
+  id                       String    @id @default(uuid())
+  shortCode                String    @unique @map("short_code")
+  displayName              String    @map("display_name")
+  servingPointName         String    @map("serving_point_name")
+  address                  String
+  building                 String
+  floor                    String
+  roomOrCounter            String    @map("room_or_counter")
+  localContact             String    @map("local_contact")
+  timeZone                 String    @default("Asia/Ho_Chi_Minh") @map("time_zone")
+  isActive                 Boolean   @default(false) @map("is_active")
+  effectiveFrom           DateTime  @map("effective_from")
+  effectiveTo             DateTime? @map("effective_to")
+  operationalMetadata     Json?     @map("operational_metadata")
+  holidayOverrides        Json?     @map("holiday_overrides")
+  capacityNotes           String?   @map("capacity_notes")
+  accessibilityInstructions String? @map("accessibility_instructions")
+  emergencyInstructions   String?   @map("emergency_instructions")
+  kitchenTeam             String?   @map("kitchen_team")
+  approvedScannerDeviceIds String[] @default([]) @map("approved_scanner_device_ids")
+  networkNotes            String?   @map("network_notes")
+  lastVerifiedBy          String?   @map("last_verified_by")
+  lastVerifiedAt          DateTime? @map("last_verified_at")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
+
+  policies              LocationPolicy[]
+  employeeAssignments   EmployeeLocationAssignment[]
+  registrationSnapshots Registration[] @relation("RegistrationServiceLocation")
+  pickupSessions        PickupSession[] @relation("PickupSessionLocation")
+  servingVerifications  ServingVerification[]
+  mealServings          MealServing[] @relation("MealServingLocation")
+
+  @@index([isActive, effectiveFrom, effectiveTo])
+  @@map("locations")
+}
+
+model LocationPolicy {
+  id                  String    @id @default(uuid())
+  locationId          String    @map("location_id")
+  latitude            Float
+  longitude           Float
+  accuracySource      String    @map("accuracy_source")
+  geofenceRadiusMeters Int      @map("geofence_radius_meters")
+  maxFixAgeSeconds    Int       @map("max_fix_age_seconds")
+  maxAccuracyMeters   Float     @map("max_accuracy_meters")
+  effectiveFrom       DateTime  @map("effective_from")
+  effectiveTo         DateTime? @map("effective_to")
+  isActive            Boolean   @default(false) @map("is_active")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  servingVerifications ServingVerification[]
+
+  @@index([locationId, isActive, effectiveFrom, effectiveTo])
+  @@map("location_policies")
+}
+
+model EmployeeLocationAssignment {
+  id                  String    @id @default(uuid())
+  userId              String?   @map("user_id")
+  normalizedEmail     String    @map("normalized_email")
+  employeeName        String    @map("employee_name")
+  employeeCode        String    @map("employee_code")
+  isActive            Boolean   @map("is_active")
+  role                String
+  serviceLocationCode String    @map("service_location_code")
+  locationId          String    @map("location_id")
+  effectiveFrom       DateTime  @map("effective_from")
+  effectiveTo         DateTime? @map("effective_to")
+  rosterImportBatchId String?   @map("roster_import_batch_id")
+  auditEventId        String?   @map("audit_event_id")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  user          User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  location      Location          @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  rosterBatch   RosterImportBatch? @relation(fields: [rosterImportBatchId], references: [id], onDelete: SetNull)
+  registrations Registration[]
+
+  @@index([normalizedEmail, effectiveFrom, effectiveTo])
+  rosterRows    RosterImportRow[]
+  @@index([locationId, effectiveFrom, effectiveTo])
+  @@index([rosterImportBatchId])
+  @@map("employee_location_assignments")
+}
+
+model RosterImportBatch {
+  id               String   @id @default(uuid())
+  importedByUserId String?  @map("imported_by_user_id")
+  source           String
+  importedAt       DateTime @default(now()) @map("imported_at")
+  auditEventId     String?  @map("audit_event_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  importedBy User?                       @relation(fields: [importedByUserId], references: [id], onDelete: SetNull)
+  rows       RosterImportRow[]
+  assignments EmployeeLocationAssignment[]
+
+  @@index([importedAt])
+  @@map("roster_import_batches")
+}
+
+model RosterImportRow {
+  id                  String                 @id @default(uuid())
+  batchId             String                 @map("batch_id")
+  normalizedEmail     String                 @map("normalized_email")
+  employeeName        String                 @map("employee_name")
+  employeeCode        String                 @map("employee_code")
+  isActive            Boolean                @map("is_active")
+  role                String
+  serviceLocationCode String                 @map("service_location_code")
+  effectiveFrom       DateTime               @map("effective_from")
+  effectiveTo         DateTime?              @map("effective_to")
+  outcome             RosterImportRowOutcome @default(PENDING)
+  reason              String?
+  assignmentId        String?                @map("assignment_id")
+  auditEventId        String?                @map("audit_event_id")
+  createdAt           DateTime               @default(now()) @map("created_at")
+
+  batch      RosterImportBatch          @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  assignment EmployeeLocationAssignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+
+  @@index([batchId, outcome])
+  @@index([normalizedEmail])
+  @@map("roster_import_rows")
+}
+
+model ServingVerification {
+  id                String                    @id @default(uuid())
+  presenterUserId   String                    @map("presenter_user_id")
+  locationId        String                    @map("location_id")
+  locationPolicyId  String?                   @map("location_policy_id")
+  result            ServingVerificationResult
+  capturedAt        DateTime                  @map("captured_at")
+  verifiedAt        DateTime?                 @map("verified_at")
+  accuracyMeters    Float?                    @map("accuracy_meters")
+  safeVerificationCode String                  @map("safe_verification_code")
+  retentionUntil    DateTime?                 @map("retention_until")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+
+  presenter       User                   @relation("ServingVerificationPresenter", fields: [presenterUserId], references: [id], onDelete: Cascade)
+  location        Location               @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  locationPolicy  LocationPolicy?        @relation(fields: [locationPolicyId], references: [id], onDelete: SetNull)
+  pickupSessions  PickupSession[]        @relation("PickupSessionVerification")
+  mealServings    MealServing[]          @relation("ServingVerificationServings")
+
+  @@index([presenterUserId, createdAt])
+  @@index([locationId, result, capturedAt])
+  @@index([retentionUntil])
+  @@map("serving_verifications")
 }
