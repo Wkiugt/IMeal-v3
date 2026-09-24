@@ -162,3 +162,6 @@
   TypeScript validation passed.
 - [!] PostgreSQL-backed API/domain/e2e checks and native Expo GPS runtime remain
   unavailable in this workspace; no live DB/native readiness claim is made.
+- [x] Follow-up review fixes: provider URL parsing now rejects malformed,
+  non-HTTPS and hostname-empty production values; worker provider/env regressions
+  cover missing URL/API key/sender and malformed URL. Commit: `2886d37`.

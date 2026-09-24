@@ -90,7 +90,8 @@ real four-location and roster imports are completed outside source control.
 
 ## Commit and review package
 
-- Commit: `a30a7fd` (`docs: document otp presenter gps operational boundaries`).
+- Implementation commit: `2886d37` (`docs: align otp policy and provider validation`).
 - Approved Task 10 baseline: `8fe7e7c`.
-- Exact review range: `8fe7e7c..a30a7fd`.
-- Exact package: `review-8fe7e7c..a30a7fd.diff`.
+- Exact implementation review range: `8fe7e7c..2886d37`.
+- Final package name: `review-8fe7e7c..final.diff` (generated from the
+  approved baseline through the final handoff commit).
