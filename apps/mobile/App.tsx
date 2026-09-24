@@ -45,7 +45,7 @@ import type {
   ProfileStackParamList,
   RootStackParamList,
 } from './src/navigation';
-import { AppText } from './src/ui/components';
+import { ActionButton, AppText } from './src/ui/components';
 import {
   employeeNav,
   hybridEmployeeNav,
@@ -71,11 +71,16 @@ function AuthScreen({ navigation }: AuthScreenProps) {
     profile,
     isRestoring,
     isVerifyingOtp,
+    authError,
     canUseEmployee,
     canUseKitchen,
+    logout,
   } = useSession();
   const isFocused = useIsFocused();
   const visibleRestoring = useScreenLoadingGate(isFocused, !isRestoring);
+  const noMobileAccess =
+    Boolean(token && profile) && !canUseEmployee && !canUseKitchen;
+  const { t } = useLanguage();
 
   useEffect(() => {
     if (!token || !profile || isVerifyingOtp || visibleRestoring) return;
@@ -93,9 +98,35 @@ function AuthScreen({ navigation }: AuthScreenProps) {
     token,
     visibleRestoring,
   ]);
-
   if (visibleRestoring)
     return <ScreenLoading label={translate('auth.restoreSession')} />;
+  if (noMobileAccess) {
+    return (
+      <View style={styles.authNoAccess}>
+        <AppText variant="pageTitle" style={styles.authNoAccessTitle}>
+          {t('auth.welcome')}
+        </AppText>
+        <AppText
+          variant="body"
+          tone="secondary"
+          style={styles.authNoAccessText}
+        >
+          {t('auth.noMobileAccess')}
+        </AppText>
+        {authError && (
+          <AppText variant="supporting" tone="critical">
+            {authError}
+          </AppText>
+        )}
+        <ActionButton
+          variant="secondary"
+          size="md"
+          label={t('auth.logOut')}
+          onPress={() => void logout()}
+        />
+      </View>
+    );
+  }
   return <EmailOtpScreen />;
 }
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -323,6 +354,20 @@ const styles = StyleSheet.create({
   },
   bootstrapErrorText: {
     marginTop: 8,
+    textAlign: 'center',
+  },
+  authNoAccess: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: designTokens.space.md,
+    padding: designTokens.space['2xl'],
+    backgroundColor: designTokens.color.background.page,
+  },
+  authNoAccessTitle: {
+    textAlign: 'center',
+  },
+  authNoAccessText: {
     textAlign: 'center',
   },
 });

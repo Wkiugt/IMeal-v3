@@ -120,3 +120,6 @@
 - [x] Focused Task 9 tests — 3 files, 14 tests passed; full mobile suite — 20 files, 72 tests passed.
 - [x] Mobile TypeScript validation passed after adding Expo Location `~17.0.1` and its foreground permission config.
 - [x] Task 9 report: `task-9-report.md`; Expo web export, root lint/build, and diff-check passed. Native device GPS/permission runtime remains unexercised in this workspace.
+- [x] Task 9 review-fix RED/GREEN: scanner idempotent retry, generation-safe foreground cleanup, QR invalidation, eligibility state, strict QR/confirm response invariants, location cancellation, secure OTP masking, foreground-only permission config, roleless logout, and storage failure boundaries.
+- [x] Task 9 review-fix focused suite — 7 files, 26 tests passed; full mobile suite — 25 files, 87 tests passed.
+- [x] Task 9 review-fix mobile TypeScript, Expo web export, root lint/build, and diff-check passed; native GPS/permission runtime remains unavailable.

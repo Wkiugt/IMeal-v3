@@ -13,7 +13,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     [
       'expo-location',
       {
-        locationAlwaysAndWhenInUsePermission:
+        locationWhenInUsePermission:
           'IMeal uses your foreground location to verify the presenter pickup site.',
       },
     ],

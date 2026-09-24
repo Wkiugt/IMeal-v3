@@ -37,9 +37,9 @@ import { useReducedMotion } from '../../ui/useReducedMotion';
 import { useLanguage } from '../../i18n/LanguageProvider';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { designTokens, getElevationStyle } from '../../ui/designTokens';
+import { getConfirmAttempt } from './kitchenScannerRules';
 
 type Props = AppTabScreenProps<'KitchenScanner'>;
-
 type ScanFeedback = {
   tone: 'success' | 'error';
   title: string;
@@ -47,6 +47,7 @@ type ScanFeedback = {
   message: string;
   meta?: string;
   retry?: boolean;
+  onRetry?: () => void;
   autoDismissMs?: number;
 };
 
@@ -191,17 +192,19 @@ export function KitchenScannerScreen({ navigation }: Props) {
     setScanned(true);
     void resolveCode(data);
   };
+
   const confirmServing = async () => {
     if (!token || !servingIntent || expired) return;
     const confirmedIntent = servingIntent;
-    const requestId = idempotencyKey.current ?? Crypto.randomUUID();
-    idempotencyKey.current = requestId;
+    const request = getConfirmAttempt(
+      confirmedIntent.session.id,
+      idempotencyKey.current,
+      Crypto.randomUUID,
+    );
+    idempotencyKey.current = request.idempotencyKey;
     setLoading(true);
     try {
-      await pickupAPI.confirmPickup(token, {
-        pickupSessionId: confirmedIntent.session.id,
-        idempotencyKey: requestId,
-      });
+      await pickupAPI.confirmPickup(token, request);
       const delegatedItem = confirmedIntent.items.find(
         (item) => item.type === 'DELEGATED',
       );
@@ -232,12 +235,12 @@ export function KitchenScannerScreen({ navigation }: Props) {
         error.code === 'PICKUP_SESSION_EXPIRED'
           ? t('errors.pickupSessionExpired')
           : getMobileErrorMessage(error, t, 'errors.confirmPickup');
-      resetScan();
       presentFeedback({
         title: t('scanner.verificationFailed'),
         message,
         tone: 'error',
         retry: true,
+        onRetry: () => void confirmServing(),
       });
     } finally {
       setLoading(false);
@@ -484,7 +487,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={t('scanner.retryScan')}
-                      onPress={resetScan}
+                      onPress={feedback.onRetry ?? resetScan}
                       style={styles.feedbackRetry}
                     >
                       <AppText variant="buttonLabel" tone="onBrand">

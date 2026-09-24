@@ -76,6 +76,44 @@ describe('pickupAPI', () => {
       }),
     );
   });
+  it.each([
+    ['b', 'a'],
+    ['a', 'a'],
+  ])(
+    'rejects a non-canonical or mismatched registrationIds response (%s)',
+    async (...registrationIds: string[]) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                qr: 'imeal:v2:presenter:2026-09-24:a,b:1:nonce:sig',
+                exp: 1_000,
+                ttl: 5,
+                registrationIds,
+                mealDate: '2026-09-24',
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+        ),
+      );
+
+      await expect(
+        pickupAPI.generateQr('token', {
+          registrationIds: ['a', 'b'],
+          presenterEvidence: {
+            capturedAt: '2026-09-24T03:00:00.000Z',
+            latitude: 10.77,
+            longitude: 106.69,
+            accuracyMeters: 12,
+          },
+        }),
+      ).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+      });
+    },
+  );
 
   it('resolves using only the QR payload', async () => {
     const fetchMock = vi.fn(
@@ -125,6 +163,37 @@ describe('pickupAPI', () => {
         body: JSON.stringify({ qr: 'qr-payload' }),
       }),
     );
+  });
+  it('rejects a confirm response whose servedCount is not all-or-nothing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: true,
+              servedCount: 2,
+              servings: [
+                {
+                  id: 'serving-1',
+                  registrationId: 'registration-1',
+                  servedAt: '2026-09-24T03:01:00.000Z',
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
+    );
+
+    await expect(
+      pickupAPI.confirmPickup('token', {
+        pickupSessionId: 'session-1',
+        idempotencyKey: 'idempotency-1',
+      }),
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+    });
   });
 
   it('confirms only the resolved session and idempotency key', async () => {

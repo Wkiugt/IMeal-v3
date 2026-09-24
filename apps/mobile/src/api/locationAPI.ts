@@ -7,6 +7,19 @@ export type LocationCapture = {
   stop: () => void;
 };
 
+export class LocationCaptureCancelledError extends Error {
+  constructor() {
+    super('Foreground location capture cancelled');
+    this.name = 'LocationCaptureCancelledError';
+  }
+}
+
+export function isLocationCaptureCancelled(
+  error: unknown,
+): error is LocationCaptureCancelledError {
+  return error instanceof LocationCaptureCancelledError;
+}
+
 const LOCATION_OPTIONS: Location.LocationOptions = {
   accuracy: Location.Accuracy.High,
   distanceInterval: 0,
@@ -59,9 +72,11 @@ export function startForegroundLocationCapture(): LocationCapture {
   );
 
   const stop = () => {
+    if (settled) return;
     settled = true;
     subscription?.remove();
     subscription = null;
+    rejectPromise(new LocationCaptureCancelledError());
   };
 
   const finish = (callback: () => void) => {

@@ -42,7 +42,16 @@ const ConfirmPickupResponseSchema = z
         .strict(),
     ),
   })
-  .strict();
+  .strict()
+  .superRefine((response, ctx) => {
+    if (response.servedCount !== response.servings.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['servedCount'],
+        message: 'servedCount must equal servings.length',
+      });
+    }
+  });
 
 export type GenerateQrResponse = z.infer<typeof GenerateQrResponseSchema>;
 export type ConfirmPickupResponse = z.infer<typeof ConfirmPickupResponseSchema>;
@@ -94,6 +103,27 @@ function parseResponse<T>(schema: z.ZodType<T>, payload: unknown): T {
   }
   return parsed.data;
 }
+function assertExactRegistrationIds(
+  response: GenerateQrResponse,
+  requestedIds: readonly string[],
+): GenerateQrResponse {
+  const expected = [...requestedIds];
+  const actual = response.registrationIds;
+  const isCanonical =
+    actual.length > 0 &&
+    actual.every(
+      (registrationId, index) =>
+        index === 0 || actual[index - 1] < registrationId,
+    );
+  if (!isCanonical || actual.join('\u0000') !== expected.join('\u0000')) {
+    throw new MobileApiError(
+      'INVALID_RESPONSE',
+      'errors.invalidResponse',
+      response,
+    );
+  }
+  return response;
+}
 
 export const pickupAPI = {
   getPickupOptions: async (token: string): Promise<PickupOptionsResponse> => {
@@ -132,7 +162,11 @@ export const pickupAPI = {
       },
       'errors.generateQr',
     );
-    return parseResponse(GenerateQrResponseSchema, payload);
+    const response = parseResponse(GenerateQrResponseSchema, payload);
+    return assertExactRegistrationIds(
+      response,
+      parsedInput.data.registrationIds,
+    );
   },
 
   resolvePickup: async (

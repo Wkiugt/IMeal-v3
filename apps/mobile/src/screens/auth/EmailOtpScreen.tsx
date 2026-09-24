@@ -11,6 +11,7 @@ import { useLanguage } from '../../i18n/LanguageProvider';
 import { ActionButton, AppText, TextField } from '../../ui/components';
 import { BrandMark } from '../../ui/BrandMotion';
 import { designTokens, getElevationStyle } from '../../ui/designTokens';
+import { OTP_INPUT_PROPS } from './otpInputRules';
 
 export function EmailOtpScreen() {
   const { authError, isRequestingOtp, isVerifyingOtp, requestOtp, verifyOtp } =
@@ -110,11 +111,7 @@ export function EmailOtpScreen() {
                     label={t('auth.verificationCode')}
                     value={code}
                     onChangeText={setCode}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="number-pad"
-                    textContentType="oneTimeCode"
-                    maxLength={8}
+                    {...OTP_INPUT_PROPS}
                     editable={!isVerifyingOtp}
                     containerStyle={styles.field}
                   />

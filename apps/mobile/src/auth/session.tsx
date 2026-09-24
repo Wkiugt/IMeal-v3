@@ -16,6 +16,7 @@ import { getMobileErrorMessage } from '../api/mobileApiError';
 import { RequestTimeoutError } from '../api/requestWithTimeout';
 import { useLanguage } from '../i18n/LanguageProvider';
 import type { Translate } from '../i18n/translations';
+import { attemptSessionStorage } from './sessionStorage';
 
 export type { MobileProfile } from '../api/authAPI';
 
@@ -90,20 +91,33 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let mounted = true;
     void (async () => {
-      const savedToken = await readStoredToken();
-      if (!savedToken) {
-        if (mounted) setIsRestoring(false);
-        return;
-      }
       try {
-        const savedProfile = await authAPI.bootstrapSession(savedToken);
-        if (mounted) {
-          setToken(savedToken);
-          setProfile(savedProfile);
-          setAuthErrorState(null);
+        const tokenResult = await attemptSessionStorage(readStoredToken);
+        if (!tokenResult.ok) {
+          if (mounted) {
+            setAuthErrorState({
+              error: tokenResult.error,
+              fallbackKey: 'errors.restoreSession',
+            });
+          }
+          return;
+        }
+        const savedToken = tokenResult.value;
+        if (!savedToken) return;
+        try {
+          const savedProfile = await authAPI.bootstrapSession(savedToken);
+          if (mounted) {
+            setToken(savedToken);
+            setProfile(savedProfile);
+            setAuthErrorState(null);
+          }
+        } catch (error: unknown) {
+          await attemptSessionStorage(clearStoredToken);
+          if (mounted) {
+            setAuthErrorState({ error, fallbackKey: 'errors.restoreSession' });
+          }
         }
       } catch (error: unknown) {
-        await clearStoredToken();
         if (mounted) {
           setAuthErrorState({ error, fallbackKey: 'errors.restoreSession' });
         }
@@ -139,7 +153,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setToken(result.sessionToken);
       setProfile(nextProfile);
     } catch (error: unknown) {
-      await clearStoredToken();
+      await attemptSessionStorage(clearStoredToken);
       setToken(null);
       setProfile(null);
       setAuthErrorState({ error, fallbackKey: 'errors.verifyOtp' });
@@ -151,14 +165,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async (): Promise<void> => {
     const currentToken = token;
+    let logoutError: unknown = null;
     try {
       if (currentToken) await authAPI.logout(currentToken);
     } catch (error: unknown) {
-      setAuthErrorState({ error, fallbackKey: 'errors.logOut' });
-    } finally {
-      await clearStoredToken();
-      setToken(null);
-      setProfile(null);
+      logoutError = error;
+    }
+    const clearResult = await attemptSessionStorage(clearStoredToken);
+    setToken(null);
+    setProfile(null);
+    if (logoutError) {
+      setAuthErrorState({ error: logoutError, fallbackKey: 'errors.logOut' });
+    } else if (!clearResult.ok) {
+      setAuthErrorState({
+        error: clearResult.error,
+        fallbackKey: 'errors.logOut',
+      });
+    } else {
       setAuthErrorState(null);
     }
   };
