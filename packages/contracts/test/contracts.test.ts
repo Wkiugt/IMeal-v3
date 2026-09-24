@@ -724,5 +724,51 @@ describe('Contracts v1', () => {
       }
     });
   });
-});
+  describe('Email OTP, location, and exact pickup contracts', () => {
+    it('accepts the versioned examples and rejects unsafe shapes', () => {
+      expect(v1.RequestOtpSchema.parse({
+        email: 'employee@example.test',
+        purpose: 'SESSION_LOGIN',
+      })).toEqual({
+        email: 'employee@example.test',
+        purpose: 'SESSION_LOGIN',
+      });
+      expect(v1.PresenterLocationEvidenceSchema.parse({
+        capturedAt: '2026-09-24T03:00:00.000Z',
+        latitude: 10.77,
+        longitude: 106.69,
+        accuracyMeters: 12,
+      })).toMatchObject({ accuracyMeters: 12 });
+      expect(v1.ConfirmPickupSchema.parse({
+        pickupSessionId: 's',
+        idempotencyKey: 'k',
+      })).toEqual({
+        pickupSessionId: 's',
+        idempotencyKey: 'k',
+      });
+      expect(() => v1.RequestOtpSchema.parse({
+        email: 'employee@example.test',
+        purpose: 'SESSION_LOGIN',
+        extra: true,
+      })).toThrow();
+      expect(() => v1.ConfirmPickupSchema.parse({
+        pickupSessionId: '',
+        idempotencyKey: 'k',
+      })).toThrow();
+      expect(() => v1.ConfirmPickupSchema.parse({
+        pickupSessionId: 's',
+        idempotencyKey: '',
+      })).toThrow();
+      expect(v1.PickupErrorCodeSchema.options).toEqual(expect.arrayContaining([
+        'OTP_REQUEST_ACCEPTED',
+        'OTP_INVALID_OR_EXPIRED',
+        'SESSION_REVOKED',
+        'GPS_RETRY_REQUIRED',
+        'PICKUP_INTENT_CONFLICT',
+        'PICKUP_SESSION_EXPIRED',
+        'IDEMPOTENCY_CONFLICT',
+      ]));
+    });
+  });
 
+});

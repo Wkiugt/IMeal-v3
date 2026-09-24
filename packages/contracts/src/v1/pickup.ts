@@ -113,3 +113,53 @@ export type PickupAvailabilityCode = z.infer<
 export type PickupAvailabilityError = z.infer<
   typeof PickupAvailabilityErrorSchema
 >;
+export const ExactPickupIntentSchema = z
+  .object({
+    presenterUserId: z.string().min(1),
+    mealDate: MealDateSchema,
+    registrationIds: z.array(z.string().min(1)).min(1).superRefine((ids, ctx) => {
+      const unique = new Set(ids);
+      if (unique.size !== ids.length) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Registration IDs must be unique' });
+      }
+      if (ids.some((id, index) => index > 0 && ids[index - 1] >= id)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Registration IDs must be sorted' });
+      }
+    }),
+    nonce: z.string().min(1),
+  })
+  .strict();
+export type ExactPickupIntent = z.infer<typeof ExactPickupIntentSchema>;
+
+export const GenerateQrSchema = z
+  .object({
+    registrationIds: z.array(z.string().min(1)).min(1),
+    presenterEvidence: z.object({
+      capturedAt: UtcDateTimeSchema,
+      latitude: z.number().finite().min(-90).max(90),
+      longitude: z.number().finite().min(-180).max(180),
+      accuracyMeters: z.number().finite().nonnegative(),
+    }).strict(),
+  })
+  .strict();
+export type GenerateQrInput = z.infer<typeof GenerateQrSchema>;
+
+export const ResolvePickupSchema = z.object({ qr: z.string().min(1) }).strict();
+export type ResolvePickupInput = z.infer<typeof ResolvePickupSchema>;
+
+export const ConfirmPickupSchema = z.object({
+  pickupSessionId: z.string().min(1),
+  idempotencyKey: z.string().min(1),
+}).strict();
+export type ConfirmPickupInput = z.infer<typeof ConfirmPickupSchema>;
+
+export const ServingVerificationSchema = z.object({
+  presenterUserId: z.string().min(1),
+  receiverType: z.enum(['SELF', 'PROXY']),
+  locationId: z.string().min(1),
+  gps: z.object({
+    result: z.literal('VALID'),
+    capturedAt: UtcDateTimeSchema,
+    accuracyMeters: z.number().finite().nonnegative(),
+  }).strict(),
+}).strict();
