@@ -4,17 +4,19 @@ import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
+import { pickupAPI, type PickupOption } from '../../api/pickupAPI';
+import { locationAPI, type LocationCapture } from '../../api/locationAPI';
 import {
-  pickupAPI,
-  type PickupOption,
-} from '../../api/pickupAPI';
-import { getMobileErrorMessage, MobileApiError } from '../../api/mobileApiError';
+  getMobileErrorMessage,
+  MobileApiError,
+} from '../../api/mobileApiError';
 import { formatShortDate, parseDateKey } from '../../businessDate';
 import { StateTransition } from '../../ui/BrandMotion';
 import { useScreenLoadingGate } from '../../ui/useScreenLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { AppFrame, SectionHeader } from '../../ui/AppShell';
 import {
+  ActionButton,
   AppText,
   EmptyState,
   MealSelectionCard,
@@ -25,6 +27,17 @@ import {
 import type { QrTicketState } from '../../ui/components';
 import { designTokens } from '../../ui/designTokens';
 import { useLanguage } from '../../i18n/LanguageProvider';
+import {
+  getInitialSelection,
+  isGpsRecoveryError,
+  sortRegistrationIds,
+} from './pickupIntentRules';
+
+export {
+  getInitialSelection,
+  isGpsRecoveryError,
+  sortRegistrationIds,
+} from './pickupIntentRules';
 
 type Props = AppTabScreenProps<'PickupIntent'>;
 type PickupLoadError =
@@ -35,7 +48,6 @@ type PickupLoadError =
 type QrState = {
   value: string;
   expiresAt: number;
-  ttlMs: number;
   ttlSeconds: number;
   selectionKey: string;
 };
@@ -43,7 +55,7 @@ type QrState = {
 const DEFAULT_QR_TTL_SECONDS = 5;
 const QR_REFRESH_LEAD_MS = designTokens.motion.duration.fast;
 
-function selectionKey(ids: string[]): string {
+function selectionKey(ids: readonly string[]): string {
   return ids.join('\u0000');
 }
 
@@ -66,67 +78,89 @@ export function PickupIntentScreen(_props: Props) {
   const optionsRequestId = useRef(0);
   const isFocused = useIsFocused();
   const qrState = useRef<QrState | null>(null);
+  const locationCapture = useRef<LocationCapture | null>(null);
   const screenLoading = useScreenLoadingGate(isFocused, !loading);
 
+  const stopLocationCapture = useCallback(() => {
+    locationCapture.current?.stop();
+    locationCapture.current = null;
+  }, []);
+
   const clearQrPresentation = useCallback(() => {
+    stopLocationCapture();
     qrState.current = null;
     setQrValue(null);
     setTimeLeft(0);
     setQrLoading(false);
-  }, []);
+  }, [stopLocationCapture]);
 
-  const fetchOptions = useCallback(async () => {
-    if (!token) return;
+  const fetchOptions = useCallback(async (): Promise<boolean> => {
+    if (!token) return false;
     const requestId = ++optionsRequestId.current;
     setLoadError(null);
     setLoading(true);
     try {
       const response = await pickupAPI.getPickupOptions(token);
-      if (requestId !== optionsRequestId.current) return;
+      if (requestId !== optionsRequestId.current) return false;
+      const available = new Set(
+        response.options.map((option) => option.registrationId),
+      );
       setOptions(response.options);
       setSelectedIds((current) => {
-        const availableIds = [...current].filter((id) =>
-          response.options.some((option) => option.registrationId === id),
+        const preserved = sortRegistrationIds(
+          [...current].filter((id) => available.has(id)),
         );
-        if (availableIds.length > 0) return new Set(availableIds);
-        return response.options[0]
-          ? new Set([response.options[0].registrationId])
-          : new Set();
+        if (preserved.length > 0) return new Set(preserved);
+        return new Set(getInitialSelection(response.options));
       });
+      clearQrPresentation();
+      setQrError(null);
+      return true;
     } catch (error: unknown) {
-      if (requestId !== optionsRequestId.current) return;
-      if (error instanceof MobileApiError && error.code === 'PICKUP_WINDOW_CLOSED') {
+      if (requestId !== optionsRequestId.current) return false;
+      clearQrPresentation();
+      setIsGenerating(false);
+      if (
+        error instanceof MobileApiError &&
+        error.code === 'PICKUP_WINDOW_CLOSED'
+      ) {
         setLoadError({ type: 'window-closed' });
       } else {
         setLoadError({
-          type: error instanceof MobileApiError && error.code === 'PICKUP_NOT_READY' ? 'not-ready' : 'error',
+          type:
+            error instanceof MobileApiError && error.code === 'PICKUP_NOT_READY'
+              ? 'not-ready'
+              : 'error',
           error,
         });
       }
+      return false;
     } finally {
       if (requestId === optionsRequestId.current) setLoading(false);
     }
-  }, [token]);
+  }, [clearQrPresentation, token]);
 
   useFocusEffect(
     useCallback(() => {
       void fetchOptions();
       return () => {
         optionsRequestId.current += 1;
+        clearQrPresentation();
       };
-    }, [fetchOptions]),
+    }, [clearQrPresentation, fetchOptions]),
   );
 
+  const selectedIdsList = sortRegistrationIds(Array.from(selectedIds));
+  const selectedSelectionKey = selectionKey(selectedIdsList);
+
   useEffect(() => {
-    if (!isFocused || !isGenerating || !token) {
-      if (!isFocused && isGenerating && token) {
-        setQrLoading(false);
-        return;
-      }
-      clearQrPresentation();
+    if (!isFocused || !isGenerating || !token || loading) {
+      if (!isFocused) stopLocationCapture();
+      if (!isGenerating || loading) stopLocationCapture();
       return;
     }
-    if (loading) {
+    if (selectedIdsList.length === 0) {
+      stopLocationCapture();
       setQrLoading(false);
       return;
     }
@@ -134,10 +168,14 @@ export function PickupIntentScreen(_props: Props) {
     let cancelled = false;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     let countdownTimer: ReturnType<typeof setInterval> | undefined;
-    const ids = Array.from(selectedIds);
-    const currentSelectionKey = selectionKey(ids);
+
+    const clearTimers = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      if (countdownTimer) clearInterval(countdownTimer);
+    };
 
     const scheduleTimers = (remainingMs: number, refresh: () => void) => {
+      clearTimers();
       setTimeLeft(Math.max(0, Math.ceil(remainingMs / 1000)));
       refreshTimer = setTimeout(
         refresh,
@@ -151,22 +189,31 @@ export function PickupIntentScreen(_props: Props) {
 
     const refresh = async () => {
       if (cancelled) return;
+      const ids = selectedIdsList;
       if (ids.length === 0) {
         setIsGenerating(false);
         return;
       }
       try {
         setQrLoading(true);
-        const response = await pickupAPI.generateQr(token, ids);
+        stopLocationCapture();
+        const capture = locationAPI.startForegroundLocationCapture();
+        locationCapture.current = capture;
+        const presenterEvidence = await capture.promise;
         if (cancelled) return;
-        const ttlSeconds = response.ttl > 0 ? response.ttl : DEFAULT_QR_TTL_SECONDS;
+        const response = await pickupAPI.generateQr(token, {
+          registrationIds: ids,
+          presenterEvidence,
+        });
+        if (cancelled) return;
+        const ttlSeconds =
+          response.ttl > 0 ? response.ttl : DEFAULT_QR_TTL_SECONDS;
         const ttlMs = ttlSeconds * 1000;
         qrState.current = {
           value: response.qr,
           expiresAt: Date.now() + ttlMs,
-          ttlMs,
           ttlSeconds,
-          selectionKey: currentSelectionKey,
+          selectionKey: selectedSelectionKey,
         };
         setQrError(null);
         setQrValue(response.qr);
@@ -175,6 +222,7 @@ export function PickupIntentScreen(_props: Props) {
         if (!cancelled) {
           clearQrPresentation();
           setQrError(error);
+          setIsGenerating(false);
           showNotice({
             title: t('pickup.qrUnavailable'),
             message: getMobileErrorMessage(error, t, 'errors.generateQr'),
@@ -182,18 +230,17 @@ export function PickupIntentScreen(_props: Props) {
           });
         }
       } finally {
+        stopLocationCapture();
         if (!cancelled) setQrLoading(false);
       }
     };
 
     const existingQr = qrState.current;
     const remainingMs = existingQr ? existingQr.expiresAt - Date.now() : 0;
-    const existingSelectionMatches = existingQr?.selectionKey === currentSelectionKey;
     if (
-      existingQr
-      && existingSelectionMatches
-      && remainingMs > 0
-      && ids.length > 0
+      existingQr &&
+      existingQr.selectionKey === selectedSelectionKey &&
+      remainingMs > 0
     ) {
       scheduleTimers(remainingMs, () => void refresh());
     } else {
@@ -204,23 +251,27 @@ export function PickupIntentScreen(_props: Props) {
 
     return () => {
       cancelled = true;
-      clearTimeout(refreshTimer);
-      clearInterval(countdownTimer);
+      clearTimers();
+      stopLocationCapture();
     };
-
   }, [
     clearQrPresentation,
     isFocused,
     isGenerating,
     loading,
-    qrRetryVersion,
-    selectedIds,
+    selectedIdsList.join('\u0000'),
+    selectedSelectionKey,
     showNotice,
+    stopLocationCapture,
     t,
     token,
+    qrRetryVersion,
   ]);
 
   const toggleSelection = (registrationId: string) => {
+    clearQrPresentation();
+    setQrError(null);
+    setIsGenerating(false);
     setSelectedIds((current) => {
       const next = new Set(current);
       if (next.has(registrationId)) next.delete(registrationId);
@@ -230,69 +281,109 @@ export function PickupIntentScreen(_props: Props) {
   };
 
   const retryQr = useCallback(() => {
+    if (selectedIdsList.length === 0) return;
     clearQrPresentation();
     setQrError(null);
     setQrRetryVersion((current) => current + 1);
     setIsGenerating(true);
-  }, [clearQrPresentation]);
+  }, [clearQrPresentation, selectedIdsList.join('\u0000')]);
+
+  const refreshOptions = useCallback(async () => {
+    setIsGenerating(false);
+    clearQrPresentation();
+    setQrError(null);
+    const refreshed = await fetchOptions();
+    if (refreshed) {
+      setQrRetryVersion((current) => current + 1);
+      setIsGenerating(true);
+    }
+  }, [clearQrPresentation, fetchOptions]);
 
   const toggleGenerating = useCallback(() => {
     if (isGenerating) {
       setIsGenerating(false);
+      clearQrPresentation();
+      return;
+    }
+    if (selectedIdsList.length === 0) {
+      showNotice({
+        title: t('pickup.selectionRequired'),
+        message: t('pickup.selectExplicitForMultiple'),
+        tone: 'error',
+      });
       return;
     }
     clearQrPresentation();
     setQrError(null);
     setIsGenerating(true);
-  }, [clearQrPresentation, isGenerating]);
+  }, [
+    clearQrPresentation,
+    isGenerating,
+    selectedIdsList.join('\u0000'),
+    showNotice,
+    stopLocationCapture,
+    t,
+  ]);
 
-  const displayName = profile?.name || profile?.email.split('@')[0] || t('profile.employeeAccount');
+  useEffect(() => () => stopLocationCapture(), [stopLocationCapture]);
+
+  const displayName =
+    profile?.name ||
+    profile?.email.split('@')[0] ||
+    t('profile.employeeAccount');
   const errorState = loadError?.type;
-  const selectedIdsList = Array.from(selectedIds);
-  const selectedSelectionKey = selectionKey(selectedIdsList);
   const currentQr = qrState.current;
   const qrExpired = currentQr !== null && currentQr.expiresAt <= Date.now();
   const visibleQrValue =
-    isFocused
-    && !qrError
-    && currentQr?.value === qrValue
-    && currentQr?.selectionKey === selectedSelectionKey
-    && (currentQr?.expiresAt ?? 0) > Date.now()
+    isFocused &&
+    !qrError &&
+    currentQr?.value === qrValue &&
+    currentQr?.selectionKey === selectedSelectionKey &&
+    (currentQr?.expiresAt ?? 0) > Date.now()
       ? qrValue
       : null;
-  const qrTicketState: QrTicketState = qrError || qrExpired
-    ? 'expired'
-    : !isGenerating
-      ? 'paused'
-      : visibleQrValue
-        ? qrLoading
-          ? 'refreshing'
-          : 'active'
-        : 'loading';
+  const qrTicketState: QrTicketState =
+    qrError || qrExpired
+      ? 'expired'
+      : !isGenerating
+        ? 'paused'
+        : visibleQrValue
+          ? qrLoading
+            ? 'refreshing'
+            : 'active'
+          : 'loading';
   const selectedMealTypeLabels = Array.from(
     new Set(
       options
         .filter((option) => selectedIds.has(option.registrationId))
-        .map((option) => t(
-          option.mealChoice === 'VEGETARIAN'
-            ? 'calendar.mealChoice.vegetarian'
-            : 'calendar.mealChoice.regular',
-        )),
+        .map((option) =>
+          t(
+            option.mealChoice === 'VEGETARIAN'
+              ? 'calendar.mealChoice.vegetarian'
+              : 'calendar.mealChoice.regular',
+          ),
+        ),
     ),
   );
-  const mealTypeLabel = selectedMealTypeLabels.length > 0
-    ? selectedMealTypeLabels.join(', ')
-    : t('pickup.mealChoice');
+  const mealTypeLabel =
+    selectedMealTypeLabels.length > 0
+      ? selectedMealTypeLabels.join(', ')
+      : t('pickup.mealChoice');
   const qrTotalSeconds = currentQr?.ttlSeconds ?? DEFAULT_QR_TTL_SECONDS;
   const ownerId = profile?.userId || profile?.id || '—';
+  const gpsRecovery = isGpsRecoveryError(qrError);
 
   return (
-    <AppFrame screenLoadingLabel={screenLoading ? t('pickup.loading') : undefined}>
+    <AppFrame
+      screenLoadingLabel={screenLoading ? t('pickup.loading') : undefined}
+    >
       <SectionHeader
         title={t('pickup.title')}
         subtitle={t('pickup.subtitle')}
       />
-      <StateTransition stateKey={errorState || (options.length === 0 ? 'empty' : 'ready')}>
+      <StateTransition
+        stateKey={errorState || (options.length === 0 ? 'empty' : 'ready')}
+      >
         {loadError?.type === 'window-closed' ? (
           <EmptyState
             icon={Clock3}
@@ -304,7 +395,11 @@ export function PickupIntentScreen(_props: Props) {
           <EmptyState
             icon={Clock3}
             title={t('pickup.notReady')}
-            description={getMobileErrorMessage(loadError.error, t, 'errors.loadPickup')}
+            description={getMobileErrorMessage(
+              loadError.error,
+              t,
+              'errors.loadPickup',
+            )}
             action={{
               label: t('pickup.checkAgain'),
               onPress: () => void fetchOptions(),
@@ -315,7 +410,11 @@ export function PickupIntentScreen(_props: Props) {
           <EmptyState
             icon={XCircle}
             title={t('pickup.loadFailed')}
-            description={getMobileErrorMessage(loadError.error, t, 'errors.loadPickup')}
+            description={getMobileErrorMessage(
+              loadError.error,
+              t,
+              'errors.loadPickup',
+            )}
             action={{
               label: t('common.retry'),
               onPress: () => void fetchOptions(),
@@ -332,13 +431,20 @@ export function PickupIntentScreen(_props: Props) {
         ) : (
           <>
             <Surface level={1} padding="xl" style={styles.selectionSurface}>
-              <View style={[styles.selectionHeader, compactLayout && styles.selectionHeaderCompact]}>
+              <View
+                style={[
+                  styles.selectionHeader,
+                  compactLayout && styles.selectionHeaderCompact,
+                ]}
+              >
                 <View style={styles.selectionCopy}>
                   <AppText variant="eyebrow" tone="secondary">
                     {t('pickup.mealsToPickUp')}
                   </AppText>
                   <AppText variant="supporting" tone="secondary">
-                    {t('pickup.selectOneOrMore')}
+                    {options.length > 1
+                      ? t('pickup.selectExplicitForMultiple')
+                      : t('pickup.selectOneOrMore')}
                   </AppText>
                 </View>
                 <StatusBadge
@@ -350,18 +456,23 @@ export function PickupIntentScreen(_props: Props) {
               <View style={styles.optionList}>
                 {options.map((option) => {
                   const selected = selectedIds.has(option.registrationId);
-                  const optionTitle = option.type === 'OWN'
-                    ? t('pickup.myMeal')
-                    : t('pickup.delegatedMeal');
+                  const optionTitle =
+                    option.type === 'OWN'
+                      ? t('pickup.myMeal')
+                      : t('pickup.delegatedMeal');
                   const choiceLabel = t(
                     option.mealChoice === 'VEGETARIAN'
                       ? 'calendar.mealChoice.vegetarian'
                       : 'calendar.mealChoice.regular',
                   );
-                  const dateLabel = formatShortDate(parseDateKey(option.mealDate), locale);
-                  const ownerLabel = option.type === 'DELEGATED' && option.owner
-                    ? ` · ${t('pickup.from', { name: option.owner.name })}`
-                    : '';
+                  const dateLabel = formatShortDate(
+                    parseDateKey(option.mealDate),
+                    locale,
+                  );
+                  const ownerLabel =
+                    option.type === 'DELEGATED' && option.owner
+                      ? ` · ${t('pickup.from', { name: option.owner.name })}`
+                      : '';
                   return (
                     <MealSelectionCard
                       key={option.registrationId}
@@ -375,6 +486,13 @@ export function PickupIntentScreen(_props: Props) {
                   );
                 })}
               </View>
+              <AppText
+                variant="caption"
+                tone="secondary"
+                style={styles.gpsPurpose}
+              >
+                {t('pickup.gpsPurpose')}
+              </AppText>
             </Surface>
             <QrTicket
               state={qrTicketState}
@@ -390,6 +508,28 @@ export function PickupIntentScreen(_props: Props) {
               onToggleActive={toggleGenerating}
               style={styles.ticket}
             />
+            {gpsRecovery && qrError && (
+              <Surface level={1} padding="lg" style={styles.gpsRecovery}>
+                <AppText variant="supporting" tone="critical">
+                  {getMobileErrorMessage(qrError, t, 'errors.generateQr')}
+                </AppText>
+                <AppText
+                  variant="caption"
+                  tone="secondary"
+                  style={styles.gpsRetention}
+                >
+                  {t('pickup.gpsRetention')}
+                </AppText>
+                <View style={styles.recoveryActions}>
+                  <ActionButton
+                    variant="secondary"
+                    size="md"
+                    label={t('pickup.refreshOptions')}
+                    onPress={() => void refreshOptions()}
+                  />
+                </View>
+              </Surface>
+            )}
           </>
         )}
       </StateTransition>
@@ -423,7 +563,20 @@ const styles = StyleSheet.create({
     marginTop: designTokens.space.md,
     gap: designTokens.space.sm,
   },
+  gpsPurpose: {
+    marginTop: designTokens.space.lg,
+  },
   ticket: {
     marginTop: designTokens.space.lg,
+  },
+  gpsRecovery: {
+    marginTop: designTokens.space.md,
+  },
+  gpsRetention: {
+    marginTop: designTokens.space.xs,
+  },
+  recoveryActions: {
+    marginTop: designTokens.space.md,
+    alignItems: 'flex-start',
   },
 });

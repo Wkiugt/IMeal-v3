@@ -10,6 +10,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     ...(config.plugins ?? []),
     'expo-notifications',
+    [
+      'expo-location',
+      {
+        locationAlwaysAndWhenInUsePermission:
+          'IMeal uses your foreground location to verify the presenter pickup site.',
+      },
+    ],
   ],
   extra: {
     ...config.extra,

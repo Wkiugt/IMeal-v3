@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import * as Linking from 'expo-linking';
 import { useFonts } from 'expo-font';
 import {
@@ -19,7 +19,7 @@ import {
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LanguageProvider, useLanguage } from './src/i18n/LanguageProvider';
 import { SessionProvider, useSession } from './src/auth/session';
 import { translate } from './src/i18n/translations';
@@ -33,7 +33,11 @@ import { KitchenScannerScreen } from './src/screens/kitchen/KitchenScannerScreen
 import { KitchenDashboardScreen } from './src/screens/kitchen/KitchenDashboardScreen';
 import { KitchenProfileScreen } from './src/screens/kitchen/KitchenProfileScreen';
 import { PickupIntentScreen } from './src/screens/pickup/PickupIntentScreen';
-import { flushPendingNotificationNavigation, navigationRef } from './src/navigation';
+import { EmailOtpScreen } from './src/screens/auth/EmailOtpScreen';
+import {
+  flushPendingNotificationNavigation,
+  navigationRef,
+} from './src/navigation';
 import type {
   AppTabParamList,
   AuthScreenProps,
@@ -41,7 +45,7 @@ import type {
   ProfileStackParamList,
   RootStackParamList,
 } from './src/navigation';
-import { ActionButton, AppText, TextField } from './src/ui/components';
+import { AppText } from './src/ui/components';
 import {
   employeeNav,
   hybridEmployeeNav,
@@ -49,15 +53,16 @@ import {
   AppTabBar,
 } from './src/ui/AppShell';
 import { NoticeProvider } from './src/ui/BrandNotice';
-import { ScreenLoading, BrandMark, StateTransition } from './src/ui/BrandMotion';
+import { ScreenLoading } from './src/ui/BrandMotion';
 import { useMinimumVisibleLoading } from './src/ui/useMinimumVisibleLoading';
 import { useScreenLoadingGate } from './src/ui/useScreenLoadingGate';
-import { designTokens, getElevationStyle } from './src/ui/designTokens';
+import { designTokens } from './src/ui/designTokens';
 import { NotificationProvider } from './src/notifications/NotificationProvider';
 const RootStack = createNativeStackNavigator<RootStackParamList>();
 const Tabs = createBottomTabNavigator<AppTabParamList>();
 const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
-const NotificationStack = createNativeStackNavigator<NotificationStackParamList>();
+const NotificationStack =
+  createNativeStackNavigator<NotificationStackParamList>();
 const prefix = Linking.createURL('/');
 
 function AuthScreen({ navigation }: AuthScreenProps) {
@@ -65,119 +70,33 @@ function AuthScreen({ navigation }: AuthScreenProps) {
     token,
     profile,
     isRestoring,
-    isSigningIn,
-    authError,
+    isVerifyingOtp,
     canUseEmployee,
     canUseKitchen,
-    signIn,
-    logout,
   } = useSession();
-  const { t } = useLanguage();
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const isFocused = useIsFocused();
   const visibleRestoring = useScreenLoadingGate(isFocused, !isRestoring);
-  const visibleSigningIn = useMinimumVisibleLoading(isSigningIn, 1_500);
+
   useEffect(() => {
-    if (!token || !profile || isSigningIn || visibleRestoring || visibleSigningIn) return;
+    if (!token || !profile || isVerifyingOtp || visibleRestoring) return;
     if (canUseEmployee) {
       navigation.replace('AppTabs', { screen: 'EmployeeDashboard' });
     } else if (canUseKitchen) {
       navigation.replace('AppTabs', { screen: 'KitchenDashboard' });
     }
-  }, [canUseEmployee, canUseKitchen, isSigningIn, navigation, profile, token, visibleRestoring, visibleSigningIn]);
+  }, [
+    canUseEmployee,
+    canUseKitchen,
+    isVerifyingOtp,
+    navigation,
+    profile,
+    token,
+    visibleRestoring,
+  ]);
 
-  const noMobileAccess =
-    Boolean(token && profile) && !canUseEmployee && !canUseKitchen;
-  const authState = visibleRestoring
-    ? 'restoring'
-    : visibleSigningIn
-      ? 'signing-in'
-      : noMobileAccess
-        ? 'no-access'
-        : 'sign-in';
-
-  return (
-    <SafeAreaView style={styles.authSafeArea}>
-      <KeyboardAvoidingView
-        style={styles.authKeyboard}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <ScrollView
-          contentContainerStyle={styles.authScrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          <StateTransition stateKey={authState} style={styles.stateTransition}>
-            {visibleRestoring ? (
-              <ScreenLoading label={t('auth.restoreSession')} />
-            ) : visibleSigningIn ? (
-              <ScreenLoading label={t('auth.signingIn')} />
-            ) : noMobileAccess ? (
-              <View style={styles.authCanvas}>
-                <View style={styles.authCard}>
-                  <BrandMark size={32} containerSize={72} style={styles.authMark} />
-                  <AppText variant="pageTitle" style={styles.title}>{t('auth.welcome')}</AppText>
-                  <AppText variant="body" tone="secondary" style={styles.subtitle}>
-                    {t('auth.noMobileAccess')}
-                  </AppText>
-                  <ActionButton
-                    variant="secondary"
-                    size="md"
-                    label={t('auth.logOut')}
-                    onPress={() => void logout()}
-                  />
-                </View>
-              </View>
-            ) : (
-              <View style={styles.authCanvas}>
-                <View style={styles.authCard}>
-                  <BrandMark size={32} containerSize={72} style={styles.authMark} />
-                  <AppText variant="pageTitle" style={styles.title}>{t('auth.welcome')}</AppText>
-                  <AppText variant="body" tone="secondary" style={styles.subtitle}>
-                    {t('auth.localSignInHint')}
-                  </AppText>
-                  <TextField
-                    label={t('auth.username')}
-                    value={username}
-                    onChangeText={setUsername}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="username"
-                    containerStyle={styles.field}
-                  />
-                  <TextField
-                    label={t('auth.password')}
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry
-                    autoCapitalize="none"
-                    autoComplete="password"
-                    containerStyle={styles.field}
-                  />
-                  <ActionButton
-                    variant="primary"
-                    size="lg"
-                    label={t('auth.signIn')}
-                    disabled={isSigningIn || !username || !password}
-                    onPress={() => void signIn(username, password)}
-                    style={styles.loginButton}
-                  />
-                  <AppText variant="caption" tone="secondary" style={styles.footnote}>
-                    {t('auth.credentialsHint')}
-                  </AppText>
-                  {authError && (
-                    <AppText variant="supporting" tone="critical" style={styles.error}>
-                      {authError}
-                    </AppText>
-                  )}
-                </View>
-              </View>
-            )}
-          </StateTransition>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
-  );
+  if (visibleRestoring)
+    return <ScreenLoading label={translate('auth.restoreSession')} />;
+  return <EmailOtpScreen />;
 }
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token, isRestoring } = useSession();
@@ -206,7 +125,10 @@ function ProfileStackNavigator() {
     <ProfileStack.Navigator
       screenOptions={{ headerShown: false, animation: 'none' }}
     >
-      <ProfileStack.Screen name="ProfileHome" component={EmployeeProfileScreen} />
+      <ProfileStack.Screen
+        name="ProfileHome"
+        component={EmployeeProfileScreen}
+      />
       <ProfileStack.Screen name="Delegation" component={DelegationScreen} />
     </ProfileStack.Navigator>
   );
@@ -214,9 +136,17 @@ function ProfileStackNavigator() {
 
 function NotificationStackNavigator() {
   return (
-    <NotificationStack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
-      <NotificationStack.Screen name="NotificationList" component={NotificationListScreen} />
-      <NotificationStack.Screen name="NotificationDetail" component={NotificationDetailScreen} />
+    <NotificationStack.Navigator
+      screenOptions={{ headerShown: false, animation: 'none' }}
+    >
+      <NotificationStack.Screen
+        name="NotificationList"
+        component={NotificationListScreen}
+      />
+      <NotificationStack.Screen
+        name="NotificationDetail"
+        component={NotificationDetailScreen}
+      />
     </NotificationStack.Navigator>
   );
 }
@@ -236,19 +166,37 @@ function AppTabsNavigator() {
     >
       {canUseEmployee && (
         <>
-          <Tabs.Screen name="EmployeeDashboard" component={EmployeeDashboardScreen} />
-          <Tabs.Screen name="EmployeeCalendar" component={EmployeeCalendarScreen} />
+          <Tabs.Screen
+            name="EmployeeDashboard"
+            component={EmployeeDashboardScreen}
+          />
+          <Tabs.Screen
+            name="EmployeeCalendar"
+            component={EmployeeCalendarScreen}
+          />
           <Tabs.Screen name="PickupIntent" component={PickupIntentScreen} />
-          <Tabs.Screen name="Notifications" component={NotificationStackNavigator} />
+          <Tabs.Screen
+            name="Notifications"
+            component={NotificationStackNavigator}
+          />
           {canUseKitchen && (
-            <Tabs.Screen name="KitchenScanner" component={KitchenScannerScreen} />
+            <Tabs.Screen
+              name="KitchenScanner"
+              component={KitchenScannerScreen}
+            />
           )}
-          <Tabs.Screen name="EmployeeProfile" component={ProfileStackNavigator} />
+          <Tabs.Screen
+            name="EmployeeProfile"
+            component={ProfileStackNavigator}
+          />
         </>
       )}
       {!canUseEmployee && canUseKitchen && (
         <>
-          <Tabs.Screen name="KitchenDashboard" component={KitchenDashboardScreen} />
+          <Tabs.Screen
+            name="KitchenDashboard"
+            component={KitchenDashboardScreen}
+          />
           <Tabs.Screen name="KitchenScanner" component={KitchenScannerScreen} />
           <Tabs.Screen name="KitchenProfile" component={KitchenProfileScreen} />
         </>
@@ -298,7 +246,11 @@ function NavigationRoot() {
   }
 
   return (
-    <NavigationContainer linking={linkingConfig()} ref={navigationRef} onReady={flushPendingNotificationNavigation}>
+    <NavigationContainer
+      linking={linkingConfig()}
+      ref={navigationRef}
+      onReady={flushPendingNotificationNavigation}
+    >
       <RootStack.Navigator
         screenOptions={{ headerShown: false, animation: 'none' }}
       >
@@ -321,7 +273,11 @@ function FontBootstrapError() {
       <AppText variant="sectionTitle" style={styles.bootstrapErrorTitle}>
         {translate('bootstrap.fontErrorTitle')}
       </AppText>
-      <AppText variant="body" tone="secondary" style={styles.bootstrapErrorText}>
+      <AppText
+        variant="body"
+        tone="secondary"
+        style={styles.bootstrapErrorText}
+      >
         {translate('bootstrap.fontErrorText')}
       </AppText>
     </View>
@@ -355,59 +311,6 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  authSafeArea: {
-    flex: 1,
-    backgroundColor: designTokens.color.background.page,
-  },
-  authKeyboard: {
-    flex: 1,
-  },
-  authScrollContent: {
-    flexGrow: 1,
-    padding: designTokens.space['2xl'],
-  },
-  stateTransition: {
-    flexGrow: 1,
-  },
-  authCanvas: {
-    flexGrow: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  authCard: {
-    width: '100%',
-    maxWidth: 346,
-    padding: 26,
-    borderWidth: 1,
-    borderColor: designTokens.color.border.standard,
-    borderRadius: designTokens.radius.floating,
-    backgroundColor: designTokens.color.surface.standard,
-    ...getElevationStyle(1),
-  },
-  authMark: {
-    alignSelf: 'center',
-    marginBottom: 18,
-    borderRadius: designTokens.radius.full,
-  },
-  title: {
-    textAlign: 'center',
-  },
-  subtitle: {
-    textAlign: 'center',
-    marginTop: designTokens.space.sm,
-    marginBottom: designTokens.space['2xl'],
-  },
-  field: { marginBottom: 14 },
-  loginButton: { marginTop: 4 },
-  footnote: {
-    flexShrink: 1,
-    textAlign: 'center',
-    marginTop: 18,
-  },
-  error: {
-    textAlign: 'center',
-    marginTop: 16,
-  },
   bootstrapError: {
     flex: 1,
     alignItems: 'center',

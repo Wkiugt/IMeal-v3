@@ -1,0 +1,2899 @@
+diff --git a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md
+index 37d745c..13d68c8 100644
+--- a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md
++++ b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md
+@@ -113,3 +113,10 @@
+ - [x] Task 8 API/core TypeScript validation, root typecheck, API lint, and diff-check passed; API lint retains only pre-existing repository warnings.
+ - [!] Task 8 PostgreSQL domain concurrency and pickup e2e verification blocked before discovery: `DATABASE_URL is not set in environment or .env.test`.
+ - [x] Task 8 report: `task-8-report.md`; no mobile Task 9, Admin Task 10, or docs Task 11 production changes.
++
++- [x] Official Task 9 brief generated from plan lines 850–929; artifact: `task-9-brief.md`.
++- [x] RED mobile transport/intent tests observed before Task 9 implementation; missing OTP API, exact pickup methods, and selection rules failed as expected.
++- [x] Task 9 implemented: strict non-enumerating OTP/session mobile transport and bootstrap; exact sorted QR generation with presenter evidence; QR-only Kitchen resolve; session/idempotency-only confirm; Expo foreground presenter evidence with cleanup; one-item auto-select and explicit multi-select; QR invalidation and Retry/Refresh-only GPS recovery; bilingual purpose/retention copy.
++- [x] Focused Task 9 tests — 3 files, 14 tests passed; full mobile suite — 20 files, 72 tests passed.
++- [x] Mobile TypeScript validation passed after adding Expo Location `~17.0.1` and its foreground permission config.
++- [x] Task 9 report: `task-9-report.md`; Expo web export, root lint/build, and diff-check passed. Native device GPS/permission runtime remains unexercised in this workspace.
+diff --git a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-9-brief.md b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-9-brief.md
+new file mode 100644
+index 0000000..ce97dfa
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-9-brief.md
+@@ -0,0 +1,42 @@
++### Task 9: Add mobile Expo foreground GPS, explicit intent, and Retry/Refresh recovery
++
++**Files:**
++- Create: `apps/mobile/src/api/authAPI.ts`
++- Create: `apps/mobile/src/api/locationAPI.ts`
++- Modify: `apps/mobile/src/api/pickupAPI.ts`
++- Create/Modify: `apps/mobile/src/screens/auth/EmailOtpScreen.tsx`
++- Modify: `apps/mobile/src/screens/pickup/PickupIntentScreen.tsx`
++- Modify: `apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx`
++- Modify: `apps/mobile/src/auth/session.tsx`, `apps/mobile/src/i18n/translations.ts`, `apps/mobile/App.tsx`
++- Modify: `apps/mobile/app.config.ts`, `apps/mobile/package.json`, `yarn.lock`
++- Test: `apps/mobile/src/api/authAPI.test.ts`, `apps/mobile/src/api/pickupAPI.test.ts`, `apps/mobile/src/screens/pickup/PickupIntentScreen.test.tsx`
++
++**Interfaces:**
++- Consumes: versioned auth/location/pickup contracts from Tasks 1, 3, and 6–8.
++- Produces: strict OTP/session transport and bootstrap, exact pickup QR/resolve/confirm wrappers, and presenter-only foreground location lifecycle.
++
++- [ ] **Step 1: Write failing mobile tests**
++
++Cover non-enumerating OTP request/strict verification parsing, sorted exact QR intent with presenter evidence, QR-only Kitchen resolve, session/idempotency-only Kitchen confirm, one-item auto-selection, explicit multi-selection, GPS Retry/Refresh recovery, and foreground location cleanup.
++
++- [ ] **Step 2: Run the RED mobile tests**
++
++```sh
++corepack yarn workspace @imeal/mobile exec vitest run src/api/pickupAPI.test.ts src/api/authAPI.test.ts src/screens/pickup/PickupIntentScreen.test.tsx
++```
++
++Expected: fail until OTP transport, exact pickup wrappers, and intent rules exist.
++
++- [ ] **Step 3: Implement the transport and foreground flow**
++
++Use strict Zod parsing and stable `MobileApiError` codes. Persist only the opaque OTP session token via the existing platform storage. Request foreground Expo location just-in-time for each QR generate/refresh; stop the capture on blur, cancellation, completion, or unmount. Keep one eligible option auto-selected, require explicit selection for multiple options, sort IDs, clear QR on any selection/eligibility/evidence change, and expose only Retry/Refresh after GPS failures. Kitchen sends only the QR to resolve and only the resolved session ID plus idempotency key to confirm.
++
++- [ ] **Step 4: Run the GREEN mobile tests and checks**
++
++```sh
++corepack yarn workspace @imeal/mobile exec vitest run src/api/pickupAPI.test.ts src/api/authAPI.test.ts src/screens/pickup/PickupIntentScreen.test.tsx
++corepack yarn workspace @imeal/mobile test
++corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
++```
++
++If native Expo runtime is unavailable, use deterministic mocked location callbacks and report that limitation; do not fabricate operational location data.
+diff --git a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-9-report.md b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-9-report.md
+new file mode 100644
+index 0000000..4cc9c6f
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-9-report.md
+@@ -0,0 +1,66 @@
++# Task 9 Report — mobile OTP, presenter GPS, exact pickup intent, and recovery
++
++## Status
++
++DONE_WITH_RUNTIME_LIMITATION — Task 9 mobile implementation is complete. Deterministic mobile unit tests, TypeScript, Expo web export, repository lint, build, and diff checks passed. A physical Expo iOS/Android runtime was not available in this workspace, so native permission prompts and device GPS hardware were not exercised.
++
++## Scope implemented
++
++- Added `authAPI` strict OTP request/verify/logout wrappers and authenticated `/auth/me` session bootstrap. OTP request responses are parsed as the non-enumerating `{ accepted: true, retryAfterSeconds? }` contract; cleartext OTP/session values are never logged or rendered.
++- Replaced mobile local username/password sign-in with `EmailOtpScreen` and opaque session persistence through `SessionProvider`/Expo SecureStore (web local storage only for the web target). Verification bootstraps the server-resolved profile before navigation.
++- Added `locationAPI` foreground Expo Location capture. It requests permission just in time, waits for one schema-validated high-accuracy fix, and removes the watch on evidence, error, blur, cancellation, completion, or unmount. No background watcher or owner GPS path exists.
++- Updated `pickupAPI` with strict response parsing and exact authenticated wrappers:
++  - `generateQr(token, { registrationIds, presenterEvidence })` sorts and validates explicit IDs.
++  - `resolvePickup(token, { qr })` sends only the QR payload.
++  - `confirmPickup(token, { pickupSessionId, idempotencyKey })` sends only session/idempotency fields and validates the all-or-nothing result.
++- Updated `PickupIntentScreen` to auto-select only one eligible option; multiple options start unselected and require explicit selection. It sorts IDs, clears QR on selection/eligibility/focus/evidence changes, captures fresh presenter evidence before initial generation and every refresh, and stops collection on blur/cancel/completion/unmount.
++- GPS unavailable/denied/stale/inaccurate failures expose only Retry (on the QR failure state) and Refresh options; there is no manual bypass, alternate site, or silent item substitution. Delegated items still collect only the authenticated presenter’s evidence.
++- Updated `KitchenScannerScreen` to use QR-only resolve and session/idempotency-only confirm. Kitchen never sends GPS/evidence. Confirmation reuses a generated idempotency key for exact retries.
++- Added Vietnamese/English OTP privacy, foreground GPS purpose/retention, selection, and safe recovery copy. Added Expo Location `~17.0.1` and its foreground permission configuration; no operational location data was added.
++- Added Task 9 brief and ledger entries. No Admin Web Task 10 or docs Task 11 production changes were made.
++
++## TDD / verification
++
++### RED
++
++- Added exact pickup transport and intent-rule tests before implementation. The initial run failed because `generateQr` still accepted a bare ID array, `resolvePickup`/`confirmPickup` did not exist, malformed QR responses were accepted, and the new auth/screen modules were absent.
++
++### GREEN
++
++- `corepack yarn workspace @imeal/mobile exec vitest run src/api/pickupAPI.test.ts src/api/authAPI.test.ts src/screens/pickup/PickupIntentScreen.test.tsx` — **3 files, 14 tests passed**.
++- `corepack yarn workspace @imeal/mobile test` — **20 files, 72 tests passed**.
++- `corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json` — passed.
++- `corepack yarn workspace @imeal/mobile exec expo export --platform web` — passed; Metro bundled the mobile app and exported the web bundle. This validates the JS/config path, not native GPS hardware.
++- `corepack yarn lint` — passed with the repository’s existing API warnings (9 warnings, 0 errors); no mobile lint script is defined in the mobile package.
++- `corepack yarn build` — passed for the repository’s configured build workspaces. Mobile has no Turbo `build` script, so the Expo web export is the mobile build smoke check.
++- `git diff --check` — passed; only Git’s existing LF/CRLF conversion warnings were reported.
++- Task 9 files were formatted with Prettier.
++
++## Runtime limitation
++
++No physical/native Expo runtime was available for this session. Native permission prompt behavior, GPS hardware accuracy, and Android/iOS config-plugin installation should be exercised on a device/emulator before release. The implementation uses deterministic `watchPositionAsync`/permission boundaries and strict contract parsing so those boundaries can be mocked in a native test harness; no fallback or fabricated location data was introduced.
++
++## Files changed
++
++- `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-9-brief.md`
++- `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-9-report.md`
++- `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md`
++- `apps/mobile/App.tsx`
++- `apps/mobile/app.config.ts`
++- `apps/mobile/package.json`
++- `apps/mobile/src/api/authAPI.ts`
++- `apps/mobile/src/api/authAPI.test.ts`
++- `apps/mobile/src/api/locationAPI.ts`
++- `apps/mobile/src/api/mobileApiError.ts`
++- `apps/mobile/src/api/pickupAPI.ts`
++- `apps/mobile/src/api/pickupAPI.test.ts`
++- `apps/mobile/src/auth/session.tsx`
++- `apps/mobile/src/i18n/translations.ts`
++- `apps/mobile/src/screens/auth/EmailOtpScreen.tsx`
++- `apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx`
++- `apps/mobile/src/screens/pickup/PickupIntentScreen.tsx`
++- `apps/mobile/src/screens/pickup/PickupIntentScreen.test.tsx`
++- `apps/mobile/src/screens/pickup/pickupIntentRules.ts`
++- `yarn.lock`
++
++No Admin Web Task 10, docs Task 11, or fabricated operational location/roster data was added.
+diff --git a/apps/mobile/App.tsx b/apps/mobile/App.tsx
+index 626fe76..f37b007 100644
+--- a/apps/mobile/App.tsx
++++ b/apps/mobile/App.tsx
+@@ -1,5 +1,5 @@
+ import React, { useEffect, useState } from 'react';
+-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
++import { StyleSheet, View } from 'react-native';
+ import * as Linking from 'expo-linking';
+ import { useFonts } from 'expo-font';
+ import {
+@@ -19,7 +19,7 @@ import {
+   type NativeStackNavigationProp,
+ } from '@react-navigation/native-stack';
+ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
++import { SafeAreaProvider } from 'react-native-safe-area-context';
+ import { LanguageProvider, useLanguage } from './src/i18n/LanguageProvider';
+ import { SessionProvider, useSession } from './src/auth/session';
+ import { translate } from './src/i18n/translations';
+@@ -33,7 +33,11 @@ import { KitchenScannerScreen } from './src/screens/kitchen/KitchenScannerScreen
+ import { KitchenDashboardScreen } from './src/screens/kitchen/KitchenDashboardScreen';
+ import { KitchenProfileScreen } from './src/screens/kitchen/KitchenProfileScreen';
+ import { PickupIntentScreen } from './src/screens/pickup/PickupIntentScreen';
+-import { flushPendingNotificationNavigation, navigationRef } from './src/navigation';
++import { EmailOtpScreen } from './src/screens/auth/EmailOtpScreen';
++import {
++  flushPendingNotificationNavigation,
++  navigationRef,
++} from './src/navigation';
+ import type {
+   AppTabParamList,
+   AuthScreenProps,
+@@ -41,7 +45,7 @@ import type {
+   ProfileStackParamList,
+   RootStackParamList,
+ } from './src/navigation';
+-import { ActionButton, AppText, TextField } from './src/ui/components';
++import { AppText } from './src/ui/components';
+ import {
+   employeeNav,
+   hybridEmployeeNav,
+@@ -49,15 +53,16 @@ import {
+   AppTabBar,
+ } from './src/ui/AppShell';
+ import { NoticeProvider } from './src/ui/BrandNotice';
+-import { ScreenLoading, BrandMark, StateTransition } from './src/ui/BrandMotion';
++import { ScreenLoading } from './src/ui/BrandMotion';
+ import { useMinimumVisibleLoading } from './src/ui/useMinimumVisibleLoading';
+ import { useScreenLoadingGate } from './src/ui/useScreenLoadingGate';
+-import { designTokens, getElevationStyle } from './src/ui/designTokens';
++import { designTokens } from './src/ui/designTokens';
+ import { NotificationProvider } from './src/notifications/NotificationProvider';
+ const RootStack = createNativeStackNavigator<RootStackParamList>();
+ const Tabs = createBottomTabNavigator<AppTabParamList>();
+ const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
+-const NotificationStack = createNativeStackNavigator<NotificationStackParamList>();
++const NotificationStack =
++  createNativeStackNavigator<NotificationStackParamList>();
+ const prefix = Linking.createURL('/');
+ 
+ function AuthScreen({ navigation }: AuthScreenProps) {
+@@ -65,119 +70,33 @@ function AuthScreen({ navigation }: AuthScreenProps) {
+     token,
+     profile,
+     isRestoring,
+-    isSigningIn,
+-    authError,
++    isVerifyingOtp,
+     canUseEmployee,
+     canUseKitchen,
+-    signIn,
+-    logout,
+   } = useSession();
+-  const { t } = useLanguage();
+-  const [username, setUsername] = useState('');
+-  const [password, setPassword] = useState('');
+   const isFocused = useIsFocused();
+   const visibleRestoring = useScreenLoadingGate(isFocused, !isRestoring);
+-  const visibleSigningIn = useMinimumVisibleLoading(isSigningIn, 1_500);
++
+   useEffect(() => {
+-    if (!token || !profile || isSigningIn || visibleRestoring || visibleSigningIn) return;
++    if (!token || !profile || isVerifyingOtp || visibleRestoring) return;
+     if (canUseEmployee) {
+       navigation.replace('AppTabs', { screen: 'EmployeeDashboard' });
+     } else if (canUseKitchen) {
+       navigation.replace('AppTabs', { screen: 'KitchenDashboard' });
+     }
+-  }, [canUseEmployee, canUseKitchen, isSigningIn, navigation, profile, token, visibleRestoring, visibleSigningIn]);
+-
+-  const noMobileAccess =
+-    Boolean(token && profile) && !canUseEmployee && !canUseKitchen;
+-  const authState = visibleRestoring
+-    ? 'restoring'
+-    : visibleSigningIn
+-      ? 'signing-in'
+-      : noMobileAccess
+-        ? 'no-access'
+-        : 'sign-in';
++  }, [
++    canUseEmployee,
++    canUseKitchen,
++    isVerifyingOtp,
++    navigation,
++    profile,
++    token,
++    visibleRestoring,
++  ]);
+ 
+-  return (
+-    <SafeAreaView style={styles.authSafeArea}>
+-      <KeyboardAvoidingView
+-        style={styles.authKeyboard}
+-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+-      >
+-        <ScrollView
+-          contentContainerStyle={styles.authScrollContent}
+-          keyboardShouldPersistTaps="handled"
+-        >
+-          <StateTransition stateKey={authState} style={styles.stateTransition}>
+-            {visibleRestoring ? (
+-              <ScreenLoading label={t('auth.restoreSession')} />
+-            ) : visibleSigningIn ? (
+-              <ScreenLoading label={t('auth.signingIn')} />
+-            ) : noMobileAccess ? (
+-              <View style={styles.authCanvas}>
+-                <View style={styles.authCard}>
+-                  <BrandMark size={32} containerSize={72} style={styles.authMark} />
+-                  <AppText variant="pageTitle" style={styles.title}>{t('auth.welcome')}</AppText>
+-                  <AppText variant="body" tone="secondary" style={styles.subtitle}>
+-                    {t('auth.noMobileAccess')}
+-                  </AppText>
+-                  <ActionButton
+-                    variant="secondary"
+-                    size="md"
+-                    label={t('auth.logOut')}
+-                    onPress={() => void logout()}
+-                  />
+-                </View>
+-              </View>
+-            ) : (
+-              <View style={styles.authCanvas}>
+-                <View style={styles.authCard}>
+-                  <BrandMark size={32} containerSize={72} style={styles.authMark} />
+-                  <AppText variant="pageTitle" style={styles.title}>{t('auth.welcome')}</AppText>
+-                  <AppText variant="body" tone="secondary" style={styles.subtitle}>
+-                    {t('auth.localSignInHint')}
+-                  </AppText>
+-                  <TextField
+-                    label={t('auth.username')}
+-                    value={username}
+-                    onChangeText={setUsername}
+-                    autoCapitalize="none"
+-                    autoCorrect={false}
+-                    autoComplete="username"
+-                    containerStyle={styles.field}
+-                  />
+-                  <TextField
+-                    label={t('auth.password')}
+-                    value={password}
+-                    onChangeText={setPassword}
+-                    secureTextEntry
+-                    autoCapitalize="none"
+-                    autoComplete="password"
+-                    containerStyle={styles.field}
+-                  />
+-                  <ActionButton
+-                    variant="primary"
+-                    size="lg"
+-                    label={t('auth.signIn')}
+-                    disabled={isSigningIn || !username || !password}
+-                    onPress={() => void signIn(username, password)}
+-                    style={styles.loginButton}
+-                  />
+-                  <AppText variant="caption" tone="secondary" style={styles.footnote}>
+-                    {t('auth.credentialsHint')}
+-                  </AppText>
+-                  {authError && (
+-                    <AppText variant="supporting" tone="critical" style={styles.error}>
+-                      {authError}
+-                    </AppText>
+-                  )}
+-                </View>
+-              </View>
+-            )}
+-          </StateTransition>
+-        </ScrollView>
+-      </KeyboardAvoidingView>
+-    </SafeAreaView>
+-  );
++  if (visibleRestoring)
++    return <ScreenLoading label={translate('auth.restoreSession')} />;
++  return <EmailOtpScreen />;
+ }
+ function ProtectedRoute({ children }: { children: React.ReactNode }) {
+   const { token, isRestoring } = useSession();
+@@ -206,7 +125,10 @@ function ProfileStackNavigator() {
+     <ProfileStack.Navigator
+       screenOptions={{ headerShown: false, animation: 'none' }}
+     >
+-      <ProfileStack.Screen name="ProfileHome" component={EmployeeProfileScreen} />
++      <ProfileStack.Screen
++        name="ProfileHome"
++        component={EmployeeProfileScreen}
++      />
+       <ProfileStack.Screen name="Delegation" component={DelegationScreen} />
+     </ProfileStack.Navigator>
+   );
+@@ -214,9 +136,17 @@ function ProfileStackNavigator() {
+ 
+ function NotificationStackNavigator() {
+   return (
+-    <NotificationStack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
+-      <NotificationStack.Screen name="NotificationList" component={NotificationListScreen} />
+-      <NotificationStack.Screen name="NotificationDetail" component={NotificationDetailScreen} />
++    <NotificationStack.Navigator
++      screenOptions={{ headerShown: false, animation: 'none' }}
++    >
++      <NotificationStack.Screen
++        name="NotificationList"
++        component={NotificationListScreen}
++      />
++      <NotificationStack.Screen
++        name="NotificationDetail"
++        component={NotificationDetailScreen}
++      />
+     </NotificationStack.Navigator>
+   );
+ }
+@@ -236,19 +166,37 @@ function AppTabsNavigator() {
+     >
+       {canUseEmployee && (
+         <>
+-          <Tabs.Screen name="EmployeeDashboard" component={EmployeeDashboardScreen} />
+-          <Tabs.Screen name="EmployeeCalendar" component={EmployeeCalendarScreen} />
++          <Tabs.Screen
++            name="EmployeeDashboard"
++            component={EmployeeDashboardScreen}
++          />
++          <Tabs.Screen
++            name="EmployeeCalendar"
++            component={EmployeeCalendarScreen}
++          />
+           <Tabs.Screen name="PickupIntent" component={PickupIntentScreen} />
+-          <Tabs.Screen name="Notifications" component={NotificationStackNavigator} />
++          <Tabs.Screen
++            name="Notifications"
++            component={NotificationStackNavigator}
++          />
+           {canUseKitchen && (
+-            <Tabs.Screen name="KitchenScanner" component={KitchenScannerScreen} />
++            <Tabs.Screen
++              name="KitchenScanner"
++              component={KitchenScannerScreen}
++            />
+           )}
+-          <Tabs.Screen name="EmployeeProfile" component={ProfileStackNavigator} />
++          <Tabs.Screen
++            name="EmployeeProfile"
++            component={ProfileStackNavigator}
++          />
+         </>
+       )}
+       {!canUseEmployee && canUseKitchen && (
+         <>
+-          <Tabs.Screen name="KitchenDashboard" component={KitchenDashboardScreen} />
++          <Tabs.Screen
++            name="KitchenDashboard"
++            component={KitchenDashboardScreen}
++          />
+           <Tabs.Screen name="KitchenScanner" component={KitchenScannerScreen} />
+           <Tabs.Screen name="KitchenProfile" component={KitchenProfileScreen} />
+         </>
+@@ -298,7 +246,11 @@ function NavigationRoot() {
+   }
+ 
+   return (
+-    <NavigationContainer linking={linkingConfig()} ref={navigationRef} onReady={flushPendingNotificationNavigation}>
++    <NavigationContainer
++      linking={linkingConfig()}
++      ref={navigationRef}
++      onReady={flushPendingNotificationNavigation}
++    >
+       <RootStack.Navigator
+         screenOptions={{ headerShown: false, animation: 'none' }}
+       >
+@@ -321,7 +273,11 @@ function FontBootstrapError() {
+       <AppText variant="sectionTitle" style={styles.bootstrapErrorTitle}>
+         {translate('bootstrap.fontErrorTitle')}
+       </AppText>
+-      <AppText variant="body" tone="secondary" style={styles.bootstrapErrorText}>
++      <AppText
++        variant="body"
++        tone="secondary"
++        style={styles.bootstrapErrorText}
++      >
+         {translate('bootstrap.fontErrorText')}
+       </AppText>
+     </View>
+@@ -355,59 +311,6 @@ export default function App() {
+ }
+ 
+ const styles = StyleSheet.create({
+-  authSafeArea: {
+-    flex: 1,
+-    backgroundColor: designTokens.color.background.page,
+-  },
+-  authKeyboard: {
+-    flex: 1,
+-  },
+-  authScrollContent: {
+-    flexGrow: 1,
+-    padding: designTokens.space['2xl'],
+-  },
+-  stateTransition: {
+-    flexGrow: 1,
+-  },
+-  authCanvas: {
+-    flexGrow: 1,
+-    alignItems: 'center',
+-    justifyContent: 'center',
+-  },
+-  authCard: {
+-    width: '100%',
+-    maxWidth: 346,
+-    padding: 26,
+-    borderWidth: 1,
+-    borderColor: designTokens.color.border.standard,
+-    borderRadius: designTokens.radius.floating,
+-    backgroundColor: designTokens.color.surface.standard,
+-    ...getElevationStyle(1),
+-  },
+-  authMark: {
+-    alignSelf: 'center',
+-    marginBottom: 18,
+-    borderRadius: designTokens.radius.full,
+-  },
+-  title: {
+-    textAlign: 'center',
+-  },
+-  subtitle: {
+-    textAlign: 'center',
+-    marginTop: designTokens.space.sm,
+-    marginBottom: designTokens.space['2xl'],
+-  },
+-  field: { marginBottom: 14 },
+-  loginButton: { marginTop: 4 },
+-  footnote: {
+-    flexShrink: 1,
+-    textAlign: 'center',
+-    marginTop: 18,
+-  },
+-  error: {
+-    textAlign: 'center',
+-    marginTop: 16,
+-  },
+   bootstrapError: {
+     flex: 1,
+     alignItems: 'center',
+diff --git a/apps/mobile/app.config.ts b/apps/mobile/app.config.ts
+index c4c1666..a003ea2 100644
+--- a/apps/mobile/app.config.ts
++++ b/apps/mobile/app.config.ts
+@@ -10,6 +10,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
+   plugins: [
+     ...(config.plugins ?? []),
+     'expo-notifications',
++    [
++      'expo-location',
++      {
++        locationAlwaysAndWhenInUsePermission:
++          'IMeal uses your foreground location to verify the presenter pickup site.',
++      },
++    ],
+   ],
+   extra: {
+     ...config.extra,
+diff --git a/apps/mobile/package.json b/apps/mobile/package.json
+index 2b7a5db..293491d 100644
+--- a/apps/mobile/package.json
++++ b/apps/mobile/package.json
+@@ -29,6 +29,7 @@
+     "expo-device": "~6.0.2",
+     "expo-font": "~12.0.10",
+     "expo-linking": "~6.3.1",
++    "expo-location": "~17.0.1",
+     "expo-notifications": "~0.28.17",
+     "expo-secure-store": "~13.0.2",
+     "expo-status-bar": "~1.12.1",
+diff --git a/apps/mobile/src/api/authAPI.test.ts b/apps/mobile/src/api/authAPI.test.ts
+new file mode 100644
+index 0000000..287d0c4
+--- /dev/null
++++ b/apps/mobile/src/api/authAPI.test.ts
+@@ -0,0 +1,94 @@
++import { afterEach, describe, expect, it, vi } from 'vitest';
++
++vi.mock('./apiConfig', () => ({ API_ROOT: 'https://api.example.test' }));
++
++import { authAPI } from './authAPI';
++
++afterEach(() => {
++  vi.unstubAllGlobals();
++});
++
++describe('authAPI', () => {
++  it('requests an OTP with a non-enumerating accepted response', async () => {
++    const fetchMock = vi.fn(
++      async () =>
++        new Response(
++          JSON.stringify({
++            accepted: true,
++          }),
++          { status: 200, headers: { 'Content-Type': 'application/json' } },
++        ),
++    );
++    vi.stubGlobal('fetch', fetchMock);
++
++    await expect(authAPI.requestOtp('person@example.test')).resolves.toEqual({
++      accepted: true,
++    });
++    expect(fetchMock).toHaveBeenCalledWith(
++      'https://api.example.test/auth/otp/request',
++      expect.objectContaining({
++        body: JSON.stringify({
++          email: 'person@example.test',
++          purpose: 'SESSION_LOGIN',
++        }),
++      }),
++    );
++  });
++
++  it('strictly parses an OTP verification session response', async () => {
++    vi.stubGlobal(
++      'fetch',
++      vi.fn(
++        async () =>
++          new Response(
++            JSON.stringify({
++              sessionToken: 'opaque-session-token',
++              expiresAt: '2026-09-24T04:00:00.000Z',
++              user: {
++                id: 'user-1',
++                email: 'person@example.test',
++                name: 'Person',
++              },
++            }),
++            { status: 200, headers: { 'Content-Type': 'application/json' } },
++          ),
++      ),
++    );
++
++    await expect(
++      authAPI.verifyOtp({
++        email: 'person@example.test',
++        code: '123456',
++      }),
++    ).resolves.toMatchObject({ sessionToken: 'opaque-session-token' });
++  });
++
++  it('rejects verification payloads with unknown fields', async () => {
++    vi.stubGlobal(
++      'fetch',
++      vi.fn(
++        async () =>
++          new Response(
++            JSON.stringify({
++              sessionToken: 'opaque-session-token',
++              expiresAt: '2026-09-24T04:00:00.000Z',
++              user: {
++                id: 'user-1',
++                email: 'person@example.test',
++                name: 'Person',
++              },
++              allowlisted: true,
++            }),
++            { status: 200, headers: { 'Content-Type': 'application/json' } },
++          ),
++      ),
++    );
++
++    await expect(
++      authAPI.verifyOtp({
++        email: 'person@example.test',
++        code: '123456',
++      }),
++    ).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
++  });
++});
+diff --git a/apps/mobile/src/api/authAPI.ts b/apps/mobile/src/api/authAPI.ts
+new file mode 100644
+index 0000000..750709e
+--- /dev/null
++++ b/apps/mobile/src/api/authAPI.ts
+@@ -0,0 +1,171 @@
++import { z } from 'zod';
++import { v1 } from '@imeal/contracts';
++import { API_ROOT } from './apiConfig';
++import {
++  MobileApiError,
++  readMobileResponseJson,
++  throwMobileResponseError,
++  toMobileApiError,
++} from './mobileApiError';
++
++type AuthFallbackKey =
++  | 'errors.requestOtp'
++  | 'errors.verifyOtp'
++  | 'errors.restoreSession'
++  | 'errors.logOut';
++
++const CurrentUserSchema = z
++  .object({
++    id: z.string().min(1),
++    userId: z.string().min(1),
++    email: z.string().email(),
++    name: z.string().optional(),
++    roles: z.array(z.string()),
++    permissions: z.array(z.string()),
++    sessionId: z.string().min(1).optional(),
++    isActive: z.boolean().optional(),
++  })
++  .strict();
++
++export type MobileProfile = z.infer<typeof CurrentUserSchema>;
++export type VerifyOtpInput =
++  | Pick<v1.VerifyOtpInput, 'email' | 'code'>
++  | v1.VerifyOtpInput;
++export type VerifyOtpResponse = v1.VerifyOtpResponse;
++export type RequestOtpResponse = v1.RequestOtpResponse;
++export type LogoutResponse = v1.LogoutResponse;
++
++async function requestJson(
++  path: string,
++  init: RequestInit,
++  fallbackKey: AuthFallbackKey,
++): Promise<unknown> {
++  let response: Response;
++  try {
++    response = await fetch(`${API_ROOT}${path}`, init);
++  } catch (error: unknown) {
++    throw toMobileApiError(error, fallbackKey);
++  }
++  if (!response.ok) await throwMobileResponseError(response, fallbackKey);
++  return readMobileResponseJson(response, fallbackKey);
++}
++
++function jsonHeaders(token?: string): Record<string, string> {
++  return {
++    Accept: 'application/json',
++    'Content-Type': 'application/json',
++    ...(token ? { Authorization: `Bearer ${token}` } : {}),
++  };
++}
++
++export const authAPI = {
++  requestOtp: async (email: string): Promise<RequestOtpResponse> => {
++    const parsedInput = v1.RequestOtpSchema.safeParse({
++      email: email.trim(),
++      purpose: 'SESSION_LOGIN',
++    });
++    if (!parsedInput.success) {
++      throw new MobileApiError(
++        'INVALID_RESPONSE',
++        'errors.invalidResponse',
++        parsedInput.error,
++      );
++    }
++    const payload = await requestJson(
++      '/auth/otp/request',
++      {
++        method: 'POST',
++        headers: jsonHeaders(),
++        body: JSON.stringify(parsedInput.data),
++      },
++      'errors.requestOtp',
++    );
++    const parsed = v1.RequestOtpResponseSchema.safeParse(payload);
++    if (!parsed.success) {
++      throw new MobileApiError(
++        'INVALID_RESPONSE',
++        'errors.invalidResponse',
++        parsed.error,
++      );
++    }
++    return parsed.data;
++  },
++
++  verifyOtp: async (input: VerifyOtpInput): Promise<VerifyOtpResponse> => {
++    const parsedInput = v1.VerifyOtpSchema.safeParse({
++      ...input,
++      email: input.email.trim(),
++      purpose: 'SESSION_LOGIN',
++    });
++    if (!parsedInput.success) {
++      throw new MobileApiError(
++        'INVALID_RESPONSE',
++        'errors.invalidResponse',
++        parsedInput.error,
++      );
++    }
++    const payload = await requestJson(
++      '/auth/otp/verify',
++      {
++        method: 'POST',
++        headers: jsonHeaders(),
++        body: JSON.stringify(parsedInput.data),
++      },
++      'errors.verifyOtp',
++    );
++    const parsed = v1.VerifyOtpResponseSchema.safeParse(payload);
++    if (!parsed.success) {
++      throw new MobileApiError(
++        'INVALID_RESPONSE',
++        'errors.invalidResponse',
++        parsed.error,
++      );
++    }
++    return parsed.data;
++  },
++
++  bootstrapSession: async (token: string): Promise<MobileProfile> => {
++    const payload = await requestJson(
++      '/auth/me',
++      {
++        headers: {
++          Accept: 'application/json',
++          Authorization: `Bearer ${token}`,
++        },
++      },
++      'errors.restoreSession',
++    );
++    const parsed = CurrentUserSchema.safeParse(payload);
++    if (!parsed.success) {
++      throw new MobileApiError(
++        'INVALID_RESPONSE',
++        'errors.invalidResponse',
++        parsed.error,
++      );
++    }
++    return parsed.data;
++  },
++
++  logout: async (token: string): Promise<LogoutResponse> => {
++    const payload = await requestJson(
++      '/auth/logout',
++      {
++        method: 'POST',
++        headers: {
++          Accept: 'application/json',
++          Authorization: `Bearer ${token}`,
++        },
++      },
++      'errors.logOut',
++    );
++    const parsed = v1.LogoutResponseSchema.safeParse(payload);
++    if (!parsed.success) {
++      throw new MobileApiError(
++        'INVALID_RESPONSE',
++        'errors.invalidResponse',
++        parsed.error,
++      );
++    }
++    return parsed.data;
++  },
++};
+diff --git a/apps/mobile/src/api/locationAPI.ts b/apps/mobile/src/api/locationAPI.ts
+new file mode 100644
+index 0000000..736cf56
+--- /dev/null
++++ b/apps/mobile/src/api/locationAPI.ts
+@@ -0,0 +1,111 @@
++import * as Location from 'expo-location';
++import { v1 } from '@imeal/contracts';
++import { MobileApiError } from './mobileApiError';
++
++export type LocationCapture = {
++  promise: Promise<v1.PresenterLocationEvidence>;
++  stop: () => void;
++};
++
++const LOCATION_OPTIONS: Location.LocationOptions = {
++  accuracy: Location.Accuracy.High,
++  distanceInterval: 0,
++  timeInterval: 1_000,
++};
++
++function locationError(
++  code: 'GPS_UNAVAILABLE' | 'GPS_INACCURATE',
++): MobileApiError {
++  const messageKey =
++    code === 'GPS_INACCURATE'
++      ? 'errors.gpsInaccurate'
++      : 'errors.gpsUnavailable';
++  return new MobileApiError(code, messageKey);
++}
++
++function toEvidence(
++  location: Location.LocationObject,
++): v1.PresenterLocationEvidence {
++  const accuracyMeters = location.coords.accuracy;
++  const capturedAt = new Date(location.timestamp);
++  if (
++    typeof accuracyMeters !== 'number' ||
++    !Number.isFinite(accuracyMeters) ||
++    accuracyMeters < 0 ||
++    !Number.isFinite(capturedAt.getTime())
++  ) {
++    throw locationError('GPS_INACCURATE');
++  }
++  const parsed = v1.PresenterLocationEvidenceSchema.safeParse({
++    capturedAt: capturedAt.toISOString(),
++    latitude: location.coords.latitude,
++    longitude: location.coords.longitude,
++    accuracyMeters,
++  });
++  if (!parsed.success) throw locationError('GPS_INACCURATE');
++  return parsed.data;
++}
++
++export function startForegroundLocationCapture(): LocationCapture {
++  let settled = false;
++  let subscription: Location.LocationSubscription | null = null;
++  let resolvePromise!: (evidence: v1.PresenterLocationEvidence) => void;
++  let rejectPromise!: (error: unknown) => void;
++  const promise = new Promise<v1.PresenterLocationEvidence>(
++    (resolve, reject) => {
++      resolvePromise = resolve;
++      rejectPromise = reject;
++    },
++  );
++
++  const stop = () => {
++    settled = true;
++    subscription?.remove();
++    subscription = null;
++  };
++
++  const finish = (callback: () => void) => {
++    if (settled) return;
++    settled = true;
++    subscription?.remove();
++    subscription = null;
++    callback();
++  };
++
++  void (async () => {
++    try {
++      const permission = await Location.requestForegroundPermissionsAsync();
++      if (settled) return;
++      if (permission.status !== Location.PermissionStatus.GRANTED) {
++        finish(() => rejectPromise(locationError('GPS_UNAVAILABLE')));
++        return;
++      }
++      subscription = await Location.watchPositionAsync(
++        LOCATION_OPTIONS,
++        (nextLocation) => {
++          try {
++            const evidence = toEvidence(nextLocation);
++            finish(() => resolvePromise(evidence));
++          } catch (error: unknown) {
++            finish(() => rejectPromise(error));
++          }
++        },
++      );
++      if (settled) subscription.remove();
++    } catch (error: unknown) {
++      finish(() => rejectPromise(locationError('GPS_UNAVAILABLE')));
++    }
++  })();
++
++  return { promise, stop };
++}
++
++export async function capturePresenterEvidence(): Promise<v1.PresenterLocationEvidence> {
++  const capture = startForegroundLocationCapture();
++  return capture.promise;
++}
++
++export const locationAPI = {
++  startForegroundLocationCapture,
++  capturePresenterEvidence,
++};
+diff --git a/apps/mobile/src/api/mobileApiError.ts b/apps/mobile/src/api/mobileApiError.ts
+index 9755df3..bbad8d1 100644
+--- a/apps/mobile/src/api/mobileApiError.ts
++++ b/apps/mobile/src/api/mobileApiError.ts
+@@ -7,16 +7,41 @@ export type MobileApiErrorCode =
+   | 'INVALID_RESPONSE'
+   | 'REQUEST_FAILED'
+   | 'DUPLICATE_SERVING'
+-  | 'PICKUP_SESSION_EXPIRED'
++  | v1.ErrorCode
+   | v1.RegistrationFailureCode
+-  | v1.PickupAvailabilityCode;
++  | v1.PickupAvailabilityCode
++  | v1.PickupErrorCode;
+ 
+ const ERROR_MESSAGE_KEYS: Record<MobileApiErrorCode, TranslationKey> = {
+   API_TIMEOUT: 'errors.apiTimeout',
+   INVALID_RESPONSE: 'errors.invalidResponse',
+   REQUEST_FAILED: 'errors.requestFailed',
+   DUPLICATE_SERVING: 'errors.duplicateServing',
++  BAD_REQUEST: 'errors.requestFailed',
++  UNAUTHORIZED: 'errors.sessionInvalid',
++  FORBIDDEN: 'errors.requestFailed',
++  NOT_FOUND: 'errors.requestFailed',
++  CONFLICT: 'errors.requestFailed',
++  INTERNAL_SERVER_ERROR: 'errors.requestFailed',
++  VALIDATION_ERROR: 'errors.requestFailed',
++  RATE_LIMITED: 'errors.otpRateLimited',
++  OTP_REQUEST_ACCEPTED: 'errors.requestOtp',
++  OTP_INVALID_OR_EXPIRED: 'errors.otpInvalidOrExpired',
++  SESSION_REVOKED: 'errors.sessionRevoked',
++  GPS_RETRY_REQUIRED: 'errors.gpsRetryRequired',
++  GPS_UNAVAILABLE: 'errors.gpsUnavailable',
++  GPS_STALE: 'errors.gpsStale',
++  GPS_INACCURATE: 'errors.gpsInaccurate',
++  PICKUP_INTENT_REQUIRED: 'errors.pickupIntentRequired',
++  PICKUP_INTENT_CONFLICT: 'errors.pickupIntentConflict',
+   PICKUP_SESSION_EXPIRED: 'errors.pickupSessionExpired',
++  IDEMPOTENCY_CONFLICT: 'errors.idempotencyConflict',
++  GPS_SESSION_REQUIRED: 'errors.gpsRetryRequired',
++  SERVING_WINDOW_CLOSED: 'errors.pickupWindowClosed',
++  QR_EXPIRED: 'errors.qrExpired',
++  QR_INVALID: 'errors.qrInvalid',
++  SESSION_INVALID: 'errors.sessionInvalid',
++  OTP_RATE_LIMITED: 'errors.otpRateLimited',
+   INVALID_MEAL_DATE: 'errors.invalidMealDate',
+   CUTOFF_PASSED: 'errors.cutoffPassed',
+   MEAL_CHOICE_UNAVAILABLE: 'errors.mealChoiceUnavailable',
+@@ -31,7 +56,11 @@ export class MobileApiError extends Error {
+   readonly messageKey: TranslationKey;
+   readonly cause: unknown;
+ 
+-  constructor(code: MobileApiErrorCode, messageKey: TranslationKey, cause?: unknown) {
++  constructor(
++    code: MobileApiErrorCode,
++    messageKey: TranslationKey,
++    cause?: unknown,
++  ) {
+     super(code);
+     this.name = 'MobileApiError';
+     this.code = code;
+@@ -40,12 +69,19 @@ export class MobileApiError extends Error {
+   }
+ }
+ 
+-export function mobileErrorMessageKey(code: MobileApiErrorCode): TranslationKey {
++export function mobileErrorMessageKey(
++  code: MobileApiErrorCode,
++): TranslationKey {
+   return ERROR_MESSAGE_KEYS[code];
+ }
+ 
+-export function isMobileApiErrorCode(value: unknown): value is MobileApiErrorCode {
+-  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(ERROR_MESSAGE_KEYS, value);
++export function isMobileApiErrorCode(
++  value: unknown,
++): value is MobileApiErrorCode {
++  return (
++    typeof value === 'string' &&
++    Object.prototype.hasOwnProperty.call(ERROR_MESSAGE_KEYS, value)
++  );
+ }
+ 
+ export function getMobileErrorMessage(
+@@ -57,12 +93,17 @@ export function getMobileErrorMessage(
+   return t(fallbackKey);
+ }
+ 
+-export function getErrorPayloadCode(payload: unknown): MobileApiErrorCode | null {
+-  if (payload === null || typeof payload !== 'object' || !('code' in payload)) return null;
++export function getErrorPayloadCode(
++  payload: unknown,
++): MobileApiErrorCode | null {
++  if (payload === null || typeof payload !== 'object' || !('code' in payload))
++    return null;
+   return isMobileApiErrorCode(payload.code) ? payload.code : null;
+ }
+ 
+-function getNestedErrorPayloadCode(payload: unknown): MobileApiErrorCode | null {
++function getNestedErrorPayloadCode(
++  payload: unknown,
++): MobileApiErrorCode | null {
+   if (isMobileApiErrorCode(payload)) return payload;
+   const directCode = getErrorPayloadCode(payload);
+   if (directCode) return directCode;
+@@ -75,19 +116,21 @@ function getNestedErrorPayloadCode(payload: unknown): MobileApiErrorCode | null
+   }
+   if (payload === null || typeof payload !== 'object') return null;
+   const record = payload as Record<string, unknown>;
+-  return getNestedErrorPayloadCode(record.error) ?? getNestedErrorPayloadCode(record.message);
++  return (
++    getNestedErrorPayloadCode(record.error) ??
++    getNestedErrorPayloadCode(record.message)
++  );
+ }
+ 
+-
+ export function toMobileApiError(
+   error: unknown,
+   fallbackKey: TranslationKey,
+ ): MobileApiError {
+   if (error instanceof MobileApiError) return error;
+-  const code: MobileApiErrorCode = error instanceof RequestTimeoutError
+-    ? 'API_TIMEOUT'
+-    : 'REQUEST_FAILED';
+-  const messageKey = code === 'REQUEST_FAILED' ? fallbackKey : mobileErrorMessageKey(code);
++  const code: MobileApiErrorCode =
++    error instanceof RequestTimeoutError ? 'API_TIMEOUT' : 'REQUEST_FAILED';
++  const messageKey =
++    code === 'REQUEST_FAILED' ? fallbackKey : mobileErrorMessageKey(code);
+   return new MobileApiError(code, messageKey, error);
+ }
+ 
+@@ -102,14 +145,22 @@ export async function throwMobileResponseError(
+     cause = error;
+   }
+   const code = getNestedErrorPayloadCode(cause) ?? 'REQUEST_FAILED';
+-  const messageKey = code === 'REQUEST_FAILED' ? fallbackKey : mobileErrorMessageKey(code);
++  const messageKey =
++    code === 'REQUEST_FAILED' ? fallbackKey : mobileErrorMessageKey(code);
+   throw new MobileApiError(code, messageKey, cause);
+ }
+ 
+-export async function readMobileResponseJson(response: Response, fallbackKey: TranslationKey): Promise<unknown> {
++export async function readMobileResponseJson(
++  response: Response,
++  fallbackKey: TranslationKey,
++): Promise<unknown> {
+   try {
+     return await response.json();
+   } catch (error: unknown) {
+-    throw new MobileApiError('INVALID_RESPONSE', mobileErrorMessageKey('INVALID_RESPONSE') || fallbackKey, error);
++    throw new MobileApiError(
++      'INVALID_RESPONSE',
++      mobileErrorMessageKey('INVALID_RESPONSE') || fallbackKey,
++      error,
++    );
+   }
+ }
+diff --git a/apps/mobile/src/api/pickupAPI.test.ts b/apps/mobile/src/api/pickupAPI.test.ts
+index 53552a0..4d77d67 100644
+--- a/apps/mobile/src/api/pickupAPI.test.ts
++++ b/apps/mobile/src/api/pickupAPI.test.ts
+@@ -9,19 +9,189 @@ afterEach(() => {
+ 
+ describe('pickupAPI', () => {
+   it('maps pickup availability failures to MobileApiError', async () => {
+-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+-      code: 'PICKUP_NOT_READY',
+-      message: 'Meal pickup is not currently available. Please wait for the kitchen signal.',
+-      details: {
+-        availableFrom: '10:30',
+-        availableUntil: '13:30',
+-        timeZone: 'Asia/Ho_Chi_Minh',
+-      },
+-    }), { status: 403, headers: { 'Content-Type': 'application/json' } })));
++    vi.stubGlobal(
++      'fetch',
++      vi.fn(
++        async () =>
++          new Response(
++            JSON.stringify({
++              code: 'PICKUP_NOT_READY',
++              message:
++                'Meal pickup is not currently available. Please wait for the kitchen signal.',
++              details: {
++                availableFrom: '10:30',
++                availableUntil: '13:30',
++                timeZone: 'Asia/Ho_Chi_Minh',
++              },
++            }),
++            { status: 403, headers: { 'Content-Type': 'application/json' } },
++          ),
++      ),
++    );
+ 
+     await expect(pickupAPI.getPickupOptions('token')).rejects.toMatchObject({
+       code: 'PICKUP_NOT_READY',
+       messageKey: 'errors.pickupNotReady',
+     });
+   });
++
++  it('sorts exact registration IDs and sends presenter evidence for QR generation', async () => {
++    const fetchMock = vi.fn(
++      async () =>
++        new Response(
++          JSON.stringify({
++            qr: 'imeal:v2:presenter:2026-09-24:a,b:1:nonce:sig',
++            exp: 1_000,
++            ttl: 5,
++            registrationIds: ['a', 'b'],
++            mealDate: '2026-09-24',
++          }),
++          { status: 200, headers: { 'Content-Type': 'application/json' } },
++        ),
++    );
++    vi.stubGlobal('fetch', fetchMock);
++
++    await pickupAPI.generateQr('token', {
++      registrationIds: ['b', 'a'],
++      presenterEvidence: {
++        capturedAt: '2026-09-24T03:00:00.000Z',
++        latitude: 10.77,
++        longitude: 106.69,
++        accuracyMeters: 12,
++      },
++    });
++
++    expect(fetchMock).toHaveBeenCalledWith(
++      'https://api.example.test/me/qr',
++      expect.objectContaining({
++        body: JSON.stringify({
++          registrationIds: ['a', 'b'],
++          presenterEvidence: {
++            capturedAt: '2026-09-24T03:00:00.000Z',
++            latitude: 10.77,
++            longitude: 106.69,
++            accuracyMeters: 12,
++          },
++        }),
++      }),
++    );
++  });
++
++  it('resolves using only the QR payload', async () => {
++    const fetchMock = vi.fn(
++      async () =>
++        new Response(
++          JSON.stringify({
++            session: {
++              id: 'session-1',
++              userId: 'presenter-1',
++              registrationIds: ['registration-1'],
++              expiresAt: '2026-09-24T03:00:30.000Z',
++              createdAt: '2026-09-24T03:00:00.000Z',
++            },
++            items: [
++              {
++                registrationId: 'registration-1',
++                mealDate: '2026-09-24',
++                mealChoice: 'REGULAR',
++                type: 'OWN',
++              },
++            ],
++            pickupSessionToken: 'session-1',
++            intent: {
++              userId: 'presenter-1',
++              items: [
++                {
++                  id: 'registration-1',
++                  itemName: 'Lunch',
++                  quantity: 1,
++                  mealChoice: 'REGULAR',
++                },
++              ],
++              totalCount: 1,
++              isProxy: false,
++            },
++          }),
++          { status: 200, headers: { 'Content-Type': 'application/json' } },
++        ),
++    );
++    vi.stubGlobal('fetch', fetchMock);
++
++    await pickupAPI.resolvePickup('token', { qr: 'qr-payload' });
++
++    expect(fetchMock).toHaveBeenCalledWith(
++      'https://api.example.test/serving/resolve',
++      expect.objectContaining({
++        body: JSON.stringify({ qr: 'qr-payload' }),
++      }),
++    );
++  });
++
++  it('confirms only the resolved session and idempotency key', async () => {
++    const fetchMock = vi.fn(
++      async () =>
++        new Response(
++          JSON.stringify({
++            success: true,
++            servedCount: 1,
++            servings: [
++              {
++                id: 'serving-1',
++                registrationId: 'registration-1',
++                servedAt: '2026-09-24T03:01:00.000Z',
++              },
++            ],
++          }),
++          { status: 200, headers: { 'Content-Type': 'application/json' } },
++        ),
++    );
++    vi.stubGlobal('fetch', fetchMock);
++
++    await pickupAPI.confirmPickup('token', {
++      pickupSessionId: 'session-1',
++      idempotencyKey: 'idempotency-1',
++    });
++
++    expect(fetchMock).toHaveBeenCalledWith(
++      'https://api.example.test/serving/confirm',
++      expect.objectContaining({
++        body: JSON.stringify({
++          pickupSessionId: 'session-1',
++          idempotencyKey: 'idempotency-1',
++        }),
++      }),
++    );
++  });
++
++  it('rejects a malformed QR response instead of trusting unknown payloads', async () => {
++    vi.stubGlobal(
++      'fetch',
++      vi.fn(
++        async () =>
++          new Response(
++            JSON.stringify({
++              qr: 'qr',
++              exp: 1_000,
++              ttl: 5,
++              extra: 'unexpected',
++            }),
++            { status: 200, headers: { 'Content-Type': 'application/json' } },
++          ),
++      ),
++    );
++
++    await expect(
++      pickupAPI.generateQr('token', {
++        registrationIds: ['registration-1'],
++        presenterEvidence: {
++          capturedAt: '2026-09-24T03:00:00.000Z',
++          latitude: 10.77,
++          longitude: 106.69,
++          accuracyMeters: 12,
++        },
++      }),
++    ).rejects.toMatchObject({
++      code: 'INVALID_RESPONSE',
++    });
++  });
+ });
+diff --git a/apps/mobile/src/api/pickupAPI.ts b/apps/mobile/src/api/pickupAPI.ts
+index 9a79903..cd47825 100644
+--- a/apps/mobile/src/api/pickupAPI.ts
++++ b/apps/mobile/src/api/pickupAPI.ts
+@@ -1,3 +1,4 @@
++import { z } from 'zod';
+ import { v1 } from '@imeal/contracts';
+ import { API_BASE } from './apiConfig';
+ import {
+@@ -9,25 +10,53 @@ import {
+ 
+ export type PickupOption = v1.PickupOption;
+ export type PickupOptionsResponse = v1.PickupOptionsResponse;
++export type GenerateQrInput = v1.GenerateQrInput;
++export type ResolvePickupInput = v1.ResolvePickupInput;
++export type ConfirmPickupInput = v1.ConfirmPickupInput;
++export type ResolvePickupResponse = v1.ResolveServingResponse;
+ 
+-export interface GenerateQrResponse {
+-  qr: string;
+-  exp: number;
+-  ttl: number;
+-}
++const GenerateQrResponseSchema = z
++  .object({
++    qr: z.string().min(1),
++    exp: z.number().int().positive(),
++    ttl: z.number().int().positive(),
++    registrationIds: z.array(z.string().min(1)).min(1),
++    mealDate: v1.MealDateSchema,
++  })
++  .strict();
+ 
+-function isGenerateQrResponse(payload: unknown): payload is GenerateQrResponse {
+-  if (payload === null || typeof payload !== 'object') return false;
+-  if (!('qr' in payload) || !('exp' in payload) || !('ttl' in payload)) return false;
+-  return typeof payload.qr === 'string'
+-    && typeof payload.exp === 'number'
+-    && typeof payload.ttl === 'number';
+-}
++const ConfirmPickupResponseSchema = z
++  .object({
++    success: z.literal(true),
++    servedCount: z.number().int().nonnegative(),
++    servings: z.array(
++      z
++        .object({
++          id: z.string().min(1),
++          registrationId: z.string().min(1),
++          servedAt: z
++            .string()
++            .datetime({ offset: false })
++            .refine((value) => value.endsWith('Z')),
++        })
++        .strict(),
++    ),
++  })
++  .strict();
++
++export type GenerateQrResponse = z.infer<typeof GenerateQrResponseSchema>;
++export type ConfirmPickupResponse = z.infer<typeof ConfirmPickupResponseSchema>;
++
++type PickupFallbackKey =
++  | 'errors.loadPickup'
++  | 'errors.generateQr'
++  | 'errors.resolvePickup'
++  | 'errors.confirmPickup';
+ 
+ async function fetchOrThrow(
+   input: RequestInfo | URL,
+   init: RequestInit,
+-  fallbackKey: 'errors.loadPickup' | 'errors.generateQr',
++  fallbackKey: PickupFallbackKey,
+ ): Promise<unknown> {
+   let response: Response;
+   try {
+@@ -40,43 +69,117 @@ async function fetchOrThrow(
+   return readMobileResponseJson(response, fallbackKey);
+ }
+ 
++function authHeaders(token: string): Record<string, string> {
++  return {
++    Accept: 'application/json',
++    Authorization: `Bearer ${token}`,
++  };
++}
++
++function jsonAuthHeaders(token: string): Record<string, string> {
++  return {
++    ...authHeaders(token),
++    'Content-Type': 'application/json',
++  };
++}
++
++function parseResponse<T>(schema: z.ZodType<T>, payload: unknown): T {
++  const parsed = schema.safeParse(payload);
++  if (!parsed.success) {
++    throw new MobileApiError(
++      'INVALID_RESPONSE',
++      'errors.invalidResponse',
++      parsed.error,
++    );
++  }
++  return parsed.data;
++}
++
+ export const pickupAPI = {
+   getPickupOptions: async (token: string): Promise<PickupOptionsResponse> => {
+     const payload = await fetchOrThrow(
+       `${API_BASE}/me/pickup-options`,
+-      {
+-        headers: {
+-          Authorization: `Bearer ${token}`,
+-        },
+-      },
++      { headers: authHeaders(token) },
+       'errors.loadPickup',
+     );
+-    const parsed = v1.PickupOptionsResponseSchema.safeParse(payload);
+-    if (!parsed.success) {
+-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
+-    }
+-    return parsed.data;
++    return parseResponse(v1.PickupOptionsResponseSchema, payload);
+   },
+ 
+   generateQr: async (
+     token: string,
+-    registrationIds: string[],
++    input: GenerateQrInput,
+   ): Promise<GenerateQrResponse> => {
++    const registrationIds = [...input.registrationIds].sort((left, right) =>
++      left.localeCompare(right),
++    );
++    const parsedInput = v1.GenerateQrSchema.safeParse({
++      ...input,
++      registrationIds,
++    });
++    if (!parsedInput.success) {
++      throw new MobileApiError(
++        'INVALID_RESPONSE',
++        'errors.invalidResponse',
++        parsedInput.error,
++      );
++    }
+     const payload = await fetchOrThrow(
+       `${API_BASE}/me/qr`,
+       {
+         method: 'POST',
+-        headers: {
+-          'Content-Type': 'application/json',
+-          Authorization: `Bearer ${token}`,
+-        },
+-        body: JSON.stringify({ registrationIds }),
++        headers: jsonAuthHeaders(token),
++        body: JSON.stringify(parsedInput.data),
+       },
+       'errors.generateQr',
+     );
+-    if (!isGenerateQrResponse(payload)) {
+-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', payload);
++    return parseResponse(GenerateQrResponseSchema, payload);
++  },
++
++  resolvePickup: async (
++    token: string,
++    input: ResolvePickupInput,
++  ): Promise<ResolvePickupResponse> => {
++    const parsedInput = v1.ResolvePickupSchema.safeParse(input);
++    if (!parsedInput.success) {
++      throw new MobileApiError(
++        'INVALID_RESPONSE',
++        'errors.invalidResponse',
++        parsedInput.error,
++      );
+     }
+-    return payload;
++    const payload = await fetchOrThrow(
++      `${API_BASE}/serving/resolve`,
++      {
++        method: 'POST',
++        headers: jsonAuthHeaders(token),
++        body: JSON.stringify(parsedInput.data),
++      },
++      'errors.resolvePickup',
++    );
++    return parseResponse(v1.ResolveServingResponseSchema, payload);
++  },
++
++  confirmPickup: async (
++    token: string,
++    input: ConfirmPickupInput,
++  ): Promise<ConfirmPickupResponse> => {
++    const parsedInput = v1.ConfirmPickupSchema.safeParse(input);
++    if (!parsedInput.success) {
++      throw new MobileApiError(
++        'INVALID_RESPONSE',
++        'errors.invalidResponse',
++        parsedInput.error,
++      );
++    }
++    const payload = await fetchOrThrow(
++      `${API_BASE}/serving/confirm`,
++      {
++        method: 'POST',
++        headers: jsonAuthHeaders(token),
++        body: JSON.stringify(parsedInput.data),
++      },
++      'errors.confirmPickup',
++    );
++    return parseResponse(ConfirmPickupResponseSchema, payload);
+   },
+ };
+diff --git a/apps/mobile/src/auth/session.tsx b/apps/mobile/src/auth/session.tsx
+index cbda515..92d7a8d 100644
+--- a/apps/mobile/src/auth/session.tsx
++++ b/apps/mobile/src/auth/session.tsx
+@@ -7,117 +7,70 @@ import React, {
+ } from 'react';
+ import { Platform } from 'react-native';
+ import * as SecureStore from 'expo-secure-store';
+-import { API_ROOT } from '../api/apiConfig';
+ import {
+-  MobileApiError,
+-  getMobileErrorMessage,
+-  readMobileResponseJson,
+-  throwMobileResponseError,
+-  toMobileApiError,
+-} from '../api/mobileApiError';
+-import { RequestTimeoutError, fetchWithTimeout } from '../api/requestWithTimeout';
++  authAPI,
++  type MobileProfile,
++  type RequestOtpResponse,
++} from '../api/authAPI';
++import { getMobileErrorMessage } from '../api/mobileApiError';
++import { RequestTimeoutError } from '../api/requestWithTimeout';
+ import { useLanguage } from '../i18n/LanguageProvider';
+ import type { Translate } from '../i18n/translations';
+-const AUTH_REQUEST_TIMEOUT_MS = 10_000;
+ 
+-type AuthErrorFallbackKey = 'errors.restoreSession' | 'errors.signIn';
++export type { MobileProfile } from '../api/authAPI';
++
++type AuthErrorFallbackKey =
++  | 'errors.restoreSession'
++  | 'errors.requestOtp'
++  | 'errors.verifyOtp'
++  | 'errors.logOut';
+ type AuthErrorState = { error: unknown; fallbackKey: AuthErrorFallbackKey };
++const SESSION_KEY = 'imeal.opaque.session-token';
+ 
+-function getAuthErrorMessage(error: unknown, fallbackKey: AuthErrorFallbackKey, t: Translate): string {
+-  if (error instanceof RequestTimeoutError) {
+-    return t('errors.apiTimeout');
+-  }
++function getAuthErrorMessage(
++  error: unknown,
++  fallbackKey: AuthErrorFallbackKey,
++  t: Translate,
++): string {
++  if (error instanceof RequestTimeoutError) return t('errors.apiTimeout');
+   return getMobileErrorMessage(error, t, fallbackKey);
+ }
+-const SESSION_KEY = 'imeal.local.access-token';
+-
+-export interface MobileProfile {
+-  id: string;
+-  userId: string;
+-  email: string;
+-  name?: string;
+-  roles: string[];
+-  permissions: string[];
+-}
+ 
+-function isMobileProfile(value: unknown): value is MobileProfile {
+-  if (!value || typeof value !== 'object') return false;
+-  const candidate = value as Partial<MobileProfile>;
+-  return (
+-    typeof candidate.id === 'string' &&
+-    typeof candidate.userId === 'string' &&
+-    typeof candidate.email === 'string' &&
+-    Array.isArray(candidate.roles) &&
+-    candidate.roles.every((role) => typeof role === 'string') &&
+-    Array.isArray(candidate.permissions) &&
+-    candidate.permissions.every((permission) => typeof permission === 'string')
+-  );
++async function readStoredToken(): Promise<string | null> {
++  if (Platform.OS === 'web')
++    return globalThis.localStorage?.getItem(SESSION_KEY) ?? null;
++  return SecureStore.getItemAsync(SESSION_KEY);
+ }
+ 
+-async function loadProfile(accessToken: string): Promise<MobileProfile> {
+-  let response: Response;
+-  try {
+-    response = await fetchWithTimeout(
+-      `${API_ROOT}/auth/me`,
+-      { headers: { Authorization: `Bearer ${accessToken}` } },
+-      AUTH_REQUEST_TIMEOUT_MS,
+-    );
+-  } catch (error: unknown) {
+-    throw toMobileApiError(error, 'errors.restoreSession');
++async function storeToken(token: string): Promise<void> {
++  if (Platform.OS === 'web') {
++    globalThis.localStorage?.setItem(SESSION_KEY, token);
++    return;
+   }
+-  if (!response.ok) await throwMobileResponseError(response, 'errors.restoreSession');
+-  const payload = await readMobileResponseJson(response, 'errors.restoreSession');
+-  if (!isMobileProfile(payload)) {
+-    throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', payload);
+-  }
+-  return payload;
++  await SecureStore.setItemAsync(SESSION_KEY, token);
+ }
+ 
+-async function loginLocal(
+-  username: string,
+-  password: string,
+-): Promise<{ accessToken: string; profile: MobileProfile }> {
+-  let response: Response;
+-  try {
+-    response = await fetchWithTimeout(
+-      `${API_ROOT}/auth/local-login`,
+-      {
+-        method: 'POST',
+-        headers: {
+-          'Content-Type': 'application/json',
+-          Accept: 'application/json',
+-        },
+-        body: JSON.stringify({ username, password }),
+-      },
+-      AUTH_REQUEST_TIMEOUT_MS,
+-    );
+-  } catch (error: unknown) {
+-    throw toMobileApiError(error, 'errors.signIn');
+-  }
+-  const payload = response.ok
+-    ? await readMobileResponseJson(response, 'errors.signIn')
+-    : await throwMobileResponseError(response, 'errors.signIn');
+-  if (!payload || typeof payload !== 'object') {
+-    throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', payload);
+-  }
+-  const accessToken = 'accessToken' in payload ? payload.accessToken : undefined;
+-  const profile = 'user' in payload ? payload.user : undefined;
+-  if (typeof accessToken !== 'string' || !isMobileProfile(profile)) {
+-    throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', payload);
++async function clearStoredToken(): Promise<void> {
++  if (Platform.OS === 'web') {
++    globalThis.localStorage?.removeItem(SESSION_KEY);
++    return;
+   }
+-  return { accessToken, profile };
++  await SecureStore.deleteItemAsync(SESSION_KEY);
+ }
+ 
+ type SessionContextValue = {
+   token: string | null;
+   profile: MobileProfile | null;
+   isRestoring: boolean;
++  isRequestingOtp: boolean;
++  isVerifyingOtp: boolean;
+   isSigningIn: boolean;
+   canSignIn: boolean;
+   authError: string | null;
+   canUseEmployee: boolean;
+   canUseKitchen: boolean;
+-  signIn: (username: string, password: string) => Promise<void>;
++  requestOtp: (email: string) => Promise<RequestOtpResponse>;
++  verifyOtp: (email: string, code: string) => Promise<void>;
+   logout: () => Promise<void>;
+ };
+ 
+@@ -128,31 +81,29 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
+   const [token, setToken] = useState<string | null>(null);
+   const [profile, setProfile] = useState<MobileProfile | null>(null);
+   const [isRestoring, setIsRestoring] = useState(true);
+-  const [isSigningIn, setIsSigningIn] = useState(false);
+-  const [authErrorState, setAuthErrorState] = useState<AuthErrorState | null>(null);
++  const [isRequestingOtp, setIsRequestingOtp] = useState(false);
++  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
++  const [authErrorState, setAuthErrorState] = useState<AuthErrorState | null>(
++    null,
++  );
+ 
+   useEffect(() => {
+     let mounted = true;
+     void (async () => {
+-      const savedToken =
+-        Platform.OS === 'web'
+-          ? (globalThis.localStorage?.getItem(SESSION_KEY) ?? null)
+-          : await SecureStore.getItemAsync(SESSION_KEY);
++      const savedToken = await readStoredToken();
+       if (!savedToken) {
+         if (mounted) setIsRestoring(false);
+         return;
+       }
+       try {
+-        const savedProfile = await loadProfile(savedToken);
++        const savedProfile = await authAPI.bootstrapSession(savedToken);
+         if (mounted) {
+           setToken(savedToken);
+           setProfile(savedProfile);
+           setAuthErrorState(null);
+         }
+       } catch (error: unknown) {
+-        if (Platform.OS === 'web')
+-          globalThis.localStorage?.removeItem(SESSION_KEY);
+-        else await SecureStore.deleteItemAsync(SESSION_KEY);
++        await clearStoredToken();
+         if (mounted) {
+           setAuthErrorState({ error, fallbackKey: 'errors.restoreSession' });
+         }
+@@ -165,48 +116,86 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
+     };
+   }, []);
+ 
+-  const signIn = async (username: string, password: string) => {
+-    setIsSigningIn(true);
++  const requestOtp = async (email: string): Promise<RequestOtpResponse> => {
++    setIsRequestingOtp(true);
+     setAuthErrorState(null);
+     try {
+-      const result = await loginLocal(username, password);
+-      if (Platform.OS === 'web')
+-        globalThis.localStorage?.setItem(SESSION_KEY, result.accessToken);
+-      else await SecureStore.setItemAsync(SESSION_KEY, result.accessToken);
+-      setToken(result.accessToken);
+-      setProfile(result.profile);
++      return await authAPI.requestOtp(email);
+     } catch (error: unknown) {
+-      setAuthErrorState({ error, fallbackKey: 'errors.signIn' });
++      setAuthErrorState({ error, fallbackKey: 'errors.requestOtp' });
++      throw error;
+     } finally {
+-      setIsSigningIn(false);
++      setIsRequestingOtp(false);
+     }
+   };
+ 
+-  const logout = async () => {
+-    if (Platform.OS === 'web') globalThis.localStorage?.removeItem(SESSION_KEY);
+-    else await SecureStore.deleteItemAsync(SESSION_KEY);
+-    setToken(null);
+-    setProfile(null);
++  const verifyOtp = async (email: string, code: string): Promise<void> => {
++    setIsVerifyingOtp(true);
+     setAuthErrorState(null);
++    try {
++      const result = await authAPI.verifyOtp({ email, code });
++      await storeToken(result.sessionToken);
++      const nextProfile = await authAPI.bootstrapSession(result.sessionToken);
++      setToken(result.sessionToken);
++      setProfile(nextProfile);
++    } catch (error: unknown) {
++      await clearStoredToken();
++      setToken(null);
++      setProfile(null);
++      setAuthErrorState({ error, fallbackKey: 'errors.verifyOtp' });
++      throw error;
++    } finally {
++      setIsVerifyingOtp(false);
++    }
++  };
++
++  const logout = async (): Promise<void> => {
++    const currentToken = token;
++    try {
++      if (currentToken) await authAPI.logout(currentToken);
++    } catch (error: unknown) {
++      setAuthErrorState({ error, fallbackKey: 'errors.logOut' });
++    } finally {
++      await clearStoredToken();
++      setToken(null);
++      setProfile(null);
++      setAuthErrorState(null);
++    }
+   };
+ 
+   const value = useMemo<SessionContextValue>(() => {
+-    const roles = profile?.roles.map((role) => role.toLowerCase()) || [];
++    const roles = profile?.roles.map((role) => role.toLowerCase()) ?? [];
+     return {
+       token,
+       profile,
+       isRestoring,
+-      isSigningIn,
++      isRequestingOtp,
++      isVerifyingOtp,
++      isSigningIn: isVerifyingOtp,
+       canSignIn: true,
+       authError: authErrorState
+-        ? getAuthErrorMessage(authErrorState.error, authErrorState.fallbackKey, t)
++        ? getAuthErrorMessage(
++            authErrorState.error,
++            authErrorState.fallbackKey,
++            t,
++          )
+         : null,
+       canUseEmployee: roles.includes('staff'),
+       canUseKitchen: roles.includes('kitchen'),
+-      signIn,
++      requestOtp,
++      verifyOtp,
+       logout,
+     };
+-  }, [authErrorState, isRestoring, isSigningIn, profile, t, token]);
++  }, [
++    authErrorState,
++    isRequestingOtp,
++    isRestoring,
++    isVerifyingOtp,
++    profile,
++    t,
++    token,
++  ]);
++
+   return (
+     <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
+   );
+diff --git a/apps/mobile/src/i18n/translations.ts b/apps/mobile/src/i18n/translations.ts
+index cdf24f2..511af16 100644
+--- a/apps/mobile/src/i18n/translations.ts
++++ b/apps/mobile/src/i18n/translations.ts
+@@ -40,6 +40,16 @@ export const vi = {
+   'common.meal': 'suất ăn',
+   'common.meals': 'suất ăn',
+   'auth.welcome': 'Chào mừng',
++  'auth.email': 'Email',
++  'auth.emailOtpHint': 'Nhập email công việc để nhận mã đăng nhập một lần.',
++  'auth.requestCode': 'Gửi mã',
++  'auth.resendCode': 'Gửi mã mới',
++  'auth.otpSent':
++    'Nếu địa chỉ có thể đăng nhập, mã đã được gửi. Hãy kiểm tra hộp thư.',
++  'auth.otpRetryAfter': 'Bạn có thể yêu cầu mã mới sau %{seconds} giây.',
++  'auth.verificationCode': 'Mã xác thực',
++  'auth.verifyCode': 'Xác thực mã',
++  'auth.otpPrivacy': 'Mã chỉ dùng một lần và sẽ hết hạn sớm. Không chia sẻ mã.',
+   'auth.noMobileAccess':
+     'Tài khoản này chưa được cấp quyền truy cập trên thiết bị di động.',
+   'auth.localSignInHint': 'Đăng nhập bằng tài khoản nhân viên hoặc bếp nội bộ.',
+@@ -194,6 +204,14 @@ export const vi = {
+   'pickup.subtitle': 'Xuất trình mã QR động này cho nhân viên bếp',
+   'pickup.loading': 'Đang tải lựa chọn nhận suất…',
+   'pickup.windowClosed': 'Hiện đang ngoài giờ nhận suất',
++  'pickup.selectExplicitForMultiple':
++    'Với nhiều suất, hãy chọn rõ các suất muốn nhận.',
++  'pickup.selectionRequired': 'Cần chọn suất ăn',
++  'pickup.gpsPurpose':
++    'Vị trí phía trước màn hình được dùng để xác minh nơi người trình bày nhận suất.',
++  'pickup.gpsRetention':
++    'Chỉ giữ bằng chứng xác minh tối thiểu cần thiết; không theo dõi nền.',
++  'pickup.refreshOptions': 'Làm mới lựa chọn',
+   'pickup.windowClosedHint':
+     'Vé suất ăn có hiệu lực từ 10:30 đến 13:30 theo giờ Việt Nam.',
+   'pickup.notReady': 'Bếp đang chuẩn bị nhận suất',
+@@ -255,6 +273,27 @@ export const vi = {
+   'scanner.employee': 'Nhân viên',
+   'scanner.servedAt': 'Đã phục vụ lúc %{time}',
+   'scanner.retryScan': 'Quét lại',
++  'errors.requestOtp': 'Không thể gửi mã đăng nhập. Hãy thử lại sau.',
++  'errors.verifyOtp': 'Mã không hợp lệ hoặc đã hết hạn.',
++  'errors.logOut': 'Không thể kết thúc phiên trên máy chủ.',
++  'errors.resolvePickup': 'Không thể kiểm tra mã nhận suất.',
++  'errors.confirmPickup': 'Không thể xác nhận phục vụ.',
++  'errors.otpInvalidOrExpired': 'Mã không hợp lệ hoặc đã hết hạn.',
++  'errors.otpRateLimited': 'Bạn đã thử quá nhiều lần. Hãy thử lại sau.',
++  'errors.sessionRevoked': 'Phiên đăng nhập đã bị thu hồi. Hãy đăng nhập lại.',
++  'errors.sessionInvalid': 'Phiên đăng nhập không hợp lệ. Hãy đăng nhập lại.',
++  'errors.gpsRetryRequired':
++    'Cần xác minh vị trí mới. Hãy thử lại hoặc làm mới.',
++  'errors.gpsUnavailable':
++    'Không thể lấy vị trí hiện tại. Hãy thử lại hoặc làm mới.',
++  'errors.gpsStale': 'Vị trí đã cũ. Hãy thử lại hoặc làm mới.',
++  'errors.gpsInaccurate': 'Vị trí chưa đủ chính xác. Hãy thử lại hoặc làm mới.',
++  'errors.pickupIntentRequired': 'Cần chọn suất ăn trước khi tạo mã QR.',
++  'errors.pickupIntentConflict': 'Lựa chọn nhận suất đã thay đổi. Hãy làm mới.',
++  'errors.idempotencyConflict':
++    'Yêu cầu xác nhận đã thay đổi. Hãy quét lại mã.',
++  'errors.qrExpired': 'Mã QR đã hết hạn. Hãy tạo mã mới.',
++  'errors.qrInvalid': 'Mã QR không hợp lệ. Hãy quét lại.',
+   'scanner.servingConfirmation': 'Xác nhận phục vụ',
+   'scanner.itemCount': '%{count} món',
+   'scanner.itemCount.one': '%{count} món',
+@@ -343,6 +382,18 @@ export type TranslationKey = keyof typeof vi;
+ 
+ export const en: Record<TranslationKey, string> = {
+   'common.retry': 'Retry',
++  'auth.email': 'Email',
++  'auth.emailOtpHint':
++    'Enter your work email to receive a one-time sign-in code.',
++  'auth.requestCode': 'Send code',
++  'auth.resendCode': 'Send a new code',
++  'auth.otpSent':
++    'If the address can sign in, a code has been sent. Check your inbox.',
++  'auth.otpRetryAfter': 'You can request a new code in %{seconds} seconds.',
++  'auth.verificationCode': 'Verification code',
++  'auth.verifyCode': 'Verify code',
++  'auth.otpPrivacy':
++    'The code is single-use and expires shortly. Never share it.',
+   'common.cancel': 'Cancel',
+   'common.confirm': 'Confirm',
+   'common.close': 'Close',
+@@ -540,6 +591,14 @@ export const en: Record<TranslationKey, string> = {
+     'Register a meal in Calendar before generating a ticket.',
+   'pickup.mealsToPickUp': 'MEALS TO PICK UP',
+   'pickup.selectOneOrMore': 'Select one or more',
++  'pickup.selectExplicitForMultiple':
++    'For multiple meals, explicitly choose the meals to pick up.',
++  'pickup.selectionRequired': 'Select a meal',
++  'pickup.gpsPurpose':
++    'Foreground location verifies where the presenter is picking up the meal.',
++  'pickup.gpsRetention':
++    'Only the minimum verification evidence is retained; there is no background tracking.',
++  'pickup.refreshOptions': 'Refresh options',
+   'pickup.myMeal': 'My meal',
+   'pickup.delegatedMeal': 'Delegated meal',
+   'pickup.from': 'From %{name}',
+@@ -600,6 +659,28 @@ export const en: Record<TranslationKey, string> = {
+   'scanner.confirmServing': 'Confirm serving',
+   'scanner.pickupSessionExpired': 'Pickup session has expired',
+   'notice.dismiss': 'Dismiss notification',
++  'errors.requestOtp': 'Unable to send a sign-in code. Try again later.',
++  'errors.verifyOtp': 'The code is invalid or has expired.',
++  'errors.logOut': 'Unable to end the server session.',
++  'errors.resolvePickup': 'Unable to verify the pickup code.',
++  'errors.confirmPickup': 'Unable to confirm serving.',
++  'errors.otpInvalidOrExpired': 'The code is invalid or has expired.',
++  'errors.otpRateLimited': 'Too many attempts. Try again later.',
++  'errors.sessionRevoked': 'Your session was revoked. Sign in again.',
++  'errors.sessionInvalid': 'Your session is invalid. Sign in again.',
++  'errors.gpsRetryRequired':
++    'A fresh location check is required. Retry or refresh.',
++  'errors.gpsUnavailable': 'Current location is unavailable. Retry or refresh.',
++  'errors.gpsStale': 'The location fix is stale. Retry or refresh.',
++  'errors.gpsInaccurate':
++    'The location is not accurate enough. Retry or refresh.',
++  'errors.pickupIntentRequired': 'Select a meal before generating a QR code.',
++  'errors.pickupIntentConflict':
++    'The pickup selection changed. Refresh and try again.',
++  'errors.idempotencyConflict':
++    'The confirmation request changed. Scan the code again.',
++  'errors.qrExpired': 'The QR code expired. Create a new code.',
++  'errors.qrInvalid': 'The QR code is invalid. Scan it again.',
+   'errors.apiTimeout':
+     'The API did not respond. Check the connection and try again.',
+   'errors.invalidResponse': 'The server response was invalid.',
+diff --git a/apps/mobile/src/screens/auth/EmailOtpScreen.tsx b/apps/mobile/src/screens/auth/EmailOtpScreen.tsx
+new file mode 100644
+index 0000000..b190c56
+--- /dev/null
++++ b/apps/mobile/src/screens/auth/EmailOtpScreen.tsx
+@@ -0,0 +1,210 @@
++import React, { useState } from 'react';
++import {
++  KeyboardAvoidingView,
++  Platform,
++  ScrollView,
++  StyleSheet,
++  View,
++} from 'react-native';
++import { useSession } from '../../auth/session';
++import { useLanguage } from '../../i18n/LanguageProvider';
++import { ActionButton, AppText, TextField } from '../../ui/components';
++import { BrandMark } from '../../ui/BrandMotion';
++import { designTokens, getElevationStyle } from '../../ui/designTokens';
++
++export function EmailOtpScreen() {
++  const { authError, isRequestingOtp, isVerifyingOtp, requestOtp, verifyOtp } =
++    useSession();
++  const { t } = useLanguage();
++  const [email, setEmail] = useState('');
++  const [code, setCode] = useState('');
++  const [requested, setRequested] = useState(false);
++  const [retryAfterSeconds, setRetryAfterSeconds] = useState<number | null>(
++    null,
++  );
++
++  const normalizedEmail = email.trim();
++  const canRequest =
++    normalizedEmail.length > 0 && !isRequestingOtp && !isVerifyingOtp;
++  const canVerify = requested && code.trim().length > 0 && !isVerifyingOtp;
++  const submitEmail = async () => {
++    if (!canRequest) return;
++    try {
++      const response = await requestOtp(normalizedEmail);
++      setRequested(true);
++      setRetryAfterSeconds(response.retryAfterSeconds ?? null);
++      setCode('');
++    } catch {
++      setRequested(false);
++      setRetryAfterSeconds(null);
++    }
++  };
++
++  const submitCode = async () => {
++    if (!canVerify) return;
++    try {
++      await verifyOtp(normalizedEmail, code.trim());
++    } catch {
++      // SessionProvider owns the safe, non-enumerating error state.
++    }
++  };
++
++  return (
++    <View style={styles.safeArea}>
++      <KeyboardAvoidingView
++        style={styles.keyboard}
++        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
++      >
++        <ScrollView
++          contentContainerStyle={styles.scrollContent}
++          keyboardShouldPersistTaps="handled"
++        >
++          <View style={styles.canvas}>
++            <View style={styles.card}>
++              <BrandMark size={32} containerSize={72} style={styles.mark} />
++              <AppText variant="pageTitle" style={styles.title}>
++                {t('auth.welcome')}
++              </AppText>
++              <AppText variant="body" tone="secondary" style={styles.subtitle}>
++                {t('auth.emailOtpHint')}
++              </AppText>
++              <TextField
++                label={t('auth.email')}
++                value={email}
++                onChangeText={setEmail}
++                autoCapitalize="none"
++                autoCorrect={false}
++                autoComplete="email"
++                keyboardType="email-address"
++                editable={!isVerifyingOtp}
++                containerStyle={styles.field}
++              />
++              <ActionButton
++                variant="primary"
++                size="lg"
++                label={requested ? t('auth.resendCode') : t('auth.requestCode')}
++                disabled={!canRequest}
++                loading={isRequestingOtp}
++                onPress={() => void submitEmail()}
++                style={styles.button}
++              />
++              {requested && (
++                <View style={styles.codeSection}>
++                  <AppText
++                    variant="supporting"
++                    tone="secondary"
++                    style={styles.codeHint}
++                  >
++                    {t('auth.otpSent')}
++                  </AppText>
++                  {retryAfterSeconds !== null && retryAfterSeconds > 0 && (
++                    <AppText
++                      variant="caption"
++                      tone="secondary"
++                      style={styles.codeHint}
++                    >
++                      {t('auth.otpRetryAfter', { seconds: retryAfterSeconds })}
++                    </AppText>
++                  )}
++                  <TextField
++                    label={t('auth.verificationCode')}
++                    value={code}
++                    onChangeText={setCode}
++                    autoCapitalize="none"
++                    autoCorrect={false}
++                    keyboardType="number-pad"
++                    textContentType="oneTimeCode"
++                    maxLength={8}
++                    editable={!isVerifyingOtp}
++                    containerStyle={styles.field}
++                  />
++                  <ActionButton
++                    variant="secondary"
++                    size="lg"
++                    label={t('auth.verifyCode')}
++                    disabled={!canVerify}
++                    loading={isVerifyingOtp}
++                    onPress={() => void submitCode()}
++                    style={styles.button}
++                  />
++                </View>
++              )}
++              <AppText
++                variant="caption"
++                tone="secondary"
++                style={styles.footnote}
++              >
++                {t('auth.otpPrivacy')}
++              </AppText>
++              {authError && (
++                <AppText
++                  variant="supporting"
++                  tone="critical"
++                  style={styles.error}
++                >
++                  {authError}
++                </AppText>
++              )}
++            </View>
++          </View>
++        </ScrollView>
++      </KeyboardAvoidingView>
++    </View>
++  );
++}
++
++const styles = StyleSheet.create({
++  safeArea: {
++    flex: 1,
++    backgroundColor: designTokens.color.background.page,
++  },
++  keyboard: { flex: 1 },
++  scrollContent: {
++    flexGrow: 1,
++    padding: designTokens.space['2xl'],
++  },
++  canvas: {
++    flexGrow: 1,
++    alignItems: 'center',
++    justifyContent: 'center',
++  },
++  card: {
++    width: '100%',
++    maxWidth: 346,
++    padding: 26,
++    borderWidth: 1,
++    borderColor: designTokens.color.border.standard,
++    borderRadius: designTokens.radius.floating,
++    backgroundColor: designTokens.color.surface.standard,
++    ...getElevationStyle(1),
++  },
++  mark: {
++    alignSelf: 'center',
++    marginBottom: 18,
++    borderRadius: designTokens.radius.full,
++  },
++  title: { textAlign: 'center' },
++  subtitle: {
++    textAlign: 'center',
++    marginTop: designTokens.space.sm,
++    marginBottom: designTokens.space['2xl'],
++  },
++  field: { marginBottom: 14 },
++  button: { marginTop: 4 },
++  codeSection: {
++    marginTop: designTokens.space.lg,
++    paddingTop: designTokens.space.lg,
++    borderTopWidth: 1,
++    borderTopColor: designTokens.color.border.standard,
++  },
++  codeHint: { marginBottom: designTokens.space.md },
++  footnote: {
++    flexShrink: 1,
++    textAlign: 'center',
++    marginTop: 18,
++  },
++  error: {
++    textAlign: 'center',
++    marginTop: 16,
++  },
++});
+diff --git a/apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx b/apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx
+index 6b61777..5d8f34f 100644
+--- a/apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx
++++ b/apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx
+@@ -23,7 +23,8 @@ import {
+ import { formatBusinessInstant } from '../../businessDate';
+ import type { AppTabScreenProps } from '../../navigation';
+ import { useSession } from '../../auth/session';
+-import { servingAPI, type ResolveServingResponse } from '../../api/servingAPI';
++import * as Crypto from 'expo-crypto';
++import { pickupAPI, type ResolvePickupResponse } from '../../api/pickupAPI';
+ import {
+   MobileApiError,
+   getMobileErrorMessage,
+@@ -57,12 +58,13 @@ export function KitchenScannerScreen({ navigation }: Props) {
+   const [scanned, setScanned] = useState(false);
+   const [loading, setLoading] = useState(false);
+   const [servingIntent, setServingIntent] =
+-    useState<ResolveServingResponse | null>(null);
++    useState<ResolvePickupResponse | null>(null);
+   const [expiresAt, setExpiresAt] = useState<number | null>(null);
+   const [secondsLeft, setSecondsLeft] = useState(0);
+   const [stageHeight, setStageHeight] = useState(0);
+   const [torchEnabled, setTorchEnabled] = useState(false);
+   const [feedback, setFeedback] = useState<ScanFeedback | null>(null);
++  const idempotencyKey = useRef<string | null>(null);
+   const reduceMotion = useReducedMotion();
+   const scanProgress = useRef(new Animated.Value(0)).current;
+   const feedbackTimer = useRef<NodeJS.Timeout | undefined>(undefined);
+@@ -158,23 +160,22 @@ export function KitchenScannerScreen({ navigation }: Props) {
+     setSecondsLeft(0);
+     setScanned(false);
+     setLoading(false);
++    idempotencyKey.current = null;
+   };
+ 
+   const resolveCode = async (payload: string) => {
+     if (!token) return;
+     setLoading(true);
+     try {
+-      const response = await servingAPI.resolveServing(
+-        { qrPayload: payload },
+-        token,
+-      );
++      idempotencyKey.current = null;
++      const response = await pickupAPI.resolvePickup(token, { qr: payload });
+       const expiry = new Date(response.session.expiresAt).getTime();
+       setServingIntent(response);
+       setExpiresAt(Number.isFinite(expiry) ? expiry : Date.now() + 30_000);
+     } catch (error: unknown) {
+       presentFeedback({
+         title: t('scanner.verificationFailed'),
+-        message: getMobileErrorMessage(error, t, 'errors.resolveServing'),
++        message: getMobileErrorMessage(error, t, 'errors.resolvePickup'),
+         tone: 'error',
+         retry: true,
+       });
+@@ -193,12 +194,14 @@ export function KitchenScannerScreen({ navigation }: Props) {
+   const confirmServing = async () => {
+     if (!token || !servingIntent || expired) return;
+     const confirmedIntent = servingIntent;
++    const requestId = idempotencyKey.current ?? Crypto.randomUUID();
++    idempotencyKey.current = requestId;
+     setLoading(true);
+     try {
+-      await servingAPI.confirmServing(
+-        { pickupSessionToken: confirmedIntent.pickupSessionToken },
+-        token,
+-      );
++      await pickupAPI.confirmPickup(token, {
++        pickupSessionId: confirmedIntent.session.id,
++        idempotencyKey: requestId,
++      });
+       const delegatedItem = confirmedIntent.items.find(
+         (item) => item.type === 'DELEGATED',
+       );
+@@ -228,7 +231,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
+         error instanceof MobileApiError &&
+         error.code === 'PICKUP_SESSION_EXPIRED'
+           ? t('errors.pickupSessionExpired')
+-          : getMobileErrorMessage(error, t, 'errors.confirmServing');
++          : getMobileErrorMessage(error, t, 'errors.confirmPickup');
+       resetScan();
+       presentFeedback({
+         title: t('scanner.verificationFailed'),
+diff --git a/apps/mobile/src/screens/pickup/PickupIntentScreen.test.tsx b/apps/mobile/src/screens/pickup/PickupIntentScreen.test.tsx
+new file mode 100644
+index 0000000..6e9fe21
+--- /dev/null
++++ b/apps/mobile/src/screens/pickup/PickupIntentScreen.test.tsx
+@@ -0,0 +1,30 @@
++import { describe, expect, it } from 'vitest';
++import {
++  getInitialSelection,
++  isGpsRecoveryError,
++  sortRegistrationIds,
++} from './pickupIntentRules';
++describe('PickupIntentScreen selection and recovery rules', () => {
++  it('auto-selects one eligible item but leaves multiple items unselected', () => {
++    expect(getInitialSelection(['registration-1'])).toEqual(['registration-1']);
++    expect(getInitialSelection(['registration-2', 'registration-1'])).toEqual(
++      [],
++    );
++  });
++
++  it('sorts selected registration IDs before creating an exact intent', () => {
++    expect(sortRegistrationIds(['registration-2', 'registration-1'])).toEqual([
++      'registration-1',
++      'registration-2',
++    ]);
++  });
++
++  it.each([
++    'GPS_RETRY_REQUIRED',
++    'GPS_UNAVAILABLE',
++    'GPS_STALE',
++    'GPS_INACCURATE',
++  ])('treats %s as Retry/Refresh-only recovery', (code) => {
++    expect(isGpsRecoveryError({ code })).toBe(true);
++  });
++});
+diff --git a/apps/mobile/src/screens/pickup/PickupIntentScreen.tsx b/apps/mobile/src/screens/pickup/PickupIntentScreen.tsx
+index 523edc9..99ebdf9 100644
+--- a/apps/mobile/src/screens/pickup/PickupIntentScreen.tsx
++++ b/apps/mobile/src/screens/pickup/PickupIntentScreen.tsx
+@@ -4,17 +4,19 @@ import { StyleSheet, View, useWindowDimensions } from 'react-native';
+ import { useFocusEffect, useIsFocused } from '@react-navigation/native';
+ import type { AppTabScreenProps } from '../../navigation';
+ import { useSession } from '../../auth/session';
++import { pickupAPI, type PickupOption } from '../../api/pickupAPI';
++import { locationAPI, type LocationCapture } from '../../api/locationAPI';
+ import {
+-  pickupAPI,
+-  type PickupOption,
+-} from '../../api/pickupAPI';
+-import { getMobileErrorMessage, MobileApiError } from '../../api/mobileApiError';
++  getMobileErrorMessage,
++  MobileApiError,
++} from '../../api/mobileApiError';
+ import { formatShortDate, parseDateKey } from '../../businessDate';
+ import { StateTransition } from '../../ui/BrandMotion';
+ import { useScreenLoadingGate } from '../../ui/useScreenLoadingGate';
+ import { useNotice } from '../../ui/BrandNotice';
+ import { AppFrame, SectionHeader } from '../../ui/AppShell';
+ import {
++  ActionButton,
+   AppText,
+   EmptyState,
+   MealSelectionCard,
+@@ -25,6 +27,17 @@ import {
+ import type { QrTicketState } from '../../ui/components';
+ import { designTokens } from '../../ui/designTokens';
+ import { useLanguage } from '../../i18n/LanguageProvider';
++import {
++  getInitialSelection,
++  isGpsRecoveryError,
++  sortRegistrationIds,
++} from './pickupIntentRules';
++
++export {
++  getInitialSelection,
++  isGpsRecoveryError,
++  sortRegistrationIds,
++} from './pickupIntentRules';
+ 
+ type Props = AppTabScreenProps<'PickupIntent'>;
+ type PickupLoadError =
+@@ -35,7 +48,6 @@ type PickupLoadError =
+ type QrState = {
+   value: string;
+   expiresAt: number;
+-  ttlMs: number;
+   ttlSeconds: number;
+   selectionKey: string;
+ };
+@@ -43,7 +55,7 @@ type QrState = {
+ const DEFAULT_QR_TTL_SECONDS = 5;
+ const QR_REFRESH_LEAD_MS = designTokens.motion.duration.fast;
+ 
+-function selectionKey(ids: string[]): string {
++function selectionKey(ids: readonly string[]): string {
+   return ids.join('\u0000');
+ }
+ 
+@@ -66,67 +78,89 @@ export function PickupIntentScreen(_props: Props) {
+   const optionsRequestId = useRef(0);
+   const isFocused = useIsFocused();
+   const qrState = useRef<QrState | null>(null);
++  const locationCapture = useRef<LocationCapture | null>(null);
+   const screenLoading = useScreenLoadingGate(isFocused, !loading);
+ 
++  const stopLocationCapture = useCallback(() => {
++    locationCapture.current?.stop();
++    locationCapture.current = null;
++  }, []);
++
+   const clearQrPresentation = useCallback(() => {
++    stopLocationCapture();
+     qrState.current = null;
+     setQrValue(null);
+     setTimeLeft(0);
+     setQrLoading(false);
+-  }, []);
++  }, [stopLocationCapture]);
+ 
+-  const fetchOptions = useCallback(async () => {
+-    if (!token) return;
++  const fetchOptions = useCallback(async (): Promise<boolean> => {
++    if (!token) return false;
+     const requestId = ++optionsRequestId.current;
+     setLoadError(null);
+     setLoading(true);
+     try {
+       const response = await pickupAPI.getPickupOptions(token);
+-      if (requestId !== optionsRequestId.current) return;
++      if (requestId !== optionsRequestId.current) return false;
++      const available = new Set(
++        response.options.map((option) => option.registrationId),
++      );
+       setOptions(response.options);
+       setSelectedIds((current) => {
+-        const availableIds = [...current].filter((id) =>
+-          response.options.some((option) => option.registrationId === id),
++        const preserved = sortRegistrationIds(
++          [...current].filter((id) => available.has(id)),
+         );
+-        if (availableIds.length > 0) return new Set(availableIds);
+-        return response.options[0]
+-          ? new Set([response.options[0].registrationId])
+-          : new Set();
++        if (preserved.length > 0) return new Set(preserved);
++        return new Set(getInitialSelection(response.options));
+       });
++      clearQrPresentation();
++      setQrError(null);
++      return true;
+     } catch (error: unknown) {
+-      if (requestId !== optionsRequestId.current) return;
+-      if (error instanceof MobileApiError && error.code === 'PICKUP_WINDOW_CLOSED') {
++      if (requestId !== optionsRequestId.current) return false;
++      clearQrPresentation();
++      setIsGenerating(false);
++      if (
++        error instanceof MobileApiError &&
++        error.code === 'PICKUP_WINDOW_CLOSED'
++      ) {
+         setLoadError({ type: 'window-closed' });
+       } else {
+         setLoadError({
+-          type: error instanceof MobileApiError && error.code === 'PICKUP_NOT_READY' ? 'not-ready' : 'error',
++          type:
++            error instanceof MobileApiError && error.code === 'PICKUP_NOT_READY'
++              ? 'not-ready'
++              : 'error',
+           error,
+         });
+       }
++      return false;
+     } finally {
+       if (requestId === optionsRequestId.current) setLoading(false);
+     }
+-  }, [token]);
++  }, [clearQrPresentation, token]);
+ 
+   useFocusEffect(
+     useCallback(() => {
+       void fetchOptions();
+       return () => {
+         optionsRequestId.current += 1;
++        clearQrPresentation();
+       };
+-    }, [fetchOptions]),
++    }, [clearQrPresentation, fetchOptions]),
+   );
+ 
++  const selectedIdsList = sortRegistrationIds(Array.from(selectedIds));
++  const selectedSelectionKey = selectionKey(selectedIdsList);
++
+   useEffect(() => {
+-    if (!isFocused || !isGenerating || !token) {
+-      if (!isFocused && isGenerating && token) {
+-        setQrLoading(false);
+-        return;
+-      }
+-      clearQrPresentation();
++    if (!isFocused || !isGenerating || !token || loading) {
++      if (!isFocused) stopLocationCapture();
++      if (!isGenerating || loading) stopLocationCapture();
+       return;
+     }
+-    if (loading) {
++    if (selectedIdsList.length === 0) {
++      stopLocationCapture();
+       setQrLoading(false);
+       return;
+     }
+@@ -134,10 +168,14 @@ export function PickupIntentScreen(_props: Props) {
+     let cancelled = false;
+     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+     let countdownTimer: ReturnType<typeof setInterval> | undefined;
+-    const ids = Array.from(selectedIds);
+-    const currentSelectionKey = selectionKey(ids);
++
++    const clearTimers = () => {
++      if (refreshTimer) clearTimeout(refreshTimer);
++      if (countdownTimer) clearInterval(countdownTimer);
++    };
+ 
+     const scheduleTimers = (remainingMs: number, refresh: () => void) => {
++      clearTimers();
+       setTimeLeft(Math.max(0, Math.ceil(remainingMs / 1000)));
+       refreshTimer = setTimeout(
+         refresh,
+@@ -151,22 +189,31 @@ export function PickupIntentScreen(_props: Props) {
+ 
+     const refresh = async () => {
+       if (cancelled) return;
++      const ids = selectedIdsList;
+       if (ids.length === 0) {
+         setIsGenerating(false);
+         return;
+       }
+       try {
+         setQrLoading(true);
+-        const response = await pickupAPI.generateQr(token, ids);
++        stopLocationCapture();
++        const capture = locationAPI.startForegroundLocationCapture();
++        locationCapture.current = capture;
++        const presenterEvidence = await capture.promise;
++        if (cancelled) return;
++        const response = await pickupAPI.generateQr(token, {
++          registrationIds: ids,
++          presenterEvidence,
++        });
+         if (cancelled) return;
+-        const ttlSeconds = response.ttl > 0 ? response.ttl : DEFAULT_QR_TTL_SECONDS;
++        const ttlSeconds =
++          response.ttl > 0 ? response.ttl : DEFAULT_QR_TTL_SECONDS;
+         const ttlMs = ttlSeconds * 1000;
+         qrState.current = {
+           value: response.qr,
+           expiresAt: Date.now() + ttlMs,
+-          ttlMs,
+           ttlSeconds,
+-          selectionKey: currentSelectionKey,
++          selectionKey: selectedSelectionKey,
+         };
+         setQrError(null);
+         setQrValue(response.qr);
+@@ -175,6 +222,7 @@ export function PickupIntentScreen(_props: Props) {
+         if (!cancelled) {
+           clearQrPresentation();
+           setQrError(error);
++          setIsGenerating(false);
+           showNotice({
+             title: t('pickup.qrUnavailable'),
+             message: getMobileErrorMessage(error, t, 'errors.generateQr'),
+@@ -182,18 +230,17 @@ export function PickupIntentScreen(_props: Props) {
+           });
+         }
+       } finally {
++        stopLocationCapture();
+         if (!cancelled) setQrLoading(false);
+       }
+     };
+ 
+     const existingQr = qrState.current;
+     const remainingMs = existingQr ? existingQr.expiresAt - Date.now() : 0;
+-    const existingSelectionMatches = existingQr?.selectionKey === currentSelectionKey;
+     if (
+-      existingQr
+-      && existingSelectionMatches
+-      && remainingMs > 0
+-      && ids.length > 0
++      existingQr &&
++      existingQr.selectionKey === selectedSelectionKey &&
++      remainingMs > 0
+     ) {
+       scheduleTimers(remainingMs, () => void refresh());
+     } else {
+@@ -204,23 +251,27 @@ export function PickupIntentScreen(_props: Props) {
+ 
+     return () => {
+       cancelled = true;
+-      clearTimeout(refreshTimer);
+-      clearInterval(countdownTimer);
++      clearTimers();
++      stopLocationCapture();
+     };
+-
+   }, [
+     clearQrPresentation,
+     isFocused,
+     isGenerating,
+     loading,
+-    qrRetryVersion,
+-    selectedIds,
++    selectedIdsList.join('\u0000'),
++    selectedSelectionKey,
+     showNotice,
++    stopLocationCapture,
+     t,
+     token,
++    qrRetryVersion,
+   ]);
+ 
+   const toggleSelection = (registrationId: string) => {
++    clearQrPresentation();
++    setQrError(null);
++    setIsGenerating(false);
+     setSelectedIds((current) => {
+       const next = new Set(current);
+       if (next.has(registrationId)) next.delete(registrationId);
+@@ -230,69 +281,109 @@ export function PickupIntentScreen(_props: Props) {
+   };
+ 
+   const retryQr = useCallback(() => {
++    if (selectedIdsList.length === 0) return;
+     clearQrPresentation();
+     setQrError(null);
+     setQrRetryVersion((current) => current + 1);
+     setIsGenerating(true);
+-  }, [clearQrPresentation]);
++  }, [clearQrPresentation, selectedIdsList.join('\u0000')]);
++
++  const refreshOptions = useCallback(async () => {
++    setIsGenerating(false);
++    clearQrPresentation();
++    setQrError(null);
++    const refreshed = await fetchOptions();
++    if (refreshed) {
++      setQrRetryVersion((current) => current + 1);
++      setIsGenerating(true);
++    }
++  }, [clearQrPresentation, fetchOptions]);
+ 
+   const toggleGenerating = useCallback(() => {
+     if (isGenerating) {
+       setIsGenerating(false);
++      clearQrPresentation();
++      return;
++    }
++    if (selectedIdsList.length === 0) {
++      showNotice({
++        title: t('pickup.selectionRequired'),
++        message: t('pickup.selectExplicitForMultiple'),
++        tone: 'error',
++      });
+       return;
+     }
+     clearQrPresentation();
+     setQrError(null);
+     setIsGenerating(true);
+-  }, [clearQrPresentation, isGenerating]);
++  }, [
++    clearQrPresentation,
++    isGenerating,
++    selectedIdsList.join('\u0000'),
++    showNotice,
++    stopLocationCapture,
++    t,
++  ]);
+ 
+-  const displayName = profile?.name || profile?.email.split('@')[0] || t('profile.employeeAccount');
++  useEffect(() => () => stopLocationCapture(), [stopLocationCapture]);
++
++  const displayName =
++    profile?.name ||
++    profile?.email.split('@')[0] ||
++    t('profile.employeeAccount');
+   const errorState = loadError?.type;
+-  const selectedIdsList = Array.from(selectedIds);
+-  const selectedSelectionKey = selectionKey(selectedIdsList);
+   const currentQr = qrState.current;
+   const qrExpired = currentQr !== null && currentQr.expiresAt <= Date.now();
+   const visibleQrValue =
+-    isFocused
+-    && !qrError
+-    && currentQr?.value === qrValue
+-    && currentQr?.selectionKey === selectedSelectionKey
+-    && (currentQr?.expiresAt ?? 0) > Date.now()
++    isFocused &&
++    !qrError &&
++    currentQr?.value === qrValue &&
++    currentQr?.selectionKey === selectedSelectionKey &&
++    (currentQr?.expiresAt ?? 0) > Date.now()
+       ? qrValue
+       : null;
+-  const qrTicketState: QrTicketState = qrError || qrExpired
+-    ? 'expired'
+-    : !isGenerating
+-      ? 'paused'
+-      : visibleQrValue
+-        ? qrLoading
+-          ? 'refreshing'
+-          : 'active'
+-        : 'loading';
++  const qrTicketState: QrTicketState =
++    qrError || qrExpired
++      ? 'expired'
++      : !isGenerating
++        ? 'paused'
++        : visibleQrValue
++          ? qrLoading
++            ? 'refreshing'
++            : 'active'
++          : 'loading';
+   const selectedMealTypeLabels = Array.from(
+     new Set(
+       options
+         .filter((option) => selectedIds.has(option.registrationId))
+-        .map((option) => t(
+-          option.mealChoice === 'VEGETARIAN'
+-            ? 'calendar.mealChoice.vegetarian'
+-            : 'calendar.mealChoice.regular',
+-        )),
++        .map((option) =>
++          t(
++            option.mealChoice === 'VEGETARIAN'
++              ? 'calendar.mealChoice.vegetarian'
++              : 'calendar.mealChoice.regular',
++          ),
++        ),
+     ),
+   );
+-  const mealTypeLabel = selectedMealTypeLabels.length > 0
+-    ? selectedMealTypeLabels.join(', ')
+-    : t('pickup.mealChoice');
++  const mealTypeLabel =
++    selectedMealTypeLabels.length > 0
++      ? selectedMealTypeLabels.join(', ')
++      : t('pickup.mealChoice');
+   const qrTotalSeconds = currentQr?.ttlSeconds ?? DEFAULT_QR_TTL_SECONDS;
+   const ownerId = profile?.userId || profile?.id || '—';
++  const gpsRecovery = isGpsRecoveryError(qrError);
+ 
+   return (
+-    <AppFrame screenLoadingLabel={screenLoading ? t('pickup.loading') : undefined}>
++    <AppFrame
++      screenLoadingLabel={screenLoading ? t('pickup.loading') : undefined}
++    >
+       <SectionHeader
+         title={t('pickup.title')}
+         subtitle={t('pickup.subtitle')}
+       />
+-      <StateTransition stateKey={errorState || (options.length === 0 ? 'empty' : 'ready')}>
++      <StateTransition
++        stateKey={errorState || (options.length === 0 ? 'empty' : 'ready')}
++      >
+         {loadError?.type === 'window-closed' ? (
+           <EmptyState
+             icon={Clock3}
+@@ -304,7 +395,11 @@ export function PickupIntentScreen(_props: Props) {
+           <EmptyState
+             icon={Clock3}
+             title={t('pickup.notReady')}
+-            description={getMobileErrorMessage(loadError.error, t, 'errors.loadPickup')}
++            description={getMobileErrorMessage(
++              loadError.error,
++              t,
++              'errors.loadPickup',
++            )}
+             action={{
+               label: t('pickup.checkAgain'),
+               onPress: () => void fetchOptions(),
+@@ -315,7 +410,11 @@ export function PickupIntentScreen(_props: Props) {
+           <EmptyState
+             icon={XCircle}
+             title={t('pickup.loadFailed')}
+-            description={getMobileErrorMessage(loadError.error, t, 'errors.loadPickup')}
++            description={getMobileErrorMessage(
++              loadError.error,
++              t,
++              'errors.loadPickup',
++            )}
+             action={{
+               label: t('common.retry'),
+               onPress: () => void fetchOptions(),
+@@ -332,13 +431,20 @@ export function PickupIntentScreen(_props: Props) {
+         ) : (
+           <>
+             <Surface level={1} padding="xl" style={styles.selectionSurface}>
+-              <View style={[styles.selectionHeader, compactLayout && styles.selectionHeaderCompact]}>
++              <View
++                style={[
++                  styles.selectionHeader,
++                  compactLayout && styles.selectionHeaderCompact,
++                ]}
++              >
+                 <View style={styles.selectionCopy}>
+                   <AppText variant="eyebrow" tone="secondary">
+                     {t('pickup.mealsToPickUp')}
+                   </AppText>
+                   <AppText variant="supporting" tone="secondary">
+-                    {t('pickup.selectOneOrMore')}
++                    {options.length > 1
++                      ? t('pickup.selectExplicitForMultiple')
++                      : t('pickup.selectOneOrMore')}
+                   </AppText>
+                 </View>
+                 <StatusBadge
+@@ -350,18 +456,23 @@ export function PickupIntentScreen(_props: Props) {
+               <View style={styles.optionList}>
+                 {options.map((option) => {
+                   const selected = selectedIds.has(option.registrationId);
+-                  const optionTitle = option.type === 'OWN'
+-                    ? t('pickup.myMeal')
+-                    : t('pickup.delegatedMeal');
++                  const optionTitle =
++                    option.type === 'OWN'
++                      ? t('pickup.myMeal')
++                      : t('pickup.delegatedMeal');
+                   const choiceLabel = t(
+                     option.mealChoice === 'VEGETARIAN'
+                       ? 'calendar.mealChoice.vegetarian'
+                       : 'calendar.mealChoice.regular',
+                   );
+-                  const dateLabel = formatShortDate(parseDateKey(option.mealDate), locale);
+-                  const ownerLabel = option.type === 'DELEGATED' && option.owner
+-                    ? ` · ${t('pickup.from', { name: option.owner.name })}`
+-                    : '';
++                  const dateLabel = formatShortDate(
++                    parseDateKey(option.mealDate),
++                    locale,
++                  );
++                  const ownerLabel =
++                    option.type === 'DELEGATED' && option.owner
++                      ? ` · ${t('pickup.from', { name: option.owner.name })}`
++                      : '';
+                   return (
+                     <MealSelectionCard
+                       key={option.registrationId}
+@@ -375,6 +486,13 @@ export function PickupIntentScreen(_props: Props) {
+                   );
+                 })}
+               </View>
++              <AppText
++                variant="caption"
++                tone="secondary"
++                style={styles.gpsPurpose}
++              >
++                {t('pickup.gpsPurpose')}
++              </AppText>
+             </Surface>
+             <QrTicket
+               state={qrTicketState}
+@@ -390,6 +508,28 @@ export function PickupIntentScreen(_props: Props) {
+               onToggleActive={toggleGenerating}
+               style={styles.ticket}
+             />
++            {gpsRecovery && qrError && (
++              <Surface level={1} padding="lg" style={styles.gpsRecovery}>
++                <AppText variant="supporting" tone="critical">
++                  {getMobileErrorMessage(qrError, t, 'errors.generateQr')}
++                </AppText>
++                <AppText
++                  variant="caption"
++                  tone="secondary"
++                  style={styles.gpsRetention}
++                >
++                  {t('pickup.gpsRetention')}
++                </AppText>
++                <View style={styles.recoveryActions}>
++                  <ActionButton
++                    variant="secondary"
++                    size="md"
++                    label={t('pickup.refreshOptions')}
++                    onPress={() => void refreshOptions()}
++                  />
++                </View>
++              </Surface>
++            )}
+           </>
+         )}
+       </StateTransition>
+@@ -423,7 +563,20 @@ const styles = StyleSheet.create({
+     marginTop: designTokens.space.md,
+     gap: designTokens.space.sm,
+   },
++  gpsPurpose: {
++    marginTop: designTokens.space.lg,
++  },
+   ticket: {
+     marginTop: designTokens.space.lg,
+   },
++  gpsRecovery: {
++    marginTop: designTokens.space.md,
++  },
++  gpsRetention: {
++    marginTop: designTokens.space.xs,
++  },
++  recoveryActions: {
++    marginTop: designTokens.space.md,
++    alignItems: 'flex-start',
++  },
+ });
+diff --git a/apps/mobile/src/screens/pickup/pickupIntentRules.ts b/apps/mobile/src/screens/pickup/pickupIntentRules.ts
+new file mode 100644
+index 0000000..2bdb27f
+--- /dev/null
++++ b/apps/mobile/src/screens/pickup/pickupIntentRules.ts
+@@ -0,0 +1,25 @@
++import type { MobileApiError } from '../../api/mobileApiError';
++import type { PickupOption } from '../../api/pickupAPI';
++
++export function getInitialSelection(
++  options: readonly PickupOption[] | readonly string[],
++): string[] {
++  if (options.length !== 1) return [];
++  const first = options[0];
++  return typeof first === 'string' ? [first] : [first.registrationId];
++}
++
++export function sortRegistrationIds(ids: readonly string[]): string[] {
++  return [...new Set(ids)].sort((left, right) => left.localeCompare(right));
++}
++
++export function isGpsRecoveryError(error: unknown): boolean {
++  if (!error || typeof error !== 'object' || !('code' in error)) return false;
++  const code = (error as MobileApiError).code;
++  return (
++    code === 'GPS_RETRY_REQUIRED' ||
++    code === 'GPS_UNAVAILABLE' ||
++    code === 'GPS_STALE' ||
++    code === 'GPS_INACCURATE'
++  );
++}
+diff --git a/yarn.lock b/yarn.lock
+index ef8d519..c842798 100644
+--- a/yarn.lock
++++ b/yarn.lock
+@@ -1939,6 +1939,7 @@ __metadata:
+     expo-device: "npm:~6.0.2"
+     expo-font: "npm:~12.0.10"
+     expo-linking: "npm:~6.3.1"
++    expo-location: "npm:~17.0.1"
+     expo-notifications: "npm:~0.28.17"
+     expo-secure-store: "npm:~13.0.2"
+     expo-status-bar: "npm:~1.12.1"
+@@ -7034,6 +7035,15 @@ __metadata:
+   languageName: node
+   linkType: hard
+ 
++"expo-location@npm:~17.0.1":
++  version: 17.0.1
++  resolution: "expo-location@npm:17.0.1"
++  peerDependencies:
++    expo: "*"
++  checksum: 10c0/b73ab52c3ad91ac3f0457b3ef5fd8c1260288f680a51e75db0d6c2fd4a15e8450b8a7ec405788cffdacc7b0dd7f62318916122cdb377e07697af896163e66a7d
++  languageName: node
++  linkType: hard
++
+ "expo-modules-autolinking@npm:1.11.3":
+   version: 1.11.3
+   resolution: "expo-modules-autolinking@npm:1.11.3"

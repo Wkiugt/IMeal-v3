@@ -7,16 +7,41 @@ export type MobileApiErrorCode =
   | 'INVALID_RESPONSE'
   | 'REQUEST_FAILED'
   | 'DUPLICATE_SERVING'
-  | 'PICKUP_SESSION_EXPIRED'
+  | v1.ErrorCode
   | v1.RegistrationFailureCode
-  | v1.PickupAvailabilityCode;
+  | v1.PickupAvailabilityCode
+  | v1.PickupErrorCode;
 
 const ERROR_MESSAGE_KEYS: Record<MobileApiErrorCode, TranslationKey> = {
   API_TIMEOUT: 'errors.apiTimeout',
   INVALID_RESPONSE: 'errors.invalidResponse',
   REQUEST_FAILED: 'errors.requestFailed',
   DUPLICATE_SERVING: 'errors.duplicateServing',
+  BAD_REQUEST: 'errors.requestFailed',
+  UNAUTHORIZED: 'errors.sessionInvalid',
+  FORBIDDEN: 'errors.requestFailed',
+  NOT_FOUND: 'errors.requestFailed',
+  CONFLICT: 'errors.requestFailed',
+  INTERNAL_SERVER_ERROR: 'errors.requestFailed',
+  VALIDATION_ERROR: 'errors.requestFailed',
+  RATE_LIMITED: 'errors.otpRateLimited',
+  OTP_REQUEST_ACCEPTED: 'errors.requestOtp',
+  OTP_INVALID_OR_EXPIRED: 'errors.otpInvalidOrExpired',
+  SESSION_REVOKED: 'errors.sessionRevoked',
+  GPS_RETRY_REQUIRED: 'errors.gpsRetryRequired',
+  GPS_UNAVAILABLE: 'errors.gpsUnavailable',
+  GPS_STALE: 'errors.gpsStale',
+  GPS_INACCURATE: 'errors.gpsInaccurate',
+  PICKUP_INTENT_REQUIRED: 'errors.pickupIntentRequired',
+  PICKUP_INTENT_CONFLICT: 'errors.pickupIntentConflict',
   PICKUP_SESSION_EXPIRED: 'errors.pickupSessionExpired',
+  IDEMPOTENCY_CONFLICT: 'errors.idempotencyConflict',
+  GPS_SESSION_REQUIRED: 'errors.gpsRetryRequired',
+  SERVING_WINDOW_CLOSED: 'errors.pickupWindowClosed',
+  QR_EXPIRED: 'errors.qrExpired',
+  QR_INVALID: 'errors.qrInvalid',
+  SESSION_INVALID: 'errors.sessionInvalid',
+  OTP_RATE_LIMITED: 'errors.otpRateLimited',
   INVALID_MEAL_DATE: 'errors.invalidMealDate',
   CUTOFF_PASSED: 'errors.cutoffPassed',
   MEAL_CHOICE_UNAVAILABLE: 'errors.mealChoiceUnavailable',
@@ -31,7 +56,11 @@ export class MobileApiError extends Error {
   readonly messageKey: TranslationKey;
   readonly cause: unknown;
 
-  constructor(code: MobileApiErrorCode, messageKey: TranslationKey, cause?: unknown) {
+  constructor(
+    code: MobileApiErrorCode,
+    messageKey: TranslationKey,
+    cause?: unknown,
+  ) {
     super(code);
     this.name = 'MobileApiError';
     this.code = code;
@@ -40,12 +69,19 @@ export class MobileApiError extends Error {
   }
 }
 
-export function mobileErrorMessageKey(code: MobileApiErrorCode): TranslationKey {
+export function mobileErrorMessageKey(
+  code: MobileApiErrorCode,
+): TranslationKey {
   return ERROR_MESSAGE_KEYS[code];
 }
 
-export function isMobileApiErrorCode(value: unknown): value is MobileApiErrorCode {
-  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(ERROR_MESSAGE_KEYS, value);
+export function isMobileApiErrorCode(
+  value: unknown,
+): value is MobileApiErrorCode {
+  return (
+    typeof value === 'string' &&
+    Object.prototype.hasOwnProperty.call(ERROR_MESSAGE_KEYS, value)
+  );
 }
 
 export function getMobileErrorMessage(
@@ -57,12 +93,17 @@ export function getMobileErrorMessage(
   return t(fallbackKey);
 }
 
-export function getErrorPayloadCode(payload: unknown): MobileApiErrorCode | null {
-  if (payload === null || typeof payload !== 'object' || !('code' in payload)) return null;
+export function getErrorPayloadCode(
+  payload: unknown,
+): MobileApiErrorCode | null {
+  if (payload === null || typeof payload !== 'object' || !('code' in payload))
+    return null;
   return isMobileApiErrorCode(payload.code) ? payload.code : null;
 }
 
-function getNestedErrorPayloadCode(payload: unknown): MobileApiErrorCode | null {
+function getNestedErrorPayloadCode(
+  payload: unknown,
+): MobileApiErrorCode | null {
   if (isMobileApiErrorCode(payload)) return payload;
   const directCode = getErrorPayloadCode(payload);
   if (directCode) return directCode;
@@ -75,19 +116,21 @@ function getNestedErrorPayloadCode(payload: unknown): MobileApiErrorCode | null 
   }
   if (payload === null || typeof payload !== 'object') return null;
   const record = payload as Record<string, unknown>;
-  return getNestedErrorPayloadCode(record.error) ?? getNestedErrorPayloadCode(record.message);
+  return (
+    getNestedErrorPayloadCode(record.error) ??
+    getNestedErrorPayloadCode(record.message)
+  );
 }
-
 
 export function toMobileApiError(
   error: unknown,
   fallbackKey: TranslationKey,
 ): MobileApiError {
   if (error instanceof MobileApiError) return error;
-  const code: MobileApiErrorCode = error instanceof RequestTimeoutError
-    ? 'API_TIMEOUT'
-    : 'REQUEST_FAILED';
-  const messageKey = code === 'REQUEST_FAILED' ? fallbackKey : mobileErrorMessageKey(code);
+  const code: MobileApiErrorCode =
+    error instanceof RequestTimeoutError ? 'API_TIMEOUT' : 'REQUEST_FAILED';
+  const messageKey =
+    code === 'REQUEST_FAILED' ? fallbackKey : mobileErrorMessageKey(code);
   return new MobileApiError(code, messageKey, error);
 }
 
@@ -102,14 +145,22 @@ export async function throwMobileResponseError(
     cause = error;
   }
   const code = getNestedErrorPayloadCode(cause) ?? 'REQUEST_FAILED';
-  const messageKey = code === 'REQUEST_FAILED' ? fallbackKey : mobileErrorMessageKey(code);
+  const messageKey =
+    code === 'REQUEST_FAILED' ? fallbackKey : mobileErrorMessageKey(code);
   throw new MobileApiError(code, messageKey, cause);
 }
 
-export async function readMobileResponseJson(response: Response, fallbackKey: TranslationKey): Promise<unknown> {
+export async function readMobileResponseJson(
+  response: Response,
+  fallbackKey: TranslationKey,
+): Promise<unknown> {
   try {
     return await response.json();
   } catch (error: unknown) {
-    throw new MobileApiError('INVALID_RESPONSE', mobileErrorMessageKey('INVALID_RESPONSE') || fallbackKey, error);
+    throw new MobileApiError(
+      'INVALID_RESPONSE',
+      mobileErrorMessageKey('INVALID_RESPONSE') || fallbackKey,
+      error,
+    );
   }
 }

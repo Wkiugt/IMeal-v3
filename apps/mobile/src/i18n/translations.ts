@@ -40,6 +40,16 @@ export const vi = {
   'common.meal': 'suất ăn',
   'common.meals': 'suất ăn',
   'auth.welcome': 'Chào mừng',
+  'auth.email': 'Email',
+  'auth.emailOtpHint': 'Nhập email công việc để nhận mã đăng nhập một lần.',
+  'auth.requestCode': 'Gửi mã',
+  'auth.resendCode': 'Gửi mã mới',
+  'auth.otpSent':
+    'Nếu địa chỉ có thể đăng nhập, mã đã được gửi. Hãy kiểm tra hộp thư.',
+  'auth.otpRetryAfter': 'Bạn có thể yêu cầu mã mới sau %{seconds} giây.',
+  'auth.verificationCode': 'Mã xác thực',
+  'auth.verifyCode': 'Xác thực mã',
+  'auth.otpPrivacy': 'Mã chỉ dùng một lần và sẽ hết hạn sớm. Không chia sẻ mã.',
   'auth.noMobileAccess':
     'Tài khoản này chưa được cấp quyền truy cập trên thiết bị di động.',
   'auth.localSignInHint': 'Đăng nhập bằng tài khoản nhân viên hoặc bếp nội bộ.',
@@ -194,6 +204,14 @@ export const vi = {
   'pickup.subtitle': 'Xuất trình mã QR động này cho nhân viên bếp',
   'pickup.loading': 'Đang tải lựa chọn nhận suất…',
   'pickup.windowClosed': 'Hiện đang ngoài giờ nhận suất',
+  'pickup.selectExplicitForMultiple':
+    'Với nhiều suất, hãy chọn rõ các suất muốn nhận.',
+  'pickup.selectionRequired': 'Cần chọn suất ăn',
+  'pickup.gpsPurpose':
+    'Vị trí phía trước màn hình được dùng để xác minh nơi người trình bày nhận suất.',
+  'pickup.gpsRetention':
+    'Chỉ giữ bằng chứng xác minh tối thiểu cần thiết; không theo dõi nền.',
+  'pickup.refreshOptions': 'Làm mới lựa chọn',
   'pickup.windowClosedHint':
     'Vé suất ăn có hiệu lực từ 10:30 đến 13:30 theo giờ Việt Nam.',
   'pickup.notReady': 'Bếp đang chuẩn bị nhận suất',
@@ -255,6 +273,27 @@ export const vi = {
   'scanner.employee': 'Nhân viên',
   'scanner.servedAt': 'Đã phục vụ lúc %{time}',
   'scanner.retryScan': 'Quét lại',
+  'errors.requestOtp': 'Không thể gửi mã đăng nhập. Hãy thử lại sau.',
+  'errors.verifyOtp': 'Mã không hợp lệ hoặc đã hết hạn.',
+  'errors.logOut': 'Không thể kết thúc phiên trên máy chủ.',
+  'errors.resolvePickup': 'Không thể kiểm tra mã nhận suất.',
+  'errors.confirmPickup': 'Không thể xác nhận phục vụ.',
+  'errors.otpInvalidOrExpired': 'Mã không hợp lệ hoặc đã hết hạn.',
+  'errors.otpRateLimited': 'Bạn đã thử quá nhiều lần. Hãy thử lại sau.',
+  'errors.sessionRevoked': 'Phiên đăng nhập đã bị thu hồi. Hãy đăng nhập lại.',
+  'errors.sessionInvalid': 'Phiên đăng nhập không hợp lệ. Hãy đăng nhập lại.',
+  'errors.gpsRetryRequired':
+    'Cần xác minh vị trí mới. Hãy thử lại hoặc làm mới.',
+  'errors.gpsUnavailable':
+    'Không thể lấy vị trí hiện tại. Hãy thử lại hoặc làm mới.',
+  'errors.gpsStale': 'Vị trí đã cũ. Hãy thử lại hoặc làm mới.',
+  'errors.gpsInaccurate': 'Vị trí chưa đủ chính xác. Hãy thử lại hoặc làm mới.',
+  'errors.pickupIntentRequired': 'Cần chọn suất ăn trước khi tạo mã QR.',
+  'errors.pickupIntentConflict': 'Lựa chọn nhận suất đã thay đổi. Hãy làm mới.',
+  'errors.idempotencyConflict':
+    'Yêu cầu xác nhận đã thay đổi. Hãy quét lại mã.',
+  'errors.qrExpired': 'Mã QR đã hết hạn. Hãy tạo mã mới.',
+  'errors.qrInvalid': 'Mã QR không hợp lệ. Hãy quét lại.',
   'scanner.servingConfirmation': 'Xác nhận phục vụ',
   'scanner.itemCount': '%{count} món',
   'scanner.itemCount.one': '%{count} món',
@@ -343,6 +382,18 @@ export type TranslationKey = keyof typeof vi;
 
 export const en: Record<TranslationKey, string> = {
   'common.retry': 'Retry',
+  'auth.email': 'Email',
+  'auth.emailOtpHint':
+    'Enter your work email to receive a one-time sign-in code.',
+  'auth.requestCode': 'Send code',
+  'auth.resendCode': 'Send a new code',
+  'auth.otpSent':
+    'If the address can sign in, a code has been sent. Check your inbox.',
+  'auth.otpRetryAfter': 'You can request a new code in %{seconds} seconds.',
+  'auth.verificationCode': 'Verification code',
+  'auth.verifyCode': 'Verify code',
+  'auth.otpPrivacy':
+    'The code is single-use and expires shortly. Never share it.',
   'common.cancel': 'Cancel',
   'common.confirm': 'Confirm',
   'common.close': 'Close',
@@ -540,6 +591,14 @@ export const en: Record<TranslationKey, string> = {
     'Register a meal in Calendar before generating a ticket.',
   'pickup.mealsToPickUp': 'MEALS TO PICK UP',
   'pickup.selectOneOrMore': 'Select one or more',
+  'pickup.selectExplicitForMultiple':
+    'For multiple meals, explicitly choose the meals to pick up.',
+  'pickup.selectionRequired': 'Select a meal',
+  'pickup.gpsPurpose':
+    'Foreground location verifies where the presenter is picking up the meal.',
+  'pickup.gpsRetention':
+    'Only the minimum verification evidence is retained; there is no background tracking.',
+  'pickup.refreshOptions': 'Refresh options',
   'pickup.myMeal': 'My meal',
   'pickup.delegatedMeal': 'Delegated meal',
   'pickup.from': 'From %{name}',
@@ -600,6 +659,28 @@ export const en: Record<TranslationKey, string> = {
   'scanner.confirmServing': 'Confirm serving',
   'scanner.pickupSessionExpired': 'Pickup session has expired',
   'notice.dismiss': 'Dismiss notification',
+  'errors.requestOtp': 'Unable to send a sign-in code. Try again later.',
+  'errors.verifyOtp': 'The code is invalid or has expired.',
+  'errors.logOut': 'Unable to end the server session.',
+  'errors.resolvePickup': 'Unable to verify the pickup code.',
+  'errors.confirmPickup': 'Unable to confirm serving.',
+  'errors.otpInvalidOrExpired': 'The code is invalid or has expired.',
+  'errors.otpRateLimited': 'Too many attempts. Try again later.',
+  'errors.sessionRevoked': 'Your session was revoked. Sign in again.',
+  'errors.sessionInvalid': 'Your session is invalid. Sign in again.',
+  'errors.gpsRetryRequired':
+    'A fresh location check is required. Retry or refresh.',
+  'errors.gpsUnavailable': 'Current location is unavailable. Retry or refresh.',
+  'errors.gpsStale': 'The location fix is stale. Retry or refresh.',
+  'errors.gpsInaccurate':
+    'The location is not accurate enough. Retry or refresh.',
+  'errors.pickupIntentRequired': 'Select a meal before generating a QR code.',
+  'errors.pickupIntentConflict':
+    'The pickup selection changed. Refresh and try again.',
+  'errors.idempotencyConflict':
+    'The confirmation request changed. Scan the code again.',
+  'errors.qrExpired': 'The QR code expired. Create a new code.',
+  'errors.qrInvalid': 'The QR code is invalid. Scan it again.',
   'errors.apiTimeout':
     'The API did not respond. Check the connection and try again.',
   'errors.invalidResponse': 'The server response was invalid.',

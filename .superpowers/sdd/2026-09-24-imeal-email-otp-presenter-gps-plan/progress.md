@@ -113,3 +113,10 @@
 - [x] Task 8 API/core TypeScript validation, root typecheck, API lint, and diff-check passed; API lint retains only pre-existing repository warnings.
 - [!] Task 8 PostgreSQL domain concurrency and pickup e2e verification blocked before discovery: `DATABASE_URL is not set in environment or .env.test`.
 - [x] Task 8 report: `task-8-report.md`; no mobile Task 9, Admin Task 10, or docs Task 11 production changes.
+
+- [x] Official Task 9 brief generated from plan lines 850–929; artifact: `task-9-brief.md`.
+- [x] RED mobile transport/intent tests observed before Task 9 implementation; missing OTP API, exact pickup methods, and selection rules failed as expected.
+- [x] Task 9 implemented: strict non-enumerating OTP/session mobile transport and bootstrap; exact sorted QR generation with presenter evidence; QR-only Kitchen resolve; session/idempotency-only confirm; Expo foreground presenter evidence with cleanup; one-item auto-select and explicit multi-select; QR invalidation and Retry/Refresh-only GPS recovery; bilingual purpose/retention copy.
+- [x] Focused Task 9 tests — 3 files, 14 tests passed; full mobile suite — 20 files, 72 tests passed.
+- [x] Mobile TypeScript validation passed after adding Expo Location `~17.0.1` and its foreground permission config.
+- [x] Task 9 report: `task-9-report.md`; Expo web export, root lint/build, and diff-check passed. Native device GPS/permission runtime remains unexercised in this workspace.

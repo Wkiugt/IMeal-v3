@@ -23,7 +23,8 @@ import {
 import { formatBusinessInstant } from '../../businessDate';
 import type { AppTabScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
-import { servingAPI, type ResolveServingResponse } from '../../api/servingAPI';
+import * as Crypto from 'expo-crypto';
+import { pickupAPI, type ResolvePickupResponse } from '../../api/pickupAPI';
 import {
   MobileApiError,
   getMobileErrorMessage,
@@ -57,12 +58,13 @@ export function KitchenScannerScreen({ navigation }: Props) {
   const [scanned, setScanned] = useState(false);
   const [loading, setLoading] = useState(false);
   const [servingIntent, setServingIntent] =
-    useState<ResolveServingResponse | null>(null);
+    useState<ResolvePickupResponse | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [stageHeight, setStageHeight] = useState(0);
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [feedback, setFeedback] = useState<ScanFeedback | null>(null);
+  const idempotencyKey = useRef<string | null>(null);
   const reduceMotion = useReducedMotion();
   const scanProgress = useRef(new Animated.Value(0)).current;
   const feedbackTimer = useRef<NodeJS.Timeout | undefined>(undefined);
@@ -158,23 +160,22 @@ export function KitchenScannerScreen({ navigation }: Props) {
     setSecondsLeft(0);
     setScanned(false);
     setLoading(false);
+    idempotencyKey.current = null;
   };
 
   const resolveCode = async (payload: string) => {
     if (!token) return;
     setLoading(true);
     try {
-      const response = await servingAPI.resolveServing(
-        { qrPayload: payload },
-        token,
-      );
+      idempotencyKey.current = null;
+      const response = await pickupAPI.resolvePickup(token, { qr: payload });
       const expiry = new Date(response.session.expiresAt).getTime();
       setServingIntent(response);
       setExpiresAt(Number.isFinite(expiry) ? expiry : Date.now() + 30_000);
     } catch (error: unknown) {
       presentFeedback({
         title: t('scanner.verificationFailed'),
-        message: getMobileErrorMessage(error, t, 'errors.resolveServing'),
+        message: getMobileErrorMessage(error, t, 'errors.resolvePickup'),
         tone: 'error',
         retry: true,
       });
@@ -193,12 +194,14 @@ export function KitchenScannerScreen({ navigation }: Props) {
   const confirmServing = async () => {
     if (!token || !servingIntent || expired) return;
     const confirmedIntent = servingIntent;
+    const requestId = idempotencyKey.current ?? Crypto.randomUUID();
+    idempotencyKey.current = requestId;
     setLoading(true);
     try {
-      await servingAPI.confirmServing(
-        { pickupSessionToken: confirmedIntent.pickupSessionToken },
-        token,
-      );
+      await pickupAPI.confirmPickup(token, {
+        pickupSessionId: confirmedIntent.session.id,
+        idempotencyKey: requestId,
+      });
       const delegatedItem = confirmedIntent.items.find(
         (item) => item.type === 'DELEGATED',
       );
@@ -228,7 +231,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
         error instanceof MobileApiError &&
         error.code === 'PICKUP_SESSION_EXPIRED'
           ? t('errors.pickupSessionExpired')
-          : getMobileErrorMessage(error, t, 'errors.confirmServing');
+          : getMobileErrorMessage(error, t, 'errors.confirmPickup');
       resetScan();
       presentFeedback({
         title: t('scanner.verificationFailed'),

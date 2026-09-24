@@ -1939,6 +1939,7 @@ __metadata:
     expo-device: "npm:~6.0.2"
     expo-font: "npm:~12.0.10"
     expo-linking: "npm:~6.3.1"
+    expo-location: "npm:~17.0.1"
     expo-notifications: "npm:~0.28.17"
     expo-secure-store: "npm:~13.0.2"
     expo-status-bar: "npm:~1.12.1"
@@ -7031,6 +7032,15 @@ __metadata:
     expo-constants: "npm:~16.0.0"
     invariant: "npm:^2.2.4"
   checksum: 10c0/a6550cacc3117dde92fe9758c3b97089dae8ce2d90a2d6dd4441571991c4c7e139beb9d5648f04eef2fccc52f00f1631f36717bcd070c62413c013a30ae7aa97
+  languageName: node
+  linkType: hard
+
+"expo-location@npm:~17.0.1":
+  version: 17.0.1
+  resolution: "expo-location@npm:17.0.1"
+  peerDependencies:
+    expo: "*"
+  checksum: 10c0/b73ab52c3ad91ac3f0457b3ef5fd8c1260288f680a51e75db0d6c2fd4a15e8450b8a7ec405788cffdacc7b0dd7f62318916122cdb377e07697af896163e66a7d
   languageName: node
   linkType: hard
 

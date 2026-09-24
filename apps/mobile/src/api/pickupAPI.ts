@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { v1 } from '@imeal/contracts';
 import { API_BASE } from './apiConfig';
 import {
@@ -9,25 +10,53 @@ import {
 
 export type PickupOption = v1.PickupOption;
 export type PickupOptionsResponse = v1.PickupOptionsResponse;
+export type GenerateQrInput = v1.GenerateQrInput;
+export type ResolvePickupInput = v1.ResolvePickupInput;
+export type ConfirmPickupInput = v1.ConfirmPickupInput;
+export type ResolvePickupResponse = v1.ResolveServingResponse;
 
-export interface GenerateQrResponse {
-  qr: string;
-  exp: number;
-  ttl: number;
-}
+const GenerateQrResponseSchema = z
+  .object({
+    qr: z.string().min(1),
+    exp: z.number().int().positive(),
+    ttl: z.number().int().positive(),
+    registrationIds: z.array(z.string().min(1)).min(1),
+    mealDate: v1.MealDateSchema,
+  })
+  .strict();
 
-function isGenerateQrResponse(payload: unknown): payload is GenerateQrResponse {
-  if (payload === null || typeof payload !== 'object') return false;
-  if (!('qr' in payload) || !('exp' in payload) || !('ttl' in payload)) return false;
-  return typeof payload.qr === 'string'
-    && typeof payload.exp === 'number'
-    && typeof payload.ttl === 'number';
-}
+const ConfirmPickupResponseSchema = z
+  .object({
+    success: z.literal(true),
+    servedCount: z.number().int().nonnegative(),
+    servings: z.array(
+      z
+        .object({
+          id: z.string().min(1),
+          registrationId: z.string().min(1),
+          servedAt: z
+            .string()
+            .datetime({ offset: false })
+            .refine((value) => value.endsWith('Z')),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+export type GenerateQrResponse = z.infer<typeof GenerateQrResponseSchema>;
+export type ConfirmPickupResponse = z.infer<typeof ConfirmPickupResponseSchema>;
+
+type PickupFallbackKey =
+  | 'errors.loadPickup'
+  | 'errors.generateQr'
+  | 'errors.resolvePickup'
+  | 'errors.confirmPickup';
 
 async function fetchOrThrow(
   input: RequestInfo | URL,
   init: RequestInit,
-  fallbackKey: 'errors.loadPickup' | 'errors.generateQr',
+  fallbackKey: PickupFallbackKey,
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -40,43 +69,117 @@ async function fetchOrThrow(
   return readMobileResponseJson(response, fallbackKey);
 }
 
+function authHeaders(token: string): Record<string, string> {
+  return {
+    Accept: 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+function jsonAuthHeaders(token: string): Record<string, string> {
+  return {
+    ...authHeaders(token),
+    'Content-Type': 'application/json',
+  };
+}
+
+function parseResponse<T>(schema: z.ZodType<T>, payload: unknown): T {
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) {
+    throw new MobileApiError(
+      'INVALID_RESPONSE',
+      'errors.invalidResponse',
+      parsed.error,
+    );
+  }
+  return parsed.data;
+}
+
 export const pickupAPI = {
   getPickupOptions: async (token: string): Promise<PickupOptionsResponse> => {
     const payload = await fetchOrThrow(
       `${API_BASE}/me/pickup-options`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      },
+      { headers: authHeaders(token) },
       'errors.loadPickup',
     );
-    const parsed = v1.PickupOptionsResponseSchema.safeParse(payload);
-    if (!parsed.success) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
-    }
-    return parsed.data;
+    return parseResponse(v1.PickupOptionsResponseSchema, payload);
   },
 
   generateQr: async (
     token: string,
-    registrationIds: string[],
+    input: GenerateQrInput,
   ): Promise<GenerateQrResponse> => {
+    const registrationIds = [...input.registrationIds].sort((left, right) =>
+      left.localeCompare(right),
+    );
+    const parsedInput = v1.GenerateQrSchema.safeParse({
+      ...input,
+      registrationIds,
+    });
+    if (!parsedInput.success) {
+      throw new MobileApiError(
+        'INVALID_RESPONSE',
+        'errors.invalidResponse',
+        parsedInput.error,
+      );
+    }
     const payload = await fetchOrThrow(
       `${API_BASE}/me/qr`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ registrationIds }),
+        headers: jsonAuthHeaders(token),
+        body: JSON.stringify(parsedInput.data),
       },
       'errors.generateQr',
     );
-    if (!isGenerateQrResponse(payload)) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', payload);
+    return parseResponse(GenerateQrResponseSchema, payload);
+  },
+
+  resolvePickup: async (
+    token: string,
+    input: ResolvePickupInput,
+  ): Promise<ResolvePickupResponse> => {
+    const parsedInput = v1.ResolvePickupSchema.safeParse(input);
+    if (!parsedInput.success) {
+      throw new MobileApiError(
+        'INVALID_RESPONSE',
+        'errors.invalidResponse',
+        parsedInput.error,
+      );
     }
-    return payload;
+    const payload = await fetchOrThrow(
+      `${API_BASE}/serving/resolve`,
+      {
+        method: 'POST',
+        headers: jsonAuthHeaders(token),
+        body: JSON.stringify(parsedInput.data),
+      },
+      'errors.resolvePickup',
+    );
+    return parseResponse(v1.ResolveServingResponseSchema, payload);
+  },
+
+  confirmPickup: async (
+    token: string,
+    input: ConfirmPickupInput,
+  ): Promise<ConfirmPickupResponse> => {
+    const parsedInput = v1.ConfirmPickupSchema.safeParse(input);
+    if (!parsedInput.success) {
+      throw new MobileApiError(
+        'INVALID_RESPONSE',
+        'errors.invalidResponse',
+        parsedInput.error,
+      );
+    }
+    const payload = await fetchOrThrow(
+      `${API_BASE}/serving/confirm`,
+      {
+        method: 'POST',
+        headers: jsonAuthHeaders(token),
+        body: JSON.stringify(parsedInput.data),
+      },
+      'errors.confirmPickup',
+    );
+    return parseResponse(ConfirmPickupResponseSchema, payload);
   },
 };
