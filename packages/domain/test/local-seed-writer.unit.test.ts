@@ -73,40 +73,50 @@ function canonicalRoleTransaction() {
   };
 }
 
+function buildTinyPlan(plan: LocalSeedPlan): LocalSeedPlan {
+  return {
+    ...plan,
+    users: [plan.users[0]],
+    userRoles: [],
+    locations: [],
+    locationPolicies: [],
+    assignments: [],
+    allowlists: [],
+    dailyMenus: [],
+    mealDays: [],
+    menuRevisions: [],
+    appSettings: [],
+    registrations: [],
+    delegations: [],
+    penalties: [],
+    servingVerifications: [],
+    pickupSessions: [],
+    servingConfirmRequests: [],
+    mealServings: [],
+    mealEvents: [],
+  };
+}
+
 describe('local seed writer boundaries', () => {
   it('skips updates for unchanged seed-owned rows and reports them as unchanged', async () => {
     const plan = buildPlan();
-    const tinyPlan: LocalSeedPlan = {
-      ...plan,
-      users: [plan.users[0]],
-      userRoles: [],
-      locations: [],
-      locationPolicies: [],
-      assignments: [],
-      allowlists: [],
-      dailyMenus: [],
-      mealDays: [],
-      menuRevisions: [],
-      appSettings: [],
-      registrations: [],
-      delegations: [],
-      penalties: [],
-      servingVerifications: [],
-      pickupSessions: [],
-      servingConfirmRequests: [],
-      mealServings: [],
-      mealEvents: [],
+    const tinyPlan = buildTinyPlan(plan);
+    const preservedUpdatedAt = new Date('2030-01-02T03:04:05.000Z');
+    const existingUser = { ...plan.users[0], updatedAt: preservedUpdatedAt };
+    const existingWeeklyMenu = {
+      ...plan.weeklyMenu,
+      updatedAt: preservedUpdatedAt,
     };
     const userUpsert = vi.fn();
     const weeklyMenuUpsert = vi.fn();
     const transaction = {
       ...canonicalRoleTransaction(),
       user: {
-        findUnique: vi.fn(async () => ({ ...plan.users[0] })),
+        findUnique: vi.fn(async () => existingUser),
         upsert: userUpsert,
       },
       weeklyMenu: {
-        findUnique: vi.fn(async () => ({ ...plan.weeklyMenu })),
+        findUnique: vi.fn(async () => existingWeeklyMenu),
         upsert: weeklyMenuUpsert,
       },
     };
@@ -117,6 +127,41 @@ describe('local seed writer boundaries', () => {
     expect(result).toMatchObject({ created: 0, updated: 0, unchanged: 2 });
     expect(userUpsert).not.toHaveBeenCalled();
     expect(weeklyMenuUpsert).not.toHaveBeenCalled();
+    expect(existingUser.updatedAt).toBe(preservedUpdatedAt);
+    expect(existingWeeklyMenu.updatedAt).toBe(preservedUpdatedAt);
+  });
+
+  it('restores a manually changed deterministic createdAt field', async () => {
+    const plan = buildPlan();
+    const tinyPlan = buildTinyPlan(plan);
+    const existingUser = {
+      ...plan.users[0],
+      createdAt: new Date('2000-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2030-01-02T03:04:05.000Z'),
+    };
+    const userUpsert = vi.fn(
+      async ({ update }: { update: Record<string, unknown> }) => {
+        Object.assign(existingUser, update);
+      },
+    );
+    const transaction = {
+      ...canonicalRoleTransaction(),
+      user: {
+        findUnique: vi.fn(async () => existingUser),
+        upsert: userUpsert,
+      },
+      weeklyMenu: {
+        findUnique: vi.fn(async () => ({ ...plan.weeklyMenu })),
+        upsert: vi.fn(),
+      },
+    };
+    const { client } = makeClient(transaction);
+
+    const result = await writeLocalSeed(client, tinyPlan);
+
+    expect(result).toMatchObject({ created: 0, updated: 1, unchanged: 1 });
+    expect(userUpsert).toHaveBeenCalledTimes(1);
+    expect(existingUser.createdAt).toEqual(plan.users[0].createdAt);
   });
 
   it('caps maxAttempts at three and uses only the 25/50ms P2034 backoff sequence', async () => {
@@ -182,6 +227,24 @@ describe('local seed writer boundaries', () => {
       expect(String(error)).not.toContain('token');
       expect(String(error)).not.toContain('otp-token');
       expect(String(error)).not.toContain('qr-payload');
+    }
+  });
+
+  it('reports Prisma initialization errorCode without exposing its message', async () => {
+    const plan = buildPlan();
+    const failure = {
+      errorCode: 'P1001',
+      message: 'Can not reach postgresql://postgres:secret@remote.example/imeal',
+    };
+    const { client } = makeFailingClient(failure);
+
+    const result = writeLocalSeed(client, plan);
+    await expect(result).rejects.toMatchObject({ code: 'P1001' });
+    try {
+      await result;
+    } catch (error) {
+      expect(String(error)).not.toContain('postgresql://');
+      expect(String(error)).not.toContain('secret');
     }
   });
 

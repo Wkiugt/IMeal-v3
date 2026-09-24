@@ -1,8 +1,8 @@
 # Task 7 verification report
 
-**UPDATED / CONDITIONAL:** The final fix wave below resolves the three actionable static findings. PostgreSQL-backed graph/rerun/rollback behavior and formatting remain unverified because the disposable `DATABASE_URL` and Prettier executable are unavailable in this environment.
+**UPDATED / CONDITIONAL:** The initial three findings and final reviewer findings I-1 through I-4 are addressed in sections 7 and 8. PostgreSQL-backed graph/rerun/rollback behavior and formatting remain unverified because the disposable `DATABASE_URL` and Prettier executable are unavailable in this environment.
 
-The original Task 7 observations and limitations remain historical evidence; section 7 records the final fix verification and current gaps.
+The earlier Task 7 observations and limitations remain historical evidence; sections 7–8 record the current fix waves and gaps.
 
 ## 1. Focused commands
 
@@ -255,3 +255,24 @@ Fresh verification:
 | custom-week executable dry-run (`--week-start 2026-10-05`) | Passed; `serveDate=2026-10-05`, complete count summary, and `LOCAL/TEST ONLY` marker printed |
 
 Current gaps remain unchanged: the disposable PostgreSQL suite cannot collect without an explicit `DATABASE_URL`, so no PostgreSQL graph, rerun, `@updatedAt`, rollback, unrelated-row, or serialization result is claimed. Prettier remains unavailable. The existing migration authorization discrepancy (`admin -> kitchen.serve`, plus missing controller-required admin permissions) remains outside this fix.
+
+## 8. Final reviewer fix wave
+
+The final reviewer findings were addressed in one additional fix wave:
+
+- **I-1 documented `.env` path:** `docs/local-role-testing.md` now states that the seed CLI reads only the current process environment and does not load `.env`. The command block explicitly sets every required safety variable, including a synthetic local `DATABASE_URL` placeholder.
+- **I-2 keyspace contract:** the approved spec, implementation plan constraints, and operator guide now state that the exact 50-email, `LOCAL-A`..`LOCAL-D`, and fixed employee-code keyspaces require a separate disposable database/schema for a different base/week. Same-database conflicts fail closed through unique constraints; no namespacing, adoption, or deletion was added. The operator guide records this as the expected smoke assertion.
+- **I-3 initialization error code:** `writer.ts#errorCode()` now reads both Prisma request `code` and initialization `errorCode`. The focused fake-client test observes `P1001` while still redacting the connection message.
+- **I-4 timestamp/manual convergence:** all update mappers include declared deterministic `createdAt`; User creation includes its declared deterministic `updatedAt`. Prisma-managed `@updatedAt` values remain out of update comparison/payloads so no-op reruns preserve them and real corrections refresh them once. Fake writer tests cover both no-op timestamp preservation and manual `createdAt` convergence.
+
+Fresh final-wave verification:
+
+| Command | Result |
+| --- | --- |
+| focused writer regression | Red: 2 expected failures before fixes; green: 1 file, 12 tests passed |
+| `corepack yarn workspace @imeal/core test:unit` | 5 files, 46 tests passed |
+| `corepack yarn workspace @imeal/core exec tsc --noEmit -p tsconfig.json` | Passed with no diagnostics |
+| executable help/custom-week dry-run/safety smoke | Passed; complete redacted summary and `serveDate=weekStart` observed; production mode rejected with `INVALID_ENVIRONMENT` |
+| disposable PostgreSQL suite | Failed before collection because `DATABASE_URL` is absent from the environment and `.env.test`; no database result is claimed |
+
+Prettier remains unavailable. The existing migration authorization discrepancy remains a separate prerequisite. No schema, migration, API, worker, deployment, or `.env.example` file was modified.

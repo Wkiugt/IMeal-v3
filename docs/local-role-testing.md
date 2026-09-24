@@ -67,15 +67,19 @@ database. The command requires all of these safety variables:
 - `DATABASE_URL`, which must be a PostgreSQL URL whose host is `localhost`,
   `127.0.0.1`, `::1`, or the local Compose service `db`.
 
-Set `DATABASE_URL` in the ignored local `.env` or in the current PowerShell
-session before running the exact invocation below. Do not put a shared,
-staging, production, or real-data connection string in this guide.
+The `seed:local` CLI reads the current process environment only; it does not
+load `.env` automatically. A local `.env` file may still be used by other
+services, but operators must explicitly set the seed variables in the current
+PowerShell session before invoking the CLI. The URL below is a clearly
+synthetic local target and must not be replaced with a shared or production
+connection string.
 
 ```powershell
 $env:NODE_ENV='test'
 $env:IMEAL_LOCAL_SEED='1'
 $env:IMEAL_LOCAL_SEED_CONFIRM='I_UNDERSTAND_LOCAL_ONLY'
 $env:IMEAL_LOCAL_SEED_BASE_EMAIL='imeal.seed@example.test'
+$env:DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal_local?schema=public'
 yarn workspace @imeal/core seed:local --dry-run
 yarn workspace @imeal/core seed:local
 ```
@@ -105,10 +109,14 @@ Real operational location data, coordinates, employee data, and roster
 assignments are never stored in source control.
 
 The seed is idempotent for the same base email, week, and serve date: reruns
-converge on the same rows and do not grow counts. It has no reset, purge, or
-delete mode; use a new disposable database (or a different synthetic
-keyspace) when an isolated dataset is needed. Never point this workflow at a
-database containing real operational data.
+converge on the same rows and do not grow counts. The exact 50-email,
+`LOCAL-A`..`LOCAL-D`, and `LOCAL-EMP-0001`..`LOCAL-EMP-0050` keyspaces are
+global unique schema values, so a different base email or week requires a
+separate disposable database/schema. Conflicting arguments in an already
+seeded database are expected to fail closed on a unique constraint; the
+writer never adopts or deletes rows outside its deterministic IDs. It has no
+reset, purge, or delete mode. Never point this workflow at a database
+containing real operational data.
 
 ## 4. Test-harness bypass
 

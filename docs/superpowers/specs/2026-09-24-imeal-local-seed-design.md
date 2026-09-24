@@ -98,7 +98,7 @@ Every generated row that has a string ID receives a deterministic UUID derived f
 
 The implementation MUST use one helper for stable IDs and MUST use the same ID on every rerun. IDs MUST NOT be generated with `randomUUID()` for seed-owned rows. Generated emails, IDs, employee codes, location codes, menu dates, registration dates, delegation IDs, serving IDs, and event IDs are therefore reproducible from the same arguments.
 
-Seed-owned rows are identified by their deterministic IDs. Rerunning with the same base email and week-start arguments upserts the same rows. Running with a different base email creates a separate synthetic keyspace and does not delete the first keyspace. A reset/purge command is deliberately out of scope.
+Seed-owned rows are identified by their deterministic IDs. Rerunning with the same base email and week-start arguments upserts the same rows. The exact 50-email, `LOCAL-A`..`LOCAL-D`, and `LOCAL-EMP-0001`..`LOCAL-EMP-0050` contracts are global schema keys, so a different base email or week MUST use a separate disposable database/schema. Conflicting arguments in an already-seeded database MUST fail closed through the existing unique constraints; the writer MUST NOT adopt or delete rows outside its deterministic IDs. A reset/purge command is deliberately out of scope.
 
 ## 5. Role distribution and authorization
 
@@ -227,7 +227,7 @@ A `P2002` outside the deterministic keyspace means the local database already co
 
 ### Rerun semantics
 
-The same command and arguments produce the same row IDs, counts, field values, and relationships. An already-converged rerun reports `created=0`, `updated=0`, and the expected counts (or an equivalent no-op summary). Rerunning after a local manual edit restores only seed-owned rows to the declared synthetic plan. Different base email or week-start arguments produce an independent deterministic keyspace; the command does not delete the prior one.
+The same command and arguments produce the same row IDs, counts, field values, and relationships. An already-converged rerun reports `created=0`, `updated=0`, and the expected counts (or an equivalent no-op summary). Rerunning after a local manual edit restores only seed-owned rows to the declared synthetic plan. A different base email or week requires a separate disposable database/schema because the exact email, `LOCAL-A`..`LOCAL-D`, employee-code, menu-date, and setting-key contracts are globally unique; same-database conflicts fail closed through unique constraints without adopting or deleting rows.
 
 ## 10. CLI and environment contract
 
@@ -313,6 +313,6 @@ The implementation MUST NOT modify `packages/domain/prisma/schema.prisma`, Prism
 - **No placeholders:** all required environment names, confirmation text, role counts, email suffixes, location codes, date defaults, status counts, and module responsibilities are specified.
 - **No production contradiction:** the command has multiple fail-closed environment/database gates, and every location/address/coordinate is marked synthetic local-only; no operational data is invented.
 - **Role consistency:** Kitchen never implies Staff in generated `UserRole` rows; dual capability is explicit. Admin is not assigned Kitchen, while the existing migration's Admin permission discrepancy remains visible rather than silently rewritten.
-- **Rerun consistency:** deterministic IDs and a single serializable transaction provide convergence without broad deletion; different keyspaces are isolated.
+- **Rerun consistency:** deterministic IDs and a single serializable transaction provide convergence without broad deletion; alternate base/week arguments use a separate disposable database/schema and same-database conflicts fail closed.
 - **Schema consistency:** registrations use valid enum values and meal choices, one row per user/date, required location snapshots for pickup history, one serving per served registration, valid delegation states, and penalties only for no-shows.
 - **Scope consistency:** this is a design document only. It does not implement code, tests, migrations, seed data, or operational imports.

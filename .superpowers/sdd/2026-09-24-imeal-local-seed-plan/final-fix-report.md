@@ -1,12 +1,12 @@
 # IMeal local synthetic seed final fix report
 
 **Date:** 2026-09-25
-**Base:** `125c937`
-**Status:** Static/actionable findings fixed; PostgreSQL smoke remains blocked by missing disposable `DATABASE_URL`.
+**Base:** `f6c7e51`
+**Status:** Final-review findings I-1 through I-4 addressed; PostgreSQL smoke remains blocked by missing disposable `DATABASE_URL`.
 
 ## Scope
 
-This fix wave addressed all three actionable findings in `task-7-report.md` without changing Prisma schema/migrations, API, worker, deployment, or `.env.example` files:
+The initial fix wave addressed the three findings recorded in the prior Task 7 report. The final reviewer fix wave is recorded below.
 
 1. `config.ts` now resolves the selected week before applying the implicit serve-date default. An omitted serve date follows an explicit `--week-start` or `IMEAL_LOCAL_SEED_WEEK_START`; when week-start is omitted, both remain the fixed default `2026-09-28`. Regression coverage includes flag and environment week-start inputs, the fixed default, and explicit serve-date input.
 2. `writer.ts` now reads each deterministic row with its scalar fields, compares the seed-owned update payload before calling the existing upsert, and reports `unchanged` for an exact match. Comparison handles `Date`, arrays, and JSON objects and ignores fields Prisma would omit (`undefined`). Changed seed-owned rows still use the deterministic update path; no delete or external-row adoption was added. The fake-transaction regression confirms unchanged rows issue no upsert and return `created=0`, `updated=0`, and the expected `unchanged` count.
@@ -70,15 +70,35 @@ It failed before test collection because `DATABASE_URL` is not set in the enviro
 
 Prettier was unavailable in the environment, so formatting remains unverified. The existing migration authorization discrepancy (`admin -> kitchen.serve`, and missing controller-required `allowlist.manage`, `location.manage`, and `roster.manage`) remains a separate prerequisite and was not changed.
 
-## Changed files
-
 - `packages/domain/src/local-seed/config.ts`
 - `packages/domain/src/local-seed/index.ts`
 - `packages/domain/src/local-seed/writer.ts`
 - `packages/domain/test/local-seed-config.unit.test.ts`
 - `packages/domain/test/local-seed-cli.unit.test.ts`
 - `packages/domain/test/local-seed-writer.unit.test.ts`
+- `docs/local-role-testing.md`
+- `docs/superpowers/specs/2026-09-24-imeal-local-seed-design.md`
+- `docs/superpowers/plans/2026-09-24-imeal-local-seed-plan.md`
 - `.superpowers/sdd/2026-09-24-imeal-local-seed-plan/task-7-report.md`
 - `.superpowers/sdd/2026-09-24-imeal-local-seed-plan/final-fix-report.md`
 
 No schema, migration, API, worker, deployment, or `.env.example` file was modified by this fix wave.
+
+## Final reviewer fix wave (I-1 through I-4)
+
+- **I-1:** `docs/local-role-testing.md` now states that the CLI reads the current process environment only and does not load `.env`. The PowerShell invocation explicitly sets every required safety variable, including the synthetic local placeholder `postgresql://postgres:postgres@localhost:5432/imeal_local?schema=public`.
+- **I-2:** The approved spec, implementation plan constraints, and operator guide now correct the keyspace contract. The exact 50-email, `LOCAL-A`..`LOCAL-D`, and `LOCAL-EMP-0001`..`LOCAL-EMP-0050` values require a separate disposable database/schema for a different base or week. Same-database conflicts are expected to fail closed through unique constraints; the writer never adopts or deletes rows outside deterministic IDs. No namespacing was added.
+- **I-3:** `writer.ts#errorCode()` now maps both Prisma request `code` and initialization `errorCode` while preserving redacted errors. A focused fake-client test proves an initialization `P1001` is reported as `P1001` without its connection message.
+- **I-4:** Every update mapper now includes its declared deterministic `createdAt` field, and User creation now includes its declared deterministic `updatedAt`. Prisma-managed `@updatedAt` values are intentionally excluded from update comparisons/payloads so unchanged reruns preserve the stored timestamp and a real correction refreshes it once. Fake writer coverage now proves an unchanged row with a preserved `updatedAt` skips updates and a manually changed `createdAt` converges.
+
+Final reviewer-wave verification:
+
+| Command | Result |
+| --- | --- |
+| focused writer regression (`test/local-seed-writer.unit.test.ts`) | Red: 2 expected failures before the fixes; green: 1 file, 12 tests passed |
+| `corepack yarn workspace @imeal/core test:unit` | 5 files, 46 tests passed |
+| `corepack yarn workspace @imeal/core exec tsc --noEmit -p tsconfig.json` | Passed with no diagnostics |
+| executable help/custom-week dry-run/safety smoke | Passed; help and redacted complete dry-run succeeded, custom `serveDate=weekStart` observed, production `NODE_ENV` rejected with `INVALID_ENVIRONMENT` |
+| `git diff --cached --check` | Passed on the staged final wave |
+
+The disposable PostgreSQL suite was attempted again and still failed before collection because `DATABASE_URL` is absent from the environment and `.env.test`. No PostgreSQL graph, same-database conflict, rerun timestamp, rollback, unrelated-row, or serialization result is claimed. Prettier remains unavailable. The existing migration authorization discrepancy remains a separate prerequisite.

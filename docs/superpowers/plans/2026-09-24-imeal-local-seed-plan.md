@@ -25,7 +25,7 @@
 - `SERVED` registrations have one serving; `CANCELLED` and `NO_SHOW` registrations have no serving; no-show rows have one 50,000-VND pending penalty.
 - Use one active assignment per user, immutable registration location snapshots, unique active employee codes, at most one active delegation per registration, and unique serving/delegation boundaries.
 - All writes belong to one serializable Prisma transaction; retry only PostgreSQL serialization conflicts (`P2034`) up to three complete attempts; never swallow `P2002`, `P2003`, `P2025`, validation, or check-constraint errors.
-- Reruns with identical base email/week/serve-date converge through deterministic upserts, do not grow row counts, and never delete or update rows outside the seed keyspace. A destructive reset command is not part of this plan.
+- The exact 50-email, `LOCAL-A`..`LOCAL-D`, and `LOCAL-EMP-0001`..`LOCAL-EMP-0050` contracts are global schema keys. A different base email or week requires a separate disposable database/schema; conflicting arguments in an already-seeded database fail closed through unique constraints, and the writer never adopts or deletes rows outside deterministic IDs.
 - Do not log passwords, database query secrets, OTP values, session tokens, QR payloads, or raw coordinates. A successful CLI summary is explicitly marked `LOCAL/TEST ONLY`.
 - `--help` may return usage before reading the write-path safety contract because it cannot create a Prisma client or mutate data; every dry-run and write path enforces the complete safety contract.
 - Every implementation task follows red/green TDD and ends with a focused verification command and a small commit. This plan itself creates no code, tests, migrations, or seed rows.

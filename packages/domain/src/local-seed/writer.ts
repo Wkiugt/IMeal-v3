@@ -458,8 +458,13 @@ function userCreate(row: SeedUserRow) {
     notificationLocale: row.notificationLocale,
     remindersEnabled: row.remindersEnabled,
     createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
+
+// Prisma-managed @updatedAt fields are intentionally omitted from update payloads:
+// no-op comparisons must preserve their existing value, while a real update
+// refreshes them once. Deterministic createdAt remains seed-owned and convergent.
 
 function userUpdate(row: SeedUserRow) {
   return {
@@ -468,6 +473,7 @@ function userUpdate(row: SeedUserRow) {
     isActive: row.isActive,
     notificationLocale: row.notificationLocale,
     remindersEnabled: row.remindersEnabled,
+    createdAt: row.createdAt,
   };
 }
 
@@ -524,6 +530,7 @@ function locationUpdate(row: SeedLocationRow) {
     networkNotes: row.networkNotes ?? null,
     lastVerifiedBy: row.lastVerifiedBy ?? null,
     lastVerifiedAt: row.lastVerifiedAt ?? null,
+    createdAt: row.createdAt,
   };
 }
 
@@ -556,6 +563,7 @@ function locationPolicyUpdate(row: SeedLocationPolicyRow) {
     effectiveFrom: row.effectiveFrom,
     effectiveTo: row.effectiveTo,
     isActive: row.isActive,
+    createdAt: row.createdAt,
   };
 }
 
@@ -592,6 +600,7 @@ function assignmentUpdate(row: SeedAssignmentRow) {
     effectiveTo: row.effectiveTo,
     rosterImportBatchId: row.rosterImportBatchId ?? null,
     auditEventId: row.auditEventId ?? null,
+    createdAt: row.createdAt,
   };
 }
 
@@ -622,6 +631,7 @@ function allowlistUpdate(row: SeedAllowlistRow) {
     reason: row.reason ?? null,
     createdBy: row.createdBy ?? null,
     updatedBy: row.updatedBy ?? null,
+    createdAt: row.createdAt,
   };
 }
 
@@ -640,6 +650,7 @@ function weeklyMenuUpdate(row: SeedWeeklyMenuRow) {
     startDate: row.startDate,
     endDate: row.endDate,
     publishedAt: row.publishedAt,
+    createdAt: row.createdAt,
   };
 }
 
@@ -660,6 +671,7 @@ function dailyMenuUpdate(row: SeedDailyMenuRow) {
     date: row.date,
     isHoliday: row.isHoliday,
     isEnabled: row.isEnabled,
+    createdAt: row.createdAt,
   };
 }
 
@@ -678,6 +690,7 @@ function mealDayUpdate(row: SeedMealDayRow) {
     dailyMenuId: row.dailyMenuId,
     mealType: row.mealType,
     isServingReady: row.isServingReady,
+    createdAt: row.createdAt,
   };
 }
 
@@ -694,6 +707,7 @@ function menuRevisionUpdate(row: SeedMenuRevisionRow) {
   return {
     dailyMenuId: row.dailyMenuId,
     content: row.content,
+    createdAt: row.createdAt,
   };
 }
 
@@ -746,6 +760,7 @@ function registrationUpdate(row: SeedRegistrationRow) {
     serviceLocationAddress: row.serviceLocationAddress,
     serviceLocationEffectiveFrom: row.serviceLocationEffectiveFrom,
     serviceLocationSnapshotAt: row.serviceLocationSnapshotAt,
+    createdAt: row.createdAt,
     version: row.version,
   };
 }
@@ -766,6 +781,7 @@ function delegationUpdate(row: SeedDelegationRow) {
     registrationId: row.registrationId,
     delegateUserId: row.delegateUserId,
     status: row.status,
+    createdAt: row.createdAt,
   };
 }
 
@@ -795,6 +811,7 @@ function penaltyUpdate(row: SeedPenaltyRow) {
     waivedAt: row.waivedAt ?? null,
     waiveReason: row.waiveReason ?? null,
     waivedByUserId: row.waivedByUserId ?? null,
+    createdAt: row.createdAt,
   };
 }
 
@@ -827,6 +844,7 @@ function servingVerificationUpdate(row: SeedServingVerificationRow) {
     safeVerificationCode: row.safeVerificationCode,
     intentNonce: row.intentNonce,
     retentionUntil: row.retentionUntil,
+    createdAt: row.createdAt,
   };
 }
 
@@ -863,6 +881,7 @@ function pickupSessionUpdate(row: SeedPickupSessionRow) {
     servingVerificationId: row.servingVerificationId,
     expiresAt: row.expiresAt,
     consumedAt: row.consumedAt,
+    createdAt: row.createdAt,
   };
 }
 
@@ -895,6 +914,7 @@ function servingConfirmRequestUpdate(row: SeedServingConfirmRequestRow) {
     resultSnapshot: jsonValue(row.resultSnapshot),
     originalResultRequestId: row.originalResultRequestId ?? null,
     completedAt: row.completedAt,
+    createdAt: row.createdAt,
   };
 }
 
@@ -966,6 +986,7 @@ function mealEventUpdate(row: SeedMealEventRow) {
   return {
     mealServingId: row.mealServingId,
     eventType: row.eventType,
+    createdAt: row.createdAt,
   };
 }
 
@@ -989,9 +1010,10 @@ function defaultSleep(milliseconds: number): Promise<void> {
 
 function errorCode(error: unknown): string | undefined {
   if (error instanceof SeedOperationError) return errorCode(error.original);
-  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined;
-  const code = error.code;
-  return typeof code === 'string' ? code : undefined;
+  if (typeof error !== 'object' || error === null) return undefined;
+  if ('code' in error && typeof error.code === 'string') return error.code;
+  if ('errorCode' in error && typeof error.errorCode === 'string') return error.errorCode;
+  return undefined;
 }
 
 function operationContext(error: unknown): OperationContext {
