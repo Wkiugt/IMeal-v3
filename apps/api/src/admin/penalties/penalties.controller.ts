@@ -9,7 +9,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PenaltiesService } from './penalties.service.js';
-import { JwtAuthGuard } from '../../auth/jwt-auth.guard.js';
+import { SessionGuard } from '../../auth/session.guard.js';
 import { PermissionsGuard } from '../../auth/permissions.guard.js';
 import { RequirePermission } from '../../auth/require-permission.decorator.js';
 import { v1 } from '@imeal/contracts';
@@ -17,7 +17,7 @@ import { CurrentUser } from '../../auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../../auth/authenticated-user.js';
 
 @Controller(['v1/admin/penalties', 'admin/penalties'])
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(SessionGuard, PermissionsGuard)
 export class PenaltiesController {
   constructor(private readonly penaltiesService: PenaltiesService) {}
 

@@ -14,7 +14,7 @@ import {
 import { v1 } from '@imeal/contracts';
 import { NotificationsService } from './notifications.service.js';
 import { PushDevicesService } from './push-devices.service.js';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { SessionGuard } from '../auth/session.guard.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/authenticated-user.js';
 
@@ -22,7 +22,7 @@ function badRequest(code: string, message: string): BadRequestException {
   return new BadRequestException({ code, message });
 }
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(SessionGuard)
 @Controller('api/notifications')
 export class NotificationsController {
   constructor(

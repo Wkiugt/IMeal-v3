@@ -2,7 +2,7 @@ import { Controller, Get, Put, Body, Query, UseGuards } from '@nestjs/common';
 import { v1 } from '@imeal/contracts';
 import { RegistrationsService } from './registrations.service.js';
 import { CutoffSettingDto } from './dto/cutoff-setting.dto.js';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { SessionGuard } from '../auth/session.guard.js';
 import { PermissionsGuard } from '../auth/permissions.guard.js';
 import { RequirePermission } from '../auth/require-permission.decorator.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
@@ -10,7 +10,7 @@ import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/authenticated-user.js';
 
 @Controller('api/registrations')
-@UseGuards(JwtAuthGuard)
+@UseGuards(SessionGuard)
 export class RegistrationsController {
   constructor(private readonly service: RegistrationsService) {}
 

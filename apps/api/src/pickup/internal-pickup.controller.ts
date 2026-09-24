@@ -1,13 +1,13 @@
 import { Controller, Post, Body, UseGuards } from '@nestjs/common';
 import { PickupService } from './pickup.service.js';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { SessionGuard } from '../auth/session.guard.js';
 import { PermissionsGuard } from '../auth/permissions.guard.js';
 import { RequirePermission } from '../auth/require-permission.decorator.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/authenticated-user.js';
 
 @Controller(['internal/api/v1/pickup', 'v1/internal/pickup', 'api/serving'])
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(SessionGuard, PermissionsGuard)
 export class InternalPickupController {
   constructor(private readonly pickupService: PickupService) {}
   @RequirePermission('kitchen.serve')

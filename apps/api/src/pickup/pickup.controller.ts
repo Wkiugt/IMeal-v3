@@ -1,11 +1,11 @@
 import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
 import { PickupService } from './pickup.service.js';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { SessionGuard } from '../auth/session.guard.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/authenticated-user.js';
 
 @Controller('api/me')
-@UseGuards(JwtAuthGuard)
+@UseGuards(SessionGuard)
 export class PickupController {
   constructor(private readonly pickupService: PickupService) {}
 

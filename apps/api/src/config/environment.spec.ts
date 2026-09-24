@@ -6,6 +6,18 @@ import {
 
 const originalEnv = { ...process.env };
 
+function setValidProductionEnvironment() {
+  process.env.NODE_ENV = 'production';
+  process.env.REQUIRE_AUTH = 'true';
+  process.env.AUTH_MODE = 'otp';
+  process.env.DATABASE_URL = 'postgresql://localhost/imeal';
+  process.env.QR_SIGNING_SECRET = 'q'.repeat(32);
+  process.env.OTP_HASH_SECRET = 'o'.repeat(32);
+  process.env.SESSION_HASH_SECRET = 's'.repeat(32);
+  process.env.SESSION_IDLE_TIMEOUT_SECONDS = '1800';
+  process.env.SESSION_ABSOLUTE_TIMEOUT_SECONDS = '604800';
+}
+
 afterEach(() => {
   process.env = { ...originalEnv };
 });
@@ -19,34 +31,37 @@ describe('API environment validation', () => {
     expect(validateApiEnvironment()).toBeUndefined();
   });
 
-  it('allows local authentication outside tests when OTP settings are present', () => {
-    process.env.NODE_ENV = 'development';
-    process.env.AUTH_MODE = 'local';
-    process.env.DATABASE_URL = 'postgresql://localhost/imeal';
-    process.env.QR_SIGNING_SECRET = 'q'.repeat(32);
-    process.env.OTP_HASH_SECRET = 'o'.repeat(32);
-    process.env.LOCAL_AUTH_JWT_SECRET = 'j'.repeat(32);
-    process.env.LOCAL_AUTH_USERS =
-      '[{"username":"admin01","password":"secret","email":"admin01@imeal.local","name":"Admin 01","role":"admin"}]';
+  it('accepts OTP-only production authentication with session settings', () => {
+    setValidProductionEnvironment();
 
     expect(() => validateApiEnvironment()).not.toThrow();
   });
 
-  it('rejects production when the OTP verifier secret is missing', () => {
-    process.env.NODE_ENV = 'production';
-    process.env.AUTH_MODE = 'entra';
-    process.env.DATABASE_URL = 'postgresql://localhost/imeal';
-    process.env.QR_SIGNING_SECRET = 'q'.repeat(32);
-    delete process.env.OTP_HASH_SECRET;
-    process.env.ENTRA_TENANT_ID = 'tenant';
-    process.env.ENTRA_CLIENT_ID = 'client';
+  it.each(['local', 'entra'])('rejects legacy %s authentication mode', (mode) => {
+    setValidProductionEnvironment();
+    process.env.AUTH_MODE = mode;
 
-    expect(() => validateApiEnvironment()).toThrow('OTP_HASH_SECRET');
+    expect(() => validateApiEnvironment()).toThrow('AUTH_MODE must be otp');
   });
 
-  it('rejects the local auth bypass outside tests', () => {
-    process.env.NODE_ENV = 'production';
-    process.env.AUTH_MODE = 'local';
+  it('rejects production when the session hash secret is missing', () => {
+    setValidProductionEnvironment();
+    delete process.env.SESSION_HASH_SECRET;
+
+    expect(() => validateApiEnvironment()).toThrow('SESSION_HASH_SECRET');
+  });
+
+  it('rejects production when a session timeout is missing', () => {
+    setValidProductionEnvironment();
+    delete process.env.SESSION_IDLE_TIMEOUT_SECONDS;
+
+    expect(() => validateApiEnvironment()).toThrow(
+      'SESSION_IDLE_TIMEOUT_SECONDS',
+    );
+  });
+
+  it('rejects an authentication bypass outside tests', () => {
+    setValidProductionEnvironment();
     process.env.REQUIRE_AUTH = 'false';
 
     expect(() => validateApiEnvironment()).toThrow(
@@ -54,35 +69,12 @@ describe('API environment validation', () => {
     );
   });
 
-  it('rejects missing local authentication settings', () => {
-    process.env.NODE_ENV = 'production';
-    process.env.AUTH_MODE = 'local';
-    process.env.DATABASE_URL = 'postgresql://localhost/imeal';
-    process.env.QR_SIGNING_SECRET = 'q'.repeat(32);
-    delete process.env.LOCAL_AUTH_JWT_SECRET;
-    delete process.env.LOCAL_AUTH_USERS;
-
-    expect(() => validateApiEnvironment()).toThrow('LOCAL_AUTH_JWT_SECRET');
-  });
-
-  it('rejects an authentication bypass outside local mode', () => {
-    process.env.NODE_ENV = 'production';
-    process.env.REQUIRE_AUTH = 'false';
-    process.env.AUTH_MODE = 'entra';
-
-    expect(() => validateApiEnvironment()).toThrow(
-      'REQUIRE_AUTH=false is only allowed',
-    );
-  });
-
   it('rejects missing production security settings', () => {
     process.env.NODE_ENV = 'production';
-    process.env.AUTH_MODE = 'entra';
     process.env.REQUIRE_AUTH = 'true';
     delete process.env.DATABASE_URL;
-    delete process.env.ENTRA_TENANT_ID;
-    delete process.env.ENTRA_CLIENT_ID;
     delete process.env.QR_SIGNING_SECRET;
+    delete process.env.AUTH_MODE;
 
     expect(() => validateApiEnvironment()).toThrow(
       'DATABASE_URL, QR_SIGNING_SECRET',

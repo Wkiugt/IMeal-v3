@@ -10,14 +10,14 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { DelegationsService } from './delegations.service.js';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { SessionGuard } from '../auth/session.guard.js';
 import { v1 } from '@imeal/contracts';
 const { CreateDelegationRequestSchema } = v1;
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/authenticated-user.js';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(SessionGuard)
 @Controller('api/delegations')
 export class DelegationsController {
   constructor(private readonly delegationsService: DelegationsService) {}

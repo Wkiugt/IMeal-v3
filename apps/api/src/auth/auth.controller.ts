@@ -3,22 +3,19 @@ import {
   Body,
   Controller,
   Get,
-  NotFoundException,
   Post,
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { isLocalAuthEnabled } from '../config/environment.js';
 import { v1 } from '@imeal/contracts';
-import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { CurrentUser } from './current-user.decorator.js';
 import type { AuthenticatedUser } from './authenticated-user.js';
-import { AuthService } from './auth.service.js';
 import {
   OtpService,
   type OtpRequestContext,
 } from './otp.service.js';
-import { parseLocalCredentials } from './local-auth.js';
+import { SessionGuard } from './session.guard.js';
+import { SessionService } from './session.service.js';
 
 interface AuthRequest {
   id?: string;
@@ -43,21 +40,13 @@ function otpContext(request: AuthRequest): OtpRequestContext {
     clientFingerprint: firstHeader(request.headers, 'user-agent'),
   };
 }
+
 @Controller('auth')
 export class AuthController {
   constructor(
-    private readonly authService: AuthService,
     private readonly otpService: OtpService,
+    private readonly sessionService: SessionService,
   ) {}
-
-  @Post('local-login')
-  loginLocal(@Body() body: unknown) {
-    if (!isLocalAuthEnabled()) {
-      throw new NotFoundException('Local authentication is disabled');
-    }
-    const { username, password } = parseLocalCredentials(body);
-    return this.authService.authenticateLocal(username, password);
-  }
 
   @Post('otp/request')
   async requestOtp(@Body() body: unknown, @Req() request: AuthRequest) {
@@ -72,7 +61,10 @@ export class AuthController {
   }
 
   @Post('otp/verify')
-  async verifyOtp(@Body() body: unknown, @Req() request: AuthRequest) {
+  async verifyOtp(
+    @Body() body: unknown,
+    @Req() request: AuthRequest,
+  ): Promise<v1.VerifyOtpResponse> {
     const parsed = v1.VerifyOtpSchema.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException({
@@ -80,12 +72,29 @@ export class AuthController {
         message: 'Invalid OTP verification request.',
       });
     }
-    const principal = await this.otpService.verify(
-      parsed.data,
-      otpContext(request),
-    );
+
+    const context = otpContext(request);
+    const principal = await this.otpService.verify(parsed.data, context);
+    const requestId = context.requestId ?? principal.requestId;
+    const metadata = {
+      ...(request.ip ? { clientIp: request.ip } : {}),
+      ...(firstHeader(request.headers, 'x-device-id')
+        ? { deviceId: firstHeader(request.headers, 'x-device-id') }
+        : {}),
+      ...(firstHeader(request.headers, 'user-agent')
+        ? { userAgent: firstHeader(request.headers, 'user-agent') }
+        : {}),
+    };
+    const session = await this.sessionService.create({
+      userId: principal.userId,
+      purpose: parsed.data.purpose,
+      requestId,
+      metadata,
+    });
+
     return {
-      verified: true,
+      sessionToken: session.token,
+      expiresAt: session.expiresAt.toISOString(),
       user: {
         id: principal.user.id,
         email: principal.user.email,
@@ -94,7 +103,27 @@ export class AuthController {
     };
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(SessionGuard)
+  @Post('logout')
+  async logout(
+    @Req() request: AuthRequest,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<v1.LogoutResponse> {
+    if (!user.sessionId) {
+      throw new BadRequestException({
+        code: 'SESSION_REVOKED',
+        message: 'Authenticated session is missing.',
+      });
+    }
+    await this.sessionService.revoke(
+      user.sessionId,
+      'LOGOUT',
+      firstHeader(request.headers, 'x-request-id') ?? request.id ?? 'unknown',
+    );
+    return { revoked: true };
+  }
+
+  @UseGuards(SessionGuard)
   @Get('me')
   getProfile(@CurrentUser() user: AuthenticatedUser) {
     return user;

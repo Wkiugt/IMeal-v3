@@ -10,7 +10,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { WeeklyMenusService } from './weekly-menus.service.js';
-import { JwtAuthGuard } from '../../auth/jwt-auth.guard.js';
+import { SessionGuard } from '../../auth/session.guard.js';
 import { PermissionsGuard } from '../../auth/permissions.guard.js';
 import { RequirePermission } from '../../auth/require-permission.decorator.js';
 import {
@@ -19,7 +19,7 @@ import {
 } from './dto/weekly-menus.schema.js';
 
 @Controller('admin/weekly-menus')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(SessionGuard, PermissionsGuard)
 @RequirePermission('menu.manage')
 export class WeeklyMenusController {
   constructor(private readonly weeklyMenusService: WeeklyMenusService) {}

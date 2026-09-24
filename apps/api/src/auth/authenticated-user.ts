@@ -5,6 +5,12 @@ export interface AuthenticatedUser {
   name?: string;
   roles: string[];
   permissions: string[];
+  /**
+   * Present for principals resolved from an active database session.
+   * OTP verification data is not an authenticated session yet.
+   */
+  sessionId?: string;
+  isActive?: boolean;
 }
 
 export interface VerifiedOtpPrincipal {
@@ -14,11 +20,4 @@ export interface VerifiedOtpPrincipal {
   challengeId: string;
   requestId: string;
   user: AuthenticatedUser;
-}
-
-export interface EntraIdentity {
-  userId: string;
-  email: string;
-  name?: string;
-  tenantId: string;
 }

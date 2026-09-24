@@ -11,12 +11,12 @@ import {
 import { Observable } from 'rxjs';
 import { KitchenDashboardService } from './kitchen-dashboard.service.js';
 import { KitchenEventsService } from './kitchen-events.service.js';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { SessionGuard } from '../auth/session.guard.js';
 import { PermissionsGuard } from '../auth/permissions.guard.js';
 import { RequirePermission } from '../auth/require-permission.decorator.js';
 
 @Controller(['v1/kitchen', 'api/kitchen'])
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(SessionGuard, PermissionsGuard)
 @RequirePermission('kitchen.serve')
 export class KitchenDashboardController {
   constructor(
