@@ -918,7 +918,7 @@ function normalizeMaxAttempts(value: number | undefined): number {
   if (!Number.isInteger(value) || value < 1) {
     throw new TypeError('maxAttempts must be a positive integer');
   }
-  return value;
+  return Math.min(value, 3);
 }
 
 function defaultSleep(milliseconds: number): Promise<void> {
