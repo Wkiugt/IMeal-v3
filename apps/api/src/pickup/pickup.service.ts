@@ -15,6 +15,16 @@ import {
   isWithinServingWindow,
   parseMealDate,
 } from '../common/business-time.js';
+import {
+  LocationsService,
+  type GpsVerificationResult,
+} from '../locations/locations.service.js';
+import type { AuthenticatedUser } from '../auth/authenticated-user.js';
+
+const QR_TTL_SECONDS = 5;
+const QR_CLOCK_SKEW_SECONDS = 2;
+const PICKUP_SESSION_TTL_SECONDS = 30;
+const VERIFICATION_RETENTION_DAYS = 365;
 
 const PICKUP_AVAILABILITY_DETAILS = {
   availableFrom: '10:30',
@@ -26,6 +36,67 @@ const PICKUP_WINDOW_CLOSED_MESSAGE =
   'Meal pickup is only available from 10:30 through 13:30 Vietnam time.';
 const PICKUP_NOT_READY_MESSAGE =
   'Meal pickup is not currently available. Please wait for the kitchen signal.';
+
+function pickupError(
+  code: v1.PickupErrorCode,
+  message: string,
+  details?: Record<string, unknown>,
+): BadRequestException {
+  return new BadRequestException({ code, message, ...(details ? { details } : {}) });
+}
+
+function pickupForbiddenError(
+  code: v1.PickupErrorCode,
+  message: string,
+  details?: Record<string, unknown>,
+): ForbiddenException {
+  return new ForbiddenException({ code, message, ...(details ? { details } : {}) });
+}
+
+function canonicalRegistrationIds(
+  registrationIds: string[] | undefined,
+): string[] {
+  if (!Array.isArray(registrationIds) || registrationIds.length === 0) {
+    throw pickupError(
+      'PICKUP_INTENT_REQUIRED',
+      'Select at least one meal before presenting a QR code.',
+    );
+  }
+  const normalized = registrationIds.map((id) => id.trim());
+  if (normalized.some((id) => id.length === 0)) {
+    throw pickupError(
+      'PICKUP_INTENT_CONFLICT',
+      'Pickup intent contains an invalid registration.',
+    );
+  }
+  const unique = new Set(normalized);
+  if (unique.size !== normalized.length) {
+    throw pickupError(
+      'PICKUP_INTENT_CONFLICT',
+      'Pickup intent contains duplicate registrations.',
+    );
+  }
+  return [...normalized].sort();
+}
+
+function exactRegistrationSet(
+  expected: string[],
+  actual: string[],
+): boolean {
+  return (
+    expected.length === actual.length &&
+    expected.every((registrationId, index) => registrationId === actual[index])
+  );
+}
+
+function safeDate(value: Date | string): Date {
+  const result = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(result.getTime())) {
+    throw pickupError('PICKUP_INTENT_CONFLICT', 'Pickup intent is invalid.');
+  }
+  return result;
+}
+
 
 function toMealDateKey(value: Date | string): string {
   return value instanceof Date ? value.toISOString().slice(0, 10) : value;
@@ -45,9 +116,21 @@ interface LockedDelegation {
 export interface PickupSessionRecord {
   id: string;
   userId: string;
+  presenterUserId?: string | null;
+  mealDate?: Date | null;
   registrationIds: string[];
+  intentRegistrationIds?: string[];
+  intentHash?: string | null;
+  intentNonce?: string | null;
+  qrHash?: string;
+  locationId?: string | null;
+  servingVerificationId?: string | null;
   expiresAt: Date;
   createdAt: Date;
+}
+interface StoredPresenterEvidence {
+  verification: v1.ServingVerification;
+  locationPolicyId: string | null;
 }
 
 @Injectable()
@@ -57,6 +140,7 @@ export class PickupService {
   constructor(
     @Optional() private readonly kitchenEventsService?: KitchenEventsService,
     @Optional() private readonly notificationsService?: NotificationsService,
+    @Optional() private readonly locationsService?: LocationsService,
   ) {
     this.prisma = new PrismaClient();
   }
@@ -64,7 +148,6 @@ export class PickupService {
   private getTodayDate(now: Date = new Date()) {
     return parseMealDate(getBusinessDate(now));
   }
-
   async checkServingWindow(mealType: string = 'LUNCH', now: Date = new Date()) {
     if (!isWithinServingWindow(now)) {
       throw new ForbiddenException({
@@ -185,39 +268,229 @@ export class PickupService {
     return crypto.createHmac('sha256', masterSecret).update(userId).digest();
   }
 
-  generateSignedQr(userId: string, registrationIds: string[] = []) {
-    const mealDate = getBusinessDate();
-    const exp = Math.floor(Date.now() / 1000) + 5;
+  private requireLocationsService(): LocationsService {
+    if (!this.locationsService) {
+      throw pickupError(
+        'PICKUP_INTENT_CONFLICT',
+        'Pickup location verification is unavailable.',
+      );
+    }
+    return this.locationsService;
+  }
+
+  private async loadRegistrationContexts(registrationIds: string[]) {
+    const contexts = await this.prisma.registration.findMany({
+      where: { id: { in: registrationIds } },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+        mealDate: true,
+        serviceLocationId: true,
+        serviceLocationCode: true,
+        serviceLocationName: true,
+        serviceLocationAddress: true,
+        serviceLocationEffectiveFrom: true,
+        mealServing: { select: { id: true } },
+      },
+    });
+    return contexts as Array<{
+      id: string;
+      userId: string;
+      status: string;
+      mealDate: Date;
+      serviceLocationId: string | null;
+      serviceLocationCode: string | null;
+      serviceLocationName: string | null;
+      serviceLocationAddress: string | null;
+      serviceLocationEffectiveFrom: Date | null;
+      mealServing: { id: string } | null;
+    }>;
+  }
+
+  private async resolveIntentLocation(
+    registrationIds: string[],
+    at: Date,
+  ) {
+    const contexts = await this.loadRegistrationContexts(registrationIds);
+    if (contexts.length !== registrationIds.length) {
+      throw pickupError(
+        'PICKUP_INTENT_CONFLICT',
+        'One or more selected meals are no longer available.',
+      );
+    }
+
+    const mealDate = toMealDateKey(contexts[0].mealDate);
+    const locationIds = new Set<string>();
+    for (const context of contexts) {
+      if (
+        context.status !== 'ACTIVE' ||
+        context.mealServing ||
+        toMealDateKey(context.mealDate) !== mealDate ||
+        !context.serviceLocationId ||
+        !context.serviceLocationCode
+      ) {
+        throw pickupError(
+          'PICKUP_INTENT_CONFLICT',
+          'The selected meals are no longer eligible for pickup.',
+        );
+      }
+      locationIds.add(context.serviceLocationId);
+    }
+    if (locationIds.size !== 1) {
+      throw pickupError(
+        'PICKUP_INTENT_CONFLICT',
+        'Selected meals must resolve to one serving location.',
+      );
+    }
+
+    const locationId = [...locationIds][0];
+    const location = await this.requireLocationsService().resolveEffectiveLocation(
+      contexts[0].serviceLocationCode!,
+      at,
+    );
+    if (location.id !== locationId) {
+      throw pickupError(
+        'PICKUP_INTENT_CONFLICT',
+        'The selected meal location is no longer effective.',
+      );
+    }
+    return { contexts, location, mealDate };
+  }
+
+  private assertExactEligibleOptions(
+    registrationIds: string[],
+    options: v1.PickupOption[],
+  ): v1.PickupOption[] {
+    const byId = new Map(
+      options.map((option) => [option.registrationId, option]),
+    );
+    return registrationIds.map((registrationId) => {
+      const option = byId.get(registrationId);
+      if (!option) {
+        throw pickupError(
+          'PICKUP_INTENT_CONFLICT',
+          'The selected meals changed; refresh pickup options and try again.',
+        );
+      }
+      return option;
+    });
+  }
+
+  private persistPresenterVerification(
+    qrHash: string,
+    presenterUserId: string,
+    verification: Extract<GpsVerificationResult, { result: 'VALID' }>,
+    at: Date,
+  ) {
+    return this.prisma.servingVerification.create({
+      data: {
+        id: qrHash,
+        presenterUserId,
+        locationId: verification.locationId,
+        locationPolicyId: verification.locationPolicyId,
+        result: 'VALID',
+        capturedAt: new Date(verification.capturedAt),
+        verifiedAt: new Date(verification.verifiedAt),
+        accuracyMeters: verification.accuracyMeters,
+        safeVerificationCode: verification.safeVerificationCode,
+        retentionUntil: new Date(
+          at.getTime() + VERIFICATION_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+        ),
+      },
+    });
+  }
+
+  generateSignedQr(
+    userId: string,
+    registrationIds: string[],
+    mealDate: string = getBusinessDate(),
+    now: Date = new Date(),
+  ) {
+    const exactIds = canonicalRegistrationIds(registrationIds);
+    const exp = Math.floor(now.getTime() / 1000) + QR_TTL_SECONDS;
     const nonce = crypto.randomBytes(16).toString('hex');
-    const intent =
-      registrationIds.length > 0
-        ? registrationIds.slice().sort().join(',')
-        : 'all';
-    const payload = `imeal:v2:${userId}:${mealDate}:${intent}:${exp}:${nonce}`;
+    const pickupIntent = exactIds.join(',');
+    const payload = `imeal:v2:${userId}:${mealDate}:${pickupIntent}:${exp}:${nonce}`;
     const sig = crypto
       .createHmac('sha256', this.getSigningKey(userId))
       .update(payload)
       .digest('hex');
+    const qr = `${payload}:${sig}`;
     return {
-      qr: `${payload}:${sig}`,
+      qr,
       exp,
-      ttl: 5,
+      ttl: QR_TTL_SECONDS,
+      nonce,
+      registrationIds: exactIds,
+      mealDate,
+      qrHash: crypto.createHash('sha256').update(qr).digest('hex'),
     };
   }
 
-  async generateQr(userId: string, registrationIds: string[] = []) {
+  async generateQr(
+    userId: string,
+    input: v1.GenerateQrInput,
+  ) {
     await this.checkServingWindow();
-    return this.generateSignedQr(userId, registrationIds);
-  }
-
-  async verifyQr(qrString: string) {
-    if (!qrString) {
-      throw new BadRequestException('QR string is required');
+    const registrationIds = canonicalRegistrationIds(input?.registrationIds);
+    const evidenceResult = v1.PresenterLocationEvidenceSchema.safeParse(
+      input?.presenterEvidence,
+    );
+    if (!evidenceResult.success) {
+      throw pickupForbiddenError(
+        'GPS_RETRY_REQUIRED',
+        'A fresh presenter location is required.',
+        { action: 'RETRY' },
+      );
+    }
+    const presenterEvidence = evidenceResult.data;
+    const options = await this.getPickupOptions(userId);
+    const selectedOptions = this.assertExactEligibleOptions(
+      registrationIds,
+      options.options,
+    );
+    const now = new Date();
+    const { location, mealDate } = await this.resolveIntentLocation(
+      registrationIds,
+      now,
+    );
+    const gps = await this.requireLocationsService().evaluatePresenterEvidence(
+      location.id,
+      presenterEvidence,
+      now,
+    );
+    if (gps.result !== 'VALID') {
+      throw pickupForbiddenError(
+        'GPS_RETRY_REQUIRED',
+        'A fresh presenter location is required.',
+        gps.details,
+      );
     }
 
+    const signed = this.generateSignedQr(userId, registrationIds, mealDate, now);
+    await this.persistPresenterVerification(
+      signed.qrHash,
+      userId,
+      gps,
+      now,
+    );
+    return {
+      qr: signed.qr,
+      exp: signed.exp,
+      ttl: signed.ttl,
+      registrationIds: selectedOptions.map((option) => option.registrationId),
+      mealDate,
+    };
+  }
+
+  private parseSignedQr(qrString: string) {
+    if (!qrString || typeof qrString !== 'string') {
+      throw pickupError('QR_INVALID', 'QR code is invalid.');
+    }
     const parts = qrString.split(':');
     if (parts.length !== 8) {
-      throw new BadRequestException('Invalid QR format');
+      throw pickupError('QR_INVALID', 'QR code is invalid.');
     }
 
     const [imeal, version, userId, mealDate, pickupIntent, expStr, nonce, sig] =
@@ -229,25 +502,36 @@ export class PickupService {
       !mealDate ||
       !pickupIntent ||
       !nonce ||
-      !sig
+      !/^[a-f0-9]{64}$/i.test(sig)
     ) {
-      throw new BadRequestException('Invalid QR format');
+      throw pickupError('QR_INVALID', 'QR code is invalid.');
     }
-
-    if (mealDate !== getBusinessDate()) {
-      throw new ForbiddenException('QR code is not for today');
+    let registrationIds: string[];
+    try {
+      registrationIds = canonicalRegistrationIds(pickupIntent.split(','));
+    } catch {
+      throw pickupError('QR_INVALID', 'QR code is invalid.');
+    }
+    if (registrationIds.join(',') !== pickupIntent) {
+      throw pickupError('QR_INVALID', 'QR code is invalid.');
     }
 
     const exp = Number(expStr);
     if (!Number.isSafeInteger(exp)) {
-      throw new BadRequestException('Invalid QR expiration');
+      throw pickupError('QR_INVALID', 'QR code is invalid.');
     }
     const nowSec = Math.floor(Date.now() / 1000);
-    if (nowSec > exp + 2) {
-      throw new ForbiddenException('QR code has expired');
+    if (nowSec > exp + QR_CLOCK_SKEW_SECONDS) {
+      throw pickupForbiddenError('QR_EXPIRED', 'QR code has expired.');
     }
-    if (exp - nowSec > 7) {
-      throw new ForbiddenException('Invalid QR code expiration');
+    if (exp - nowSec > QR_TTL_SECONDS + QR_CLOCK_SKEW_SECONDS) {
+      throw pickupForbiddenError('QR_INVALID', 'QR code is invalid.');
+    }
+    if (mealDate !== getBusinessDate()) {
+      throw pickupForbiddenError(
+        'PICKUP_INTENT_CONFLICT',
+        'QR code is not valid for today.',
+      );
     }
 
     const payload = `imeal:v2:${userId}:${mealDate}:${pickupIntent}:${expStr}:${nonce}`;
@@ -261,53 +545,183 @@ export class PickupService {
       providedSignature.length !== expectedSignature.length ||
       !crypto.timingSafeEqual(providedSignature, expectedSignature)
     ) {
-      throw new ForbiddenException('Invalid QR signature');
-    }
-
-    const optionsResult = await this.getPickupOptions(userId);
-    let options = optionsResult.options;
-    if (pickupIntent !== 'all') {
-      const allowedIds = new Set(
-        pickupIntent
-          .split(',')
-          .map((id) => id.trim())
-          .filter(Boolean),
-      );
-      options = options.filter((option) =>
-        allowedIds.has(option.registrationId),
-      );
+      throw pickupForbiddenError('QR_INVALID', 'QR code is invalid.');
     }
 
     return {
-      valid: true,
       userId,
+      mealDate,
+      registrationIds,
+      nonce,
+      exp,
       qrHash: crypto.createHash('sha256').update(qrString).digest('hex'),
-      pickupOptions: options,
     };
   }
 
-  async resolvePickup(qrInput: string | { qr?: string; qrPayload?: string }) {
-    const qrString =
-      typeof qrInput === 'string'
-        ? qrInput
-        : qrInput?.qr || qrInput?.qrPayload || '';
-    const verification = await this.verifyQr(qrString);
-    const { userId, pickupOptions, qrHash } = verification;
+  async verifyQr(qrString: string) {
+    const parsed = this.parseSignedQr(qrString);
+    const options = await this.getPickupOptions(parsed.userId);
+    const pickupOptions = this.assertExactEligibleOptions(
+      parsed.registrationIds,
+      options.options,
+    );
+    return {
+      valid: true as const,
+      userId: parsed.userId,
+      mealDate: parsed.mealDate,
+      registrationIds: parsed.registrationIds,
+      nonce: parsed.nonce,
+      exp: parsed.exp,
+      qrHash: parsed.qrHash,
+      pickupOptions,
+    };
+  }
 
-    if (pickupOptions.length === 0) {
-      throw new BadRequestException('No eligible pickup items found.');
+  private async readStoredPresenterEvidence(
+    sessionOrIntentId: string,
+    at: Date,
+  ): Promise<StoredPresenterEvidence> {
+    const stored = await this.prisma.servingVerification.findUnique({
+      where: { id: sessionOrIntentId },
+    });
+    if (
+      !stored ||
+      stored.result !== 'VALID' ||
+      stored.accuracyMeters == null ||
+      stored.accuracyMeters < 0
+    ) {
+      throw pickupForbiddenError(
+        'GPS_RETRY_REQUIRED',
+        'A fresh presenter location is required.',
+        { action: 'REFRESH' },
+      );
+    }
+    const capturedAt = safeDate(stored.capturedAt);
+    if (capturedAt.getTime() > at.getTime()) {
+      throw pickupForbiddenError(
+        'GPS_RETRY_REQUIRED',
+        'A fresh presenter location is required.',
+        { action: 'RETRY' },
+      );
+    }
+    return {
+      locationPolicyId: stored.locationPolicyId,
+      verification: v1.ServingVerificationSchema.parse({
+        presenterUserId: stored.presenterUserId,
+        receiverType: 'SELF',
+        locationId: stored.locationId,
+        gps: {
+          result: 'VALID',
+          capturedAt: capturedAt.toISOString(),
+          accuracyMeters: stored.accuracyMeters,
+        },
+      }),
+    };
+  }
+
+  async verifyStoredPresenterEvidence(
+    sessionOrIntentId: string,
+    at: Date = new Date(),
+  ): Promise<v1.ServingVerification> {
+    return (await this.readStoredPresenterEvidence(sessionOrIntentId, at))
+      .verification;
+  }
+
+  async resolvePickup(
+    input: v1.ResolvePickupInput,
+    kitchenActor: AuthenticatedUser,
+  ) {
+    if (
+      !kitchenActor ||
+      kitchenActor.isActive === false ||
+      !kitchenActor.permissions.includes('kitchen.serve')
+    ) {
+      throw new ForbiddenException({
+        code: 'FORBIDDEN',
+        message: 'Kitchen serving permission is required.',
+      });
+    }
+    const parsedInput = v1.ResolvePickupSchema.safeParse(input);
+    if (!parsedInput.success) {
+      throw pickupError('QR_INVALID', 'QR code is invalid.');
     }
 
-    const registrationIds = pickupOptions.map(
-      (option) => option.registrationId,
+    const verification = await this.verifyQr(parsedInput.data.qr);
+    const now = new Date();
+    const { location, mealDate } = await this.resolveIntentLocation(
+      verification.registrationIds,
+      now,
     );
-    const expiresAt = new Date(Date.now() + 30 * 1000);
+    const storedEvidenceRecord = await this.readStoredPresenterEvidence(
+      verification.qrHash,
+      now,
+    );
+    const storedEvidence = storedEvidenceRecord.verification;
+    if (
+      storedEvidence.presenterUserId !== verification.userId ||
+      storedEvidence.locationId !== location.id ||
+      storedEvidenceRecord.locationPolicyId !== location.locationPolicy.id
+    ) {
+      throw pickupError(
+        'PICKUP_INTENT_CONFLICT',
+        'Pickup verification no longer matches the selected intent.',
+      );
+    }
+
+    const policy = location.locationPolicy;
+    const capturedAt = new Date(storedEvidence.gps.capturedAt);
+    const ageSeconds = (now.getTime() - capturedAt.getTime()) / 1000;
+    if (
+      ageSeconds < 0 ||
+      ageSeconds > policy.maxFixAgeSeconds ||
+      storedEvidence.gps.accuracyMeters > policy.maxAccuracyMeters
+    ) {
+      throw pickupForbiddenError(
+        'GPS_RETRY_REQUIRED',
+        'A fresh presenter location is required.',
+        { action: 'REFRESH' },
+      );
+    }
+
+    const pickupOptions = this.assertExactEligibleOptions(
+      verification.registrationIds,
+      verification.pickupOptions,
+    );
+    const expiresAt = new Date(
+      now.getTime() + PICKUP_SESSION_TTL_SECONDS * 1000,
+    );
     const sessionId = crypto.randomUUID();
     const sessions = await this.prisma.$queryRaw<PickupSessionRecord[]>`
       INSERT INTO "pickup_sessions"
-        ("id", "user_id", "registration_ids", "expires_at", "qr_hash")
+        (
+          "id",
+          "user_id",
+          "presenter_user_id",
+          "meal_date",
+          "registration_ids",
+          "intent_registration_ids",
+          "intent_hash",
+          "intent_nonce",
+          "expires_at",
+          "qr_hash",
+          "location_id",
+          "serving_verification_id"
+        )
       VALUES
-        (${sessionId}, ${userId}, ${registrationIds}::text[], ${expiresAt}, ${qrHash})
+        (
+          ${sessionId},
+          ${verification.userId},
+          ${verification.userId},
+          ${parseMealDate(mealDate)},
+          ${verification.registrationIds}::text[],
+          ${verification.registrationIds}::text[],
+          ${verification.qrHash},
+          ${verification.nonce},
+          ${expiresAt},
+          ${verification.qrHash},
+          ${location.id},
+          ${verification.qrHash}
+        )
       ON CONFLICT ("qr_hash") DO NOTHING
       RETURNING
         "id",
@@ -318,19 +732,24 @@ export class PickupService {
     `;
     const session = sessions[0];
     if (!session) {
-      throw new ForbiddenException('QR code has already been used');
+      throw pickupForbiddenError(
+        'PICKUP_INTENT_CONFLICT',
+        'QR code has already been resolved.',
+      );
     }
 
     return v1.ResolveServingResponseSchema.parse({
       session: {
-        ...session,
-        expiresAt: session.expiresAt.toISOString(),
-        createdAt: session.createdAt.toISOString(),
+        id: session.id,
+        userId: session.userId,
+        registrationIds: verification.registrationIds,
+        expiresAt: safeDate(session.expiresAt).toISOString(),
+        createdAt: safeDate(session.createdAt).toISOString(),
       },
       items: pickupOptions,
       pickupSessionToken: session.id,
       intent: {
-        userId,
+        userId: verification.userId,
         items: pickupOptions.map((option) => ({
           id: option.registrationId,
           itemName:
@@ -347,31 +766,47 @@ export class PickupService {
   }
 
   async confirmPickup(
-    body: {
-      pickupSessionId?: string;
-      pickupSessionToken?: string;
-      registrationIds?: string[];
-      idempotencyKey?: string;
-    },
-    callerUserId: string,
+    body: v1.ConfirmPickupInput,
+    caller: AuthenticatedUser | string,
   ) {
-    const pickupSessionId = body.pickupSessionId || body.pickupSessionToken;
+    const unsafeBody = body as v1.ConfirmPickupInput & {
+      registrationIds?: unknown;
+      pickupSessionToken?: unknown;
+    };
+    if (
+      unsafeBody.registrationIds !== undefined ||
+      unsafeBody.pickupSessionToken !== undefined
+    ) {
+      throw pickupError(
+        'PICKUP_INTENT_CONFLICT',
+        'Confirmation must use the exact resolved pickup session.',
+      );
+    }
+    const callerUserId = typeof caller === 'string' ? caller : caller.id;
+    const pickupSessionId = body?.pickupSessionId;
     if (!pickupSessionId) {
-      throw new BadRequestException('Pickup session ID or token is required');
-    }
-
-    let registrationIds = body.registrationIds;
-    if (!registrationIds || registrationIds.length === 0) {
-      const session = await this.prisma.pickupSession.findUnique({
-        where: { id: pickupSessionId },
+      throw new BadRequestException({
+        code: 'PICKUP_INTENT_REQUIRED',
+        message: 'Pickup session ID is required.',
       });
-      if (!session) {
-        throw new BadRequestException('Invalid pickup session');
-      }
-      registrationIds = session.registrationIds;
     }
-
-    const idempotencyKey = body.idempotencyKey || `idem-${pickupSessionId}`;
+    const session = await this.prisma.pickupSession.findUnique({
+      where: { id: pickupSessionId },
+    });
+    if (!session) {
+      throw new BadRequestException({
+        code: 'PICKUP_INTENT_CONFLICT',
+        message: 'Invalid pickup session.',
+      });
+    }
+    if (session.expiresAt.getTime() < Date.now()) {
+      throw new BadRequestException({
+        code: 'PICKUP_SESSION_EXPIRED',
+        message: 'Pickup session has expired',
+      });
+    }
+    const registrationIds = canonicalRegistrationIds(session.registrationIds);
+    const idempotencyKey = body.idempotencyKey;
 
     // 1. Check idempotency first (outside transaction, to avoid lock contention if already succeeded)
     const existingReq = await this.prisma.servingConfirmRequest.findUnique({
@@ -406,27 +841,12 @@ export class PickupService {
       );
     }
 
-    // 2. Validate Session
-    const session = await this.prisma.pickupSession.findUnique({
-      where: { id: pickupSessionId },
-    });
-
-    if (!session) {
-      throw new BadRequestException('Invalid pickup session');
-    }
-    if (session.expiresAt.getTime() < Date.now()) {
-      throw new BadRequestException({
-        code: 'PICKUP_SESSION_EXPIRED',
-        message: 'Pickup session has expired',
-      });
-    }
-
-    for (const regId of registrationIds) {
-      if (!session.registrationIds.includes(regId)) {
-        throw new BadRequestException(
-          `Registration ${regId} is not in this pickup session`,
-        );
-      }
+    // 2. The session is immutable: confirmation can never submit a subset or expansion.
+    if (!exactRegistrationSet(registrationIds, session.registrationIds)) {
+      throw pickupError(
+        'PICKUP_INTENT_CONFLICT',
+        'Pickup session intent is invalid.',
+      );
     }
 
     await this.checkServingWindow();

@@ -6,9 +6,14 @@ import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 const mockPrisma = {
   registration: {
     findUnique: vi.fn(),
+    findMany: vi.fn(),
   },
   pickupDelegation: {
     findMany: vi.fn(),
+  },
+  servingVerification: {
+    findUnique: vi.fn(),
+    create: vi.fn(),
   },
   servingConfirmRequest: {
     findUnique: vi.fn(),
@@ -200,8 +205,8 @@ describe('PickupService', () => {
       vi.spyOn(service, 'checkServingWindow').mockResolvedValue(undefined);
     });
 
-    it('generates a 5s TTL server-signed v2 QR code by default', async () => {
-      const res = await service.generateQr('user123', ['reg1']);
+    it('generates a 5s TTL server-signed v2 QR code', () => {
+      const res = service.generateSignedQr('user123', ['reg1']);
       expect(res.qr).toBeDefined();
 
       const parts = res.qr.split(':');
@@ -210,7 +215,7 @@ describe('PickupService', () => {
       expect(parts[1]).toBe('v2');
       expect(parts[2]).toBe('user123');
       expect(parts[4]).toBe('reg1');
-      expect('ttl' in res ? res.ttl : undefined).toBe(5);
+      expect(res.ttl).toBe(5);
     });
   });
 
@@ -235,7 +240,9 @@ describe('PickupService', () => {
     it('rejects the removed legacy TOTP format', async () => {
       await expect(
         service.verifyQr('imeal:totp:user123:000000'),
-      ).rejects.toThrow('Invalid QR format');
+      ).rejects.toMatchObject({
+        response: { code: 'QR_INVALID' },
+      });
     });
 
     it('rejects a QR after its clock-skew allowance', async () => {
@@ -264,74 +271,35 @@ describe('PickupService', () => {
       const parts = signed.qr.split(':');
       parts[3] = '2025-01-01';
 
-      await expect(service.verifyQr(parts.join(':'))).rejects.toThrow(
-        'QR code is not for today',
-      );
+      await expect(service.verifyQr(parts.join(':'))).rejects.toMatchObject({
+        response: { code: 'PICKUP_INTENT_CONFLICT' },
+      });
     });
 
-    it('filters pickup options to the signed intent', async () => {
+    it('rejects a changed exact intent instead of filtering or substituting items', async () => {
+      vi.spyOn(service, 'getPickupOptions').mockResolvedValue({
+        options: [ownPickupOption],
+      });
+
+      const signed = service.generateSignedQr('user123', ['reg1', 'reg2']);
+
+      await expect(service.verifyQr(signed.qr)).rejects.toMatchObject({
+        response: { code: 'PICKUP_INTENT_CONFLICT' },
+      });
+    });
+
+    it('accepts an exact sorted multi-item intent', async () => {
       vi.spyOn(service, 'getPickupOptions').mockResolvedValue({
         options: [ownPickupOption, delegatedPickupOption],
       });
 
-      const signed = service.generateSignedQr('user123', ['reg1']);
+      const signed = service.generateSignedQr('user123', ['reg2', 'reg1']);
       const result = await service.verifyQr(signed.qr);
 
-      expect(result.pickupOptions).toHaveLength(1);
-      expect(result.pickupOptions[0].registrationId).toBe('reg1');
-    });
-
-    it('returns all eligible options for an all-items intent', async () => {
-      vi.spyOn(service, 'getPickupOptions').mockResolvedValue({
-        options: [ownPickupOption, delegatedPickupOption],
-      });
-
-      const signed = service.generateSignedQr('user123');
-      const result = await service.verifyQr(signed.qr);
-
-      expect(result.pickupOptions).toHaveLength(2);
-    });
-  });
-
-  describe('resolvePickup with pickupIntent', () => {
-    beforeEach(() => {
-      vi.spyOn(service, 'getPickupOptions').mockResolvedValue({
-        options: [ownPickupOption, delegatedPickupOption],
-      });
-    });
-
-    it('atomically creates one persisted redemption session', async () => {
-      mockPrisma.$queryRaw.mockResolvedValueOnce([
-        {
-          id: 'sess-test-1',
-          userId: 'user123',
-          registrationIds: ['reg1'],
-          expiresAt: new Date(),
-          createdAt: new Date(),
-        },
+      expect(result.pickupOptions.map((item) => item.registrationId)).toEqual([
+        'reg1',
+        'reg2',
       ]);
-      const signed = service.generateSignedQr('user123', ['reg1']);
-
-      const resolved = await service.resolvePickup(signed.qr);
-
-      expect(resolved.items).toHaveLength(1);
-      expect(resolved.items[0].registrationId).toBe('reg1');
-      expect(resolved.items[0].mealChoice).toBe('VEGETARIAN');
-      expect(resolved.pickupSessionToken).toBe('sess-test-1');
-      expect(resolved.intent.items[0]).toMatchObject({
-        id: 'reg1',
-        mealChoice: 'VEGETARIAN',
-      });
-      expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
-    });
-
-    it('rejects a QR whose database redemption already exists', async () => {
-      mockPrisma.$queryRaw.mockResolvedValueOnce([]);
-      const signed = service.generateSignedQr('user123', ['reg1']);
-
-      await expect(service.resolvePickup(signed.qr)).rejects.toThrow(
-        'QR code has already been used',
-      );
     });
   });
 
@@ -341,6 +309,11 @@ describe('PickupService', () => {
     });
 
     it('returns previously generated servings on idempotency retry', async () => {
+      mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
+        id: 'session1',
+        expiresAt: new Date(Date.now() + 10000),
+        registrationIds: ['reg1'],
+      });
       mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce({
         status: 'SUCCESS',
       });
@@ -351,7 +324,6 @@ describe('PickupService', () => {
       const result = await service.confirmPickup(
         {
           pickupSessionId: 'session1',
-          registrationIds: ['reg1'],
           idempotencyKey: 'key1',
         },
         'caller1',
@@ -363,12 +335,12 @@ describe('PickupService', () => {
     });
 
     it('processes transaction if not idempotently fulfilled', async () => {
-      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
       mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
         id: 'session1',
         expiresAt: new Date(Date.now() + 10000),
         registrationIds: ['reg1'],
       });
+      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
 
       mockPrisma.$transaction.mockResolvedValueOnce([
         { id: 'serving1', registrationId: 'reg1', servedAt: new Date() },
@@ -377,7 +349,6 @@ describe('PickupService', () => {
       const result = await service.confirmPickup(
         {
           pickupSessionId: 'session1',
-          registrationIds: ['reg1'],
           idempotencyKey: 'key2',
         },
         'caller2',
@@ -395,12 +366,12 @@ describe('PickupService', () => {
         undefined,
       );
 
-      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
       mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
         id: 'session1',
         expiresAt: new Date(Date.now() + 10000),
         registrationIds: ['reg1'],
       });
+      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
 
       mockPrisma.$transaction.mockResolvedValueOnce([
         { id: 'serving1', registrationId: 'reg1', servedAt: new Date() },
@@ -409,7 +380,6 @@ describe('PickupService', () => {
       const result = await serviceWithEvents.confirmPickup(
         {
           pickupSessionId: 'session1',
-          registrationIds: ['reg1'],
           idempotencyKey: 'key-events',
         },
         'caller-event',
@@ -423,9 +393,7 @@ describe('PickupService', () => {
         }),
       );
     });
-
     it('throws if pickup session is expired', async () => {
-      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
       mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
         id: 'session1',
         expiresAt: new Date(Date.now() - 10000), // expired
@@ -436,7 +404,6 @@ describe('PickupService', () => {
         service.confirmPickup(
           {
             pickupSessionId: 'session1',
-            registrationIds: ['reg1'],
             idempotencyKey: 'key3',
           },
           'caller3',
@@ -450,17 +417,13 @@ describe('PickupService', () => {
     });
 
     it('gracefully handles concurrent idempotency inside transaction', async () => {
-      // Setup outer check to pass (simulate concurrent entry)
-      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
       mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
         id: 'session1',
         expiresAt: new Date(Date.now() + 10000),
         registrationIds: ['reg1'],
       });
+      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
 
-      // We will test the inner transaction logic by directly executing the transaction callback
-      // However, we just mocked $transaction to return a value.
-      // To test the inner callback, we can capture it and run it.
       let txCallback:
         | ((tx: unknown) => Promise<Array<{ registrationId: string }>>)
         | undefined;
@@ -476,7 +439,6 @@ describe('PickupService', () => {
       await service.confirmPickup(
         {
           pickupSessionId: 'session1',
-          registrationIds: ['reg1'],
           idempotencyKey: 'key4',
         },
         'caller4',
@@ -507,6 +469,309 @@ describe('PickupService', () => {
       }
       const result = await capturedCallback(mockTx);
       expect(result[0].registrationId).toBe('reg1'); // Graceful return!
+    });
+  });
+  describe('Task 7 exact intent and presenter evidence', () => {
+    const validEvidence = {
+      capturedAt: '2026-09-04T04:00:00.000Z',
+      latitude: 10.77,
+      longitude: 106.69,
+      accuracyMeters: 12,
+    } as const;
+    const kitchenActor = {
+      id: 'kitchen-1',
+      userId: 'kitchen-1',
+      email: 'kitchen@example.test',
+      roles: ['kitchen'],
+      permissions: ['kitchen.serve'],
+      sessionId: 'session-kitchen',
+      isActive: true,
+    };
+
+    function makeLocationsService(result: unknown = {
+      result: 'VALID',
+      locationId: 'location-1',
+      locationPolicyId: 'policy-1',
+      capturedAt: validEvidence.capturedAt,
+      verifiedAt: '2026-09-04T04:00:01.000Z',
+      accuracyMeters: validEvidence.accuracyMeters,
+      safeVerificationCode: 'GPS_VALID',
+    }) {
+      return {
+        resolveEffectiveLocation: vi.fn().mockResolvedValue({
+          id: 'location-1',
+          shortCode: 'HQ',
+          locationPolicy: {
+            id: 'policy-1',
+            maxFixAgeSeconds: 120,
+            maxAccuracyMeters: 50,
+          },
+        }),
+        evaluatePresenterEvidence: vi.fn().mockResolvedValue(result),
+      };
+    }
+
+    it('rejects zero selection and does not issue a usable QR', async () => {
+      const locationsService = makeLocationsService();
+      const taskService = new PickupService(
+        undefined,
+        undefined,
+        locationsService as never,
+      );
+      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
+
+      await expect(
+        taskService.generateQr('presenter-1', {
+          registrationIds: [],
+          presenterEvidence: validEvidence,
+        } as never),
+      ).rejects.toMatchObject({
+        response: { code: 'PICKUP_INTENT_REQUIRED' },
+      });
+    });
+
+    it('requires fresh presenter evidence on every QR generation or refresh', async () => {
+      const locationsService = makeLocationsService({
+        result: 'GPS_RETRY_REQUIRED',
+        locationId: 'location-1',
+        code: 'GPS_RETRY_REQUIRED',
+        safeVerificationCode: 'GPS_STALE',
+        details: { action: 'RETRY' },
+      });
+      const taskService = new PickupService(
+        undefined,
+        undefined,
+        locationsService as never,
+      );
+      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
+      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
+        options: [ownPickupOption],
+      });
+      mockPrisma.registration.findMany = vi.fn().mockResolvedValue([
+        {
+          id: 'reg1',
+          userId: 'presenter-1',
+          status: 'ACTIVE',
+          mealDate: new Date('2026-09-04T00:00:00.000Z'),
+          serviceLocationId: 'location-1',
+          serviceLocationCode: 'HQ',
+          mealServing: null,
+        },
+      ]);
+
+      await expect(
+        taskService.generateQr('presenter-1', {
+          registrationIds: ['reg1'],
+          presenterEvidence: validEvidence,
+        } as never),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'GPS_RETRY_REQUIRED',
+          details: { action: 'RETRY' },
+        },
+      });
+      expect(locationsService.evaluatePresenterEvidence).toHaveBeenCalledWith(
+        'location-1',
+        validEvidence,
+        expect.any(Date),
+      );
+      expect(mockPrisma.servingVerification.create).not.toHaveBeenCalled();
+    });
+    it('persists only safe presenter verification evidence for the signed exact set', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-04T04:00:00.000Z'));
+      const locationsService = makeLocationsService();
+      const taskService = new PickupService(
+        undefined,
+        undefined,
+        locationsService as never,
+      );
+      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
+      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
+        options: [ownPickupOption],
+      });
+      mockPrisma.registration.findMany.mockResolvedValueOnce([
+        {
+          id: 'reg1',
+          userId: 'presenter-1',
+          status: 'ACTIVE',
+          mealDate: new Date('2026-09-04T00:00:00.000Z'),
+          serviceLocationId: 'location-1',
+          serviceLocationCode: 'HQ',
+          serviceLocationName: 'HQ',
+          serviceLocationAddress: 'Address',
+          serviceLocationEffectiveFrom: null,
+          mealServing: null,
+        },
+      ]);
+
+      const result = await taskService.generateQr('presenter-1', {
+        registrationIds: ['reg1'],
+        presenterEvidence: validEvidence,
+      } as never);
+
+      expect(result.registrationIds).toEqual(['reg1']);
+      expect(result.mealDate).toBe('2026-09-04');
+      expect(result.ttl).toBe(5);
+      expect(mockPrisma.servingVerification.create).toHaveBeenCalledTimes(1);
+      const persisted = mockPrisma.servingVerification.create.mock.calls[0][0]
+        .data;
+      expect(persisted).toMatchObject({
+        presenterUserId: 'presenter-1',
+        locationId: 'location-1',
+        locationPolicyId: 'policy-1',
+        accuracyMeters: 12,
+        safeVerificationCode: 'GPS_VALID',
+      });
+      expect(persisted).not.toHaveProperty('latitude');
+      expect(persisted).not.toHaveProperty('longitude');
+    });
+
+    it('rejects a stale selected item without substituting another eligible item', async () => {
+      const locationsService = makeLocationsService();
+      const taskService = new PickupService(
+        undefined,
+        undefined,
+        locationsService as never,
+      );
+      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
+      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
+        options: [ownPickupOption],
+      });
+      const signed = taskService.generateSignedQr('presenter-1', ['reg1', 'reg2']);
+      mockPrisma.servingVerification.findUnique.mockResolvedValueOnce({
+        id: 'qr-hash',
+        presenterUserId: 'presenter-1',
+        locationId: 'location-1',
+        locationPolicyId: 'policy-1',
+        result: 'VALID',
+        capturedAt: new Date(validEvidence.capturedAt),
+        accuracyMeters: 12,
+      });
+
+      await expect(
+        taskService.resolvePickup(
+          { qr: signed.qr },
+          kitchenActor,
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'PICKUP_INTENT_CONFLICT' },
+      });
+    });
+
+    it('resolves only a QR for an authenticated Kitchen actor and stores no Kitchen GPS', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-04T04:00:00.000Z'));
+      const locationsService = makeLocationsService();
+      const taskService = new PickupService(
+        undefined,
+        undefined,
+        locationsService as never,
+      );
+      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
+      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
+        options: [ownPickupOption],
+      });
+      const signed = taskService.generateSignedQr('presenter-1', ['reg1']);
+      mockPrisma.servingVerification.findUnique.mockResolvedValueOnce({
+        id: expect.any(String),
+        presenterUserId: 'presenter-1',
+        locationId: 'location-1',
+        locationPolicyId: 'policy-1',
+        result: 'VALID',
+        capturedAt: new Date(validEvidence.capturedAt),
+        accuracyMeters: 12,
+      });
+      mockPrisma.registration.findMany = vi.fn().mockResolvedValue([
+        {
+          id: 'reg1',
+          userId: 'presenter-1',
+          status: 'ACTIVE',
+          mealDate: new Date('2026-09-04T00:00:00.000Z'),
+          serviceLocationId: 'location-1',
+          serviceLocationCode: 'HQ',
+          mealServing: null,
+        },
+      ]);
+      mockPrisma.$queryRaw.mockResolvedValueOnce([
+        {
+          id: 'session-1',
+          userId: 'presenter-1',
+          registrationIds: ['reg1'],
+          expiresAt: new Date(Date.now() + 30_000),
+          createdAt: new Date(),
+        },
+      ]);
+
+      const resolved = await taskService.resolvePickup(
+        { qr: signed.qr },
+        kitchenActor,
+      );
+
+      expect(resolved.items.map((item) => item.registrationId)).toEqual([
+        'reg1',
+      ]);
+      expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(locationsService.evaluatePresenterEvidence).not.toHaveBeenCalled();
+    });
+    it('rejects stored evidence when the effective location policy changes', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-04T04:00:00.000Z'));
+      const locationsService = makeLocationsService();
+      const taskService = new PickupService(
+        undefined,
+        undefined,
+        locationsService as never,
+      );
+      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
+      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
+        options: [ownPickupOption],
+      });
+      const signed = taskService.generateSignedQr('presenter-1', ['reg1']);
+      mockPrisma.servingVerification.findUnique.mockResolvedValueOnce({
+        id: signed.qrHash,
+        presenterUserId: 'presenter-1',
+        locationId: 'location-1',
+        locationPolicyId: 'policy-old',
+        result: 'VALID',
+        capturedAt: new Date(validEvidence.capturedAt),
+        accuracyMeters: 12,
+      });
+      mockPrisma.registration.findMany = vi.fn().mockResolvedValue([
+        {
+          id: 'reg1',
+          userId: 'presenter-1',
+          status: 'ACTIVE',
+          mealDate: new Date('2026-09-04T00:00:00.000Z'),
+          serviceLocationId: 'location-1',
+          serviceLocationCode: 'HQ',
+          mealServing: null,
+        },
+      ]);
+
+      await expect(
+        taskService.resolvePickup({ qr: signed.qr }, kitchenActor),
+      ).rejects.toMatchObject({
+        response: { code: 'PICKUP_INTENT_CONFLICT' },
+      });
+    });
+
+
+    it('rejects a changed resolved intent at confirm time', async () => {
+      const taskService = new PickupService();
+
+      await expect(
+        taskService.confirmPickup(
+          {
+            pickupSessionId: 'session-1',
+            idempotencyKey: 'key-1',
+            registrationIds: ['reg-other'],
+          } as never,
+          kitchenActor,
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'PICKUP_INTENT_CONFLICT' },
+      });
     });
   });
 });
