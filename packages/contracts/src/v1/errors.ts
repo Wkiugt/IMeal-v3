@@ -40,11 +40,23 @@ export const GpsFailureDetailsSchema = z.object({
 export type GpsFailureDetails = z.infer<typeof GpsFailureDetailsSchema>;
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
+const CanonicalErrorCodeSchema = z.union([ErrorCodeSchema, PickupErrorCodeSchema]);
+
 export const ErrorDetailSchema = z.object({
-  code: ErrorCodeSchema,
+  code: CanonicalErrorCodeSchema,
   message: z.string(),
   details: z.record(z.unknown()).optional(),
   path: z.array(z.union([z.string(), z.number()])).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (!value.code.startsWith('GPS_')) return;
+  const parsed = GpsFailureDetailsSchema.safeParse(value.details);
+  if (!parsed.success) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['details'],
+      message: 'GPS error details must contain only a safe recovery action',
+    });
+  }
 });
 
 export type ErrorDetail = z.infer<typeof ErrorDetailSchema>;

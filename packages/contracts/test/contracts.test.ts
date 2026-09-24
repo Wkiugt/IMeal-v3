@@ -773,6 +773,47 @@ describe('Contracts v1', () => {
         extra: true,
       })).toThrow();
     });
+    it('keeps location and roster contracts strict', () => {
+      const location = {
+        locationId: 'location',
+        shortCode: 'LOC-1',
+        timeZone: 'Asia/Ho_Chi_Minh',
+        geofenceRadiusMeters: 100,
+        maxFixAgeSeconds: 30,
+        maxAccuracyMeters: 50,
+      };
+      expect(v1.LocationPolicySchema.parse(location)).toEqual(location);
+      expect(() => v1.LocationPolicySchema.parse({ ...location, geofenceRadiusMeters: 0 })).toThrow();
+      expect(() => v1.LocationPolicySchema.parse({ ...location, unexpected: true })).toThrow();
+      const roster = {
+        email: 'employee@example.test',
+        name: 'Employee',
+        employeeCode: 'E-1',
+        isActive: true,
+        role: 'STAFF',
+        serviceLocationCode: 'LOC-1',
+        effectiveFrom: '2026-09-24T00:00:00.000Z',
+        effectiveTo: null,
+      };
+      expect(v1.RosterImportRowSchema.parse(roster)).toEqual(roster);
+      expect(() => v1.RosterImportRowSchema.parse({ ...roster, email: 'not-an-email' })).toThrow();
+      expect(() => v1.RosterImportRowSchema.parse({ ...roster, unexpected: true })).toThrow();
+    });
+
+    it('keeps OTP responses free of clear codes and requires UTC expiry', () => {
+      const response = {
+        sessionToken: 'session',
+        expiresAt: '2026-09-24T04:00:00.000Z',
+        user: { id: 'user', email: 'employee@example.test', name: null },
+      };
+      expect(v1.VerifyOtpResponseSchema.parse(response)).toEqual(response);
+      expect(() => v1.VerifyOtpResponseSchema.parse({ ...response, code: '123456' })).toThrow();
+      expect(() => v1.VerifyOtpResponseSchema.parse({
+        ...response,
+        expiresAt: '2026-09-24T04:00:00.000+07:00',
+      })).toThrow();
+    });
+
 
     it('requires canonical sorted unique registration IDs for Generate QR', () => {
       const evidence = {
@@ -810,6 +851,26 @@ describe('Contracts v1', () => {
         idempotencyKey: 'k',
       });
       expect(() => v1.ConfirmPickupSchema.parse({ pickupSessionId: '', idempotencyKey: 'k' })).toThrow();
+      expect(v1.ErrorDetailSchema.parse({
+        code: 'BAD_REQUEST',
+        message: 'bad request',
+        details: { reason: 'invalid input' },
+      }).details).toEqual({ reason: 'invalid input' });
+      expect(v1.ErrorDetailSchema.parse({
+        code: 'GPS_STALE',
+        message: 'retry location',
+        details: { action: 'RETRY' },
+      }).details).toEqual({ action: 'RETRY' });
+      expect(() => v1.ErrorDetailSchema.parse({
+        code: 'GPS_STALE',
+        message: 'retry location',
+        details: { action: 'RETRY', latitude: 10.77 },
+      })).toThrow();
+      expect(() => v1.ErrorDetailSchema.parse({
+        code: 'GPS_INACCURATE',
+        message: 'refresh location',
+        details: { action: 'REFRESH', distanceMeters: 2 },
+      })).toThrow();
       expect(() => v1.ConfirmPickupSchema.parse({ pickupSessionId: 's', idempotencyKey: '' })).toThrow();
       expect(() => v1.ConfirmPickupSchema.parse({
         pickupSessionId: 's',
