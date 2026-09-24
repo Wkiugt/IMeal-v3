@@ -1,0 +1,1680 @@
+diff --git a/apps/api/src/pickup/internal-pickup.controller.ts b/apps/api/src/pickup/internal-pickup.controller.ts
+index b5281b4..beab58a 100644
+--- a/apps/api/src/pickup/internal-pickup.controller.ts
++++ b/apps/api/src/pickup/internal-pickup.controller.ts
+@@ -1,33 +1,35 @@
+ import { Controller, Post, Body, UseGuards } from '@nestjs/common';
++import { v1 } from '@imeal/contracts';
+ import { PickupService } from './pickup.service.js';
+ import { SessionGuard } from '../auth/session.guard.js';
+ import { PermissionsGuard } from '../auth/permissions.guard.js';
+ import { RequirePermission } from '../auth/require-permission.decorator.js';
+ import { CurrentUser } from '../auth/current-user.decorator.js';
+ import type { AuthenticatedUser } from '../auth/authenticated-user.js';
++import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
+ 
+ @Controller(['internal/api/v1/pickup', 'v1/internal/pickup', 'api/serving'])
+ @UseGuards(SessionGuard, PermissionsGuard)
+ export class InternalPickupController {
+   constructor(private readonly pickupService: PickupService) {}
++
+   @RequirePermission('kitchen.serve')
+   @Post('resolve')
+-  async resolvePickup(@Body() body: { qr?: string; qrPayload?: string }) {
+-    const qrString = body.qr || body.qrPayload || '';
+-    return this.pickupService.resolvePickup(qrString);
++  async resolvePickup(
++    @Body(new ZodValidationPipe(v1.ResolvePickupSchema))
++    body: v1.ResolvePickupInput,
++    @CurrentUser() user: AuthenticatedUser,
++  ) {
++    return this.pickupService.resolvePickup(body, user);
+   }
++
+   @RequirePermission('kitchen.serve')
+   @Post('confirm')
+   async confirmPickup(
+-    @Body()
+-    body: {
+-      pickupSessionId?: string;
+-      pickupSessionToken?: string;
+-      registrationIds?: string[];
+-      idempotencyKey?: string;
+-    },
++    @Body(new ZodValidationPipe(v1.ConfirmPickupSchema))
++    body: v1.ConfirmPickupInput,
+     @CurrentUser() user: AuthenticatedUser,
+   ) {
+-    return this.pickupService.confirmPickup(body, user.id);
++    return this.pickupService.confirmPickup(body, user);
+   }
+ }
+diff --git a/apps/api/src/pickup/pickup.controller.ts b/apps/api/src/pickup/pickup.controller.ts
+index 5db7517..a684bf9 100644
+--- a/apps/api/src/pickup/pickup.controller.ts
++++ b/apps/api/src/pickup/pickup.controller.ts
+@@ -1,8 +1,10 @@
+ import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
++import { v1 } from '@imeal/contracts';
+ import { PickupService } from './pickup.service.js';
+ import { SessionGuard } from '../auth/session.guard.js';
+ import { CurrentUser } from '../auth/current-user.decorator.js';
+ import type { AuthenticatedUser } from '../auth/authenticated-user.js';
++import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
+ 
+ @Controller('api/me')
+ @UseGuards(SessionGuard)
+@@ -17,8 +19,9 @@ export class PickupController {
+   @Post('qr')
+   generateQr(
+     @CurrentUser() user: AuthenticatedUser,
+-    @Body() body: { registrationIds?: string[] },
++    @Body(new ZodValidationPipe(v1.GenerateQrSchema))
++    body: v1.GenerateQrInput,
+   ) {
+-    return this.pickupService.generateQr(user.id, body?.registrationIds || []);
++    return this.pickupService.generateQr(user.id, body);
+   }
+ }
+diff --git a/apps/api/src/pickup/pickup.module.ts b/apps/api/src/pickup/pickup.module.ts
+index dfe6d1e..d44d780 100644
+--- a/apps/api/src/pickup/pickup.module.ts
++++ b/apps/api/src/pickup/pickup.module.ts
+@@ -5,9 +5,10 @@ import { PickupService } from './pickup.service.js';
+ import { AuthModule } from '../auth/auth.module.js';
+ import { KitchenModule } from '../kitchen/kitchen.module.js';
+ import { NotificationsModule } from '../notifications/notifications.module.js';
++import { LocationsModule } from '../locations/locations.module.js';
+ 
+ @Module({
+-  imports: [AuthModule, KitchenModule, NotificationsModule],
++  imports: [AuthModule, KitchenModule, NotificationsModule, LocationsModule],
+   controllers: [PickupController, InternalPickupController],
+   providers: [PickupService],
+   exports: [PickupService],
+diff --git a/apps/api/src/pickup/pickup.service.spec.ts b/apps/api/src/pickup/pickup.service.spec.ts
+index 367d56f..400e86a 100644
+--- a/apps/api/src/pickup/pickup.service.spec.ts
++++ b/apps/api/src/pickup/pickup.service.spec.ts
+@@ -6,10 +6,15 @@ import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
+ const mockPrisma = {
+   registration: {
+     findUnique: vi.fn(),
++    findMany: vi.fn(),
+   },
+   pickupDelegation: {
+     findMany: vi.fn(),
+   },
++  servingVerification: {
++    findUnique: vi.fn(),
++    create: vi.fn(),
++  },
+   servingConfirmRequest: {
+     findUnique: vi.fn(),
+     create: vi.fn(),
+@@ -200,8 +205,8 @@ describe('PickupService', () => {
+       vi.spyOn(service, 'checkServingWindow').mockResolvedValue(undefined);
+     });
+ 
+-    it('generates a 5s TTL server-signed v2 QR code by default', async () => {
+-      const res = await service.generateQr('user123', ['reg1']);
++    it('generates a 5s TTL server-signed v2 QR code', () => {
++      const res = service.generateSignedQr('user123', ['reg1']);
+       expect(res.qr).toBeDefined();
+ 
+       const parts = res.qr.split(':');
+@@ -210,7 +215,7 @@ describe('PickupService', () => {
+       expect(parts[1]).toBe('v2');
+       expect(parts[2]).toBe('user123');
+       expect(parts[4]).toBe('reg1');
+-      expect('ttl' in res ? res.ttl : undefined).toBe(5);
++      expect(res.ttl).toBe(5);
+     });
+   });
+ 
+@@ -235,7 +240,9 @@ describe('PickupService', () => {
+     it('rejects the removed legacy TOTP format', async () => {
+       await expect(
+         service.verifyQr('imeal:totp:user123:000000'),
+-      ).rejects.toThrow('Invalid QR format');
++      ).rejects.toMatchObject({
++        response: { code: 'QR_INVALID' },
++      });
+     });
+ 
+     it('rejects a QR after its clock-skew allowance', async () => {
+@@ -264,74 +271,35 @@ describe('PickupService', () => {
+       const parts = signed.qr.split(':');
+       parts[3] = '2025-01-01';
+ 
+-      await expect(service.verifyQr(parts.join(':'))).rejects.toThrow(
+-        'QR code is not for today',
+-      );
++      await expect(service.verifyQr(parts.join(':'))).rejects.toMatchObject({
++        response: { code: 'PICKUP_INTENT_CONFLICT' },
++      });
+     });
+ 
+-    it('filters pickup options to the signed intent', async () => {
++    it('rejects a changed exact intent instead of filtering or substituting items', async () => {
+       vi.spyOn(service, 'getPickupOptions').mockResolvedValue({
+-        options: [ownPickupOption, delegatedPickupOption],
++        options: [ownPickupOption],
+       });
+ 
+-      const signed = service.generateSignedQr('user123', ['reg1']);
+-      const result = await service.verifyQr(signed.qr);
++      const signed = service.generateSignedQr('user123', ['reg1', 'reg2']);
+ 
+-      expect(result.pickupOptions).toHaveLength(1);
+-      expect(result.pickupOptions[0].registrationId).toBe('reg1');
++      await expect(service.verifyQr(signed.qr)).rejects.toMatchObject({
++        response: { code: 'PICKUP_INTENT_CONFLICT' },
++      });
+     });
+ 
+-    it('returns all eligible options for an all-items intent', async () => {
++    it('accepts an exact sorted multi-item intent', async () => {
+       vi.spyOn(service, 'getPickupOptions').mockResolvedValue({
+         options: [ownPickupOption, delegatedPickupOption],
+       });
+ 
+-      const signed = service.generateSignedQr('user123');
++      const signed = service.generateSignedQr('user123', ['reg2', 'reg1']);
+       const result = await service.verifyQr(signed.qr);
+ 
+-      expect(result.pickupOptions).toHaveLength(2);
+-    });
+-  });
+-
+-  describe('resolvePickup with pickupIntent', () => {
+-    beforeEach(() => {
+-      vi.spyOn(service, 'getPickupOptions').mockResolvedValue({
+-        options: [ownPickupOption, delegatedPickupOption],
+-      });
+-    });
+-
+-    it('atomically creates one persisted redemption session', async () => {
+-      mockPrisma.$queryRaw.mockResolvedValueOnce([
+-        {
+-          id: 'sess-test-1',
+-          userId: 'user123',
+-          registrationIds: ['reg1'],
+-          expiresAt: new Date(),
+-          createdAt: new Date(),
+-        },
++      expect(result.pickupOptions.map((item) => item.registrationId)).toEqual([
++        'reg1',
++        'reg2',
+       ]);
+-      const signed = service.generateSignedQr('user123', ['reg1']);
+-
+-      const resolved = await service.resolvePickup(signed.qr);
+-
+-      expect(resolved.items).toHaveLength(1);
+-      expect(resolved.items[0].registrationId).toBe('reg1');
+-      expect(resolved.items[0].mealChoice).toBe('VEGETARIAN');
+-      expect(resolved.pickupSessionToken).toBe('sess-test-1');
+-      expect(resolved.intent.items[0]).toMatchObject({
+-        id: 'reg1',
+-        mealChoice: 'VEGETARIAN',
+-      });
+-      expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
+-    });
+-
+-    it('rejects a QR whose database redemption already exists', async () => {
+-      mockPrisma.$queryRaw.mockResolvedValueOnce([]);
+-      const signed = service.generateSignedQr('user123', ['reg1']);
+-
+-      await expect(service.resolvePickup(signed.qr)).rejects.toThrow(
+-        'QR code has already been used',
+-      );
+     });
+   });
+ 
+@@ -341,6 +309,11 @@ describe('PickupService', () => {
+     });
+ 
+     it('returns previously generated servings on idempotency retry', async () => {
++      mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
++        id: 'session1',
++        expiresAt: new Date(Date.now() + 10000),
++        registrationIds: ['reg1'],
++      });
+       mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce({
+         status: 'SUCCESS',
+       });
+@@ -351,7 +324,6 @@ describe('PickupService', () => {
+       const result = await service.confirmPickup(
+         {
+           pickupSessionId: 'session1',
+-          registrationIds: ['reg1'],
+           idempotencyKey: 'key1',
+         },
+         'caller1',
+@@ -363,12 +335,12 @@ describe('PickupService', () => {
+     });
+ 
+     it('processes transaction if not idempotently fulfilled', async () => {
+-      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
+       mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
+         id: 'session1',
+         expiresAt: new Date(Date.now() + 10000),
+         registrationIds: ['reg1'],
+       });
++      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
+ 
+       mockPrisma.$transaction.mockResolvedValueOnce([
+         { id: 'serving1', registrationId: 'reg1', servedAt: new Date() },
+@@ -377,7 +349,6 @@ describe('PickupService', () => {
+       const result = await service.confirmPickup(
+         {
+           pickupSessionId: 'session1',
+-          registrationIds: ['reg1'],
+           idempotencyKey: 'key2',
+         },
+         'caller2',
+@@ -395,12 +366,12 @@ describe('PickupService', () => {
+         undefined,
+       );
+ 
+-      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
+       mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
+         id: 'session1',
+         expiresAt: new Date(Date.now() + 10000),
+         registrationIds: ['reg1'],
+       });
++      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
+ 
+       mockPrisma.$transaction.mockResolvedValueOnce([
+         { id: 'serving1', registrationId: 'reg1', servedAt: new Date() },
+@@ -409,7 +380,6 @@ describe('PickupService', () => {
+       const result = await serviceWithEvents.confirmPickup(
+         {
+           pickupSessionId: 'session1',
+-          registrationIds: ['reg1'],
+           idempotencyKey: 'key-events',
+         },
+         'caller-event',
+@@ -423,9 +393,7 @@ describe('PickupService', () => {
+         }),
+       );
+     });
+-
+     it('throws if pickup session is expired', async () => {
+-      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
+       mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
+         id: 'session1',
+         expiresAt: new Date(Date.now() - 10000), // expired
+@@ -436,7 +404,6 @@ describe('PickupService', () => {
+         service.confirmPickup(
+           {
+             pickupSessionId: 'session1',
+-            registrationIds: ['reg1'],
+             idempotencyKey: 'key3',
+           },
+           'caller3',
+@@ -450,17 +417,13 @@ describe('PickupService', () => {
+     });
+ 
+     it('gracefully handles concurrent idempotency inside transaction', async () => {
+-      // Setup outer check to pass (simulate concurrent entry)
+-      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
+       mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
+         id: 'session1',
+         expiresAt: new Date(Date.now() + 10000),
+         registrationIds: ['reg1'],
+       });
++      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
+ 
+-      // We will test the inner transaction logic by directly executing the transaction callback
+-      // However, we just mocked $transaction to return a value.
+-      // To test the inner callback, we can capture it and run it.
+       let txCallback:
+         | ((tx: unknown) => Promise<Array<{ registrationId: string }>>)
+         | undefined;
+@@ -476,7 +439,6 @@ describe('PickupService', () => {
+       await service.confirmPickup(
+         {
+           pickupSessionId: 'session1',
+-          registrationIds: ['reg1'],
+           idempotencyKey: 'key4',
+         },
+         'caller4',
+@@ -509,4 +471,307 @@ describe('PickupService', () => {
+       expect(result[0].registrationId).toBe('reg1'); // Graceful return!
+     });
+   });
++  describe('Task 7 exact intent and presenter evidence', () => {
++    const validEvidence = {
++      capturedAt: '2026-09-04T04:00:00.000Z',
++      latitude: 10.77,
++      longitude: 106.69,
++      accuracyMeters: 12,
++    } as const;
++    const kitchenActor = {
++      id: 'kitchen-1',
++      userId: 'kitchen-1',
++      email: 'kitchen@example.test',
++      roles: ['kitchen'],
++      permissions: ['kitchen.serve'],
++      sessionId: 'session-kitchen',
++      isActive: true,
++    };
++
++    function makeLocationsService(result: unknown = {
++      result: 'VALID',
++      locationId: 'location-1',
++      locationPolicyId: 'policy-1',
++      capturedAt: validEvidence.capturedAt,
++      verifiedAt: '2026-09-04T04:00:01.000Z',
++      accuracyMeters: validEvidence.accuracyMeters,
++      safeVerificationCode: 'GPS_VALID',
++    }) {
++      return {
++        resolveEffectiveLocation: vi.fn().mockResolvedValue({
++          id: 'location-1',
++          shortCode: 'HQ',
++          locationPolicy: {
++            id: 'policy-1',
++            maxFixAgeSeconds: 120,
++            maxAccuracyMeters: 50,
++          },
++        }),
++        evaluatePresenterEvidence: vi.fn().mockResolvedValue(result),
++      };
++    }
++
++    it('rejects zero selection and does not issue a usable QR', async () => {
++      const locationsService = makeLocationsService();
++      const taskService = new PickupService(
++        undefined,
++        undefined,
++        locationsService as never,
++      );
++      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
++
++      await expect(
++        taskService.generateQr('presenter-1', {
++          registrationIds: [],
++          presenterEvidence: validEvidence,
++        } as never),
++      ).rejects.toMatchObject({
++        response: { code: 'PICKUP_INTENT_REQUIRED' },
++      });
++    });
++
++    it('requires fresh presenter evidence on every QR generation or refresh', async () => {
++      const locationsService = makeLocationsService({
++        result: 'GPS_RETRY_REQUIRED',
++        locationId: 'location-1',
++        code: 'GPS_RETRY_REQUIRED',
++        safeVerificationCode: 'GPS_STALE',
++        details: { action: 'RETRY' },
++      });
++      const taskService = new PickupService(
++        undefined,
++        undefined,
++        locationsService as never,
++      );
++      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
++      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
++        options: [ownPickupOption],
++      });
++      mockPrisma.registration.findMany = vi.fn().mockResolvedValue([
++        {
++          id: 'reg1',
++          userId: 'presenter-1',
++          status: 'ACTIVE',
++          mealDate: new Date('2026-09-04T00:00:00.000Z'),
++          serviceLocationId: 'location-1',
++          serviceLocationCode: 'HQ',
++          mealServing: null,
++        },
++      ]);
++
++      await expect(
++        taskService.generateQr('presenter-1', {
++          registrationIds: ['reg1'],
++          presenterEvidence: validEvidence,
++        } as never),
++      ).rejects.toMatchObject({
++        response: {
++          code: 'GPS_RETRY_REQUIRED',
++          details: { action: 'RETRY' },
++        },
++      });
++      expect(locationsService.evaluatePresenterEvidence).toHaveBeenCalledWith(
++        'location-1',
++        validEvidence,
++        expect.any(Date),
++      );
++      expect(mockPrisma.servingVerification.create).not.toHaveBeenCalled();
++    });
++    it('persists only safe presenter verification evidence for the signed exact set', async () => {
++      vi.useFakeTimers();
++      vi.setSystemTime(new Date('2026-09-04T04:00:00.000Z'));
++      const locationsService = makeLocationsService();
++      const taskService = new PickupService(
++        undefined,
++        undefined,
++        locationsService as never,
++      );
++      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
++      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
++        options: [ownPickupOption],
++      });
++      mockPrisma.registration.findMany.mockResolvedValueOnce([
++        {
++          id: 'reg1',
++          userId: 'presenter-1',
++          status: 'ACTIVE',
++          mealDate: new Date('2026-09-04T00:00:00.000Z'),
++          serviceLocationId: 'location-1',
++          serviceLocationCode: 'HQ',
++          serviceLocationName: 'HQ',
++          serviceLocationAddress: 'Address',
++          serviceLocationEffectiveFrom: null,
++          mealServing: null,
++        },
++      ]);
++
++      const result = await taskService.generateQr('presenter-1', {
++        registrationIds: ['reg1'],
++        presenterEvidence: validEvidence,
++      } as never);
++
++      expect(result.registrationIds).toEqual(['reg1']);
++      expect(result.mealDate).toBe('2026-09-04');
++      expect(result.ttl).toBe(5);
++      expect(mockPrisma.servingVerification.create).toHaveBeenCalledTimes(1);
++      const persisted = mockPrisma.servingVerification.create.mock.calls[0][0]
++        .data;
++      expect(persisted).toMatchObject({
++        presenterUserId: 'presenter-1',
++        locationId: 'location-1',
++        locationPolicyId: 'policy-1',
++        accuracyMeters: 12,
++        safeVerificationCode: 'GPS_VALID',
++      });
++      expect(persisted).not.toHaveProperty('latitude');
++      expect(persisted).not.toHaveProperty('longitude');
++    });
++
++    it('rejects a stale selected item without substituting another eligible item', async () => {
++      const locationsService = makeLocationsService();
++      const taskService = new PickupService(
++        undefined,
++        undefined,
++        locationsService as never,
++      );
++      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
++      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
++        options: [ownPickupOption],
++      });
++      const signed = taskService.generateSignedQr('presenter-1', ['reg1', 'reg2']);
++      mockPrisma.servingVerification.findUnique.mockResolvedValueOnce({
++        id: 'qr-hash',
++        presenterUserId: 'presenter-1',
++        locationId: 'location-1',
++        locationPolicyId: 'policy-1',
++        result: 'VALID',
++        capturedAt: new Date(validEvidence.capturedAt),
++        accuracyMeters: 12,
++      });
++
++      await expect(
++        taskService.resolvePickup(
++          { qr: signed.qr },
++          kitchenActor,
++        ),
++      ).rejects.toMatchObject({
++        response: { code: 'PICKUP_INTENT_CONFLICT' },
++      });
++    });
++
++    it('resolves only a QR for an authenticated Kitchen actor and stores no Kitchen GPS', async () => {
++      vi.useFakeTimers();
++      vi.setSystemTime(new Date('2026-09-04T04:00:00.000Z'));
++      const locationsService = makeLocationsService();
++      const taskService = new PickupService(
++        undefined,
++        undefined,
++        locationsService as never,
++      );
++      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
++      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
++        options: [ownPickupOption],
++      });
++      const signed = taskService.generateSignedQr('presenter-1', ['reg1']);
++      mockPrisma.servingVerification.findUnique.mockResolvedValueOnce({
++        id: expect.any(String),
++        presenterUserId: 'presenter-1',
++        locationId: 'location-1',
++        locationPolicyId: 'policy-1',
++        result: 'VALID',
++        capturedAt: new Date(validEvidence.capturedAt),
++        accuracyMeters: 12,
++      });
++      mockPrisma.registration.findMany = vi.fn().mockResolvedValue([
++        {
++          id: 'reg1',
++          userId: 'presenter-1',
++          status: 'ACTIVE',
++          mealDate: new Date('2026-09-04T00:00:00.000Z'),
++          serviceLocationId: 'location-1',
++          serviceLocationCode: 'HQ',
++          mealServing: null,
++        },
++      ]);
++      mockPrisma.$queryRaw.mockResolvedValueOnce([
++        {
++          id: 'session-1',
++          userId: 'presenter-1',
++          registrationIds: ['reg1'],
++          expiresAt: new Date(Date.now() + 30_000),
++          createdAt: new Date(),
++        },
++      ]);
++
++      const resolved = await taskService.resolvePickup(
++        { qr: signed.qr },
++        kitchenActor,
++      );
++
++      expect(resolved.items.map((item) => item.registrationId)).toEqual([
++        'reg1',
++      ]);
++      expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
++      expect(locationsService.evaluatePresenterEvidence).not.toHaveBeenCalled();
++    });
++    it('rejects stored evidence when the effective location policy changes', async () => {
++      vi.useFakeTimers();
++      vi.setSystemTime(new Date('2026-09-04T04:00:00.000Z'));
++      const locationsService = makeLocationsService();
++      const taskService = new PickupService(
++        undefined,
++        undefined,
++        locationsService as never,
++      );
++      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
++      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
++        options: [ownPickupOption],
++      });
++      const signed = taskService.generateSignedQr('presenter-1', ['reg1']);
++      mockPrisma.servingVerification.findUnique.mockResolvedValueOnce({
++        id: signed.qrHash,
++        presenterUserId: 'presenter-1',
++        locationId: 'location-1',
++        locationPolicyId: 'policy-old',
++        result: 'VALID',
++        capturedAt: new Date(validEvidence.capturedAt),
++        accuracyMeters: 12,
++      });
++      mockPrisma.registration.findMany = vi.fn().mockResolvedValue([
++        {
++          id: 'reg1',
++          userId: 'presenter-1',
++          status: 'ACTIVE',
++          mealDate: new Date('2026-09-04T00:00:00.000Z'),
++          serviceLocationId: 'location-1',
++          serviceLocationCode: 'HQ',
++          mealServing: null,
++        },
++      ]);
++
++      await expect(
++        taskService.resolvePickup({ qr: signed.qr }, kitchenActor),
++      ).rejects.toMatchObject({
++        response: { code: 'PICKUP_INTENT_CONFLICT' },
++      });
++    });
++
++
++    it('rejects a changed resolved intent at confirm time', async () => {
++      const taskService = new PickupService();
++
++      await expect(
++        taskService.confirmPickup(
++          {
++            pickupSessionId: 'session-1',
++            idempotencyKey: 'key-1',
++            registrationIds: ['reg-other'],
++          } as never,
++          kitchenActor,
++        ),
++      ).rejects.toMatchObject({
++        response: { code: 'PICKUP_INTENT_CONFLICT' },
++      });
++    });
++  });
+ });
+diff --git a/apps/api/src/pickup/pickup.service.ts b/apps/api/src/pickup/pickup.service.ts
+index c2b6213..08a4fed 100644
+--- a/apps/api/src/pickup/pickup.service.ts
++++ b/apps/api/src/pickup/pickup.service.ts
+@@ -15,6 +15,16 @@ import {
+   isWithinServingWindow,
+   parseMealDate,
+ } from '../common/business-time.js';
++import {
++  LocationsService,
++  type GpsVerificationResult,
++} from '../locations/locations.service.js';
++import type { AuthenticatedUser } from '../auth/authenticated-user.js';
++
++const QR_TTL_SECONDS = 5;
++const QR_CLOCK_SKEW_SECONDS = 2;
++const PICKUP_SESSION_TTL_SECONDS = 30;
++const VERIFICATION_RETENTION_DAYS = 365;
+ 
+ const PICKUP_AVAILABILITY_DETAILS = {
+   availableFrom: '10:30',
+@@ -27,6 +37,67 @@ const PICKUP_WINDOW_CLOSED_MESSAGE =
+ const PICKUP_NOT_READY_MESSAGE =
+   'Meal pickup is not currently available. Please wait for the kitchen signal.';
+ 
++function pickupError(
++  code: v1.PickupErrorCode,
++  message: string,
++  details?: Record<string, unknown>,
++): BadRequestException {
++  return new BadRequestException({ code, message, ...(details ? { details } : {}) });
++}
++
++function pickupForbiddenError(
++  code: v1.PickupErrorCode,
++  message: string,
++  details?: Record<string, unknown>,
++): ForbiddenException {
++  return new ForbiddenException({ code, message, ...(details ? { details } : {}) });
++}
++
++function canonicalRegistrationIds(
++  registrationIds: string[] | undefined,
++): string[] {
++  if (!Array.isArray(registrationIds) || registrationIds.length === 0) {
++    throw pickupError(
++      'PICKUP_INTENT_REQUIRED',
++      'Select at least one meal before presenting a QR code.',
++    );
++  }
++  const normalized = registrationIds.map((id) => id.trim());
++  if (normalized.some((id) => id.length === 0)) {
++    throw pickupError(
++      'PICKUP_INTENT_CONFLICT',
++      'Pickup intent contains an invalid registration.',
++    );
++  }
++  const unique = new Set(normalized);
++  if (unique.size !== normalized.length) {
++    throw pickupError(
++      'PICKUP_INTENT_CONFLICT',
++      'Pickup intent contains duplicate registrations.',
++    );
++  }
++  return [...normalized].sort();
++}
++
++function exactRegistrationSet(
++  expected: string[],
++  actual: string[],
++): boolean {
++  return (
++    expected.length === actual.length &&
++    expected.every((registrationId, index) => registrationId === actual[index])
++  );
++}
++
++function safeDate(value: Date | string): Date {
++  const result = value instanceof Date ? value : new Date(value);
++  if (!Number.isFinite(result.getTime())) {
++    throw pickupError('PICKUP_INTENT_CONFLICT', 'Pickup intent is invalid.');
++  }
++  return result;
++}
++
++
+ function toMealDateKey(value: Date | string): string {
+   return value instanceof Date ? value.toISOString().slice(0, 10) : value;
+ }
+@@ -45,10 +116,22 @@ interface LockedDelegation {
+ export interface PickupSessionRecord {
+   id: string;
+   userId: string;
++  presenterUserId?: string | null;
++  mealDate?: Date | null;
+   registrationIds: string[];
++  intentRegistrationIds?: string[];
++  intentHash?: string | null;
++  intentNonce?: string | null;
++  qrHash?: string;
++  locationId?: string | null;
++  servingVerificationId?: string | null;
+   expiresAt: Date;
+   createdAt: Date;
+ }
++interface StoredPresenterEvidence {
++  verification: v1.ServingVerification;
++  locationPolicyId: string | null;
++}
+ 
+ @Injectable()
+ export class PickupService {
+@@ -57,6 +140,7 @@ export class PickupService {
+   constructor(
+     @Optional() private readonly kitchenEventsService?: KitchenEventsService,
+     @Optional() private readonly notificationsService?: NotificationsService,
++    @Optional() private readonly locationsService?: LocationsService,
+   ) {
+     this.prisma = new PrismaClient();
+   }
+@@ -64,7 +148,6 @@ export class PickupService {
+   private getTodayDate(now: Date = new Date()) {
+     return parseMealDate(getBusinessDate(now));
+   }
+-
+   async checkServingWindow(mealType: string = 'LUNCH', now: Date = new Date()) {
+     if (!isWithinServingWindow(now)) {
+       throw new ForbiddenException({
+@@ -185,39 +268,229 @@ export class PickupService {
+     return crypto.createHmac('sha256', masterSecret).update(userId).digest();
+   }
+ 
+-  generateSignedQr(userId: string, registrationIds: string[] = []) {
+-    const mealDate = getBusinessDate();
+-    const exp = Math.floor(Date.now() / 1000) + 5;
++  private requireLocationsService(): LocationsService {
++    if (!this.locationsService) {
++      throw pickupError(
++        'PICKUP_INTENT_CONFLICT',
++        'Pickup location verification is unavailable.',
++      );
++    }
++    return this.locationsService;
++  }
++
++  private async loadRegistrationContexts(registrationIds: string[]) {
++    const contexts = await this.prisma.registration.findMany({
++      where: { id: { in: registrationIds } },
++      select: {
++        id: true,
++        userId: true,
++        status: true,
++        mealDate: true,
++        serviceLocationId: true,
++        serviceLocationCode: true,
++        serviceLocationName: true,
++        serviceLocationAddress: true,
++        serviceLocationEffectiveFrom: true,
++        mealServing: { select: { id: true } },
++      },
++    });
++    return contexts as Array<{
++      id: string;
++      userId: string;
++      status: string;
++      mealDate: Date;
++      serviceLocationId: string | null;
++      serviceLocationCode: string | null;
++      serviceLocationName: string | null;
++      serviceLocationAddress: string | null;
++      serviceLocationEffectiveFrom: Date | null;
++      mealServing: { id: string } | null;
++    }>;
++  }
++
++  private async resolveIntentLocation(
++    registrationIds: string[],
++    at: Date,
++  ) {
++    const contexts = await this.loadRegistrationContexts(registrationIds);
++    if (contexts.length !== registrationIds.length) {
++      throw pickupError(
++        'PICKUP_INTENT_CONFLICT',
++        'One or more selected meals are no longer available.',
++      );
++    }
++
++    const mealDate = toMealDateKey(contexts[0].mealDate);
++    const locationIds = new Set<string>();
++    for (const context of contexts) {
++      if (
++        context.status !== 'ACTIVE' ||
++        context.mealServing ||
++        toMealDateKey(context.mealDate) !== mealDate ||
++        !context.serviceLocationId ||
++        !context.serviceLocationCode
++      ) {
++        throw pickupError(
++          'PICKUP_INTENT_CONFLICT',
++          'The selected meals are no longer eligible for pickup.',
++        );
++      }
++      locationIds.add(context.serviceLocationId);
++    }
++    if (locationIds.size !== 1) {
++      throw pickupError(
++        'PICKUP_INTENT_CONFLICT',
++        'Selected meals must resolve to one serving location.',
++      );
++    }
++
++    const locationId = [...locationIds][0];
++    const location = await this.requireLocationsService().resolveEffectiveLocation(
++      contexts[0].serviceLocationCode!,
++      at,
++    );
++    if (location.id !== locationId) {
++      throw pickupError(
++        'PICKUP_INTENT_CONFLICT',
++        'The selected meal location is no longer effective.',
++      );
++    }
++    return { contexts, location, mealDate };
++  }
++
++  private assertExactEligibleOptions(
++    registrationIds: string[],
++    options: v1.PickupOption[],
++  ): v1.PickupOption[] {
++    const byId = new Map(
++      options.map((option) => [option.registrationId, option]),
++    );
++    return registrationIds.map((registrationId) => {
++      const option = byId.get(registrationId);
++      if (!option) {
++        throw pickupError(
++          'PICKUP_INTENT_CONFLICT',
++          'The selected meals changed; refresh pickup options and try again.',
++        );
++      }
++      return option;
++    });
++  }
++
++  private persistPresenterVerification(
++    qrHash: string,
++    presenterUserId: string,
++    verification: Extract<GpsVerificationResult, { result: 'VALID' }>,
++    at: Date,
++  ) {
++    return this.prisma.servingVerification.create({
++      data: {
++        id: qrHash,
++        presenterUserId,
++        locationId: verification.locationId,
++        locationPolicyId: verification.locationPolicyId,
++        result: 'VALID',
++        capturedAt: new Date(verification.capturedAt),
++        verifiedAt: new Date(verification.verifiedAt),
++        accuracyMeters: verification.accuracyMeters,
++        safeVerificationCode: verification.safeVerificationCode,
++        retentionUntil: new Date(
++          at.getTime() + VERIFICATION_RETENTION_DAYS * 24 * 60 * 60 * 1000,
++        ),
++      },
++    });
++  }
++
++  generateSignedQr(
++    userId: string,
++    registrationIds: string[],
++    mealDate: string = getBusinessDate(),
++    now: Date = new Date(),
++  ) {
++    const exactIds = canonicalRegistrationIds(registrationIds);
++    const exp = Math.floor(now.getTime() / 1000) + QR_TTL_SECONDS;
+     const nonce = crypto.randomBytes(16).toString('hex');
+-    const intent =
+-      registrationIds.length > 0
+-        ? registrationIds.slice().sort().join(',')
+-        : 'all';
+-    const payload = `imeal:v2:${userId}:${mealDate}:${intent}:${exp}:${nonce}`;
++    const pickupIntent = exactIds.join(',');
++    const payload = `imeal:v2:${userId}:${mealDate}:${pickupIntent}:${exp}:${nonce}`;
+     const sig = crypto
+       .createHmac('sha256', this.getSigningKey(userId))
+       .update(payload)
+       .digest('hex');
++    const qr = `${payload}:${sig}`;
+     return {
+-      qr: `${payload}:${sig}`,
++      qr,
+       exp,
+-      ttl: 5,
++      ttl: QR_TTL_SECONDS,
++      nonce,
++      registrationIds: exactIds,
++      mealDate,
++      qrHash: crypto.createHash('sha256').update(qr).digest('hex'),
+     };
+   }
+ 
+-  async generateQr(userId: string, registrationIds: string[] = []) {
++  async generateQr(
++    userId: string,
++    input: v1.GenerateQrInput,
++  ) {
+     await this.checkServingWindow();
+-    return this.generateSignedQr(userId, registrationIds);
++    const registrationIds = canonicalRegistrationIds(input?.registrationIds);
++    const evidenceResult = v1.PresenterLocationEvidenceSchema.safeParse(
++      input?.presenterEvidence,
++    );
++    if (!evidenceResult.success) {
++      throw pickupForbiddenError(
++        'GPS_RETRY_REQUIRED',
++        'A fresh presenter location is required.',
++        { action: 'RETRY' },
++      );
++    }
++    const presenterEvidence = evidenceResult.data;
++    const options = await this.getPickupOptions(userId);
++    const selectedOptions = this.assertExactEligibleOptions(
++      registrationIds,
++      options.options,
++    );
++    const now = new Date();
++    const { location, mealDate } = await this.resolveIntentLocation(
++      registrationIds,
++      now,
++    );
++    const gps = await this.requireLocationsService().evaluatePresenterEvidence(
++      location.id,
++      presenterEvidence,
++      now,
++    );
++    if (gps.result !== 'VALID') {
++      throw pickupForbiddenError(
++        'GPS_RETRY_REQUIRED',
++        'A fresh presenter location is required.',
++        gps.details,
++      );
++    }
++
++    const signed = this.generateSignedQr(userId, registrationIds, mealDate, now);
++    await this.persistPresenterVerification(
++      signed.qrHash,
++      userId,
++      gps,
++      now,
++    );
++    return {
++      qr: signed.qr,
++      exp: signed.exp,
++      ttl: signed.ttl,
++      registrationIds: selectedOptions.map((option) => option.registrationId),
++      mealDate,
++    };
+   }
+ 
+-  async verifyQr(qrString: string) {
+-    if (!qrString) {
+-      throw new BadRequestException('QR string is required');
++  private parseSignedQr(qrString: string) {
++    if (!qrString || typeof qrString !== 'string') {
++      throw pickupError('QR_INVALID', 'QR code is invalid.');
+     }
+-
+     const parts = qrString.split(':');
+     if (parts.length !== 8) {
+-      throw new BadRequestException('Invalid QR format');
++      throw pickupError('QR_INVALID', 'QR code is invalid.');
+     }
+ 
+     const [imeal, version, userId, mealDate, pickupIntent, expStr, nonce, sig] =
+@@ -229,25 +502,36 @@ export class PickupService {
+       !mealDate ||
+       !pickupIntent ||
+       !nonce ||
+-      !sig
++      !/^[a-f0-9]{64}$/i.test(sig)
+     ) {
+-      throw new BadRequestException('Invalid QR format');
++      throw pickupError('QR_INVALID', 'QR code is invalid.');
+     }
+-
+-    if (mealDate !== getBusinessDate()) {
+-      throw new ForbiddenException('QR code is not for today');
++    let registrationIds: string[];
++    try {
++      registrationIds = canonicalRegistrationIds(pickupIntent.split(','));
++    } catch {
++      throw pickupError('QR_INVALID', 'QR code is invalid.');
++    }
++    if (registrationIds.join(',') !== pickupIntent) {
++      throw pickupError('QR_INVALID', 'QR code is invalid.');
+     }
+ 
+     const exp = Number(expStr);
+     if (!Number.isSafeInteger(exp)) {
+-      throw new BadRequestException('Invalid QR expiration');
++      throw pickupError('QR_INVALID', 'QR code is invalid.');
+     }
+     const nowSec = Math.floor(Date.now() / 1000);
+-    if (nowSec > exp + 2) {
+-      throw new ForbiddenException('QR code has expired');
++    if (nowSec > exp + QR_CLOCK_SKEW_SECONDS) {
++      throw pickupForbiddenError('QR_EXPIRED', 'QR code has expired.');
+     }
+-    if (exp - nowSec > 7) {
+-      throw new ForbiddenException('Invalid QR code expiration');
++    if (exp - nowSec > QR_TTL_SECONDS + QR_CLOCK_SKEW_SECONDS) {
++      throw pickupForbiddenError('QR_INVALID', 'QR code is invalid.');
++    }
++    if (mealDate !== getBusinessDate()) {
++      throw pickupForbiddenError(
++        'PICKUP_INTENT_CONFLICT',
++        'QR code is not valid for today.',
++      );
+     }
+ 
+     const payload = `imeal:v2:${userId}:${mealDate}:${pickupIntent}:${expStr}:${nonce}`;
+@@ -261,53 +545,183 @@ export class PickupService {
+       providedSignature.length !== expectedSignature.length ||
+       !crypto.timingSafeEqual(providedSignature, expectedSignature)
+     ) {
+-      throw new ForbiddenException('Invalid QR signature');
++      throw pickupForbiddenError('QR_INVALID', 'QR code is invalid.');
+     }
+ 
+-    const optionsResult = await this.getPickupOptions(userId);
+-    let options = optionsResult.options;
+-    if (pickupIntent !== 'all') {
+-      const allowedIds = new Set(
+-        pickupIntent
+-          .split(',')
+-          .map((id) => id.trim())
+-          .filter(Boolean),
++    return {
++      userId,
++      mealDate,
++      registrationIds,
++      nonce,
++      exp,
++      qrHash: crypto.createHash('sha256').update(qrString).digest('hex'),
++    };
++  }
++
++  async verifyQr(qrString: string) {
++    const parsed = this.parseSignedQr(qrString);
++    const options = await this.getPickupOptions(parsed.userId);
++    const pickupOptions = this.assertExactEligibleOptions(
++      parsed.registrationIds,
++      options.options,
++    );
++    return {
++      valid: true as const,
++      userId: parsed.userId,
++      mealDate: parsed.mealDate,
++      registrationIds: parsed.registrationIds,
++      nonce: parsed.nonce,
++      exp: parsed.exp,
++      qrHash: parsed.qrHash,
++      pickupOptions,
++    };
++  }
++
++  private async readStoredPresenterEvidence(
++    sessionOrIntentId: string,
++    at: Date,
++  ): Promise<StoredPresenterEvidence> {
++    const stored = await this.prisma.servingVerification.findUnique({
++      where: { id: sessionOrIntentId },
++    });
++    if (
++      !stored ||
++      stored.result !== 'VALID' ||
++      stored.accuracyMeters == null ||
++      stored.accuracyMeters < 0
++    ) {
++      throw pickupForbiddenError(
++        'GPS_RETRY_REQUIRED',
++        'A fresh presenter location is required.',
++        { action: 'REFRESH' },
+       );
+-      options = options.filter((option) =>
+-        allowedIds.has(option.registrationId),
++    }
++    const capturedAt = safeDate(stored.capturedAt);
++    if (capturedAt.getTime() > at.getTime()) {
++      throw pickupForbiddenError(
++        'GPS_RETRY_REQUIRED',
++        'A fresh presenter location is required.',
++        { action: 'RETRY' },
+       );
+     }
+-
+     return {
+-      valid: true,
+-      userId,
+-      qrHash: crypto.createHash('sha256').update(qrString).digest('hex'),
+-      pickupOptions: options,
++      locationPolicyId: stored.locationPolicyId,
++      verification: v1.ServingVerificationSchema.parse({
++        presenterUserId: stored.presenterUserId,
++        receiverType: 'SELF',
++        locationId: stored.locationId,
++        gps: {
++          result: 'VALID',
++          capturedAt: capturedAt.toISOString(),
++          accuracyMeters: stored.accuracyMeters,
++        },
++      }),
+     };
+   }
+ 
+-  async resolvePickup(qrInput: string | { qr?: string; qrPayload?: string }) {
+-    const qrString =
+-      typeof qrInput === 'string'
+-        ? qrInput
+-        : qrInput?.qr || qrInput?.qrPayload || '';
+-    const verification = await this.verifyQr(qrString);
+-    const { userId, pickupOptions, qrHash } = verification;
++  async verifyStoredPresenterEvidence(
++    sessionOrIntentId: string,
++    at: Date = new Date(),
++  ): Promise<v1.ServingVerification> {
++    return (await this.readStoredPresenterEvidence(sessionOrIntentId, at))
++      .verification;
++  }
+ 
+-    if (pickupOptions.length === 0) {
+-      throw new BadRequestException('No eligible pickup items found.');
++  async resolvePickup(
++    input: v1.ResolvePickupInput,
++    kitchenActor: AuthenticatedUser,
++  ) {
++    if (
++      !kitchenActor ||
++      kitchenActor.isActive === false ||
++      !kitchenActor.permissions.includes('kitchen.serve')
++    ) {
++      throw new ForbiddenException({
++        code: 'FORBIDDEN',
++        message: 'Kitchen serving permission is required.',
++      });
++    }
++    const parsedInput = v1.ResolvePickupSchema.safeParse(input);
++    if (!parsedInput.success) {
++      throw pickupError('QR_INVALID', 'QR code is invalid.');
+     }
+ 
+-    const registrationIds = pickupOptions.map(
+-      (option) => option.registrationId,
++    const verification = await this.verifyQr(parsedInput.data.qr);
++    const now = new Date();
++    const { location, mealDate } = await this.resolveIntentLocation(
++      verification.registrationIds,
++      now,
++    );
++    const storedEvidenceRecord = await this.readStoredPresenterEvidence(
++      verification.qrHash,
++      now,
++    );
++    const storedEvidence = storedEvidenceRecord.verification;
++    if (
++      storedEvidence.presenterUserId !== verification.userId ||
++      storedEvidence.locationId !== location.id ||
++      storedEvidenceRecord.locationPolicyId !== location.locationPolicy.id
++    ) {
++      throw pickupError(
++        'PICKUP_INTENT_CONFLICT',
++        'Pickup verification no longer matches the selected intent.',
++      );
++    }
++
++    const policy = location.locationPolicy;
++    const capturedAt = new Date(storedEvidence.gps.capturedAt);
++    const ageSeconds = (now.getTime() - capturedAt.getTime()) / 1000;
++    if (
++      ageSeconds < 0 ||
++      ageSeconds > policy.maxFixAgeSeconds ||
++      storedEvidence.gps.accuracyMeters > policy.maxAccuracyMeters
++    ) {
++      throw pickupForbiddenError(
++        'GPS_RETRY_REQUIRED',
++        'A fresh presenter location is required.',
++        { action: 'REFRESH' },
++      );
++    }
++
++    const pickupOptions = this.assertExactEligibleOptions(
++      verification.registrationIds,
++      verification.pickupOptions,
++    );
++    const expiresAt = new Date(
++      now.getTime() + PICKUP_SESSION_TTL_SECONDS * 1000,
+     );
+-    const expiresAt = new Date(Date.now() + 30 * 1000);
+     const sessionId = crypto.randomUUID();
+     const sessions = await this.prisma.$queryRaw<PickupSessionRecord[]>`
+       INSERT INTO "pickup_sessions"
+-        ("id", "user_id", "registration_ids", "expires_at", "qr_hash")
++        (
++          "id",
++          "user_id",
++          "presenter_user_id",
++          "meal_date",
++          "registration_ids",
++          "intent_registration_ids",
++          "intent_hash",
++          "intent_nonce",
++          "expires_at",
++          "qr_hash",
++          "location_id",
++          "serving_verification_id"
++        )
+       VALUES
+-        (${sessionId}, ${userId}, ${registrationIds}::text[], ${expiresAt}, ${qrHash})
++        (
++          ${sessionId},
++          ${verification.userId},
++          ${verification.userId},
++          ${parseMealDate(mealDate)},
++          ${verification.registrationIds}::text[],
++          ${verification.registrationIds}::text[],
++          ${verification.qrHash},
++          ${verification.nonce},
++          ${expiresAt},
++          ${verification.qrHash},
++          ${location.id},
++          ${verification.qrHash}
++        )
+       ON CONFLICT ("qr_hash") DO NOTHING
+       RETURNING
+         "id",
+@@ -318,19 +732,24 @@ export class PickupService {
+     `;
+     const session = sessions[0];
+     if (!session) {
+-      throw new ForbiddenException('QR code has already been used');
++      throw pickupForbiddenError(
++        'PICKUP_INTENT_CONFLICT',
++        'QR code has already been resolved.',
++      );
+     }
+ 
+     return v1.ResolveServingResponseSchema.parse({
+       session: {
+-        ...session,
+-        expiresAt: session.expiresAt.toISOString(),
+-        createdAt: session.createdAt.toISOString(),
++        id: session.id,
++        userId: session.userId,
++        registrationIds: verification.registrationIds,
++        expiresAt: safeDate(session.expiresAt).toISOString(),
++        createdAt: safeDate(session.createdAt).toISOString(),
+       },
+       items: pickupOptions,
+       pickupSessionToken: session.id,
+       intent: {
+-        userId,
++        userId: verification.userId,
+         items: pickupOptions.map((option) => ({
+           id: option.registrationId,
+           itemName:
+@@ -347,31 +766,47 @@ export class PickupService {
+   }
+ 
+   async confirmPickup(
+-    body: {
+-      pickupSessionId?: string;
+-      pickupSessionToken?: string;
+-      registrationIds?: string[];
+-      idempotencyKey?: string;
+-    },
+-    callerUserId: string,
++    body: v1.ConfirmPickupInput,
++    caller: AuthenticatedUser | string,
+   ) {
+-    const pickupSessionId = body.pickupSessionId || body.pickupSessionToken;
++    const unsafeBody = body as v1.ConfirmPickupInput & {
++      registrationIds?: unknown;
++      pickupSessionToken?: unknown;
++    };
++    if (
++      unsafeBody.registrationIds !== undefined ||
++      unsafeBody.pickupSessionToken !== undefined
++    ) {
++      throw pickupError(
++        'PICKUP_INTENT_CONFLICT',
++        'Confirmation must use the exact resolved pickup session.',
++      );
++    }
++    const callerUserId = typeof caller === 'string' ? caller : caller.id;
++    const pickupSessionId = body?.pickupSessionId;
+     if (!pickupSessionId) {
+-      throw new BadRequestException('Pickup session ID or token is required');
++      throw new BadRequestException({
++        code: 'PICKUP_INTENT_REQUIRED',
++        message: 'Pickup session ID is required.',
++      });
+     }
+-
+-    let registrationIds = body.registrationIds;
+-    if (!registrationIds || registrationIds.length === 0) {
+-      const session = await this.prisma.pickupSession.findUnique({
+-        where: { id: pickupSessionId },
++    const session = await this.prisma.pickupSession.findUnique({
++      where: { id: pickupSessionId },
++    });
++    if (!session) {
++      throw new BadRequestException({
++        code: 'PICKUP_INTENT_CONFLICT',
++        message: 'Invalid pickup session.',
+       });
+-      if (!session) {
+-        throw new BadRequestException('Invalid pickup session');
+-      }
+-      registrationIds = session.registrationIds;
+     }
+-
+-    const idempotencyKey = body.idempotencyKey || `idem-${pickupSessionId}`;
++    if (session.expiresAt.getTime() < Date.now()) {
++      throw new BadRequestException({
++        code: 'PICKUP_SESSION_EXPIRED',
++        message: 'Pickup session has expired',
++      });
++    }
++    const registrationIds = canonicalRegistrationIds(session.registrationIds);
++    const idempotencyKey = body.idempotencyKey;
+ 
+     // 1. Check idempotency first (outside transaction, to avoid lock contention if already succeeded)
+     const existingReq = await this.prisma.servingConfirmRequest.findUnique({
+@@ -406,27 +841,12 @@ export class PickupService {
+       );
+     }
+ 
+-    // 2. Validate Session
+-    const session = await this.prisma.pickupSession.findUnique({
+-      where: { id: pickupSessionId },
+-    });
+-
+-    if (!session) {
+-      throw new BadRequestException('Invalid pickup session');
+-    }
+-    if (session.expiresAt.getTime() < Date.now()) {
+-      throw new BadRequestException({
+-        code: 'PICKUP_SESSION_EXPIRED',
+-        message: 'Pickup session has expired',
+-      });
+-    }
+-
+-    for (const regId of registrationIds) {
+-      if (!session.registrationIds.includes(regId)) {
+-        throw new BadRequestException(
+-          `Registration ${regId} is not in this pickup session`,
+-        );
+-      }
++    // 2. The session is immutable: confirmation can never submit a subset or expansion.
++    if (!exactRegistrationSet(registrationIds, session.registrationIds)) {
++      throw pickupError(
++        'PICKUP_INTENT_CONFLICT',
++        'Pickup session intent is invalid.',
++      );
+     }
+ 
+     await this.checkServingWindow();
+diff --git a/apps/api/test/pickup.e2e-spec.ts b/apps/api/test/pickup.e2e-spec.ts
+index 7303d61..c35ccb3 100644
+--- a/apps/api/test/pickup.e2e-spec.ts
++++ b/apps/api/test/pickup.e2e-spec.ts
+@@ -13,45 +13,63 @@ import { SessionGuard } from './../src/auth/session.guard.js';
+ import { SessionService } from './../src/auth/session.service.js';
+ import { PermissionsGuard } from './../src/auth/permissions.guard.js';
+ 
++const presenterEvidence = {
++  capturedAt: '2026-09-04T04:00:00.000Z',
++  latitude: 10.77,
++  longitude: 106.69,
++  accuracyMeters: 12,
++};
++
+ describe('PickupController (e2e)', () => {
+   let app: INestApplication<Server>;
++  let generateQr: ReturnType<typeof vi.fn>;
++  let resolvePickup: ReturnType<typeof vi.fn>;
++  let confirmPickup: ReturnType<typeof vi.fn>;
+ 
+   beforeAll(() => {
+-    process.env.REQUIRE_AUTH = 'false'; // Bypass auth
++    process.env.REQUIRE_AUTH = 'false';
+   });
+ 
+   beforeEach(async () => {
++    generateQr = vi.fn().mockResolvedValue({
++      qr: 'imeal:v2:mock-user:2026-09-04:abc:1788420000:nonce:sig',
++      exp: 1788420000,
++      ttl: 5,
++      registrationIds: ['reg-1'],
++      mealDate: '2026-09-04',
++    });
++    resolvePickup = vi.fn().mockResolvedValue({
++      session: {
++        id: 'mock-session',
++        userId: 'mock-user',
++        registrationIds: ['reg-1'],
++        expiresAt: '2026-09-04T04:00:30.000Z',
++        createdAt: '2026-09-04T04:00:00.000Z',
++      },
++      items: [],
++      pickupSessionToken: 'mock-session',
++      intent: {
++        userId: 'mock-user',
++        items: [],
++        totalCount: 0,
++        isProxy: false,
++      },
++    });
++    confirmPickup = vi.fn().mockResolvedValue({
++      success: true,
++      servedCount: 1,
++      servings: [],
++    });
++
+     const moduleFixture: TestingModule = await Test.createTestingModule({
+       imports: [AppModule],
+     })
+       .overrideProvider(PickupService)
+       .useValue({
+         getPickupOptions: vi.fn().mockResolvedValue({ options: [] }),
+-        getTotpSecret: vi.fn().mockReturnValue({ secret: 'mock-secret' }),
+-        generateQr: vi
+-          .fn()
+-          .mockImplementation((_userId, registrationIds, options) => {
+-            return {
+-              qr:
+-                options?.format === 'totp'
+-                  ? 'imeal:totp:mock-user:123456'
+-                  : 'imeal:v2:mock-user:2026-09-03:all:1788420000:abcd1234:sig123',
+-              registrationIds,
+-              format: options?.format || 'v2',
+-              ttl: options?.ttl || 5,
+-            };
+-          }),
+-        verifyQr: vi.fn().mockResolvedValue({
+-          valid: true,
+-          userId: 'mock-user',
+-          pickupOptions: [],
+-        }),
+-        resolvePickup: vi
+-          .fn()
+-          .mockResolvedValue({ session: { id: 'mock-session' }, items: [] }),
+-        confirmPickup: vi
+-          .fn()
+-          .mockResolvedValue({ success: true, servedCount: 1, servings: [] }),
++        generateQr,
++        resolvePickup,
++        confirmPickup,
+       })
+       .compile();
+ 
+@@ -71,74 +89,70 @@ describe('PickupController (e2e)', () => {
+     expect(res.body).toEqual({ options: [] });
+   });
+ 
+-  it('/api/me/qr (POST) - defaults to v2 signed QR with 5s TTL', async () => {
++  it('/api/me/qr (POST) requires exact intent and presenter evidence', async () => {
+     const res = await request(app.getHttpServer())
+       .post('/api/me/qr')
+-      .send({ registrationIds: ['abc'] });
++      .send({ registrationIds: ['reg-1'], presenterEvidence });
+ 
+     expect(res.status).toBe(201);
+-    expect(res.body.qr).toContain('imeal:v2:');
+-    expect(res.body.format).toBe('v2');
+-    expect(res.body.ttl).toBe(5);
++    expect(res.body).toMatchObject({
++      qr: expect.stringContaining('imeal:v2:'),
++      ttl: 5,
++      registrationIds: ['reg-1'],
++    });
++    expect(generateQr).toHaveBeenCalledWith(
++      'test-user-id',
++      { registrationIds: ['reg-1'], presenterEvidence },
++    );
+   });
+ 
+-  it('/api/me/qr (POST) - accepts custom format and ttl', async () => {
++  it('/api/me/qr (POST) rejects missing presenter evidence', async () => {
+     const res = await request(app.getHttpServer())
+       .post('/api/me/qr')
+-      .send({ registrationIds: ['abc'], format: 'totp', ttl: 30 });
++      .send({ registrationIds: ['reg-1'] });
+ 
+-    expect(res.status).toBe(201);
+-    expect(res.body.qr).toContain('imeal:totp:');
+-    expect(res.body.format).toBe('totp');
+-    expect(res.body.ttl).toBe(30);
++    expect(res.status).toBe(400);
++    expect(generateQr).not.toHaveBeenCalled();
+   });
+ 
+-  it('/api/me/verify-qr (POST) - success', async () => {
++  it('/internal/api/v1/pickup/resolve (POST) sends only QR and authenticated actor', async () => {
+     const res = await request(app.getHttpServer())
+-      .post('/api/me/verify-qr')
+-      .send({ qr: 'MOCK_QR_STRING' });
++      .post('/internal/api/v1/pickup/resolve')
++      .send({ qr: 'SIGNED_QR' });
+ 
+     expect(res.status).toBe(201);
+-    expect(res.body).toEqual({
+-      valid: true,
+-      userId: 'mock-user',
+-      pickupOptions: [],
+-    });
+-  });
+-
+-  it('/api/me/totp-secret (GET) - success', async () => {
+-    const res = await request(app.getHttpServer()).get('/api/me/totp-secret');
+-    expect(res.status).toBe(200);
+-    expect(res.body).toEqual({ secret: 'mock-secret' });
++    expect(resolvePickup).toHaveBeenCalledWith(
++      { qr: 'SIGNED_QR' },
++      expect.objectContaining({ id: 'test-user-id' }),
++    );
+   });
+ 
+-  it('/internal/api/v1/pickup/resolve (POST) - success', async () => {
++  it('/internal/api/v1/pickup/resolve (POST) rejects client GPS and aliases', async () => {
+     const res = await request(app.getHttpServer())
+       .post('/internal/api/v1/pickup/resolve')
+-      .send({ qr: 'MOCK_QR_STRING' });
++      .send({ qr: 'SIGNED_QR', presenterEvidence });
+ 
+-    expect(res.status).toBe(201);
+-    expect(res.body).toEqual({ session: { id: 'mock-session' }, items: [] });
++    expect(res.status).toBe(400);
++    expect(resolvePickup).not.toHaveBeenCalled();
+   });
+ 
+-  it('/internal/api/v1/pickup/confirm (POST) - success', async () => {
++  it('/internal/api/v1/pickup/confirm (POST) accepts session-only exact intent', async () => {
+     const res = await request(app.getHttpServer())
+       .post('/internal/api/v1/pickup/confirm')
+       .send({
+         pickupSessionId: 'sess-123',
+-        registrationIds: ['reg-1'],
+         idempotencyKey: 'idem-1',
+       });
+ 
+     expect(res.status).toBe(201);
+     expect(res.body).toEqual({ success: true, servedCount: 1, servings: [] });
++    expect(confirmPickup).toHaveBeenCalledWith(
++      { pickupSessionId: 'sess-123', idempotencyKey: 'idem-1' },
++      expect.objectContaining({ id: 'test-user-id' }),
++    );
+   });
+ 
+   it('requires a valid opaque session with the current kitchen permission', async () => {
+-    const resolvePickup = vi.fn().mockResolvedValue({
+-      session: { id: 'public-source-session' },
+-      items: [],
+-    });
+     const kitchenUser: AuthenticatedUser = {
+       id: 'kitchen-1',
+       userId: 'kitchen-1',
+@@ -162,13 +176,17 @@ describe('PickupController (e2e)', () => {
+       if (token === 'staff-session') return staffUser;
+       return null;
+     });
++    const restrictedResolve = vi.fn().mockResolvedValue({
++      session: { id: 'public-source-session' },
++      items: [],
++    });
+ 
+     const testingModule = await Test.createTestingModule({
+       controllers: [InternalPickupController],
+       providers: [
+         {
+           provide: PickupService,
+-          useValue: { resolvePickup },
++          useValue: { resolvePickup: restrictedResolve },
+         },
+         {
+           provide: SessionService,
+@@ -186,30 +204,30 @@ describe('PickupController (e2e)', () => {
+       const kitchenResponse = await request(testApp.getHttpServer())
+         .post('/api/serving/resolve')
+         .set('Authorization', 'Bearer kitchen-session')
+-        .send({ qrPayload: 'PUBLIC_SOURCE_QR' });
++        .send({ qr: 'PUBLIC_SOURCE_QR' });
+ 
+       expect(kitchenResponse.status).toBe(201);
+-      expect(kitchenResponse.body).toEqual({
+-        session: { id: 'public-source-session' },
+-        items: [],
+-      });
++      expect(restrictedResolve).toHaveBeenCalledWith(
++        { qr: 'PUBLIC_SOURCE_QR' },
++        kitchenUser,
++      );
+ 
+-      resolvePickup.mockClear();
++      restrictedResolve.mockClear();
+       const missingBearerResponse = await request(testApp.getHttpServer())
+         .post('/api/serving/resolve')
+-        .send({ qrPayload: 'PUBLIC_SOURCE_QR' });
++        .send({ qr: 'PUBLIC_SOURCE_QR' });
+ 
+       expect(missingBearerResponse.status).toBe(401);
+-      expect(resolvePickup).not.toHaveBeenCalled();
++      expect(restrictedResolve).not.toHaveBeenCalled();
+ 
+-      resolvePickup.mockClear();
++      restrictedResolve.mockClear();
+       const missingPermissionResponse = await request(testApp.getHttpServer())
+         .post('/api/serving/resolve')
+         .set('Authorization', 'Bearer staff-session')
+-        .send({ qrPayload: 'PUBLIC_SOURCE_QR' });
++        .send({ qr: 'PUBLIC_SOURCE_QR' });
+ 
+       expect(missingPermissionResponse.status).toBe(403);
+-      expect(resolvePickup).not.toHaveBeenCalled();
++      expect(restrictedResolve).not.toHaveBeenCalled();
+       expect(resolveSession).toHaveBeenCalledWith('staff-session');
+     } finally {
+       await testApp.close();

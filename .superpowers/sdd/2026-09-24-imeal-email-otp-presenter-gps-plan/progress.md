@@ -94,3 +94,12 @@
 - [x] Task 6 API/core TypeScript validation passed; API lint exited 0 with only pre-existing warnings; `git diff --check` passed.
 - [!] Task 6 domain DB-backed tests remain blocked: no `DATABASE_URL` in default domain setup; focused run stopped before tests with `DATABASE_URL is not set in environment or .env.test`. Domain TypeScript validation passed.
 - [x] Task 6 review-fix commit `0e87b57` — `feat(admin): add approved locations roster imports and snapshots`; report at `task-6-report.md`; review package input baseline `9ac7a1e`.
+
+- [x] Official Task 7 brief generated/read from plan lines 679–776; artifact: `task-7-brief.md`.
+- [x] RED Task 7 pickup tests observed failing before exact-intent/presenter-evidence implementation; policy-identity revalidation regression also observed RED before the fix.
+- [x] Task 7 implemented: strict sorted non-empty intent, five-second/two-second-skew signed QR, presenter-only fresh GPS on every generate, safe verification persistence, strict Kitchen QR-only resolve, server-side registration snapshot/location/policy revalidation, exact replay-safe 30-second session binding, and session-only confirm transport.
+- [x] Focused pickup GREEN: `pickup.service.spec.ts` — 25 tests passed; full API unit suite — 20 files, 153 tests passed.
+- [x] API TypeScript validation passed; API lint exited 0 with only pre-existing warnings; `git diff --check` passed.
+- [!] Pickup e2e verification is blocked before test discovery because `packages/domain/test/setup.ts` reports `DATABASE_URL is not set in environment or .env.test`; no live DB/e2e claim.
+- [x] Task 7 report: `task-7-report.md`; no Task 8/9/10/11 changes and no operational seed data.
+- [x] Task 7 commit `9fc188e` — `feat(pickup): enforce exact intent and presenter gps at qr generation`; review package: `review-0e87b57..9fc188e.diff`.
