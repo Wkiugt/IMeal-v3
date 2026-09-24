@@ -91,10 +91,10 @@ real four-location and roster imports are completed outside source control.
 ## Commit and review package
 
 - Implementation cleanup commit: `2886d37` (`docs: align otp policy and provider validation`).
-- Latest Task 11 metadata/ledger handoff commit: `f494255`
-  (`docs: record Task 11 verification metadata`).
+- Latest Task 11 metadata/ledger handoff commit: `4e7cb68`
+  (`docs: supersede legacy task scope note`).
 - Approved Task 10 baseline: `8fe7e7c`.
-- Exact final implementation review range: `8fe7e7c..f494255`.
+- Exact final implementation review range: `8fe7e7c..4e7cb68`.
 - Exact package: `review-8fe7e7c..final.diff` (generated from the approved
-  baseline through `f494255`; report metadata is the only follow-up beyond the
+  baseline through `4e7cb68`; report metadata is the only follow-up beyond the
   implementation cleanup).
