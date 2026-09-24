@@ -15,7 +15,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:unit": "vitest run --config ./vitest.unit.config.ts"
+    "test:unit": "vitest run --config ./vitest.unit.config.ts",
+    "seed:local": "node -e \"process.argv.splice(1, 0, 'src/local-seed/cli.ts'); require('ts-node').register({ experimentalResolver: true, compilerOptions: { module: 'CommonJS' } }); require('./src/local-seed/cli.ts')\" --"
   },
   "dependencies": {
     "date-fns": "^4.4.0",

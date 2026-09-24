@@ -13,7 +13,7 @@
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "yarn workspace @imeal/contracts exec tsc --noEmit -p tsconfig.json && yarn workspace @imeal/core exec tsc --noEmit -p tsconfig.json && yarn workspace @imeal/api exec tsc --noEmit -p tsconfig.json && yarn workspace @imeal/worker exec tsc --noEmit -p tsconfig.json && yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json && yarn workspace @imeal/admin-web typecheck",
-    "test:unit": "yarn workspace @imeal/contracts test && yarn workspace @imeal/api test && yarn workspace @imeal/worker test",
+    "test:unit": "yarn workspace @imeal/core test:unit && yarn workspace @imeal/contracts test && yarn workspace @imeal/api test && yarn workspace @imeal/worker test",
     "test:db": "yarn workspace @imeal/core test && yarn workspace @imeal/api test:e2e && yarn workspace @imeal/worker test:e2e",
     "format": "prettier --write \"**/*.{ts,tsx,md,html,css,json}\""
   },
