@@ -56,6 +56,6 @@ No Task 7 QR/pickup, Task 8 confirmation, Task 9/10 mobile/Admin Web UI, or Task
 
 ## Commit
 
-- `4aa0f3a` — `feat(admin): add approved locations roster imports and snapshots`
-- Review package input: `4aa0f3a` (parent baseline `9ac7a1e`).
-- Scoped review package: `review-9ac7a1e..4aa0f3a.diff`.
+- `0e87b57` — `feat(admin): add approved locations roster imports and snapshots`
+- Review package input: `0e87b57` (parent baseline `9ac7a1e`).
+- Scoped review package: `review-9ac7a1e..0e87b57.diff`.

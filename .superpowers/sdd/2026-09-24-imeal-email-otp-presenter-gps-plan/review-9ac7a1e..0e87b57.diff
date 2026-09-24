@@ -1,0 +1,2356 @@
+diff --git a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md
+new file mode 100644
+index 0000000..960c254
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md
+@@ -0,0 +1,96 @@
++# SDD ledger — plan: docs/superpowers/plans/2026-09-24-imeal-email-otp-presenter-gps-plan.md
++
++- Workspace: existing isolated repository workspace
++- Identity: task2-persistence worker
++
++## Preflight scan
++
++| Task | Shared file/interface | Finding | Ruling |
++| --- | --- | --- | --- |
++| 1 → 2 | `packages/contracts/src/v1/*` → Prisma persistence | Task 1 provides OTP, location, roster, exact pickup, and serving-verification shapes; Task 2 persists server-side counterparts without changing contracts. | Use Task 1 commit `ddcb635` as the contract boundary. |
++| 2 → 3–9 | Prisma models → API/mobile/admin/worker callers | Task 2 must expose nullable/additive historical fields where existing callers cannot yet populate immutable snapshots; later tasks enforce required new write paths. | Preserve existing create callers and historical rows while adding indexes/FKs and snapshot columns. |
++| 2 self-consistency | Schema, migration, DB tests | Tests require zero operational rows after migration, unique session/serving boundaries, and immutable registration snapshots; migration must contain no operational inserts. | Use fixture rows only inside tests; migration is additive/transformative and seed-free for locations/employees. |
++
++## Progress
++
++- [x] Official Task 2 brief generated/read via `subagent-driven-development` SDD helper.
++- [x] Current migration history inspected; next migration remains `20260924000000_email_otp_presenter_gps`.
++- [x] RED persistence assertions written; direct Yarn unavailable and Corepack run blocked before assertions by unavailable PostgreSQL.
++- [x] Prisma schema and checked-in additive migration implemented; no operational location/employee seed rows.
++- [x] Prisma validate, client generation, domain TypeScript validation, and diff hygiene passed.
++- [!] GREEN DB persistence/registration tests blocked by unavailable Docker/PostgreSQL at `localhost:6432`.
++- [x] Commit `c6557ee` — `feat(domain): add otp session location roster and serving snapshots`.
++- [!] Task 2 status: BLOCKED for DB-backed verification; report at `task-2-report.md`.
++- [x] Review Fix Round 1: legacy nullable pickup intent backfill, NOT VALID pickup ownership FK, all-active employee-code uniqueness, finite float checks, and regression assertion.
++- [x] Fix commit `5205e72`.
++- [!] Review-fix DB verification remains blocked by unavailable PostgreSQL/Docker; static checks passed.
++- [x] Review Fix Round 2: valid serving verification now requires non-null finite accuracy; schema documentation and DB assertion added.
++- [x] Fix commit `2eebaae`.
++- [!] Review-fix DB verification remains blocked by unavailable PostgreSQL/Docker; static checks passed.
++- [x] Review Fix Round 3: restored `serving_verifications_pkey` before the conditional accuracy check; duplicate-ID DB assertion added.
++- [x] Fix commit `d736877`.
++- [!] Review-fix DB verification remains blocked by unavailable PostgreSQL/Docker; static checks passed.
++- [x] Task 2 fix round 4/5 — `5205e72` — legacy nullable pickup intent normalization, safe `NOT VALID` ownership FK, all-active employee-code uniqueness, finite float checks.
++- [x] Task 2 fix round 5/5 — `2eebaae` — `VALID` serving verification requires non-null finite accuracy; schema note and DB assertion.
++- [x] Task 2 PK fix — `d736877` — restored `serving_verifications_pkey` before the conditional accuracy check; duplicate-ID assertion.
++- [x] Task 2: complete with DB verification blocked by unavailable PostgreSQL/Docker; static review approved.
++
++- Task 1 complete through commit `ddcb635`; contract boundary consumed by this task.
++
++- [x] Official Task 3 brief read from the approved plan/spec (the generated `task-3-brief.md` artifact was absent; Task 3 lines 368–457 were used verbatim as the brief).
++- [x] RED OTP/controller/environment tests written and observed failing before implementation.
++- [x] Task 3 allowlist-A OTP request/verify, redacted audit, hash-only challenge, throttles, conditional consumption, outbox row, controller routes, and production config guards implemented.
++- [x] Focused GREEN: API OTP/controller/environment tests — 3 files, 21 tests passed.
++- [x] API TypeScript validation passed; API lint exited 0 with pre-existing repository warnings; `git diff --check` passed.
++- [x] Commit `90c1432` — `feat(api): add allowlist email otp authentication`.
++- [!] DB-backed verification remains blocked by Task 2's unavailable PostgreSQL/Docker (`localhost:6432` refused; Docker Linux engine unavailable).
++- [x] Task 3 complete; report at `task-3-report.md`.
++
++- [x] Review fix round 1: request throttling/resend responses are now the same `{ accepted: true }` shape as ineligible responses; redacted internal audit outcomes remain.
++- [x] Review fix round 1: per-client rate limiting now acquires sorted PostgreSQL transaction advisory locks keyed by hashed client identities across allowlisted addresses; no schema change required.
++- [x] Review fix round 1 commit `43e4b05`; focused tests 22 passed, API TypeScript passed, lint exited 0 with pre-existing warnings, and `git diff --check` passed.
++
++- [x] Review fix round 2: client advisory lock(s) now supplement, rather than replace, the eligible allowlist `FOR UPDATE` row lock; acquisition order is sorted client keys then address row to avoid cycles.
++- [x] Review fix round 2 commit `02d0893`; concurrent two-address lock test now passes with both lock classes, focused tests 22 passed, API TypeScript passed, lint exited 0 with pre-existing warnings, and `git diff --check` passed.
++- [x] Official Task 4 SDD brief generated from the approved plan (artifact: `task-4-brief.md`).
++- [x] RED session/guard tests written and observed failing before the new session modules existed.
++- [x] Opaque 32-byte database sessions implemented with one-way token hashes, minimized hashed metadata, creation/revocation audit linkage, idle and absolute expiry, last-used refresh, current-user/role/permission resolution, and all closed-set revocation reasons.
++- [x] `VerifyOtp` creates exactly one session and returns only `VerifyOtpResponse` token/expiresAt/user; logout revokes `LOGOUT`; account-wide revocation helper and disabled-account revocation are available.
++- [x] All protected API controllers migrated from JWT guard to `SessionGuard`; Entra/local production bootstrap files/tests/dependencies removed; config fails closed for legacy modes and non-test bypass.
++- [x] Focused Task 4/auth verification: 5 files, 33 tests passed; full API suite: 15 files, 125 tests passed.
++- [x] API TypeScript validation passed; API lint exited 0 with pre-existing warnings; `git diff --check` passed; Yarn immutable install passed with peer warnings.
++- [!] DB-backed session verification remains blocked by unavailable PostgreSQL/Docker (`localhost:6432` refused; Docker Linux engine unavailable); Prisma-mock/static verification is complete.
++- [!] Scope note: mobile/admin clients, `.env.example`, Docker Compose, and docs retain legacy references by explicit user instruction to exclude those tasks.
++- [x] Task 4 committed as `25246d1` — `feat(api): replace production jwt bootstrap with opaque sessions`.
++- [x] Task 4 report: `task-4-report.md`; review package input path is the plan workspace plus commit `25246d1`.
++- [!] Task 4 complete with DB verification blocked by unavailable PostgreSQL/Docker; focused/mock/static checks are green.
++- [x] Task 4 review fix: `SessionGuard` now returns canonical structured `SESSION_INVALID` for both absent and invalid bearer tokens; regression RED/GREEN verified.
++- [x] Task 4 fix commit `771aeb6`; focused 33 tests and full API 125 tests passed; API tsc/lint/diff-check passed.
++- [x] Scoped review package: `review-25246d1..771aeb6.diff`.
++
++- [x] Official Task 5 SDD brief generated/read from plan lines 531–595; artifact: `task-5-brief.md`.
++- [x] RED worker/API provider/outbox tests observed before implementation (missing production modules).
++- [x] Task 5 implemented: encrypted provider payload in `providerPayloadRef`, transactional API enqueue, atomic `SKIP LOCKED` worker claim, expiry/consumed suppression, bounded exponential retry/max attempts, redacted audit/logging, minimal provider copy, and production fail-closed provider/encryption configuration.
++- [x] Focused GREEN: API OTP/provider/outbox/controller/environment tests — 5 files, 33 tests passed; worker OTP delivery tests — 1 file, 3 tests passed.
++- [x] API and worker TypeScript validation passed; API and worker lint exited 0 (API only pre-existing warnings); `git diff --check` passed.
++- [!] Live PostgreSQL/outbox verification remains blocked: `localhost:6432` refused and Docker Desktop Linux engine unavailable; Prisma-shaped transaction tests do not claim live DB coverage.
++- [x] Task 5 report: `task-5-report.md`.
++- [x] Task 5 commit `f263a41` — `feat(worker): deliver otp through transactional outbox` (amended provider error classification hardening).
++- [x] Task 5 review package recorded in `task-5-report.md`.
++
++- [x] Task 5 review fix: worker startup validates encryption/config before boot; max-attempt cleanup preserves active `PROCESSING` claims; a no-argument cron wrapper delegates to direct processing; and current-time challenge state is checked before and immediately before provider send.
++- [x] Task 5 claim ownership hardening: added nullable `claim_token` schema/migration field; worker/API claim batches assign fresh tokens and validation/processed/failed transitions require the token, preventing stale workers from completing reclaimed rows.
++- [x] Task 5 review-fix regression coverage: worker focused suite — 1 file, 10 tests passed; API focused suite — 5 files, 33 tests passed; API/worker TypeScript, lint, Prisma validation, and diff-check passed (API lint retains pre-existing warnings).
++- [!] Live PostgreSQL verification remains blocked by the same unavailable `localhost:6432`/Docker environment.
++- [x] Task 5 review-fix commits `8db34ef`, `6ca4c3d`, and `9ac7a1e` (`fix(worker): preserve cron and claim ownership`).
++- [x] Scoped review package: `review-f263a41..9ac7a1e.diff`.
++- [!] Claim lease ownership closes stale-worker row transitions; external provider acceptance after a worker crash remains the documented unavoidable at-least-once ambiguity.
++
++- [x] Official Task 6 brief generated/read from plan lines 599–675; artifact: `task-6-brief.md`.
++- [x] RED Task 6 API location/roster tests observed failing before new modules existed; review regressions covered replay preview, atomic staging, policy boundaries, safe GPS mapping, audit IDs, and allowlist email validation.
++- [x] Task 6 implemented: effective active location/policy resolution, server-side geofence/freshness/accuracy checks with canonical safe retry errors, authorized location/roster/allowlist admin endpoints, normalized strict roster preview validation with transactional staging, atomic/idempotent roster commit, and no fabricated operational data.
++- [x] Registration snapshots now resolve server-side effective assignment by user ID/normalized email and preserve immutable location/assignment/name/address values on reactivation/update; related location active/effective predicates are part of assignment selection.
++- [x] Task 6 review-focused GREEN: API roster/location/allowlist suites — 3 files, 14 tests passed; full API suite — 20 files, 148 tests passed.
++- [x] Task 6 API/core TypeScript validation passed; API lint exited 0 with only pre-existing warnings; `git diff --check` passed.
++- [!] Task 6 domain DB-backed tests remain blocked: no `DATABASE_URL` in default domain setup; focused run stopped before tests with `DATABASE_URL is not set in environment or .env.test`. Domain TypeScript validation passed.
++- [x] Task 6 review-fix commit `4aa0f3a` — `feat(admin): add approved locations roster imports and snapshots`; report at `task-6-report.md`; review package input baseline `9ac7a1e`.
+diff --git a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-6-report.md b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-6-report.md
+new file mode 100644
+index 0000000..8df9a6d
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-6-report.md
+@@ -0,0 +1,61 @@
++# Task 6 Report — four-location configuration, roster import, and registration snapshots
++
++## Status
++
++DONE_WITH_CONCERN — Task 6 implementation and review fixes are complete. Reachable API/static verification is green. Live domain/database verification is blocked because PostgreSQL at `localhost:6432` is unavailable in this workspace.
++
++## Scope implemented
++
++- Added `LocationsService` with server-only effective active location/policy resolution, effective-dated configuration writes, positive/integer policy thresholds, structured validation 400s, policy ownership checks, haversine geofence evaluation, freshness/accuracy/bounds checks, and safe GPS results. Retry failures expose only canonical safe codes and `RETRY`/`REFRESH`; no raw coordinates or distance are returned.
++- Added `LocationsModule` and authorized location configuration endpoints under `v1/admin/locations` and `admin/locations`, protected by `SessionGuard`, `PermissionsGuard`, and explicit `location.manage` permission.
++- Added atomic roster preview/commit service and endpoints under `v1/admin/roster` and `admin/roster`, protected by explicit `roster.manage` permission. Preview normalizes NFKC/lowercase email, uppercase employee code/capability/location code, validates strict approved fields/date ranges, rejects unknown locations, true duplicate employee-code conflicts, and inactive capability assignments before commit. Batch and all preview rows stage in one transaction.
++- Roster commit uses one Prisma transaction for all assignment/row/audit writes, persists batch and row `auditEventId` values, is idempotent for already accepted batches and exact normalized assignment replays, deactivates a prior assignment only inside the same transaction, and rolls back all writes if a later row fails. No seed rows or fabricated location/employee data were added.
++- Added allowlist administration endpoints under `v1/admin/allowlist` and `admin/allowlist` with explicit `allowlist.manage` permission. The controller trims and validates email syntax before persistence; it exposes no admin-role grant/revoke path. Audit details hash email addresses rather than logging full email content.
++- Wired the new module into `AppModule`.
++- Updated domain `RegistrationService.registerMeal` to resolve an effective active assignment by server-side user ID/normalized email and meal-date range, including the related location's active/effective predicate, then persist immutable service-location/assignment/name/address/effective-date snapshots on create. Re-activating an existing registration only fills a missing snapshot; later assignment changes cannot rewrite an existing snapshot. Added focused query-predicate and snapshot-shape domain assertions.
++
++## TDD and verification
++
++### RED
++
++- `corepack yarn workspace @imeal/api exec vitest run src/admin/locations/locations.service.spec.ts src/admin/roster/roster-import.service.spec.ts` initially failed because the new location/roster modules did not exist (`Cannot find module`).
++- The new domain snapshot test was added before the domain implementation. The normal domain test setup could not reach assertions because `DATABASE_URL` was absent; with the configured endpoint supplied it failed before tests with `ECONNREFUSED ::1:6432` / `127.0.0.1:6432`.
++
++### GREEN / static verification
++
++- `corepack yarn workspace @imeal/api exec vitest run src/admin/roster/roster-import.service.spec.ts src/admin/locations/locations.service.spec.ts src/admin/allowlist/allowlist.controller.spec.ts` — **3 files, 14 tests passed**.
++- `corepack yarn workspace @imeal/api exec vitest run` — **20 files, 148 tests passed**.
++- `corepack yarn workspace @imeal/api exec tsc --noEmit` — passed.
++- `corepack yarn workspace @imeal/core exec tsc --noEmit` — passed.
++- `corepack yarn workspace @imeal/api lint` — exited 0; only pre-existing warnings remain in unrelated files (`test-controller`, registrations/delegations specs, common pipe, notifications service).
++- `git diff --check` — passed; Git emitted only expected Windows LF/CRLF notices.
++
++## Database blocker
++
++The domain test suite cannot run its DB-backed setup. Without an injected URL it fails at `packages/domain/test/setup.ts` with `DATABASE_URL is not set in environment or .env.test`; when run against the configured `postgresql://postgres:postgres@localhost:6432/imeal` endpoint, PostgreSQL connection attempts fail with `ECONNREFUSED ::1:6432` and `ECONNREFUSED 127.0.0.1:6432`. No live migration/transaction/registration snapshot assertion is claimed.
++
++## Files changed
++
++- `apps/api/src/app.module.ts`
++- `apps/api/src/locations/locations.service.ts`
++- `apps/api/src/locations/locations.module.ts`
++- `apps/api/src/admin/locations/locations.controller.ts`
++- `apps/api/src/admin/locations/locations.service.spec.ts`
++- `apps/api/src/admin/allowlist/allowlist.controller.ts`
++- `apps/api/src/admin/allowlist/allowlist.controller.spec.ts`
++- `apps/api/src/admin/roster/roster-import.service.ts`
++- `apps/api/src/admin/roster/roster.controller.ts`
++- `apps/api/src/admin/roster/roster-import.service.spec.ts`
++- `packages/domain/src/RegistrationService.ts`
++- `packages/domain/test/registration.test.ts`
++- `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-6-brief.md`
++- `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-6-report.md`
++- `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md`
++
++No Task 7 QR/pickup, Task 8 confirmation, Task 9/10 mobile/Admin Web UI, or Task 11 documentation work was added. No migration or operational seed data was added.
++
++## Commit
++
++- `4aa0f3a` — `feat(admin): add approved locations roster imports and snapshots`
++- Review package input: `4aa0f3a` (parent baseline `9ac7a1e`).
++- Scoped review package: `review-9ac7a1e..4aa0f3a.diff`.
+diff --git a/apps/api/src/admin/allowlist/allowlist.controller.spec.ts b/apps/api/src/admin/allowlist/allowlist.controller.spec.ts
+new file mode 100644
+index 0000000..9bf9cef
+--- /dev/null
++++ b/apps/api/src/admin/allowlist/allowlist.controller.spec.ts
+@@ -0,0 +1,44 @@
++import { describe, expect, it, vi } from 'vitest';
++import { AllowlistController } from './allowlist.controller.js';
++
++const prisma = {
++  otpAllowlist: { findMany: vi.fn(), update: vi.fn(), upsert: vi.fn() },
++  auditLog: { create: vi.fn() },
++  $transaction: vi.fn(),
++};
++
++vi.mock('@prisma/client', () => ({
++  PrismaClient: class {
++    constructor() {
++      return prisma;
++    }
++  },
++}));
++
++describe('AllowlistController validation', () => {
++  it.each([
++    ['blank email', { email: '   ' }],
++    ['invalid email', { email: 'not-an-email' }],
++  ])('rejects %s at the admin boundary', async (_label, override) => {
++    const controller = new AllowlistController();
++
++    await expect(
++      controller.create(
++        {
++          ...((
++            {
++              email: 'employee@example.test',
++              ...(override as Record<string, unknown>),
++            }
++          ) as Record<string, unknown>),
++          state: 'ACTIVE',
++          effectiveFrom: '2026-09-24T00:00:00.000Z',
++        },
++        { id: 'admin-1' } as never,
++      ),
++    ).rejects.toMatchObject({
++      response: { code: 'VALIDATION_ERROR' },
++    });
++    expect(prisma.$transaction).not.toHaveBeenCalled();
++  });
++});
+diff --git a/apps/api/src/admin/allowlist/allowlist.controller.ts b/apps/api/src/admin/allowlist/allowlist.controller.ts
+new file mode 100644
+index 0000000..6249351
+--- /dev/null
++++ b/apps/api/src/admin/allowlist/allowlist.controller.ts
+@@ -0,0 +1,165 @@
++import {
++  BadRequestException,
++  Body,
++  Controller,
++  Get,
++  Param,
++  Post,
++  Put,
++  UseGuards,
++} from '@nestjs/common';
++import { PrismaClient } from '@prisma/client';
++import { createHash } from 'node:crypto';
++import { z } from 'zod';
++import { SessionGuard } from '../../auth/session.guard.js';
++import { PermissionsGuard } from '../../auth/permissions.guard.js';
++import { RequirePermission } from '../../auth/require-permission.decorator.js';
++import { CurrentUser } from '../../auth/current-user.decorator.js';
++import type { AuthenticatedUser } from '../../auth/authenticated-user.js';
++
++const AllowlistInputSchema = z
++  .object({
++    email: z.string().trim().email(),
++    userId: z.string().min(1).nullable().optional(),
++    state: z.enum(['ACTIVE', 'DISABLED']),
++    effectiveFrom: z.string(),
++    effectiveTo: z.string().nullable().optional(),
++    reason: z.string().trim().max(500).nullable().optional(),
++  })
++  .strict();
++
++function normalizeEmail(email: string): string {
++  return email.normalize('NFKC').trim().toLowerCase();
++}
++function emailHash(email: string): string {
++  return createHash('sha256').update(email).digest('hex');
++}
++
++function parseDate(value: string): Date {
++  const date = new Date(value);
++  if (!value.endsWith('Z') || !Number.isFinite(date.getTime())) {
++    throw new BadRequestException({
++      code: 'VALIDATION_ERROR',
++      message: 'Effective dates must be UTC ISO instants.',
++    });
++  }
++  return date;
++}
++
++@Controller(['v1/admin/allowlist', 'admin/allowlist'])
++@UseGuards(SessionGuard, PermissionsGuard)
++@RequirePermission('allowlist.manage')
++export class AllowlistController {
++  private readonly prisma = new PrismaClient();
++
++  @Get()
++  list() {
++    return this.prisma.otpAllowlist.findMany({
++      orderBy: { normalizedEmail: 'asc' },
++      select: {
++        id: true,
++        normalizedEmail: true,
++        userId: true,
++        state: true,
++        purpose: true,
++        effectiveFrom: true,
++        effectiveTo: true,
++        reason: true,
++        createdBy: true,
++        updatedBy: true,
++        createdAt: true,
++        updatedAt: true,
++      },
++    });
++  }
++
++  @Post()
++  create(@Body() body: unknown, @CurrentUser() actor: AuthenticatedUser) {
++    return this.save(body, actor.id);
++  }
++
++  @Put(':id')
++  update(
++    @Param('id') id: string,
++    @Body() body: unknown,
++    @CurrentUser() actor: AuthenticatedUser,
++  ) {
++    return this.save(body, actor.id, id);
++  }
++
++  private async save(body: unknown, actorId: string, id?: string) {
++    const parsed = AllowlistInputSchema.safeParse(body);
++    if (!parsed.success) {
++      throw new BadRequestException({
++        code: 'VALIDATION_ERROR',
++        message: 'Invalid allowlist record.',
++      });
++    }
++    const normalizedEmail = normalizeEmail(parsed.data.email);
++    const effectiveFrom = parseDate(parsed.data.effectiveFrom);
++    const effectiveTo = parsed.data.effectiveTo
++      ? parseDate(parsed.data.effectiveTo)
++      : null;
++    if (effectiveTo && effectiveTo <= effectiveFrom) {
++      throw new BadRequestException({
++        code: 'INVALID_EFFECTIVE_RANGE',
++        message: 'Effective end must be after effective start.',
++      });
++    }
++
++    return this.prisma.$transaction(async (tx) => {
++      const record = id
++        ? await tx.otpAllowlist.update({
++            where: { id },
++            data: {
++              normalizedEmail,
++              userId: parsed.data.userId ?? null,
++              state: parsed.data.state,
++              effectiveFrom,
++              effectiveTo,
++              reason: parsed.data.reason ?? null,
++              updatedBy: actorId,
++            },
++          })
++        : await tx.otpAllowlist.upsert({
++            where: {
++              normalizedEmail_purpose: {
++                normalizedEmail,
++                purpose: 'SESSION_LOGIN',
++              },
++            },
++            update: {
++              userId: parsed.data.userId ?? null,
++              state: parsed.data.state,
++              effectiveFrom,
++              effectiveTo,
++              reason: parsed.data.reason ?? null,
++              updatedBy: actorId,
++            },
++            create: {
++              normalizedEmail,
++              userId: parsed.data.userId ?? null,
++              state: parsed.data.state,
++              purpose: 'SESSION_LOGIN',
++              effectiveFrom,
++              effectiveTo,
++              reason: parsed.data.reason ?? null,
++              createdBy: actorId,
++              updatedBy: actorId,
++            },
++          });
++      await tx.auditLog.create({
++        data: {
++          userId: actorId,
++          action: id ? 'ALLOWLIST_UPDATED' : 'ALLOWLIST_UPSERTED',
++          details: JSON.stringify({
++            allowlistId: record.id,
++            emailHash: emailHash(normalizedEmail),
++            state: parsed.data.state,
++          }),
++        },
++      });
++      return record;
++    });
++  }
++}
+diff --git a/apps/api/src/admin/locations/locations.controller.ts b/apps/api/src/admin/locations/locations.controller.ts
+new file mode 100644
+index 0000000..f58672d
+--- /dev/null
++++ b/apps/api/src/admin/locations/locations.controller.ts
+@@ -0,0 +1,102 @@
++import {
++  BadRequestException,
++  Body,
++  Controller,
++  Get,
++  Param,
++  Post,
++  Put,
++  UseGuards,
++} from '@nestjs/common';
++import { z } from 'zod';
++import { LocationsService } from '../../locations/locations.service.js';
++import { SessionGuard } from '../../auth/session.guard.js';
++import { PermissionsGuard } from '../../auth/permissions.guard.js';
++import { RequirePermission } from '../../auth/require-permission.decorator.js';
++import { CurrentUser } from '../../auth/current-user.decorator.js';
++import type { AuthenticatedUser } from '../../auth/authenticated-user.js';
++
++const LocationConfigurationSchema = z
++  .object({
++    id: z.string().min(1).optional(),
++    shortCode: z.string().min(1),
++    displayName: z.string().min(1),
++    servingPointName: z.string().min(1),
++    address: z.string().min(1),
++    building: z.string().min(1),
++    floor: z.string().min(1),
++    roomOrCounter: z.string().min(1),
++    localContact: z.string().min(1),
++    timeZone: z.literal('Asia/Ho_Chi_Minh').optional(),
++    isActive: z.boolean(),
++    effectiveFrom: z.union([z.string(), z.date()]),
++    effectiveTo: z.union([z.string(), z.date()]).nullable().optional(),
++    operationalMetadata: z.unknown().optional(),
++    holidayOverrides: z.unknown().optional(),
++    capacityNotes: z.string().nullable().optional(),
++    accessibilityInstructions: z.string().nullable().optional(),
++    emergencyInstructions: z.string().nullable().optional(),
++    kitchenTeam: z.string().nullable().optional(),
++    approvedScannerDeviceIds: z.array(z.string().min(1)).optional(),
++    networkNotes: z.string().nullable().optional(),
++    policy: z
++      .object({
++        id: z.string().min(1).optional(),
++        latitude: z.number().finite().min(-90).max(90),
++        longitude: z.number().finite().min(-180).max(180),
++        accuracySource: z.string().min(1),
++        geofenceRadiusMeters: z.number().finite().int().positive(),
++        maxFixAgeSeconds: z.number().finite().int().nonnegative(),
++        maxAccuracyMeters: z.number().finite().nonnegative(),
++        effectiveFrom: z.union([z.string(), z.date()]),
++        effectiveTo: z.union([z.string(), z.date()]).nullable().optional(),
++        isActive: z.boolean(),
++      })
++      .strict(),
++  })
++  .strict();
++
++@Controller(['v1/admin/locations', 'admin/locations'])
++@UseGuards(SessionGuard, PermissionsGuard)
++export class LocationsController {
++  constructor(private readonly locationsService: LocationsService) {}
++
++  @Get()
++  @RequirePermission('location.manage')
++  list() {
++    return this.locationsService.listConfiguredLocations();
++  }
++
++  @Post()
++  @RequirePermission('location.manage')
++  save(@Body() body: unknown, @CurrentUser() user: AuthenticatedUser) {
++    return this.saveConfiguration(body, user.id);
++  }
++
++  @Put(':id')
++  @RequirePermission('location.manage')
++  update(
++    @Param('id') id: string,
++    @Body() body: unknown,
++    @CurrentUser() user: AuthenticatedUser,
++  ) {
++    if (!body || typeof body !== 'object') {
++      throw new BadRequestException({
++        code: 'VALIDATION_ERROR',
++        message: 'Location configuration is required.',
++      });
++    }
++    return this.saveConfiguration({ ...(body as object), id }, user.id);
++  }
++
++  private saveConfiguration(body: unknown, actorId: string) {
++    const parsed = LocationConfigurationSchema.safeParse(body);
++    if (!parsed.success) {
++      throw new BadRequestException({
++        code: 'VALIDATION_ERROR',
++        message: 'Invalid location configuration.',
++      });
++    }
++    return this.locationsService.saveConfiguration(parsed.data, actorId);
++  }
++}
+diff --git a/apps/api/src/admin/locations/locations.service.spec.ts b/apps/api/src/admin/locations/locations.service.spec.ts
+new file mode 100644
+index 0000000..6ca78db
+--- /dev/null
++++ b/apps/api/src/admin/locations/locations.service.spec.ts
+@@ -0,0 +1,207 @@
++import { describe, expect, it, beforeEach, vi } from 'vitest';
++import { LocationsService } from '../../locations/locations.service.js';
++
++const NOW = new Date('2026-09-24T03:00:00.000Z');
++const LOCATION = {
++  id: 'location-1',
++  shortCode: 'LOC-A',
++  displayName: 'Approved location',
++  servingPointName: 'Approved serving point',
++  address: 'Approved address',
++  isActive: true,
++  effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
++  effectiveTo: null,
++  timeZone: 'Asia/Ho_Chi_Minh',
++  policies: [
++    {
++      id: 'policy-1',
++      latitude: 10.77,
++      longitude: 106.69,
++      accuracySource: 'approved-survey',
++      geofenceRadiusMeters: 250,
++      maxFixAgeSeconds: 120,
++      maxAccuracyMeters: 50,
++      effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
++      effectiveTo: null,
++      isActive: true,
++    },
++  ],
++};
++
++const LOCATION_CONFIGURATION = {
++  id: 'location-1',
++  shortCode: 'LOC-A',
++  displayName: 'Approved location',
++  servingPointName: 'Approved serving point',
++  address: 'Approved address',
++  building: 'Building',
++  floor: '1',
++  roomOrCounter: 'Counter',
++  localContact: 'Contact',
++  isActive: true,
++  effectiveFrom: '2026-01-01T00:00:00.000Z',
++  effectiveTo: null,
++  policy: {
++    id: 'policy-1',
++    latitude: 10.77,
++    longitude: 106.69,
++    accuracySource: 'approved-survey',
++    geofenceRadiusMeters: 250,
++    maxFixAgeSeconds: 120,
++    maxAccuracyMeters: 50,
++    effectiveFrom: '2026-01-01T00:00:00.000Z',
++    effectiveTo: null,
++    isActive: true,
++  },
++};
++
++const prisma = {
++  location: {
++    findFirst: vi.fn(),
++    findUnique: vi.fn(),
++    update: vi.fn(),
++    create: vi.fn(),
++  },
++  locationPolicy: {
++    findUnique: vi.fn(),
++    update: vi.fn(),
++    create: vi.fn(),
++  },
++  auditLog: { create: vi.fn() },
++  $transaction: vi.fn(),
++};
++
++vi.mock('@prisma/client', () => ({
++  PrismaClient: class {
++    constructor() {
++      return prisma;
++    }
++  },
++}));
++
++describe('LocationsService', () => {
++  let service: LocationsService;
++
++  beforeEach(() => {
++    vi.clearAllMocks();
++    prisma.$transaction.mockImplementation(
++      async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
++    );
++    service = new LocationsService();
++  });
++
++  it('resolves only an effective active location and policy selected by server code', async () => {
++    prisma.location.findFirst.mockResolvedValue(LOCATION);
++
++    const resolved = await service.resolveEffectiveLocation(' loc-a ', NOW);
++
++    expect(prisma.location.findFirst).toHaveBeenCalledWith(
++      expect.objectContaining({
++        where: expect.objectContaining({
++          shortCode: 'LOC-A',
++          isActive: true,
++        }),
++      }),
++    );
++    expect(resolved).toMatchObject({
++      id: 'location-1',
++      shortCode: 'LOC-A',
++      locationPolicy: expect.objectContaining({ locationId: 'location-1' }),
++    });
++  });
++
++  it.each([
++    ['geofence radius', { geofenceRadiusMeters: 250.5 }],
++    ['maximum fix age', { maxFixAgeSeconds: 120.5 }],
++  ])(
++    'rejects a non-integral %s policy threshold before persistence',
++    async (_label, override) => {
++      await expect(
++        service.saveConfiguration(
++          {
++            ...LOCATION_CONFIGURATION,
++            policy: { ...LOCATION_CONFIGURATION.policy, ...override },
++          },
++          'admin-1',
++        ),
++      ).rejects.toMatchObject({
++        response: { code: 'VALIDATION_ERROR' },
++      });
++      expect(prisma.$transaction).not.toHaveBeenCalled();
++    },
++  );
++
++  it('rejects a policy update when the policy belongs to another location', async () => {
++    prisma.locationPolicy.findUnique.mockResolvedValue({
++      id: 'policy-2',
++      locationId: 'location-2',
++    });
++
++    await expect(
++      service.saveConfiguration(
++        {
++          ...LOCATION_CONFIGURATION,
++          policy: { ...LOCATION_CONFIGURATION.policy, id: 'policy-2' },
++        },
++        'admin-1',
++      ),
++    ).rejects.toMatchObject({
++      response: { code: 'INVALID_LOCATION_POLICY' },
++    });
++    expect(prisma.location.update).not.toHaveBeenCalled();
++  });
++
++  it('evaluates a fresh accurate fix inside the configured geofence', async () => {
++    prisma.location.findUnique.mockResolvedValue(LOCATION);
++
++    const result = await service.evaluatePresenterEvidence(
++      'location-1',
++      {
++        capturedAt: NOW.toISOString(),
++        latitude: 10.7705,
++        longitude: 106.6905,
++        accuracyMeters: 12,
++      },
++      NOW,
++    );
++
++    expect(result).toMatchObject({ result: 'VALID', locationId: 'location-1' });
++    expect(JSON.stringify(result)).not.toContain('distance');
++    expect(JSON.stringify(result)).not.toContain('latitude');
++    expect(JSON.stringify(result)).not.toContain('longitude');
++  });
++
++  it.each([
++    ['stale', new Date('2026-09-24T02:55:00.000Z'), 12, 10.7705, 106.6905],
++    ['inaccurate', NOW, 500, 10.7705, 106.6905],
++    ['outside', NOW, 12, 11.1, 106.69],
++  ])(
++    'returns safe retry data for a %s fix',
++    async (_reason, capturedAt, accuracyMeters, latitude, longitude) => {
++      prisma.location.findUnique.mockResolvedValue(LOCATION);
++
++      const result = await service.evaluatePresenterEvidence(
++        'location-1',
++        {
++          capturedAt: capturedAt.toISOString(),
++          latitude,
++          longitude,
++          accuracyMeters,
++        },
++        NOW,
++      );
++
++      expect(result.result).toBe('GPS_RETRY_REQUIRED');
++      if (result.result !== 'GPS_RETRY_REQUIRED') {
++        throw new Error('Expected retry result');
++      }
++      expect(result.details).toEqual({ action: expect.any(String) });
++      if (_reason === 'outside') {
++        expect(result.code).toBe('GPS_RETRY_REQUIRED');
++      }
++      expect(JSON.stringify(result)).not.toContain('distance');
++      expect(JSON.stringify(result)).not.toContain('latitude');
++      expect(JSON.stringify(result)).not.toContain('longitude');
++    },
++  );
++});
+diff --git a/apps/api/src/admin/roster/roster-import.service.spec.ts b/apps/api/src/admin/roster/roster-import.service.spec.ts
+new file mode 100644
+index 0000000..54c4765
+--- /dev/null
++++ b/apps/api/src/admin/roster/roster-import.service.spec.ts
+@@ -0,0 +1,302 @@
++import { describe, expect, it, beforeEach, vi } from 'vitest';
++import {
++  RosterImportService,
++  type RosterImportBatchInput,
++} from './roster-import.service.js';
++import { LocationsService } from '../../locations/locations.service.js';
++
++const NOW = new Date('2026-09-24T03:00:00.000Z');
++const LOCATION = {
++  id: 'location-1',
++  shortCode: 'LOC-A',
++  displayName: 'Approved location',
++  servingPointName: 'Approved serving point',
++  address: 'Approved address',
++  building: 'Building',
++  floor: '1',
++  roomOrCounter: 'Counter',
++  localContact: 'Contact',
++  timeZone: 'Asia/Ho_Chi_Minh',
++  isActive: true,
++  effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
++  effectiveTo: null,
++};
++
++const prisma = {
++  location: { findFirst: vi.fn() },
++  employeeLocationAssignment: {
++    findMany: vi.fn(),
++    findFirst: vi.fn(),
++    create: vi.fn(),
++    update: vi.fn(),
++  },
++  rosterImportBatch: {
++    create: vi.fn(),
++    findUnique: vi.fn(),
++    update: vi.fn(),
++  },
++  rosterImportRow: { create: vi.fn(), update: vi.fn() },
++  auditLog: { create: vi.fn() },
++  user: { findUnique: vi.fn() },
++  $transaction: vi.fn(),
++};
++
++vi.mock('@prisma/client', () => ({
++  PrismaClient: class {
++    constructor() {
++      return prisma;
++    }
++  },
++}));
++
++const locationsService = {
++  resolveEffectiveLocation: vi.fn(),
++};
++
++describe('RosterImportService', () => {
++  let service: RosterImportService;
++
++  beforeEach(() => {
++    vi.resetAllMocks();
++    service = new RosterImportService(
++      locationsService as unknown as LocationsService,
++    );
++    locationsService.resolveEffectiveLocation.mockResolvedValue({
++      ...LOCATION,
++      locationPolicy: null,
++    });
++    prisma.employeeLocationAssignment.findMany.mockResolvedValue([]);
++    prisma.$transaction.mockImplementation(
++      async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
++    );
++  });
++
++  it('normalizes approved fields and reports every invalid row without committing', async () => {
++    const input: RosterImportBatchInput = {
++      source: 'approved-import.csv',
++      rows: [
++        {
++          email: ' Employee@Example.test ',
++          name: 'Employee',
++          employeeCode: 'EMP-1',
++          isActive: true,
++          role: 'staff',
++          serviceLocationCode: 'LOC-A',
++          effectiveFrom: '2026-09-24T00:00:00.000Z',
++          effectiveTo: null,
++        },
++        {
++          email: 'second@example.test',
++          name: 'Second',
++          employeeCode: 'EMP-1',
++          isActive: false,
++          role: 'kitchen',
++          serviceLocationCode: 'UNKNOWN',
++          effectiveFrom: '2026-09-25T00:00:00.000Z',
++          effectiveTo: '2026-09-24T00:00:00.000Z',
++        },
++        {
++          email: 'third@example.test',
++          name: 'Third',
++          employeeCode: 'EMP-3',
++          isActive: true,
++          role: 'staff',
++          serviceLocationCode: 'UNKNOWN',
++          effectiveFrom: '2026-09-25T00:00:00.000Z',
++          effectiveTo: null,
++        },
++        {
++          email: 'fourth@example.test',
++          name: 'Fourth',
++          employeeCode: 'EMP-4',
++          isActive: true,
++          role: 'staff',
++          serviceLocationCode: 'LOC-A',
++          effectiveFrom: '2026-09-26T00:00:00.000Z',
++          effectiveTo: '2026-09-25T00:00:00.000Z',
++        },
++        {
++          email: 'fifth@example.test',
++          name: 'Fifth',
++          employeeCode: 'EMP-5',
++          isActive: false,
++          role: 'kitchen',
++          serviceLocationCode: 'LOC-A',
++          effectiveFrom: '2026-09-27T00:00:00.000Z',
++          effectiveTo: null,
++        },
++      ],
++    };
++    locationsService.resolveEffectiveLocation.mockImplementation(
++      async (code: string) => {
++        if (code === 'UNKNOWN') {
++          throw new Error('UNKNOWN_SERVICE_LOCATION');
++        }
++        return { ...LOCATION, locationPolicy: null };
++      },
++    );
++
++    const result = await service.preview(input, NOW);
++
++    expect(result.rows[0]).toMatchObject({
++      normalizedEmail: 'employee@example.test',
++      employeeCode: 'EMP-1',
++      serviceLocationCode: 'LOC-A',
++      reason: 'DUPLICATE_EMPLOYEE_CODE',
++    });
++    expect(result.rows.map((row) => row.reason)).toEqual(
++      expect.arrayContaining([
++        'UNKNOWN_SERVICE_LOCATION',
++        'DUPLICATE_EMPLOYEE_CODE',
++        'INVALID_EFFECTIVE_RANGE',
++        'INACTIVE_CAPABILITY',
++      ]),
++    );
++    expect(prisma.$transaction).not.toHaveBeenCalled();
++  });
++
++  it('accepts an exact normalized assignment replay as an idempotent preview', async () => {
++    prisma.employeeLocationAssignment.findMany.mockResolvedValue([
++      {
++        employeeCode: 'EMP-1',
++        normalizedEmail: 'employee@example.test',
++        serviceLocationCode: 'LOC-A',
++        effectiveFrom: new Date('2026-09-24T00:00:00.000Z'),
++        effectiveTo: null,
++      },
++    ]);
++
++    const result = await service.preview(
++      {
++        source: 'replayed-import.csv',
++        rows: [
++          {
++            email: ' Employee@Example.test ',
++            name: 'Employee',
++            employeeCode: 'EMP-1',
++            isActive: true,
++            role: 'staff',
++            serviceLocationCode: 'LOC-A',
++            effectiveFrom: '2026-09-24T00:00:00.000Z',
++            effectiveTo: null,
++          },
++        ],
++      },
++      NOW,
++    );
++
++    expect(result.valid).toBe(true);
++    expect(result.rows[0].reason).toBeUndefined();
++  });
++
++  it('stages the batch and every preview row in one transaction', async () => {
++    const writes: string[] = [];
++    prisma.rosterImportBatch.create.mockImplementation(async () => {
++      writes.push('batch');
++      return { id: 'batch-1' };
++    });
++    prisma.rosterImportRow.create.mockImplementation(async () => {
++      writes.push('row');
++      throw new Error('staging failed');
++    });
++    prisma.$transaction.mockImplementation(
++      async (callback: (tx: typeof prisma) => unknown) => {
++        try {
++          return await callback(prisma);
++        } catch (error: unknown) {
++          writes.length = 0;
++          throw error;
++        }
++      },
++    );
++
++    await expect(
++      service.preview({
++        source: 'failing-import.csv',
++        rows: [
++          {
++            email: 'employee@example.test',
++            name: 'Employee',
++            employeeCode: 'EMP-1',
++            isActive: true,
++            role: 'staff',
++            serviceLocationCode: 'LOC-A',
++            effectiveFrom: '2026-09-24T00:00:00.000Z',
++            effectiveTo: null,
++          },
++        ],
++      }),
++    ).rejects.toThrow('staging failed');
++    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
++    expect(writes).toEqual([]);
++  });
++
++  it('commits all rows atomically and is idempotent by normalized email', async () => {
++    const input: RosterImportBatchInput = {
++      source: 'approved-import.csv',
++      rows: [
++        {
++          email: ' Employee@Example.test ',
++          name: 'Employee',
++          employeeCode: 'EMP-1',
++          isActive: true,
++          role: 'staff',
++          serviceLocationCode: 'LOC-A',
++          effectiveFrom: '2026-09-24T00:00:00.000Z',
++          effectiveTo: null,
++        },
++      ],
++    };
++    const batch = await service.preview(input, NOW);
++    prisma.rosterImportBatch.create.mockResolvedValue({ id: 'batch-1' });
++    prisma.rosterImportBatch.findUnique
++      .mockResolvedValueOnce({
++        id: 'batch-1',
++        source: input.source,
++        rows: [
++          {
++            ...batch.rows[0],
++            id: 'row-1',
++            outcome: 'PENDING',
++            assignmentId: null,
++          },
++        ],
++      })
++      .mockResolvedValueOnce({
++        id: 'batch-1',
++        source: input.source,
++        rows: [
++          {
++            ...batch.rows[0],
++            id: 'row-1',
++            outcome: 'ACCEPTED',
++            assignmentId: 'assignment-1',
++          },
++        ],
++      });
++    prisma.employeeLocationAssignment.create.mockResolvedValue({
++      id: 'assignment-1',
++    });
++    prisma.rosterImportRow.create.mockResolvedValue({ id: 'row-1' });
++    prisma.rosterImportRow.update.mockResolvedValue({});
++
++    const first = await service.commit('batch-1', 'admin-1');
++    const replay = await service.commit('batch-1', 'admin-1');
++
++    expect(first.idempotent).toBe(false);
++    expect(replay.idempotent).toBe(true);
++    expect(prisma.employeeLocationAssignment.create).toHaveBeenCalledTimes(1);
++    expect(prisma.rosterImportBatch.update).toHaveBeenCalledWith(
++      expect.objectContaining({
++        where: { id: 'batch-1' },
++        data: expect.objectContaining({ auditEventId: expect.any(String) }),
++      }),
++    );
++    expect(prisma.rosterImportRow.update).toHaveBeenCalledWith(
++      expect.objectContaining({
++        where: { id: 'row-1' },
++        data: expect.objectContaining({ auditEventId: expect.any(String) }),
++      }),
++    );
++  });
++});
+diff --git a/apps/api/src/admin/roster/roster-import.service.ts b/apps/api/src/admin/roster/roster-import.service.ts
+new file mode 100644
+index 0000000..692944c
+--- /dev/null
++++ b/apps/api/src/admin/roster/roster-import.service.ts
+@@ -0,0 +1,552 @@
++import {
++  BadRequestException,
++  Injectable,
++  NotFoundException,
++} from '@nestjs/common';
++import { PrismaClient } from '@prisma/client';
++import { createHash, randomUUID } from 'node:crypto';
++import { v1 } from '@imeal/contracts';
++type RosterImportRow = v1.RosterImportRow;
++function emailHash(email: string): string {
++  return createHash('sha256').update(email).digest('hex');
++}
++import type {
++  LocationsService,
++  ResolvedLocation,
++} from '../../locations/locations.service.js';
++
++export type RosterImportBatchInput = {
++  source: string;
++  rows: RosterImportRow[];
++};
++
++export type RosterImportReason =
++  | 'INVALID_ROW'
++  | 'UNKNOWN_SERVICE_LOCATION'
++  | 'DUPLICATE_EMPLOYEE_CODE'
++  | 'INVALID_EFFECTIVE_RANGE'
++  | 'INACTIVE_CAPABILITY';
++
++export type RosterPreviewRow = RosterImportRow & {
++  rowNumber: number;
++  normalizedEmail: string;
++  employeeCode: string;
++  role: string;
++  serviceLocationCode: string;
++  effectiveFrom: string;
++  effectiveTo: string | null;
++  locationId?: string;
++  reason?: RosterImportReason;
++};
++
++export type RosterPreview = {
++  batchId?: string;
++  source: string;
++  rows: RosterPreviewRow[];
++  valid: boolean;
++  acceptedCount: number;
++  rejectedCount: number;
++};
++
++export type RosterImportResult = {
++  batchId: string;
++  rows: Array<{
++    rowNumber: number;
++    normalizedEmail: string;
++    assignmentId: string;
++    outcome: 'ACCEPTED';
++  }>;
++  acceptedCount: number;
++  idempotent: boolean;
++};
++
++type NormalizedRow = Omit<RosterPreviewRow, 'reason'> & {
++  location: ResolvedLocation;
++  reason: RosterImportReason[];
++};
++
++const DISABLED_CAPABILITIES = new Set(['', 'NONE', 'INACTIVE', 'DISABLED']);
++
++function normalizeText(value: string): string {
++  return value.normalize('NFKC').trim();
++}
++
++function normalizeEmail(value: string): string {
++  return normalizeText(value).toLowerCase();
++}
++
++function normalizeCode(value: string): string {
++  return normalizeText(value).toUpperCase();
++}
++
++function parseUtcDate(value: string): Date | null {
++  if (!value.endsWith('Z')) return null;
++  const parsed = new Date(value);
++  return Number.isFinite(parsed.getTime()) ? parsed : null;
++}
++
++function hasOnlyRosterFields(row: unknown): row is RosterImportRow {
++  if (!row || typeof row !== 'object') return false;
++  const allowed = new Set([
++    'email',
++    'name',
++    'employeeCode',
++    'isActive',
++    'role',
++    'serviceLocationCode',
++    'effectiveFrom',
++    'effectiveTo',
++  ]);
++  return Object.keys(row).every((key) => allowed.has(key));
++}
++
++function locationReason(error: unknown): RosterImportReason {
++  if (
++    typeof error === 'object' &&
++    error !== null &&
++    'response' in error &&
++    typeof error.response === 'object' &&
++    error.response !== null &&
++    'code' in error.response &&
++    error.response.code === 'UNKNOWN_SERVICE_LOCATION'
++  ) {
++    return 'UNKNOWN_SERVICE_LOCATION';
++  }
++  return 'UNKNOWN_SERVICE_LOCATION';
++}
++
++@Injectable()
++export class RosterImportService {
++  private readonly prisma: PrismaClient;
++
++  constructor(private readonly locationsService: LocationsService) {
++    this.prisma = new PrismaClient();
++  }
++
++  async preview(
++    input: RosterImportBatchInput,
++    at: Date = new Date(),
++  ): Promise<RosterPreview> {
++    if (
++      !input ||
++      typeof input.source !== 'string' ||
++      !input.source.trim() ||
++      !Array.isArray(input.rows) ||
++      input.rows.length === 0
++    ) {
++      throw new BadRequestException({
++        code: 'VALIDATION_ERROR',
++        message: 'Roster import source and rows are required.',
++      });
++    }
++    const rows: RosterPreviewRow[] = [];
++    const employeeCodes = new Map<string, number[]>();
++
++    for (let index = 0; index < input.rows.length; index += 1) {
++      const sourceRow = input.rows[index];
++      const normalized = this.normalizeRow(sourceRow, index + 1);
++      const reasons = normalized.reason ? [...normalized.reason] : [];
++      let location: ResolvedLocation | null = null;
++
++      if (
++        normalized.serviceLocationCode &&
++        !reasons.includes('UNKNOWN_SERVICE_LOCATION')
++      ) {
++        try {
++          location = await this.locationsService.resolveEffectiveLocation(
++            normalized.serviceLocationCode,
++            normalized.effectiveFromDate ?? at,
++          );
++          normalized.locationId = location.id;
++        } catch (error: unknown) {
++          reasons.push(locationReason(error));
++        }
++      }
++
++      if (
++        normalized.isActive === false &&
++        !DISABLED_CAPABILITIES.has(normalized.role.toUpperCase())
++      ) {
++        reasons.push('INACTIVE_CAPABILITY');
++      }
++
++      const codeRows = employeeCodes.get(normalized.employeeCode) ?? [];
++      codeRows.push(index);
++      employeeCodes.set(normalized.employeeCode, codeRows);
++
++      rows.push({
++        ...this.publicRow(normalized),
++        reason: selectReason(reasons),
++      });
++    }
++
++    for (const indexes of employeeCodes.values()) {
++      if (indexes.length < 2) continue;
++      for (const index of indexes) {
++        rows[index].reason = selectReason([
++          ...(rows[index].reason ? [rows[index].reason] : []),
++          'DUPLICATE_EMPLOYEE_CODE',
++        ]);
++      }
++    }
++
++    const duplicateCodes = Array.from(employeeCodes.keys());
++    if (duplicateCodes.length > 0) {
++      const existing = await this.prisma.employeeLocationAssignment.findMany({
++        where: { employeeCode: { in: duplicateCodes }, isActive: true },
++        select: {
++          employeeCode: true,
++          normalizedEmail: true,
++          serviceLocationCode: true,
++          effectiveFrom: true,
++          effectiveTo: true,
++        },
++      });
++      for (const row of rows) {
++        const conflicting = existing.some(
++          (assignment) =>
++            assignment.employeeCode === row.employeeCode &&
++            assignment.normalizedEmail !== row.normalizedEmail,
++        );
++        if (conflicting) {
++          row.reason = selectReason([
++            ...(row.reason ? [row.reason] : []),
++            'DUPLICATE_EMPLOYEE_CODE',
++          ]);
++        }
++      }
++    }
++
++    const rejectedCount = rows.filter((row) => row.reason !== undefined).length;
++    const valid = rejectedCount === 0;
++    if (!valid) {
++      return {
++        source: normalizeText(input.source),
++        rows,
++        valid: false,
++        acceptedCount: 0,
++        rejectedCount,
++      };
++    }
++
++    const batch = await this.prisma.$transaction(async (tx) => {
++      const createdBatch = await tx.rosterImportBatch.create({
++        data: { source: normalizeText(input.source) },
++      });
++      const batchId = createdBatch?.id ?? randomUUID();
++      for (const row of rows) {
++        await tx.rosterImportRow.create({
++          data: {
++            batchId,
++            normalizedEmail: row.normalizedEmail,
++            employeeName: row.name,
++            employeeCode: row.employeeCode,
++            isActive: row.isActive,
++            role: row.role,
++            serviceLocationCode: row.serviceLocationCode,
++            effectiveFrom: new Date(row.effectiveFrom),
++            effectiveTo: row.effectiveTo ? new Date(row.effectiveTo) : null,
++          },
++        });
++      }
++      return createdBatch;
++    });
++    const batchId = batch?.id ?? randomUUID();
++
++    return {
++      batchId,
++      source: normalizeText(input.source),
++      rows,
++      valid: true,
++      acceptedCount: rows.length,
++      rejectedCount: 0,
++    };
++  }
++
++  async commit(batchId: string, actorId: string): Promise<RosterImportResult> {
++    if (!batchId.trim() || !actorId.trim()) {
++      throw new BadRequestException({
++        code: 'VALIDATION_ERROR',
++        message: 'Batch and actor are required.',
++      });
++    }
++
++    return this.prisma.$transaction(async (tx) => {
++      const batch = await tx.rosterImportBatch.findUnique({
++        where: { id: batchId },
++        include: { rows: true },
++      });
++      if (!batch) {
++        throw new NotFoundException({
++          code: 'ROSTER_BATCH_NOT_FOUND',
++          message: 'Roster import batch was not found.',
++        });
++      }
++
++      const rows = batch.rows;
++      if (rows.length === 0) {
++        throw new BadRequestException({
++          code: 'VALIDATION_ERROR',
++          message: 'Roster import batch is empty.',
++        });
++      }
++      if (rows.every((row) => row.outcome === 'ACCEPTED')) {
++        return {
++          batchId,
++          rows: rows.map((row, index) => ({
++            rowNumber: index + 1,
++            normalizedEmail: row.normalizedEmail,
++            assignmentId: row.assignmentId ?? '',
++            outcome: 'ACCEPTED' as const,
++          })),
++          acceptedCount: rows.length,
++          idempotent: true,
++        };
++      }
++      if (rows.some((row) => row.outcome === 'REJECTED')) {
++        throw new BadRequestException({
++          code: 'ROSTER_IMPORT_REJECTED',
++          message: 'Roster import contains rejected rows.',
++        });
++      }
++
++      const batchAudit = await tx.auditLog.create({
++        data: {
++          userId: actorId,
++          action: 'ROSTER_IMPORT_COMMITTED',
++          details: JSON.stringify({ batchId }),
++        },
++      });
++      const batchAuditId = batchAudit?.id ?? randomUUID();
++      let idempotent = true;
++
++      const duplicateCodes = await tx.employeeLocationAssignment.findMany({
++        where: {
++          employeeCode: { in: rows.map((row) => row.employeeCode) },
++          isActive: true,
++        },
++        select: { id: true, employeeCode: true, normalizedEmail: true },
++      });
++      const duplicateByCode = new Map(
++        duplicateCodes.map((assignment) => [
++          assignment.employeeCode,
++          assignment,
++        ]),
++      );
++
++      const resultRows: RosterImportResult['rows'] = [];
++      for (const [index, row] of rows.entries()) {
++        const duplicate = duplicateByCode.get(row.employeeCode);
++        if (duplicate && duplicate.normalizedEmail !== row.normalizedEmail) {
++          throw new BadRequestException({
++            code: 'ROSTER_IMPORT_REJECTED',
++            message: 'Employee code is already assigned.',
++          });
++        }
++        const location = await this.locationsService.resolveEffectiveLocation(
++          row.serviceLocationCode,
++          row.effectiveFrom,
++        );
++        const user = await tx.user.findUnique({
++          where: { email: row.normalizedEmail },
++          select: { id: true },
++        });
++        const audit = await tx.auditLog.create({
++          data: {
++            userId: actorId,
++            action: 'ROSTER_ASSIGNMENT_IMPORTED',
++            details: JSON.stringify({
++              batchId,
++              emailHash: emailHash(row.normalizedEmail),
++              employeeCode: row.employeeCode,
++              locationId: location.id,
++            }),
++          },
++        });
++
++        const existing = await tx.employeeLocationAssignment.findFirst({
++          where: {
++            normalizedEmail: row.normalizedEmail,
++            effectiveFrom: row.effectiveFrom,
++            effectiveTo: row.effectiveTo,
++          },
++        });
++        let assignment;
++        const assignmentData = {
++          userId: user?.id ?? null,
++          normalizedEmail: row.normalizedEmail,
++          employeeName: row.employeeName,
++          employeeCode: row.employeeCode,
++          isActive: row.isActive,
++          role: row.role,
++          serviceLocationCode: row.serviceLocationCode,
++          locationId: location.id,
++          effectiveFrom: row.effectiveFrom,
++          effectiveTo: row.effectiveTo,
++          rosterImportBatchId: batchId,
++          auditEventId: audit?.id ?? randomUUID(),
++        };
++        if (
++          existing &&
++          existing.employeeCode === row.employeeCode &&
++          existing.serviceLocationCode === row.serviceLocationCode &&
++          existing.locationId === location.id &&
++          existing.isActive === row.isActive &&
++          existing.role === row.role
++        ) {
++          assignment = existing;
++        } else if (existing) {
++          assignment = await tx.employeeLocationAssignment.update({
++            where: { id: existing.id },
++            data: assignmentData,
++          });
++          idempotent = false;
++        } else {
++          const prior = await tx.employeeLocationAssignment.findFirst({
++            where: { normalizedEmail: row.normalizedEmail, isActive: true },
++          });
++          if (prior && prior.effectiveFrom < row.effectiveFrom) {
++            await tx.employeeLocationAssignment.update({
++              where: { id: prior.id },
++              data: { isActive: false, effectiveTo: row.effectiveFrom },
++            });
++          }
++          assignment = await tx.employeeLocationAssignment.create({
++            data: assignmentData,
++          });
++          idempotent = false;
++        }
++
++        await tx.rosterImportRow.update({
++          where: { id: row.id },
++          data: {
++            outcome: 'ACCEPTED',
++            assignmentId: assignment.id,
++            auditEventId: audit?.id ?? randomUUID(),
++          },
++        });
++        resultRows.push({
++          rowNumber: index + 1,
++          normalizedEmail: row.normalizedEmail,
++          assignmentId: assignment.id,
++          outcome: 'ACCEPTED',
++        });
++      }
++      await tx.rosterImportBatch.update({
++        where: { id: batchId },
++        data: {
++          importedByUserId: actorId,
++          importedAt: new Date(),
++          auditEventId: batchAuditId,
++        },
++      });
++      return {
++        batchId,
++        rows: resultRows,
++        acceptedCount: resultRows.length,
++        idempotent,
++      };
++    });
++  }
++
++  private normalizeRow(
++    row: unknown,
++    rowNumber: number,
++  ): NormalizedRow & { effectiveFromDate: Date | null } {
++    const fallback = {
++      rowNumber,
++      email: '',
++      name: '',
++      employeeCode: '',
++      isActive: false,
++      role: '',
++      serviceLocationCode: '',
++      effectiveFrom: '',
++      effectiveTo: null,
++      normalizedEmail: '',
++      locationId: undefined,
++      effectiveFromDate: null,
++      reason: ['INVALID_ROW'] as RosterImportReason[],
++      location: null as unknown as ResolvedLocation,
++    };
++    if (!hasOnlyRosterFields(row)) return fallback;
++
++    const normalized = {
++      rowNumber,
++      email: normalizeEmail(row.email),
++      name: normalizeText(row.name),
++      employeeCode: normalizeCode(row.employeeCode),
++      isActive: row.isActive,
++      role: normalizeCode(row.role),
++      serviceLocationCode: normalizeCode(row.serviceLocationCode),
++      effectiveFrom: row.effectiveFrom,
++      effectiveTo: row.effectiveTo,
++      normalizedEmail: normalizeEmail(row.email),
++      locationId: undefined as string | undefined,
++      effectiveFromDate: parseUtcDate(row.effectiveFrom),
++      reason: [] as RosterImportReason[],
++      location: null as unknown as ResolvedLocation,
++    };
++
++    const parsed = v1.RosterImportRowSchema.safeParse({
++      email: normalized.email,
++      name: normalized.name,
++      employeeCode: normalized.employeeCode,
++      isActive: normalized.isActive,
++      role: normalized.role,
++      serviceLocationCode: normalized.serviceLocationCode,
++      effectiveFrom: normalized.effectiveFrom,
++      effectiveTo: normalized.effectiveTo,
++    });
++    if (!parsed.success || !normalized.effectiveFromDate) {
++      normalized.reason.push('INVALID_ROW');
++      return normalized;
++    }
++    const effectiveToDate = normalized.effectiveTo
++      ? parseUtcDate(normalized.effectiveTo)
++      : null;
++    if (normalized.effectiveTo && !effectiveToDate) {
++      normalized.reason.push('INVALID_EFFECTIVE_RANGE');
++    } else if (
++      effectiveToDate &&
++      effectiveToDate <= normalized.effectiveFromDate
++    ) {
++      normalized.reason.push('INVALID_EFFECTIVE_RANGE');
++    }
++    return normalized;
++  }
++
++  private publicRow(
++    row: NormalizedRow & { effectiveFromDate: Date | null },
++  ): RosterPreviewRow {
++    return {
++      rowNumber: row.rowNumber,
++      email: row.email,
++      name: row.name,
++      employeeCode: row.employeeCode,
++      isActive: row.isActive,
++      role: row.role,
++      serviceLocationCode: row.serviceLocationCode,
++      effectiveFrom: row.effectiveFrom,
++      effectiveTo: row.effectiveTo,
++      normalizedEmail: row.normalizedEmail,
++      locationId: row.locationId,
++      reason: selectReason(row.reason),
++    };
++  }
++}
++
++const REASON_PRIORITY: RosterImportReason[] = [
++  'DUPLICATE_EMPLOYEE_CODE',
++  'UNKNOWN_SERVICE_LOCATION',
++  'INVALID_EFFECTIVE_RANGE',
++  'INACTIVE_CAPABILITY',
++  'INVALID_ROW',
++];
++
++function selectReason(
++  reasons: RosterImportReason[] | RosterImportReason,
++): RosterImportReason | undefined {
++  const values = Array.isArray(reasons) ? reasons : [reasons];
++  return REASON_PRIORITY.find((reason) => values.includes(reason));
++}
+diff --git a/apps/api/src/admin/roster/roster.controller.ts b/apps/api/src/admin/roster/roster.controller.ts
+new file mode 100644
+index 0000000..8e13420
+--- /dev/null
++++ b/apps/api/src/admin/roster/roster.controller.ts
+@@ -0,0 +1,67 @@
++import {
++  BadRequestException,
++  Body,
++  Controller,
++  Param,
++  Post,
++  UseGuards,
++} from '@nestjs/common';
++import { z } from 'zod';
++import { RosterImportService } from './roster-import.service.js';
++import { SessionGuard } from '../../auth/session.guard.js';
++import { PermissionsGuard } from '../../auth/permissions.guard.js';
++import { RequirePermission } from '../../auth/require-permission.decorator.js';
++import { CurrentUser } from '../../auth/current-user.decorator.js';
++import type { AuthenticatedUser } from '../../auth/authenticated-user.js';
++import type { RosterImportBatchInput } from './roster-import.service.js';
++
++const RosterImportRequestSchema = z
++  .object({
++    source: z.string().trim().min(1),
++    rows: z
++      .array(
++        z
++          .object({
++            email: z.string(),
++            name: z.string(),
++            employeeCode: z.string(),
++            isActive: z.boolean(),
++            role: z.string(),
++            serviceLocationCode: z.string(),
++            effectiveFrom: z.string(),
++            effectiveTo: z.string().nullable(),
++          })
++          .strict(),
++      )
++      .min(1),
++  })
++  .strict();
++
++@Controller(['v1/admin/roster', 'admin/roster'])
++@UseGuards(SessionGuard, PermissionsGuard)
++@RequirePermission('roster.manage')
++export class RosterController {
++  constructor(private readonly rosterImportService: RosterImportService) {}
++
++  @Post('preview')
++  preview(@Body() body: unknown) {
++    const parsed = RosterImportRequestSchema.safeParse(body);
++    if (!parsed.success) {
++      throw new BadRequestException({
++        code: 'VALIDATION_ERROR',
++        message: 'Invalid roster import.',
++      });
++    }
++    return this.rosterImportService.preview(
++      parsed.data as RosterImportBatchInput,
++    );
++  }
++
++  @Post(':batchId/commit')
++  commit(
++    @Param('batchId') batchId: string,
++    @CurrentUser() user: AuthenticatedUser,
++  ) {
++    return this.rosterImportService.commit(batchId, user.id);
++  }
++}
+diff --git a/apps/api/src/app.module.ts b/apps/api/src/app.module.ts
+index bde8981..4ebaddb 100644
+--- a/apps/api/src/app.module.ts
++++ b/apps/api/src/app.module.ts
+@@ -9,7 +9,7 @@ import { RegistrationsModule } from './registrations/registrations.module.js';
+ import { NotificationsModule } from './notifications/notifications.module.js';
+ import { PickupModule } from './pickup/pickup.module.js';
+ import { KitchenModule } from './kitchen/kitchen.module.js';
+-
++import { LocationsModule } from './locations/locations.module.js';
+ @Module({
+   imports: [
+     AuthModule,
+@@ -20,6 +20,7 @@ import { KitchenModule } from './kitchen/kitchen.module.js';
+     NotificationsModule,
+     PickupModule,
+     KitchenModule,
++    LocationsModule,
+   ],
+   controllers: [AppController],
+   providers: [AppService],
+diff --git a/apps/api/src/locations/locations.module.ts b/apps/api/src/locations/locations.module.ts
+new file mode 100644
+index 0000000..e130309
+--- /dev/null
++++ b/apps/api/src/locations/locations.module.ts
+@@ -0,0 +1,15 @@
++import { Module } from '@nestjs/common';
++import { AuthModule } from '../auth/auth.module.js';
++import { LocationsService } from './locations.service.js';
++import { LocationsController } from '../admin/locations/locations.controller.js';
++import { RosterImportService } from '../admin/roster/roster-import.service.js';
++import { RosterController } from '../admin/roster/roster.controller.js';
++import { AllowlistController } from '../admin/allowlist/allowlist.controller.js';
++
++@Module({
++  imports: [AuthModule],
++  controllers: [LocationsController, RosterController, AllowlistController],
++  providers: [LocationsService, RosterImportService],
++  exports: [LocationsService, RosterImportService],
++})
++export class LocationsModule {}
+diff --git a/apps/api/src/locations/locations.service.ts b/apps/api/src/locations/locations.service.ts
+new file mode 100644
+index 0000000..9471b79
+--- /dev/null
++++ b/apps/api/src/locations/locations.service.ts
+@@ -0,0 +1,467 @@
++import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
++import { PrismaClient } from '@prisma/client';
++import type { Prisma } from '@prisma/client';
++import { v1 } from '@imeal/contracts';
++import { randomUUID } from 'node:crypto';
++const VN_TIME_ZONE = 'Asia/Ho_Chi_Minh' as const;
++const EARTH_RADIUS_METERS = 6_371_000;
++
++type LocationPolicyRecord = {
++  id: string;
++  locationId: string;
++  latitude: number;
++  longitude: number;
++  accuracySource: string;
++  geofenceRadiusMeters: number;
++  maxFixAgeSeconds: number;
++  maxAccuracyMeters: number;
++  effectiveFrom: Date;
++  effectiveTo: Date | null;
++  isActive: boolean;
++};
++
++type LocationRecord = {
++  id: string;
++  shortCode: string;
++  displayName: string;
++  servingPointName: string;
++  address: string;
++  building?: string;
++  floor?: string;
++  roomOrCounter?: string;
++  localContact?: string;
++  timeZone: string;
++  isActive: boolean;
++  effectiveFrom: Date;
++  effectiveTo: Date | null;
++  operationalMetadata?: unknown;
++  holidayOverrides?: unknown;
++  capacityNotes?: string | null;
++  accessibilityInstructions?: string | null;
++  emergencyInstructions?: string | null;
++  kitchenTeam?: string | null;
++  approvedScannerDeviceIds?: string[];
++  networkNotes?: string | null;
++  lastVerifiedBy?: string | null;
++  lastVerifiedAt?: Date | null;
++  policies?: LocationPolicyRecord[];
++};
++
++export type ResolvedLocation = Omit<LocationRecord, 'policies'> & {
++  locationPolicy: LocationPolicyRecord;
++};
++
++export type GpsVerificationResult =
++  | {
++      result: 'VALID';
++      locationId: string;
++      locationPolicyId: string;
++      capturedAt: string;
++      verifiedAt: string;
++      accuracyMeters: number;
++      safeVerificationCode: 'GPS_VALID';
++    }
++  | {
++      result: 'GPS_RETRY_REQUIRED';
++      locationId: string;
++      code: 'GPS_RETRY_REQUIRED';
++      safeVerificationCode:
++        | 'GPS_UNAVAILABLE'
++        | 'GPS_STALE'
++        | 'GPS_INACCURATE'
++        | 'GPS_RETRY_REQUIRED';
++      details: { action: 'RETRY' | 'REFRESH' };
++    };
++
++type GpsFailureCode =
++  | 'GPS_UNAVAILABLE'
++  | 'GPS_STALE'
++  | 'GPS_INACCURATE'
++  | 'GPS_RETRY_REQUIRED';
++
++export interface LocationConfigurationInput {
++  id?: string;
++  shortCode: string;
++  displayName: string;
++  servingPointName: string;
++  address: string;
++  building: string;
++  floor: string;
++  roomOrCounter: string;
++  localContact: string;
++  timeZone?: typeof VN_TIME_ZONE;
++  isActive: boolean;
++  effectiveFrom: string | Date;
++  effectiveTo?: string | Date | null;
++  operationalMetadata?: unknown;
++  holidayOverrides?: unknown;
++  capacityNotes?: string | null;
++  accessibilityInstructions?: string | null;
++  emergencyInstructions?: string | null;
++  kitchenTeam?: string | null;
++  approvedScannerDeviceIds?: string[];
++  networkNotes?: string | null;
++  policy: {
++    id?: string;
++    latitude: number;
++    longitude: number;
++    accuracySource: string;
++    geofenceRadiusMeters: number;
++    maxFixAgeSeconds: number;
++    maxAccuracyMeters: number;
++    effectiveFrom: string | Date;
++    effectiveTo?: string | Date | null;
++    isActive: boolean;
++  };
++}
++
++function activeAt(at: Date) {
++  return {
++    lte: at,
++  };
++}
++
++function dateRangeAt(at: Date) {
++  return {
++    effectiveFrom: activeAt(at),
++    OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }],
++  };
++}
++
++function normalizeCode(code: string): string {
++  return code.normalize('NFKC').trim().toUpperCase();
++}
++
++function asDate(value: string | Date): Date {
++  const parsed = new Date(value);
++  if (!Number.isFinite(parsed.getTime())) {
++    throw new BadRequestException({
++      code: 'VALIDATION_ERROR',
++      message: 'Effective dates must be valid UTC ISO instants.',
++    });
++  }
++  return parsed;
++}
++
++function haversineDistanceMeters(
++  latitude: number,
++  longitude: number,
++  targetLatitude: number,
++  targetLongitude: number,
++): number {
++  const toRadians = (value: number) => (value * Math.PI) / 180;
++  const latitudeDelta = toRadians(targetLatitude - latitude);
++  const longitudeDelta = toRadians(targetLongitude - longitude);
++  const originLatitude = toRadians(latitude);
++  const destinationLatitude = toRadians(targetLatitude);
++  const a =
++    Math.sin(latitudeDelta / 2) ** 2 +
++    Math.cos(originLatitude) *
++      Math.cos(destinationLatitude) *
++      Math.sin(longitudeDelta / 2) ** 2;
++  return 2 * EARTH_RADIUS_METERS * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
++}
++
++@Injectable()
++export class LocationsService {
++  private readonly prisma: PrismaClient;
++
++  constructor() {
++    this.prisma = new PrismaClient();
++  }
++
++  async resolveEffectiveLocation(
++    code: string,
++    at: Date = new Date(),
++  ): Promise<ResolvedLocation> {
++    const shortCode = normalizeCode(code);
++    const record = (await this.prisma.location.findFirst({
++      where: {
++        shortCode,
++        isActive: true,
++        ...dateRangeAt(at),
++      },
++      include: {
++        policies: {
++          where: { isActive: true, ...dateRangeAt(at) },
++          orderBy: { effectiveFrom: 'desc' },
++          take: 1,
++        },
++      },
++    })) as LocationRecord | null;
++
++    const locationPolicy = record?.policies?.[0];
++    if (!record || !locationPolicy) {
++      throw new NotFoundException({
++        code: 'UNKNOWN_SERVICE_LOCATION',
++        message: 'Service location is not available.',
++      });
++    }
++
++    const resolvedPolicy = {
++      ...locationPolicy,
++      locationId: locationPolicy.locationId ?? record.id,
++    };
++    const { policies: _policies, ...location } = record;
++    return { ...location, locationPolicy: resolvedPolicy };
++  }
++
++  async evaluatePresenterEvidence(
++    locationId: string,
++    evidence: v1.PresenterLocationEvidence,
++    at: Date = new Date(),
++  ): Promise<GpsVerificationResult> {
++    const record = (await this.prisma.location.findUnique({
++      where: { id: locationId },
++      include: {
++        policies: {
++          where: { isActive: true, ...dateRangeAt(at) },
++          orderBy: { effectiveFrom: 'desc' },
++          take: 1,
++        },
++      },
++    })) as LocationRecord | null;
++
++    const locationPolicy = record?.policies?.[0];
++    if (!record || !record.isActive || !isEffective(record, at)) {
++      return this.retry(locationId, 'GPS_UNAVAILABLE', 'REFRESH');
++    }
++    if (!locationPolicy) {
++      return this.retry(locationId, 'GPS_UNAVAILABLE', 'REFRESH');
++    }
++
++    const capturedAt = new Date(evidence.capturedAt);
++    if (!Number.isFinite(capturedAt.getTime())) {
++      return this.retry(locationId, 'GPS_STALE', 'RETRY');
++    }
++    if (
++      !Number.isFinite(evidence.latitude) ||
++      !Number.isFinite(evidence.longitude) ||
++      evidence.latitude < -90 ||
++      evidence.latitude > 90 ||
++      evidence.longitude < -180 ||
++      evidence.longitude > 180
++    ) {
++      return this.retry(locationId, 'GPS_INACCURATE', 'RETRY');
++    }
++
++    const ageSeconds = (at.getTime() - capturedAt.getTime()) / 1000;
++    if (ageSeconds < 0 || ageSeconds > locationPolicy.maxFixAgeSeconds) {
++      return this.retry(locationId, 'GPS_STALE', 'RETRY');
++    }
++    if (
++      !Number.isFinite(evidence.accuracyMeters) ||
++      evidence.accuracyMeters < 0 ||
++      evidence.accuracyMeters > locationPolicy.maxAccuracyMeters
++    ) {
++      return this.retry(locationId, 'GPS_INACCURATE', 'RETRY');
++    }
++
++    const distance = haversineDistanceMeters(
++      evidence.latitude,
++      evidence.longitude,
++      locationPolicy.latitude,
++      locationPolicy.longitude,
++    );
++    if (distance > locationPolicy.geofenceRadiusMeters) {
++      return this.retry(locationId, 'GPS_RETRY_REQUIRED', 'REFRESH');
++    }
++
++    return {
++      result: 'VALID',
++      locationId,
++      locationPolicyId: locationPolicy.id,
++      capturedAt: capturedAt.toISOString(),
++      verifiedAt: at.toISOString(),
++      accuracyMeters: evidence.accuracyMeters,
++      safeVerificationCode: 'GPS_VALID',
++    };
++  }
++
++  async listConfiguredLocations(at: Date = new Date()) {
++    const locations = await this.prisma.location.findMany({
++      orderBy: { shortCode: 'asc' },
++      include: {
++        policies: {
++          orderBy: { effectiveFrom: 'desc' },
++        },
++      },
++    });
++    return locations.map((location) => ({
++      ...location,
++      effectiveNow: location.isActive && isEffective(location, at) === true,
++    }));
++  }
++
++  async saveConfiguration(
++    input: LocationConfigurationInput,
++    actorId: string,
++    at: Date = new Date(),
++  ) {
++    if (!input || !input.policy) {
++      throw new BadRequestException({
++        code: 'VALIDATION_ERROR',
++        message: 'Location configuration and policy are required.',
++      });
++    }
++    const locationId = input.id ?? randomUUID();
++    const effectiveFrom = asDate(input.effectiveFrom);
++    const effectiveTo =
++      input.effectiveTo == null ? null : asDate(input.effectiveTo);
++    const policyEffectiveFrom = asDate(input.policy.effectiveFrom);
++    const policyEffectiveTo =
++      input.policy.effectiveTo == null
++        ? null
++        : asDate(input.policy.effectiveTo);
++    validateDateRange(effectiveFrom, effectiveTo);
++    validateDateRange(policyEffectiveFrom, policyEffectiveTo);
++    validatePolicy(input.policy);
++
++    return this.prisma.$transaction(async (tx) => {
++      if (input.policy.id) {
++        const existingPolicy = await tx.locationPolicy.findUnique({
++          where: { id: input.policy.id },
++          select: { locationId: true },
++        });
++        if (!existingPolicy || existingPolicy.locationId !== locationId) {
++          throw new BadRequestException({
++            code: 'INVALID_LOCATION_POLICY',
++            message: 'Location policy does not belong to location.',
++          });
++        }
++      }
++
++      const locationData = {
++        shortCode: normalizeCode(input.shortCode),
++        displayName: input.displayName.trim(),
++        servingPointName: input.servingPointName.trim(),
++        address: input.address.trim(),
++        building: input.building.trim(),
++        floor: input.floor.trim(),
++        roomOrCounter: input.roomOrCounter.trim(),
++        localContact: input.localContact.trim(),
++        timeZone: VN_TIME_ZONE,
++        isActive: input.isActive,
++        effectiveFrom,
++        effectiveTo,
++        operationalMetadata:
++          input.operationalMetadata == null
++            ? undefined
++            : (input.operationalMetadata as Prisma.InputJsonValue),
++        holidayOverrides:
++          input.holidayOverrides == null
++            ? undefined
++            : (input.holidayOverrides as Prisma.InputJsonValue),
++        capacityNotes: input.capacityNotes ?? null,
++        accessibilityInstructions: input.accessibilityInstructions ?? null,
++        emergencyInstructions: input.emergencyInstructions ?? null,
++        kitchenTeam: input.kitchenTeam ?? null,
++        approvedScannerDeviceIds: input.approvedScannerDeviceIds ?? [],
++        networkNotes: input.networkNotes ?? null,
++        lastVerifiedBy: actorId,
++        lastVerifiedAt: at,
++      };
++
++      const location = input.id
++        ? await tx.location.update({
++            where: { id: locationId },
++            data: locationData,
++          })
++        : await tx.location.create({
++            data: { id: locationId, ...locationData },
++          });
++
++      const policyData = {
++        latitude: input.policy.latitude,
++        longitude: input.policy.longitude,
++        accuracySource: input.policy.accuracySource.trim(),
++        geofenceRadiusMeters: input.policy.geofenceRadiusMeters,
++        maxFixAgeSeconds: input.policy.maxFixAgeSeconds,
++        maxAccuracyMeters: input.policy.maxAccuracyMeters,
++        effectiveFrom: policyEffectiveFrom,
++        effectiveTo: policyEffectiveTo,
++        isActive: input.policy.isActive,
++      };
++      if (input.policy.id) {
++        await tx.locationPolicy.update({
++          where: { id: input.policy.id },
++          data: policyData,
++        });
++      } else {
++        await tx.locationPolicy.create({
++          data: { id: randomUUID(), locationId: location.id, ...policyData },
++        });
++      }
++
++      await tx.auditLog.create({
++        data: {
++          userId: actorId,
++          action: input.id
++            ? 'LOCATION_CONFIGURATION_UPDATED'
++            : 'LOCATION_CONFIGURATION_CREATED',
++          details: JSON.stringify({
++            locationId: location.id,
++            shortCode: location.shortCode,
++          }),
++        },
++      });
++      return location;
++    });
++  }
++
++  private retry(
++    locationId: string,
++    safeVerificationCode: GpsFailureCode,
++    action: 'RETRY' | 'REFRESH',
++  ): GpsVerificationResult {
++    return {
++      result: 'GPS_RETRY_REQUIRED',
++      locationId,
++      code: 'GPS_RETRY_REQUIRED',
++      safeVerificationCode,
++      details: { action },
++    };
++  }
++}
++
++function isEffective(
++  record: { effectiveFrom: Date; effectiveTo: Date | null },
++  at: Date,
++): boolean {
++  return (
++    record.effectiveFrom <= at &&
++    (record.effectiveTo === null || record.effectiveTo > at)
++  );
++}
++function validateDateRange(from: Date, to: Date | null): void {
++  if (to && to <= from) {
++    throw new BadRequestException({
++      code: 'VALIDATION_ERROR',
++      message: 'Effective end must be after effective start.',
++    });
++  }
++}
++
++function validatePolicy(policy: LocationConfigurationInput['policy']): void {
++  if (
++    !Number.isFinite(policy.latitude) ||
++    policy.latitude < -90 ||
++    policy.latitude > 90 ||
++    !Number.isFinite(policy.longitude) ||
++    policy.longitude < -180 ||
++    policy.longitude > 180 ||
++    !Number.isFinite(policy.geofenceRadiusMeters) ||
++    policy.geofenceRadiusMeters <= 0 ||
++    !Number.isInteger(policy.geofenceRadiusMeters) ||
++    !Number.isFinite(policy.maxFixAgeSeconds) ||
++    policy.maxFixAgeSeconds < 0 ||
++    !Number.isInteger(policy.maxFixAgeSeconds) ||
++    !Number.isFinite(policy.maxAccuracyMeters) ||
++    policy.maxAccuracyMeters < 0
++  ) {
++    throw new BadRequestException({
++      code: 'VALIDATION_ERROR',
++      message: 'Invalid location policy.',
++    });
++  }
++}
+diff --git a/packages/domain/src/RegistrationService.ts b/packages/domain/src/RegistrationService.ts
+index af7a69a..cc0227a 100644
+--- a/packages/domain/src/RegistrationService.ts
++++ b/packages/domain/src/RegistrationService.ts
+@@ -34,6 +34,56 @@ export class RegistrationService {
+     return true;
+   }
+
++  static buildLocationSnapshot(
++    assignment: {
++      id: string;
++      serviceLocationCode: string;
++      effectiveFrom: Date;
++      location: {
++        id: string;
++        displayName: string;
++        address: string;
++      };
++    },
++    snapshotAt: Date,
++  ) {
++    return {
++      serviceLocationId: assignment.location.id,
++      serviceLocationAssignmentId: assignment.id,
++      serviceLocationCode: assignment.serviceLocationCode,
++      serviceLocationName: assignment.location.displayName,
++      serviceLocationAddress: assignment.location.address,
++      serviceLocationEffectiveFrom: new Date(assignment.effectiveFrom),
++      serviceLocationSnapshotAt: new Date(snapshotAt),
++    };
++  }
++
++  static buildEffectiveAssignmentWhere(
++    userId: string,
++    normalizedEmail: string | undefined,
++    targetDate: Date,
++  ) {
++    return {
++      isActive: true,
++      AND: [
++        {
++          OR: normalizedEmail ? [{ userId }, { normalizedEmail }] : [{ userId }],
++        },
++        { effectiveFrom: { lte: targetDate } },
++        {
++          OR: [{ effectiveTo: null }, { effectiveTo: { gt: targetDate } }],
++        },
++      ],
++      location: {
++        is: {
++          isActive: true,
++          effectiveFrom: { lte: targetDate },
++          OR: [{ effectiveTo: null }, { effectiveTo: { gt: targetDate } }],
++        },
++      },
++    };
++  }
++
+   static async registerMeal(
+     userId: string,
+     targetDate: Date,
+@@ -51,18 +101,61 @@ export class RegistrationService {
+       throw new Error('Menu is not available for this date.');
+     }
+
+-    return await prisma.registration.upsert({
+-      where: {
+-        userId_mealDate: { userId, mealDate: targetDate },
+-      },
+-      update: {
+-        status: 'ACTIVE',
+-      },
+-      create: {
+-        userId,
+-        mealDate: targetDate,
+-        status: 'ACTIVE',
+-      },
++    return prisma.$transaction(async (tx) => {
++      const user = await tx.user.findUnique({
++        where: { id: userId },
++        select: { email: true },
++      });
++      const normalizedEmail = user?.email
++        .normalize('NFKC')
++        .trim()
++        .toLowerCase();
++      const assignment = await tx.employeeLocationAssignment.findFirst({
++        where: this.buildEffectiveAssignmentWhere(
++          userId,
++          normalizedEmail,
++          targetDate,
++        ),
++        include: { location: true },
++        orderBy: { effectiveFrom: 'desc' },
++      });
++      const existing = await tx.registration.findUnique({
++        where: {
++          userId_mealDate: { userId, mealDate: targetDate },
++        },
++      });
++      const locationSnapshot = assignment
++        ? this.buildLocationSnapshot(assignment, currentTime)
++        : undefined;
++
++      if (existing) {
++        const updateData: {
++          status: 'ACTIVE';
++          serviceLocationId?: string;
++          serviceLocationAssignmentId?: string;
++          serviceLocationCode?: string;
++          serviceLocationName?: string;
++          serviceLocationAddress?: string;
++          serviceLocationEffectiveFrom?: Date;
++          serviceLocationSnapshotAt?: Date;
++        } = { status: 'ACTIVE' };
++        if (!existing.serviceLocationSnapshotAt && locationSnapshot) {
++          Object.assign(updateData, locationSnapshot);
++        }
++        return tx.registration.update({
++          where: { id: existing.id },
++          data: updateData,
++        });
++      }
++
++      return tx.registration.create({
++        data: {
++          userId,
++          mealDate: targetDate,
++          status: 'ACTIVE',
++          ...locationSnapshot,
++        },
++      });
+     });
+   }
+
+diff --git a/packages/domain/test/registration.test.ts b/packages/domain/test/registration.test.ts
+index a5f138f..2d5aebc 100644
+--- a/packages/domain/test/registration.test.ts
++++ b/packages/domain/test/registration.test.ts
+@@ -62,6 +62,51 @@ describe('Domain Tests: Registration Rules', () => {
+     });
+   });
+
++  describe('Service-location snapshots', () => {
++    it('copies the effective assignment and location values without exposing mutable references', () => {
++      const snapshotAt = new Date('2026-09-24T03:00:00.000Z');
++      const assignment = {
++        id: 'assignment-1',
++        serviceLocationCode: 'LOC-A',
++        effectiveFrom: new Date('2026-09-01T00:00:00.000Z'),
++        location: {
++          id: 'location-1',
++          displayName: 'Approved location',
++          address: 'Approved address',
++        },
++      };
++
++      expect(
++        RegistrationService.buildLocationSnapshot(assignment, snapshotAt),
++      ).toEqual({
++        serviceLocationId: 'location-1',
++        serviceLocationAssignmentId: 'assignment-1',
++        serviceLocationCode: 'LOC-A',
++        serviceLocationName: 'Approved location',
++        serviceLocationAddress: 'Approved address',
++        serviceLocationEffectiveFrom: assignment.effectiveFrom,
++        serviceLocationSnapshotAt: snapshotAt,
++      });
++    });
++
++    it('filters assignments to locations effective on the meal date', () => {
++      const mealDate = new Date('2026-09-24T00:00:00.000Z');
++      const where = RegistrationService.buildEffectiveAssignmentWhere(
++        'user-1',
++        'employee@example.test',
++        mealDate,
++      );
++
++      expect(where.location).toEqual({
++        is: {
++          isActive: true,
++          effectiveFrom: { lte: mealDate },
++          OR: [{ effectiveTo: null }, { effectiveTo: { gt: mealDate } }],
++        },
++      });
++    });
++  });
++
+   describe('Integration with DB', () => {
+     it('Cancel registration atomically revokes active delegation', async () => {
+       const user1 = await prisma.user.create({ data: { email: 'u1@ex.com' } });

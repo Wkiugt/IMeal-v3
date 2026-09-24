@@ -93,4 +93,4 @@
 - [x] Task 6 review-focused GREEN: API roster/location/allowlist suites — 3 files, 14 tests passed; full API suite — 20 files, 148 tests passed.
 - [x] Task 6 API/core TypeScript validation passed; API lint exited 0 with only pre-existing warnings; `git diff --check` passed.
 - [!] Task 6 domain DB-backed tests remain blocked: no `DATABASE_URL` in default domain setup; focused run stopped before tests with `DATABASE_URL is not set in environment or .env.test`. Domain TypeScript validation passed.
-- [x] Task 6 review-fix commit `4aa0f3a` — `feat(admin): add approved locations roster imports and snapshots`; report at `task-6-report.md`; review package input baseline `9ac7a1e`.
+- [x] Task 6 review-fix commit `0e87b57` — `feat(admin): add approved locations roster imports and snapshots`; report at `task-6-report.md`; review package input baseline `9ac7a1e`.
