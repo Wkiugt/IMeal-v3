@@ -1,5 +1,5 @@
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PickupService } from './pickup.service.js';
-import { ForbiddenException } from '@nestjs/common';
 import { vi } from 'vitest';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 
@@ -488,15 +488,18 @@ describe('PickupService', () => {
       isActive: true,
     };
 
-    function makeLocationsService(result: unknown = {
-      result: 'VALID',
-      locationId: 'location-1',
-      locationPolicyId: 'policy-1',
-      capturedAt: validEvidence.capturedAt,
-      verifiedAt: '2026-09-04T04:00:01.000Z',
-      accuracyMeters: validEvidence.accuracyMeters,
-      safeVerificationCode: 'GPS_VALID',
-    }) {
+    function makeLocationsService(
+      result: unknown = {
+        result: 'VALID',
+        locationId: 'location-1',
+        locationPolicyId: 'policy-1',
+        capturedAt: validEvidence.capturedAt,
+        verifiedAt: '2026-09-04T04:00:01.000Z',
+        accuracyMeters: validEvidence.accuracyMeters,
+        safeVerificationCode: 'GPS_VALID',
+      },
+      policyUpdatedAt = '2026-09-04T03:00:00.000Z',
+    ) {
       return {
         resolveEffectiveLocation: vi.fn().mockResolvedValue({
           id: 'location-1',
@@ -505,6 +508,7 @@ describe('PickupService', () => {
             id: 'policy-1',
             maxFixAgeSeconds: 120,
             maxAccuracyMeters: 50,
+            updatedAt: new Date(policyUpdatedAt),
           },
         }),
         evaluatePresenterEvidence: vi.fn().mockResolvedValue(result),
@@ -755,7 +759,147 @@ describe('PickupService', () => {
         response: { code: 'PICKUP_INTENT_CONFLICT' },
       });
     });
+    it('rejects GPS evidence captured before an in-place policy update', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-04T04:00:00.000Z'));
+      const locationsService = makeLocationsService(
+        undefined,
+        '2026-09-04T04:00:01.000Z',
+      );
+      const taskService = new PickupService(
+        undefined,
+        undefined,
+        locationsService as never,
+      );
+      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
+      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
+        options: [ownPickupOption],
+      });
+      const signed = taskService.generateSignedQr('presenter-1', ['reg1']);
+      mockPrisma.servingVerification.findUnique.mockResolvedValueOnce({
+        id: signed.qrHash,
+        presenterUserId: 'presenter-1',
+        locationId: 'location-1',
+        locationPolicyId: 'policy-1',
+        result: 'VALID',
+        capturedAt: new Date(validEvidence.capturedAt),
+        accuracyMeters: 12,
+      });
+      mockPrisma.registration.findMany = vi.fn().mockResolvedValue([
+        {
+          id: 'reg1',
+          userId: 'presenter-1',
+          status: 'ACTIVE',
+          mealDate: new Date('2026-09-04T00:00:00.000Z'),
+          serviceLocationId: 'location-1',
+          serviceLocationCode: 'HQ',
+          mealServing: null,
+        },
+      ]);
 
+      await expect(
+        taskService.resolvePickup({ qr: signed.qr }, kitchenActor),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'GPS_RETRY_REQUIRED',
+          details: { action: 'REFRESH' },
+        },
+      });
+    });
+
+    it('rejects a QR whose meal date differs from registration snapshots', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-04T04:00:00.000Z'));
+      const locationsService = makeLocationsService();
+      const taskService = new PickupService(
+        undefined,
+        undefined,
+        locationsService as never,
+      );
+      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
+      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
+        options: [ownPickupOption],
+      });
+      const signed = taskService.generateSignedQr(
+        'presenter-1',
+        ['reg1'],
+        '2026-09-04',
+      );
+      mockPrisma.registration.findMany = vi.fn().mockResolvedValue([
+        {
+          id: 'reg1',
+          userId: 'presenter-1',
+          status: 'ACTIVE',
+          mealDate: new Date('2026-09-05T00:00:00.000Z'),
+          serviceLocationId: 'location-1',
+          serviceLocationCode: 'HQ',
+          mealServing: null,
+        },
+      ]);
+
+      await expect(
+        taskService.resolvePickup({ qr: signed.qr }, kitchenActor),
+      ).rejects.toMatchObject({
+        response: { code: 'PICKUP_INTENT_CONFLICT' },
+      });
+    });
+
+    it('maps unknown service locations to the canonical pickup conflict code', async () => {
+      const locationsService = makeLocationsService();
+      locationsService.resolveEffectiveLocation.mockRejectedValue(
+        new NotFoundException({
+          code: 'UNKNOWN_SERVICE_LOCATION',
+          message: 'Service location is not available.',
+        }),
+      );
+      const taskService = new PickupService(
+        undefined,
+        undefined,
+        locationsService as never,
+      );
+      vi.spyOn(taskService, 'checkServingWindow').mockResolvedValue(undefined);
+      vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
+        options: [ownPickupOption],
+      });
+      mockPrisma.registration.findMany.mockResolvedValueOnce([
+        {
+          id: 'reg1',
+          userId: 'presenter-1',
+          status: 'ACTIVE',
+          mealDate: new Date('2026-09-24T00:00:00.000Z'),
+          serviceLocationId: 'location-1',
+          serviceLocationCode: 'MISSING',
+          mealServing: null,
+        },
+      ]);
+
+      await expect(
+        taskService.generateQr('presenter-1', {
+          registrationIds: ['reg1'],
+          presenterEvidence: validEvidence,
+        } as never),
+      ).rejects.toMatchObject({
+        response: { code: 'PICKUP_INTENT_CONFLICT' },
+      });
+
+      mockPrisma.registration.findMany.mockResolvedValueOnce([
+        {
+          id: 'reg1',
+          userId: 'presenter-1',
+          status: 'ACTIVE',
+          mealDate: new Date(),
+          serviceLocationId: 'location-1',
+          serviceLocationCode: 'MISSING',
+          mealServing: null,
+        },
+      ]);
+      const signed = taskService.generateSignedQr('presenter-1', ['reg1']);
+      await expect(
+        taskService.resolvePickup({ qr: signed.qr }, kitchenActor),
+      ).rejects.toMatchObject({
+        response: { code: 'PICKUP_INTENT_CONFLICT' },
+      });
+    });
 
     it('rejects a changed resolved intent at confirm time', async () => {
       const taskService = new PickupService();

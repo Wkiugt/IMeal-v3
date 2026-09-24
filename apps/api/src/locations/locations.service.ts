@@ -18,6 +18,7 @@ type LocationPolicyRecord = {
   effectiveFrom: Date;
   effectiveTo: Date | null;
   isActive: boolean;
+  updatedAt: Date;
 };
 
 type LocationRecord = {

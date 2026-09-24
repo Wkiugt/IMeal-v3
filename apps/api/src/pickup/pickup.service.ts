@@ -18,6 +18,7 @@ import {
 import {
   LocationsService,
   type GpsVerificationResult,
+  type ResolvedLocation,
 } from '../locations/locations.service.js';
 import type { AuthenticatedUser } from '../auth/authenticated-user.js';
 
@@ -95,6 +96,16 @@ function safeDate(value: Date | string): Date {
     throw pickupError('PICKUP_INTENT_CONFLICT', 'Pickup intent is invalid.');
   }
   return result;
+}
+function exceptionCode(error: unknown): unknown {
+  if (!error || typeof error !== 'object' || !('response' in error)) {
+    return undefined;
+  }
+  const response = error.response;
+  if (!response || typeof response !== 'object' || !('code' in response)) {
+    return undefined;
+  }
+  return response.code;
 }
 
 
@@ -345,10 +356,21 @@ export class PickupService {
     }
 
     const locationId = [...locationIds][0];
-    const location = await this.requireLocationsService().resolveEffectiveLocation(
-      contexts[0].serviceLocationCode!,
-      at,
-    );
+    let location: ResolvedLocation;
+    try {
+      location = await this.requireLocationsService().resolveEffectiveLocation(
+        contexts[0].serviceLocationCode!,
+        at,
+      );
+    } catch (error: unknown) {
+      if (exceptionCode(error) === 'UNKNOWN_SERVICE_LOCATION') {
+        throw pickupError(
+          'PICKUP_INTENT_CONFLICT',
+          'The selected meal location is no longer available.',
+        );
+      }
+      throw error;
+    }
     if (location.id !== locationId) {
       throw pickupError(
         'PICKUP_INTENT_CONFLICT',
@@ -652,6 +674,12 @@ export class PickupService {
       verification.registrationIds,
       now,
     );
+    if (verification.mealDate !== mealDate) {
+      throw pickupError(
+        'PICKUP_INTENT_CONFLICT',
+        'QR meal date no longer matches the selected meals.',
+      );
+    }
     const storedEvidenceRecord = await this.readStoredPresenterEvidence(
       verification.qrHash,
       now,
@@ -670,6 +698,14 @@ export class PickupService {
 
     const policy = location.locationPolicy;
     const capturedAt = new Date(storedEvidence.gps.capturedAt);
+    const policyUpdatedAt = safeDate(policy.updatedAt);
+    if (policyUpdatedAt.getTime() > capturedAt.getTime()) {
+      throw pickupForbiddenError(
+        'GPS_RETRY_REQUIRED',
+        'A fresh presenter location is required.',
+        { action: 'REFRESH' },
+      );
+    }
     const ageSeconds = (now.getTime() - capturedAt.getTime()) / 1000;
     if (
       ageSeconds < 0 ||
@@ -682,7 +718,6 @@ export class PickupService {
         { action: 'REFRESH' },
       );
     }
-
     const pickupOptions = this.assertExactEligibleOptions(
       verification.registrationIds,
       verification.pickupOptions,
