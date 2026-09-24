@@ -181,7 +181,7 @@ describe('OtpService', () => {
     expect(prisma.otpChallenge.create).not.toHaveBeenCalled();
   });
 
-  it('uses one transactional client limiter lock across different allowlisted addresses', async () => {
+  it('uses shared client and address locks across concurrent allowlisted addresses', async () => {
     const { service, allowlist, prisma } = installService();
     const first = {
       ...ALLOWLIST,
@@ -210,16 +210,19 @@ describe('OtpService', () => {
       ),
     ]);
 
-    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
-    expect(prisma.$queryRaw.mock.calls[0][1]).toBe(
-      prisma.$queryRaw.mock.calls[1][1],
+    const rawCalls = prisma.$queryRaw.mock.calls;
+    const advisoryCalls = rawCalls.filter(([template]) =>
+      Array.isArray(template) &&
+      template.join('').includes('pg_advisory_xact_lock'),
     );
-    expect(JSON.stringify(prisma.$queryRaw.mock.calls)).toContain(
-      'pg_advisory_xact_lock',
+    const addressCalls = rawCalls.filter(([template]) =>
+      Array.isArray(template) &&
+      template.join('').includes('otp_allowlists'),
     );
-    expect(JSON.stringify(prisma.$queryRaw.mock.calls)).not.toContain(
-      context.clientIp,
-    );
+    expect(advisoryCalls).toHaveLength(2);
+    expect(addressCalls).toHaveLength(2);
+    expect(advisoryCalls[0][1]).toBe(advisoryCalls[1][1]);
+    expect(JSON.stringify(rawCalls)).not.toContain(context.clientIp);
   });
 
   it('atomically consumes a valid code and resolves the current user', async () => {

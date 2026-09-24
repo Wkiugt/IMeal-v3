@@ -179,14 +179,11 @@ export class OtpService {
         ]
           .filter((value): value is string => Boolean(value))
           .sort();
-        if (clientLockKeys.length > 0) {
-          for (const identityHash of clientLockKeys) {
-            const lockKey = `otp-rate-limit:${input.purpose}:${identityHash}`;
-            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
-          }
-        } else {
-          await tx.$queryRaw`SELECT id FROM "otp_allowlists" WHERE id = ${eligible.id} FOR UPDATE`;
+        for (const identityHash of clientLockKeys) {
+          const lockKey = `otp-rate-limit:${input.purpose}:${identityHash}`;
+          await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
         }
+        await tx.$queryRaw`SELECT id FROM "otp_allowlists" WHERE id = ${eligible.id} FOR UPDATE`;
       }
       const activeChallenge = await tx.otpChallenge.findFirst({
         where: {
