@@ -170,5 +170,5 @@
   cover missing URL/API key/sender and malformed URL. Commit: `2886d37`.
 - [x] Final metadata chain recorded for package regeneration: implementation
   `2886d37`, ledger handoff `4e7cb68`, prior report HEAD `854b406`;
-  Compose healthchecks now use `CHANGE_ME_LOCAL`, and the final package excludes
-  only its own ignored artifact while covering every tracked handoff file.
+  exact source range `8fe7e7c..3a36fc4`; final package includes the
+  metadata-only follow-up and excludes only its own ignored artifact.

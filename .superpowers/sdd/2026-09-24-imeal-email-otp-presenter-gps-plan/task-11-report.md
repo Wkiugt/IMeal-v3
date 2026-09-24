@@ -94,9 +94,11 @@ real four-location and roster imports are completed outside source control.
 - Ledger handoff commit: `4e7cb68` (`docs: supersede legacy task scope note`).
 - Final report HEAD before this metadata/package regeneration: `854b406`.
 - Approved Task 10 baseline: `8fe7e7c`.
-- Exact review range: approved baseline through the final metadata/Compose
-  handoff commit reported with this package.
-- Exact package: `review-8fe7e7c..final.diff`.
+- Exact source implementation range: `8fe7e7c..3a36fc4`.
+- Final report/metadata commit is the metadata-only follow-up to that source
+  range (the final hash is returned with this handoff).
+- Exact package: `review-8fe7e7c..final.diff`, generated from the source range
+  plus the final metadata follow-up.
 - Package exclusion: the ignored `review-8fe7e7c..final.diff` artifact is not
-  included in its own byte-matched Git diff; all tracked files in the final
-  handoff range are included.
+  included in its own byte-matched Git diff; every tracked source/metadata file
+  in the final range is included.
