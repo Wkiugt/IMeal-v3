@@ -3,8 +3,8 @@
 This guide is for automated tests and local development. It is **not** a
 production authentication procedure. Production accepts only allowlist-A email
 OTP and opaque PostgreSQL-backed sessions. There is no supported local
-username/password, Entra/federated, email-domain, employee-code, or client-role
-login path.
+username/password, federated identity-provider, email-domain, manual-code,
+client-role login path.
 
 ## 1. Safety boundary
 
@@ -42,10 +42,15 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
-The API and worker validate the same OTP/session/provider/GPS/serving contract
-as production. A real local OTP-provider smoke requires a disposable provider
-configuration supplied outside source control; it must not be replaced with a
-local password endpoint.
+The API startup validator requires the OTP/session/GPS/serving settings in every
+non-test runtime; its HTTPS provider URL, API key and sender identity are
+required only when `NODE_ENV=production`. The worker has a separate startup
+validator: the encrypted delivery key is always required, while production
+additionally requires database/provider settings, every `OTP_DELIVERY_*` value
+and the fixed serving/QR/session values. Selected worker numeric/fixed defaults
+are available outside production for unit tests. These validators are
+intentionally not identical, and the API test-harness bypass does not make a
+worker runtime safe to deploy.
 
 ## 3. Test-harness bypass
 
@@ -60,14 +65,13 @@ REQUIRE_AUTH=false
 `REQUIRE_AUTH=false` is accepted only when `NODE_ENV=test`. Any other
 combination, especially production, fails closed. Do not copy this block into a
 runtime `.env` used by a long-lived API, worker, mobile app or Admin Web.
-
 Typical scoped commands:
 
 ```powershell
 yarn workspace @imeal/api exec vitest run src/config/environment.spec.ts
 yarn workspace @imeal/api exec vitest run src/auth
-nyarn workspace @imeal/api exec vitest run src/pickup
-nyarn workspace @imeal/api exec vitest run src/admin
+yarn workspace @imeal/api exec vitest run src/pickup
+yarn workspace @imeal/api exec vitest run src/admin
 ```
 
 Tests that exercise real OTP/session persistence should set `REQUIRE_AUTH=true`,

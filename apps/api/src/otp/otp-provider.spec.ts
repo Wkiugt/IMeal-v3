@@ -73,6 +73,6 @@ describe('ConfiguredOtpProvider', () => {
     delete process.env.OTP_PROVIDER_URL;
     delete process.env.OTP_PROVIDER_API_KEY;
 
-    expect(() => new ConfiguredOtpProvider()).toThrow('OTP provider configuration');
+    expect(() => new ConfiguredOtpProvider()).toThrow('OTP_PROVIDER_URL');
   });
 });

@@ -1,6 +1,6 @@
 # IMeal v2 — Re-platforming and Execution Plan
 
-**Goal:** Chuyển IMeal từ web Next.js/Firebase/Firestore sang IMeal v2 mobile-first, sử dụng Microsoft Entra ID, NestJS, PostgreSQL và Linux self-host, đồng thời redesign weekly menu/registration, delegation và Kitchen serving flow.
+**Goal:** Chuyển IMeal từ web Next.js/Firebase/Firestore sang IMeal v2 mobile-first, sử dụng allowlist-A email OTP với opaque PostgreSQL-backed sessions, NestJS, PostgreSQL và Linux self-host, đồng thời redesign weekly menu/registration, delegation và Kitchen serving flow.
 
 ## Global constraints
 
@@ -10,7 +10,9 @@
 - Cutoff mutation requires server time `< 14:00` ngày trước từng meal date; exactly 14:00 is locked.
 - Serving window 10:30–13:30; no-show processing starts 13:45.
 - One fixed meal per meal date, managed by Kitchen weekly.
-- First Entra login auto-provisions `staff` only.
+- Production authentication is allowlist-A email OTP only; verification creates
+  an opaque PostgreSQL-backed session and never auto-provisions a privileged
+  role.
 - Kitchen/Admin role manually assigned.
 - QR TTL 5 seconds, clock skew 2 seconds, pickup session TTL 30 seconds.
 - Serving/check-in requires authenticated Kitchen role/permission and server-side pickup validation.
@@ -26,19 +28,18 @@
 
 ## 1. Delivery strategy
 
-| Phase | Deliverable                                                    | Priority        |
-| ----- | -------------------------------------------------------------- | --------------- |
-| 0     | Verify canonical policy + organization/Entra/network ownership | P0              |
-| 1     | Repository/tooling + Linux dev/staging foundation              | P0              |
-| 2     | PostgreSQL schema + domain/test safety net                     | P0              |
-| 3     | Microsoft Entra auth + auto provisioning/RBAC                  | P0              |
-| 4     | Weekly menu + weekly registration                              | P0              |
-| 5     | Delegation + notifications                                     | P0              |
-| 6     | Dynamic QR + Kitchen serving + realtime dashboard              | P0              |
-| 7     | No-show/penalty/admin/audit/jobs                               | P0/P1           |
-| 8     | Clean-slate qualification + security/load/UAT                  | P0 release gate |
-| 9     | Production rollout + mobile distribution + operations          | P0 release gate |
-
+| Phase | Deliverable | Priority |
+| ----- | ----------- | -------- |
+| 0 | Verify canonical policy + organization/OTP/provider/network ownership | P0 |
+| 1 | Repository/tooling + Linux dev/staging foundation | P0 |
+| 2 | PostgreSQL schema + domain/test safety net | P0 |
+| 3 | Allowlist-A email OTP + opaque sessions/RBAC | P0 |
+| 4 | Weekly menu + weekly registration | P0 |
+| 5 | Delegation + notifications | P0 |
+| 6 | Dynamic QR + Kitchen serving + realtime dashboard | P0 |
+| 7 | No-show/penalty/admin/audit/jobs | P0/P1 |
+| 8 | Clean-slate qualification + security/load/UAT | P0 release gate |
+| 9 | Production rollout + mobile distribution + operations | P0 release gate |
 Phases should be independently reviewable. No production rollout before Phase 8 exit criteria.
 
 ---
@@ -49,34 +50,39 @@ Phases should be independently reviewable. No production rollout before Phase 8 
 
 - [ ] Product/API/backend/UX docs agree on Monday week, cutoff, 10:30–13:30 serving and 13:45 no-show.
 - [ ] QR 5s/skew 2s/pickup session 30s represented in contracts/tests.
-- [ ] Staff-side pickup intent, Kitchen scan→final-confirm flow, employee-code recovery and all-or-nothing batch serving represented consistently; no Kitchen item-edit or reversal flow remains.
+- [ ] Staff-side pickup intent, Kitchen scan→final-confirm flow, no manual-code
+  recovery/bypass and all-or-nothing batch serving represented consistently; no
+  Kitchen item-edit or reversal flow remains.
 - [ ] Persisted inbox + Expo Push, 50,000 VND penalty, 1-year history retention and permission model represented consistently.
 - [ ] Firebase removal-at-redevelopment-start/no-migration policy appears in technical/backend/rollout sections.
 
-**Exit:** canonical policy has no unresolved schema/state-transition decision.
+## Task 0.2 — OTP/provider/organization prerequisites
 
-## Task 0.2 — Entra/organization prerequisites
+Coordinate with the organization owner for allowlist-A provisioning and the
+approved OTP provider. No federated identity provider, tenant/client/redirect
+registration or local production login is part of the current contract:
 
-Coordinate with Microsoft Entra administrator. Concrete tenant/client/scope/redirect values are **TBD pending the IEC Entra request** and should be filled here once provisioned:
+- [ ] Approve the source and owner for exactly the active allowlist-A emails.
+- [ ] Configure an HTTPS OTP provider URL, API key and sender identity outside
+  source control.
+- [ ] Confirm provider delivery, rate limits, expiry and support ownership.
+- [ ] Record synthetic test addresses and role assignments without storing
+  secrets or real employee data in docs.
+- [ ] Approve the one-shot server-side first-Admin provisioning operation and
+  its audit owner.
 
-- [ ] Obtain tenant ID.
-- [ ] Create/configure IMeal Mobile app registration.
-- [ ] Create/configure IMeal API app registration/scope.
-- [ ] Configure Android/iOS redirect URI(s).
-- [ ] Configure single-tenant access.
-- [ ] Confirm organization MFA/Conditional Access behavior.
-- [ ] Confirm no mobile client secret is required/embedded.
-- [ ] Record test users and admin ownership without storing secrets in docs.
-- [ ] Approve explicit Entra tenant/object ID and owner for one-shot first-Admin bootstrap.
+**Exit:** allowlist-A data, provider settings, role assignments and opaque
+session behavior are provisioned and documented without secrets; staging OTP
+request/verify is exercised at the authentication exit.
 
-**Exit:** Entra registrations, scopes, redirect ownership and organization-managed test accounts are provisioned and documented without secrets. End-to-end staging login is exercised at the Phase 3 exit.
 
 ## Task 0.3 — Network/DNS/TLS topology
 
 - [ ] Define public API hostname for Staff and Kitchen features.
 - [ ] Configure HTTPS certificate trusted by target iOS/Android devices.
 - [ ] Deny public/general LAN access to PostgreSQL port.
-- [ ] Allow API outbound HTTPS to Microsoft identity endpoints and chosen push/image providers.
+- [ ] Allow API outbound HTTPS to the approved OTP provider and chosen
+  push/image providers.
 
 **Exit:** HTTPS API reachability, authentication/permission boundaries and PostgreSQL isolation are documented and testable.
 
@@ -204,28 +210,33 @@ Add constraints:
 
 ---
 
-# Phase 3 — Microsoft Entra authentication and RBAC
+# Phase 3 — Allowlist-A email OTP authentication and RBAC
 
-## Task 3.1 — Mobile sign-in spike
+## Task 3.1 — Mobile email OTP flow
 
-- [ ] React Native/Expo app launches Entra Authorization Code + PKCE.
-- [ ] Validate redirect behavior on physical Android and iOS.
-- [ ] Securely handle tokens using platform-appropriate secure storage/session strategy.
-- [ ] Handle cancel, expiry, renewal and logout.
+- [ ] Request OTP with generic non-disclosure response for allowlisted,
+  unknown and disabled addresses.
+- [ ] Show OTP verification, expiry, attempt-limit, resend and provider-error
+  states without revealing account existence.
+- [ ] Store only the opaque session token in platform secure storage; never
+  store an OTP or provider secret in the client.
+- [ ] Handle logout, expiry, account disable, revocation and cold deep links.
 
-## Task 3.2 — API token validation
+## Task 3.2 — API OTP/session validation
 
-- [ ] Validate issuer/signature/audience/tenant/expiry.
-- [ ] Do not authorize by email suffix.
-- [ ] Map token tenant/object ID to IMeal user.
-- [ ] Structured auth error codes.
+- [ ] Normalize and resolve only administrator-provisioned allowlist-A emails.
+- [ ] Hash OTPs; enforce single-use, expiry, attempt and address/client limits.
+- [ ] Hash opaque sessions; enforce idle and absolute lifetimes.
+- [ ] Re-resolve account status and permissions on every protected request.
+- [ ] Return structured auth error codes without account enumeration.
 
-## Task 3.3 — Auto provisioning
+## Task 3.3 — Account and roster provisioning
 
-- [ ] First valid login creates active user.
-- [ ] Add only `staff` role.
-- [ ] Update safe display profile fields on later login.
-- [ ] Disabled user receives 403 IMeal account state.
+- [ ] Do not auto-provision accounts or privileged roles from login.
+- [ ] Provision allowlist records, account status, roles and roster/location
+  assignments through audited server-side/Admin operations.
+- [ ] Disabled users receive `ACCOUNT_DISABLED`; active sessions are revoked.
+- [ ] Keep role claims server-side; client requests never choose a role.
 
 ## Task 3.4 — Admin Web Staff/Kitchen role management
 
@@ -233,21 +244,29 @@ Add constraints:
 - [ ] Admin Web exposes **no grant/revoke Admin action or endpoint**.
 - [ ] Audit actor/time.
 - [ ] Protect against unauthorized escalation.
-- [ ] Admin-role lifecycle remains a separate audited server-side operation, not an Admin Web capability.
+- [ ] Admin-role lifecycle remains a separate audited server-side operation, not
+  an Admin Web capability.
 - [ ] Assign/revoke `penalty.read`, `penalty.resolve`.
-- [ ] Seed canonical Admin role permissions; authorization still checks permission, never Admin bypass.
+- [ ] Seed canonical Admin role permissions; authorization still checks
+  permission, never Admin bypass.
 - [ ] Admin role alone does not grant Kitchen serving.
-- [ ] Kitchen role does not grant Staff registration/QR/delegation; dual-role users require explicit `staff + kitchen`.
+- [ ] Kitchen role does not grant Staff registration/QR/delegation; dual-role
+  users require explicit `staff + kitchen`.
 
 ## Task 3.5 — Admin bootstrap / server-side Admin lifecycle
 
-- [ ] One-shot/bootstrap operation accepts explicit Entra tenant/object ID; no email matching.
+- [ ] First Admin provisioning accepts an approved allowlist record and explicit
+  server-side ownership; no email-domain matching.
 - [ ] Admin-role creation/removal is unavailable from Admin Web.
-- [ ] Refuses unsafe reuse unless an approved server-side recovery procedure is invoked.
+- [ ] Refuses unsafe reuse unless an approved server-side recovery procedure is
+  invoked.
 - [ ] Records actor/time/request evidence without secrets.
-- [ ] Exact IEC approval/ownership process may be filled after the responsible administrators are identified; do not hard-code an unverified two-person rule.
+- [ ] Exact IEC approval/ownership process may be filled after the responsible
+  administrators are identified; do not hard-code an unverified two-person rule.
 
-**Exit Phase 3:** organization-managed test accounts complete end-to-end staging login; Entra answers identity and PostgreSQL RBAC answers authorization.
+**Exit Phase 3:** synthetic staging addresses complete request/verify/logout
+against the OTP provider; opaque sessions and PostgreSQL RBAC answer
+authorization.
 
 ---
 
@@ -377,9 +396,9 @@ Authenticated Kitchen role/permission required.
 - [ ] Resolved self/proxy intended-item list with prominent total count.
 - [ ] No per-item checkbox or item-edit action; Kitchen verifies the Staff-selected set and uses one big final-confirm CTA.
 - [ ] Big confirm CTA includes count.
-- [ ] Expired pickup session recovery.
+- [ ] Expired pickup session recovery requires scanning a fresh QR and resolving
+  the exact presenter-selected set again.
 - [ ] Duplicate serving warning includes receiver/time.
-- [ ] Manual employee-code recovery with reason, rate limit and audit.
 
 ## Task 6.5 — Realtime dashboard
 
@@ -471,7 +490,8 @@ Authenticated Kitchen role/permission required.
 
 - [ ] Create fresh database solely from checked-in migrations.
 - [ ] Run audited first-Admin bootstrap.
-- [ ] Auto-provision test users from Entra and assign Kitchen/permissions explicitly.
+- [ ] Provision synthetic allowlist-A test users and assign
+  Kitchen/permissions explicitly; do not auto-provision from login.
 - [ ] Prove Firebase has been absent from the v2 runtime/data path since re-development kickoff; no export/import/mapping/dual-write dependency exists.
 - [ ] Restore a fresh environment from PostgreSQL backup.
 
@@ -485,8 +505,8 @@ Authenticated Kitchen role/permission required.
 - [ ] Tag synthetic accounts/data so production-safe cleanup is deterministic and audited.
 
 ## Task 8.3 — Security gate
-
-- [ ] Wrong tenant denied.
+- [ ] Unknown/disabled allowlist addresses receive the same generic response
+  and cannot create a session.
 - [ ] Staff cannot self-grant Kitchen/Admin.
 - [ ] Staff cannot call Kitchen serving mutation.
 - [ ] Kitchen serving requires authenticated Kitchen role/permission and all server-side pickup invariants.
@@ -501,7 +521,7 @@ Authenticated Kitchen role/permission required.
 
 Staff:
 
-- [ ] Entra first login.
+- [ ] Allowlist-A email OTP request/verify and opaque-session restore/logout.
 - [ ] Weekly tick/untick/mixed cutoff.
 - [ ] History and penalty detail.
 - [ ] Pre-cutoff canceled registration still shows its immutable menu revision after later menu edit.
@@ -517,7 +537,8 @@ Kitchen:
 - [ ] Staff preselects multiple pickup items; Kitchen scan shows the intended set/count without requiring item ticking.
 - [ ] One stale intended item rolls back entire multi-item batch.
 - [ ] 20 consecutive self/proxy/duplicate scans retain scanner context and use the scan→confirm happy path.
-- [ ] Unselected eligible registrations are never served; pre-confirm changes use the secondary edit action.
+- [ ] Unselected eligible registrations are never served; any pre-confirm
+  change requires refreshed presenter intent and QR re-resolve.
 - [ ] Duplicate scan.
 - [ ] Two-device realtime dashboard.
 - [ ] Serving resolve/confirm works for valid Kitchen callers regardless of client network location.
@@ -580,8 +601,8 @@ Linux LTS
 The project has not yet selected package/bundle IDs, signing ownership, minimum OS versions or distribution channel. These are intentionally deferred and must be resolved before production release, not during core domain implementation.
 
 - [ ] Configure Android signing/package ID.
-- [ ] Configure iOS signing/bundle ID.
-- [ ] Entra redirect URIs match release builds.
+- [ ] OTP provider HTTPS URL/sender settings and opaque-session behavior match
+  release configuration.
 - [ ] Decide organization distribution channel (managed/internal store/public private listing as approved).
 - [ ] Test upgrade path and deep links/push on release build.
 - [ ] Define API/mobile compatibility matrix, minimum supported app version and pilot cohort.
@@ -593,7 +614,8 @@ The project has not yet selected package/bundle IDs, signing ownership, minimum 
 - [ ] Provision fresh production PostgreSQL schema/config; Firebase has already been removed since re-development kickoff.
 - [ ] Run audited server-side Admin bootstrap/lifecycle operation and assign Kitchen/permissions.
 - [ ] Release mobile to pilot cohort, then staged organization rollout.
-- [ ] Verify Entra login and auto provisioning.
+- [ ] Verify allowlist-A OTP request/verify, opaque-session restore/logout and
+  current server-side role/status enforcement.
 - [ ] Verify one tagged synthetic weekly registration.
 - [ ] Verify tagged synthetic self/proxy final serving and audited synthetic cleanup.
 - [ ] Verify realtime dashboard.
@@ -608,8 +630,9 @@ The project has not yet selected package/bundle IDs, signing ownership, minimum 
 
 Do not go live if any condition remains:
 
-- Entra tenant/app registration incomplete or wrong-tenant access possible.
-- Auto provisioning can grant privileged role.
+- Allowlist-A source/provider settings incomplete or OTP/session validation
+  bypassable.
+- Server-side role provisioning can grant a privileged role without audit.
 - Weekly registration cutoff enforced only on client.
 - Duplicate registration/serving reproduced under concurrency.
 - QR scan directly marks serving without Kitchen confirmation.
@@ -622,7 +645,8 @@ Do not go live if any condition remains:
 - Multi-item serving can partially commit.
 - Disabled account can call any protected API.
 - Rollback authority/window, API/mobile compatibility or backward-compatible schema procedure is untested.
-- Android/iOS release builds have not been tested against production-like Entra redirect configuration.
+- Android/iOS release builds have not been tested against production-like OTP
+  provider, opaque-session and permission configuration.
 
 ## Post-launch follow-up
 

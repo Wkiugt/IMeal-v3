@@ -235,13 +235,32 @@ function providerConfig(env: NodeJS.ProcessEnv): WorkerOtpProviderConfig {
   const url = env.OTP_PROVIDER_URL?.trim() || null;
   const apiKey = env.OTP_PROVIDER_API_KEY?.trim() || null;
   const from = env.OTP_PROVIDER_FROM?.trim() || null;
-  if (
-    env.NODE_ENV === 'production' &&
-    (!url || !apiKey || !from || !/^https:\/\//i.test(url))
-  ) {
-    throw new Error(
-      'OTP provider configuration requires an HTTPS URL, API key and sender identity in production',
-    );
+  if (env.NODE_ENV === 'production') {
+    let validHttpsUrl = /^https:\/\//i.test(url ?? '');
+    if (validHttpsUrl && url) {
+      const authority = url.slice('https://'.length).split(/[/?#]/, 1)[0];
+      validHttpsUrl = authority.length > 0;
+      try {
+        const parsed = new URL(url);
+        validHttpsUrl =
+          validHttpsUrl &&
+          parsed.protocol === 'https:' &&
+          parsed.hostname.length > 0;
+      } catch {
+        validHttpsUrl = false;
+      }
+    }
+    if (!validHttpsUrl) {
+      throw new Error(
+        'OTP_PROVIDER_URL must be a valid HTTPS URL with a hostname in production',
+      );
+    }
+    if (!apiKey) {
+      throw new Error('OTP_PROVIDER_API_KEY is required in production');
+    }
+    if (!from) {
+      throw new Error('OTP_PROVIDER_FROM is required in production');
+    }
   }
   return { url, apiKey, from };
 }

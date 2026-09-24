@@ -140,21 +140,25 @@
 - [x] Task 10 privacy review-fix commit `feat(admin-web): manage locations roster allowlist and audit` at current HEAD; exact package: `review-57c6f1b..final.diff`.
 - [x] Official Task 11 brief generated/read from the approved plan; artifact:
   `task-11-brief.md`.
-- [x] API environment validation now requires OTP/session/provider/rate-limit,
-  GPS default bounds, exact serving/QR/session invariants and
-  `AUTH_MODE=otp`/`REQUIRE_AUTH=true`; only the test harness bypass is accepted.
-- [x] Worker startup validation now requires production database/provider,
-  encrypted delivery key, every `OTP_DELIVERY_*` setting, retry ordering and
-  exact serving/QR/session invariants.
-- [x] `.env.example` documents the actual API/worker/mobile names without
-  secrets or fabricated location/employee data.
-- [x] Task 11 docs cut over README reading order, technical requirements,
-  product flows, backend structure and local-role testing to allowlist OTP,
-  opaque sessions, four external location imports, fixed roster/snapshots,
-  foreground presenter GPS, exact QR/TTL/skew/session/idempotent serving,
-  Kitchen no-GPS and residual privacy risk.
-- [x] Focused Task 11 checks: API environment/provider — 2 files, 33 tests
-  passed; worker delivery/validation — 1 file, 26 tests passed; API and worker
+- [x] API validation requires auth/OTP/session/GPS/serving settings in every
+  non-test runtime; production additionally requires a parsed HTTPS provider URL
+  with a hostname, API key and sender identity. Only the exact test harness
+  bypass returns early.
+- [x] Worker startup validation separately requires the encrypted delivery key;
+  production additionally requires database/provider settings, every
+  `OTP_DELIVERY_*` setting, retry ordering and exact serving/QR/session
+  invariants.
+- [x] `.env.example` and Docker Compose now use explicit
+  `CHANGE_ME_LOCAL` disposable credential placeholders, OTP-only API/worker
+  wiring, and no local-auth defaults.
+- [x] Task 11 docs cut over README, `docs/01`, `docs/02`, `docs/03`,
+  `docs/04`, `docs/05`, `docs/06`, mobile 1:1 implementation and
+  local-role testing to allowlist OTP, opaque sessions, four external location
+  imports, fixed roster/snapshots, foreground presenter GPS, exact
+  QR/TTL/skew/session/idempotent serving, Kitchen no-GPS and residual privacy
+  risk. Legacy Entra/manual-code/secondary-edit claims were removed.
+- [x] Focused Task 11 checks: API environment/provider — 2 files, 36 tests
+  passed; worker delivery/validation — 1 file, 33 tests passed; API and worker
   TypeScript validation passed.
 - [!] PostgreSQL-backed API/domain/e2e checks and native Expo GPS runtime remain
   unavailable in this workspace; no live DB/native readiness claim is made.

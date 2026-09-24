@@ -228,7 +228,8 @@ Exact path spelling may change only with the shared API contract. Mobile, Admin 
 Production startup is fail-closed. API validation requires `DATABASE_URL`,
 `AUTH_MODE=otp`, `REQUIRE_AUTH=true`, `QR_SIGNING_SECRET`, `OTP_HASH_SECRET`,
 `OTP_DELIVERY_ENCRYPTION_KEY`, `OTP_PROVIDER_URL` (HTTPS),
-`OTP_PROVIDER_API_KEY`, all OTP expiry/resend/attempt/rate-limit settings,
+`OTP_PROVIDER_API_KEY`, and the production sender identity
+`OTP_PROVIDER_FROM`, all OTP expiry/resend/attempt/rate-limit settings,
 `SESSION_HASH_SECRET`, `SESSION_IDLE_TIMEOUT_SECONDS` and
 `SESSION_ABSOLUTE_TIMEOUT_SECONDS`.
 

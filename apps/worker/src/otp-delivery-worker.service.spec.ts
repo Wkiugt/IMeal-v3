@@ -160,6 +160,26 @@ describe('OtpDeliveryWorker', () => {
     expect(() => validateWorkerEnvironment(validWorkerEnvironment())).not.toThrow();
   });
 
+  it.each(['OTP_PROVIDER_URL', 'OTP_PROVIDER_API_KEY', 'OTP_PROVIDER_FROM'])(
+    'rejects production when %s is missing',
+    (name) => {
+      const env = validWorkerEnvironment();
+      delete env[name];
+
+      expect(() => validateWorkerEnvironment(env)).toThrow(name);
+    },
+  );
+
+  it.each(['http://provider.example.test/send', 'https://', 'https:///send', 'not-a-url'])(
+    'rejects production when OTP_PROVIDER_URL is invalid: %s',
+    (url) => {
+      const env = validWorkerEnvironment();
+      env.OTP_PROVIDER_URL = url;
+
+      expect(() => validateWorkerEnvironment(env)).toThrow('OTP_PROVIDER_URL');
+    },
+  );
+
   it.each([
     'DATABASE_URL',
     'OTP_DELIVERY_BATCH_SIZE',

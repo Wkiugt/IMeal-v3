@@ -10,7 +10,10 @@ This change converts the mobile Staff and Kitchen actors to the preserved protot
 - Staff + Kitchen: `Dashboard | Calendar | Ticket | Check-in | Profile`
 - Kitchen-only: `Dashboard | Scanner | Profile`
 
-Protected routes no longer receive access tokens through navigation parameters. `SessionProvider` restores the Entra session and supplies the token/profile to mobile screens. Cold deep links redirect unauthenticated users to `Auth`.
+Protected routes no longer receive access tokens or roles through navigation
+parameters. `SessionProvider` restores the opaque session from secure storage
+and fetches the current profile/permissions from `/auth/me`; cold deep links
+redirect unauthenticated users to the allowlist-A email OTP screen.
 
 ## Implemented surfaces
 
@@ -31,7 +34,8 @@ The employee registration client uses the existing API controller paths:
 - `PUT /registrations/batch`
 
 The mobile API base strips a trailing `/api` for registration, auth, and direct controller paths. Pickup and serving endpoints use the shared API origin. In Expo development, the host is derived from the Metro session as `http://<Metro-host>:3000/api`; every connected device uses that endpoint.
-Serving authorization no longer depends on an internal LAN source IP; a valid bearer token with `kitchen.serve` permission is required.
+Serving authorization no longer depends on an internal LAN source IP; an active
+opaque session with `kitchen.serve` permission is required.
 
 ## Run
 
@@ -43,12 +47,14 @@ corepack prepare yarn@4.18.0 --activate
 corepack yarn install --immutable
 ```
 
-Create `apps/mobile/.env` only with the Entra values needed by the selected auth configuration:
+Create `apps/mobile/.env` only with the public API origins needed by the
+selected target. Production authentication remains allowlist-A email OTP; do
+not put provider keys, session secrets, identity-provider credentials or role
+claims in a mobile variable:
 
 ```env
-EXPO_PUBLIC_ENTRA_TENANT_ID=...
-EXPO_PUBLIC_ENTRA_CLIENT_ID=...
-EXPO_PUBLIC_ENTRA_API_SCOPE=...
+EXPO_PUBLIC_API_URL=https://<approved-api-origin>/api
+EXPO_PACKAGER_PROXY_URL=https://<approved-metro-proxy>
 ```
 
 Run local Expo targets without setting an API IP value:
@@ -71,5 +77,8 @@ Validated during implementation:
 ```text
 corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
 ```
-
-Expo web smoke coverage included the login surface, protected cold deep links, employee dashboard/calendar/ticket/profile/delegations, kitchen dashboard, scanner permission state, 1440px desktop framing, and 360px/390px mobile layouts. Physical camera scanning and native-device session expiry still require a device with the API and Entra environment configured.
+Expo web smoke coverage included the login surface, protected cold deep links,
+employee dashboard/calendar/ticket/profile/delegations, kitchen dashboard,
+scanner permission state, 1440px desktop framing, and 360px/390px mobile
+layouts. Physical camera scanning and native-device session expiry still require
+a device with the API, OTP provider and approved role configuration.

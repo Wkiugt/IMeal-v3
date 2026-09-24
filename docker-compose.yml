@@ -4,8 +4,8 @@ services:
     command: ['postgres', '-c', 'password_encryption=md5']
     restart: always
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-CHANGE_ME_LOCAL}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME_LOCAL}
       POSTGRES_DB: ${POSTGRES_DB:-imeal}
       POSTGRES_HOST_AUTH_METHOD: md5
     ports:
@@ -27,8 +27,8 @@ services:
     container_name: imeal_pgbouncer
     restart: always
     environment:
-      DB_USER: ${POSTGRES_USER:-postgres}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DB_USER: ${POSTGRES_USER:-CHANGE_ME_LOCAL}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME_LOCAL}
       DB_HOST: db
       DB_NAME: ${POSTGRES_DB:-imeal}
       AUTH_TYPE: plain
@@ -55,8 +55,8 @@ services:
     container_name: imeal_minio
     restart: always
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-CHANGE_ME_LOCAL}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-CHANGE_ME_LOCAL}
     command: server /data --console-address ":9001"
     ports:
       - '${MINIO_PORT:-9000}:9000'
@@ -77,7 +77,7 @@ services:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc config host add myminio http://minio:9000 ${MINIO_ROOT_USER:-admin} ${MINIO_ROOT_PASSWORD:-password123};
+      /usr/bin/mc config host add myminio http://minio:9000 ${MINIO_ROOT_USER:-CHANGE_ME_LOCAL} ${MINIO_ROOT_PASSWORD:-CHANGE_ME_LOCAL};
       /usr/bin/mc mb myminio/${MINIO_BUCKET_NAME:-imeal-bucket} --ignore-existing;
       /usr/bin/mc anonymous set public myminio/${MINIO_BUCKET_NAME:-imeal-bucket};
       exit 0;
@@ -91,7 +91,7 @@ services:
     restart: 'no'
     command: ['yarn', 'workspace', '@imeal/core', 'prisma', 'migrate', 'deploy']
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-imeal}?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER:-CHANGE_ME_LOCAL}:${POSTGRES_PASSWORD:-CHANGE_ME_LOCAL}@db:5432/${POSTGRES_DB:-imeal}?schema=public
     depends_on:
       db:
         condition: service_healthy
@@ -104,16 +104,39 @@ services:
     restart: unless-stopped
     environment:
       PORT: 3000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@pgbouncer:5432/${POSTGRES_DB:-imeal}?schema=public&pgbouncer=true
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-CHANGE_ME_LOCAL}:${POSTGRES_PASSWORD:-CHANGE_ME_LOCAL}@pgbouncer:5432/${POSTGRES_DB:-imeal}?schema=public&pgbouncer=true
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-admin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-password123}
-      AUTH_MODE: ${AUTH_MODE:-local}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-CHANGE_ME_LOCAL}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-CHANGE_ME_LOCAL}
+      AUTH_MODE: ${AUTH_MODE:-otp}
       REQUIRE_AUTH: ${REQUIRE_AUTH:-true}
-      LOCAL_AUTH_JWT_SECRET: ${LOCAL_AUTH_JWT_SECRET:?LOCAL_AUTH_JWT_SECRET is required}
-      LOCAL_AUTH_USERS: ${LOCAL_AUTH_USERS:?LOCAL_AUTH_USERS is required}
       QR_SIGNING_SECRET: ${QR_SIGNING_SECRET:?QR_SIGNING_SECRET is required}
+      OTP_HASH_SECRET: ${OTP_HASH_SECRET:?OTP_HASH_SECRET is required}
+      OTP_DELIVERY_ENCRYPTION_KEY: ${OTP_DELIVERY_ENCRYPTION_KEY:?OTP_DELIVERY_ENCRYPTION_KEY is required}
+      OTP_PROVIDER_URL: ${OTP_PROVIDER_URL:?OTP_PROVIDER_URL is required}
+      OTP_PROVIDER_API_KEY: ${OTP_PROVIDER_API_KEY:?OTP_PROVIDER_API_KEY is required}
+      OTP_PROVIDER_FROM: ${OTP_PROVIDER_FROM:?OTP_PROVIDER_FROM is required}
+      OTP_EXPIRY_SECONDS: ${OTP_EXPIRY_SECONDS:?OTP_EXPIRY_SECONDS is required}
+      OTP_RESEND_SECONDS: ${OTP_RESEND_SECONDS:?OTP_RESEND_SECONDS is required}
+      OTP_ATTEMPT_LIMIT: ${OTP_ATTEMPT_LIMIT:?OTP_ATTEMPT_LIMIT is required}
+      OTP_RATE_WINDOW_SECONDS: ${OTP_RATE_WINDOW_SECONDS:?OTP_RATE_WINDOW_SECONDS is required}
+      OTP_ADDRESS_RATE_LIMIT: ${OTP_ADDRESS_RATE_LIMIT:?OTP_ADDRESS_RATE_LIMIT is required}
+      OTP_CLIENT_RATE_LIMIT: ${OTP_CLIENT_RATE_LIMIT:?OTP_CLIENT_RATE_LIMIT is required}
+      SESSION_HASH_SECRET: ${SESSION_HASH_SECRET:?SESSION_HASH_SECRET is required}
+      SESSION_IDLE_TIMEOUT_SECONDS: ${SESSION_IDLE_TIMEOUT_SECONDS:?SESSION_IDLE_TIMEOUT_SECONDS is required}
+      SESSION_ABSOLUTE_TIMEOUT_SECONDS: ${SESSION_ABSOLUTE_TIMEOUT_SECONDS:?SESSION_ABSOLUTE_TIMEOUT_SECONDS is required}
+      GPS_DEFAULT_GEOFENCE_RADIUS_METERS: ${GPS_DEFAULT_GEOFENCE_RADIUS_METERS:?GPS_DEFAULT_GEOFENCE_RADIUS_METERS is required}
+      GPS_DEFAULT_MAX_FIX_AGE_SECONDS: ${GPS_DEFAULT_MAX_FIX_AGE_SECONDS:?GPS_DEFAULT_MAX_FIX_AGE_SECONDS is required}
+      GPS_DEFAULT_MAX_ACCURACY_METERS: ${GPS_DEFAULT_MAX_ACCURACY_METERS:?GPS_DEFAULT_MAX_ACCURACY_METERS is required}
+      SERVING_TIME_ZONE: ${SERVING_TIME_ZONE:?SERVING_TIME_ZONE is required}
+      SERVING_WINDOW_START: ${SERVING_WINDOW_START:?SERVING_WINDOW_START is required}
+      SERVING_WINDOW_END: ${SERVING_WINDOW_END:?SERVING_WINDOW_END is required}
+      NO_SHOW_PROCESSING_TIME: ${NO_SHOW_PROCESSING_TIME:?NO_SHOW_PROCESSING_TIME is required}
+      QR_TTL_SECONDS: ${QR_TTL_SECONDS:?QR_TTL_SECONDS is required}
+      QR_CLOCK_SKEW_SECONDS: ${QR_CLOCK_SKEW_SECONDS:?QR_CLOCK_SKEW_SECONDS is required}
+      PICKUP_SESSION_TTL_SECONDS: ${PICKUP_SESSION_TTL_SECONDS:?PICKUP_SESSION_TTL_SECONDS is required}
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -141,11 +164,28 @@ services:
     restart: unless-stopped
     environment:
       PORT: 3001
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@pgbouncer:5432/${POSTGRES_DB:-imeal}?schema=public&pgbouncer=true
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-CHANGE_ME_LOCAL}:${POSTGRES_PASSWORD:-CHANGE_ME_LOCAL}@pgbouncer:5432/${POSTGRES_DB:-imeal}?schema=public&pgbouncer=true
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-admin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-password123}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-CHANGE_ME_LOCAL}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-CHANGE_ME_LOCAL}
+      OTP_DELIVERY_ENCRYPTION_KEY: ${OTP_DELIVERY_ENCRYPTION_KEY:?OTP_DELIVERY_ENCRYPTION_KEY is required}
+      OTP_PROVIDER_URL: ${OTP_PROVIDER_URL:?OTP_PROVIDER_URL is required}
+      OTP_PROVIDER_API_KEY: ${OTP_PROVIDER_API_KEY:?OTP_PROVIDER_API_KEY is required}
+      OTP_PROVIDER_FROM: ${OTP_PROVIDER_FROM:?OTP_PROVIDER_FROM is required}
+      OTP_DELIVERY_BATCH_SIZE: ${OTP_DELIVERY_BATCH_SIZE:?OTP_DELIVERY_BATCH_SIZE is required}
+      OTP_DELIVERY_MAX_ATTEMPTS: ${OTP_DELIVERY_MAX_ATTEMPTS:?OTP_DELIVERY_MAX_ATTEMPTS is required}
+      OTP_DELIVERY_RETRY_BASE_SECONDS: ${OTP_DELIVERY_RETRY_BASE_SECONDS:?OTP_DELIVERY_RETRY_BASE_SECONDS is required}
+      OTP_DELIVERY_RETRY_MAX_SECONDS: ${OTP_DELIVERY_RETRY_MAX_SECONDS:?OTP_DELIVERY_RETRY_MAX_SECONDS is required}
+      OTP_DELIVERY_CLAIM_TIMEOUT_SECONDS: ${OTP_DELIVERY_CLAIM_TIMEOUT_SECONDS:?OTP_DELIVERY_CLAIM_TIMEOUT_SECONDS is required}
+      SERVING_TIME_ZONE: ${SERVING_TIME_ZONE:?SERVING_TIME_ZONE is required}
+      SERVING_WINDOW_START: ${SERVING_WINDOW_START:?SERVING_WINDOW_START is required}
+      SERVING_WINDOW_END: ${SERVING_WINDOW_END:?SERVING_WINDOW_END is required}
+      NO_SHOW_PROCESSING_TIME: ${NO_SHOW_PROCESSING_TIME:?NO_SHOW_PROCESSING_TIME is required}
+      QR_TTL_SECONDS: ${QR_TTL_SECONDS:?QR_TTL_SECONDS is required}
+      QR_CLOCK_SKEW_SECONDS: ${QR_CLOCK_SKEW_SECONDS:?QR_CLOCK_SKEW_SECONDS is required}
+      PICKUP_SESSION_TTL_SECONDS: ${PICKUP_SESSION_TTL_SECONDS:?PICKUP_SESSION_TTL_SECONDS is required}
     depends_on:
       pgbouncer:
         condition: service_healthy

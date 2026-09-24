@@ -91,27 +91,30 @@ Do not use web-style module dropdown as primary mobile navigation.
 
 ## 5. Login screen
 
-Minimal corporate authentication:
+Production login is allowlist-A email OTP only:
 
 ```text
              IMeal
 
   Quản lý suất ăn nội bộ IEC
 
-  [ Đăng nhập với Microsoft ]
+  [ Email công việc                         ]
+  [ Gửi mã OTP                              ]
 
-  Sử dụng tài khoản Microsoft của tổ chức
+  Nếu email được cấp quyền, mã xác minh sẽ được gửi.
 ```
 
 States:
 
-- Auth pending.
-- Entra cancel/error.
-- Wrong tenant/access denied.
-- IMeal account disabled.
-- API unreachable.
+- OTP request pending/success with generic non-disclosure copy.
+- OTP verification pending, invalid, expired or attempt-limited.
+- Account disabled/session revoked.
+- API or provider unreachable.
 
-Không có email/password fields, signup hoặc forgot-password của IMeal.
+OTP success creates an opaque server session; the mobile client never receives
+identity-provider tokens or chooses a role. Không có federated identity-provider
+email/password fields, signup, forgot-password, email-domain authorization,
+manual-code login hoặc local production bypass.
 
 ## 6. Staff Home
 
@@ -549,12 +552,12 @@ Staff Account includes read-only meal history and penalty list/detail; mutation 
 
 | Flow             | Error                          | Required recovery                                                        |
 | ---------------- | ------------------------------ | ------------------------------------------------------------------------ |
-| Entra login      | Cancel/network/tenant          | Retry / clear reason                                                     |
+| Email OTP        | invalid/expired/network/disabled | Generic reason-safe copy; retry request or verification without account disclosure |
 | Weekly load      | API fail                       | Preserve last safe view where possible + retry                           |
 | Weekly save      | partial cutoff/conflict        | Per-day result + retain failed draft                                     |
 | QR               | issue/refresh fail             | Expired state + retry                                                    |
 | Delegation       | target/revoke conflict         | Server message + refresh authoritative state                             |
-| Scanner          | camera denied                  | Manual employee-code recovery with reason/audit                          |
+| Scanner          | camera/GPS denied or unavailable | Show safe state with `Retry`/`Refresh`; no manual location or manual-code fallback |
 | Resolve          | QR expired/forged              | Ask user show current QR                                                 |
 | Confirm          | DB/network fail                | Retry with idempotency key, never fake success                           |
 | Confirm batch    | any selected item stale        | Commit none; show changed item and require re-resolve                    |

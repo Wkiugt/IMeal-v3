@@ -34,17 +34,27 @@ corepack yarn install --immutable
 cp .env.example .env
 ```
 
-Giữ local auth trong `.env`:
+Production và mọi môi trường chạy API/worker dùng **allowlist-A email OTP** và
+opaque PostgreSQL-backed sessions. Copy `.env.example`, sau đó thay toàn bộ
+placeholder bằng secret/provider configuration được cấp ngoài source control;
+không dùng local auth mode, username/password hoặc sample accounts:
 
 ```dotenv
-AUTH_MODE=local
+AUTH_MODE=otp
 REQUIRE_AUTH=true
-DATABASE_URL=postgresql://postgres:postgres@localhost:6432/imeal?schema=public&pgbouncer=true
+DATABASE_URL=postgresql://CHANGE_ME_LOCAL:CHANGE_ME_LOCAL@localhost:6432/imeal?schema=public&pgbouncer=true
 QR_SIGNING_SECRET=<chuỗi-ngẫu-nhiên-it-nhat-32-ky-tu>
-LOCAL_AUTH_JWT_SECRET=<chuỗi-ngẫu-nhiên-it-nhat-32-ky-tu>
+OTP_HASH_SECRET=<chuỗi-ngẫu-nhiên-it-nhat-32-ky-tu>
+OTP_DELIVERY_ENCRYPTION_KEY=<chuỗi-ngẫu-nhiên-it-nhat-32-ky-tu>
+OTP_PROVIDER_URL=<https-provider-url>
+OTP_PROVIDER_API_KEY=<provider-secret>
+OTP_PROVIDER_FROM=<approved-sender-identity>
 ```
 
-Thay các secret và password trong `LOCAL_AUTH_USERS`. Tài khoản mẫu gồm `staff01`–`staff05`, `kitchen01`, `kitchen02` và `admin01`.
+Test harness mới được phép dùng bypass đúng cặp `NODE_ENV=test` và
+`REQUIRE_AUTH=false`; bypass này không phải login method và bị production
+startup validation từ chối. Repository không chứa account, employee, roster,
+location hoặc coordinate data mẫu.
 
 ### 2. Khởi động database và migration
 
@@ -141,15 +151,21 @@ corepack yarn workspace @imeal/mobile start:lan
 
 ### Smoke test thủ công Android LAN
 
-Sau khi quét QR và Expo Go mở ứng dụng, kiểm tra ngắn theo thứ tự:
+Flow này cần allowlist-A emails, role/location/roster assignments và OTP
+provider configuration được provisioned ngoài repository; không có account mẫu:
 
-1. Đăng nhập vai trò staff bằng `staff01` (mật khẩu lấy từ `LOCAL_AUTH_USERS`).
-2. Tạo đăng ký và mở QR đăng ký/nhận suất.
-3. Đăng nhập vai trò kitchen bằng `kitchen01`.
+1. Staff request OTP bằng email allowlist-A và verify code nhận qua provider.
+2. Tạo đăng ký và mở QR pickup intent.
+3. Logout; Kitchen request/verify OTP bằng email đã được cấp
+   `kitchen.serve`.
 4. Mở scanner và cấp quyền camera khi được hỏi.
-5. Quét QR nhận suất của staff.
-6. Kiểm tra lại thông tin trong màn hình review.
+5. Quét QR nhận suất của Staff.
+6. Kiểm tra presenter, danh sách pickup intent và pickup session trong review.
 7. Xác nhận serving và kiểm tra trạng thái thành công.
+
+Không dùng username/password, local credentials hoặc client-supplied role để
+thay thế flow trên. Với test tự động không có provider, xem
+`docs/local-role-testing.md` và chỉ dùng test harness bypass được mô tả ở đó.
 
 ### Khắc phục nhanh Android LAN
 
@@ -214,7 +230,7 @@ Lỗi `Cannot read properties of undefined (reading 'body')` là lỗi Expo shar
 PowerShell:
 
 ```powershell
-$env:DATABASE_URL='postgresql://postgres:postgres@localhost:6432/imeal?schema=public&pgbouncer=true'
+$env:DATABASE_URL='postgresql://CHANGE_ME_LOCAL:CHANGE_ME_LOCAL@localhost:6432/imeal?schema=public&pgbouncer=true'
 $env:PORT='3001'
 corepack yarn workspace @imeal/worker start:dev
 ```
@@ -222,7 +238,7 @@ corepack yarn workspace @imeal/worker start:dev
 macOS/Linux:
 
 ```bash
-export DATABASE_URL='postgresql://postgres:postgres@localhost:6432/imeal?schema=public&pgbouncer=true'
+export DATABASE_URL='postgresql://CHANGE_ME_LOCAL:CHANGE_ME_LOCAL@localhost:6432/imeal?schema=public&pgbouncer=true'
 export PORT=3001
 corepack yarn workspace @imeal/worker start:dev
 ```
@@ -289,7 +305,7 @@ corepack yarn test:unit
 DB/e2e test dùng PostgreSQL trực tiếp tại `localhost:5432`, không dùng database production:
 
 ```powershell
-$env:DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal?schema=public'
+$env:DATABASE_URL='postgresql://CHANGE_ME_LOCAL:CHANGE_ME_LOCAL@localhost:5432/imeal?schema=public'
 corepack yarn test:db
 ```
 

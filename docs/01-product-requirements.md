@@ -54,25 +54,41 @@ V2 chuyển trọng tâm từ web “đăng ký ngày mai + chọn món” sang 
 
 ### Role policy
 
-- Microsoft Entra login thành công lần đầu → auto-provision `staff`.
-- `kitchen` và `admin` không được auto-provision.
-- Admin Web chỉ được quản lý/cấp-gỡ role `staff` và `kitchen`; **không được cấp role `admin` cho user khác**.
-- Role `admin` không được cấp qua Admin Web; lifecycle Admin dùng operation server-side được audit và gắn explicit Entra object ID.
-- User có thể đồng thời có `staff + kitchen` hoặc `staff + admin`. Nhân sự Kitchen muốn dùng suất cá nhân phải có thêm role `staff`.
-- Không tạo role `finance` hoặc `kitchen_lead` trong MVP; capability nhạy cảm dùng permission `penalty.read`, `penalty.resolve`.
-- Finance workflow dùng Admin Web với permission penalty/report phù hợp.
-- Admin đầu tiên được cấp qua one-shot bootstrap command được audit, gắn với explicit Entra object ID.
+- An administrator-provisioned, active allowlist-A email requests and verifies an
+  OTP; successful verification does not auto-provision a privileged role.
+- `staff`, `kitchen` and `admin` assignments are managed server-side with audit.
+- Admin Web only manages/can grant or revoke `staff` and `kitchen`; it has no
+  Admin-role grant control.
+- The first Admin is provisioned by an explicit audited server-side operation;
+  no email-domain, client-role, username/password or manual-code login path
+  exists.
+- A user may have `staff + kitchen` or `staff + admin`. Kitchen staff need the
+  explicit `staff` assignment to use Staff registration and pickup surfaces.
+- No `finance` or `kitchen_lead` role exists in MVP; sensitive capability uses
+  `penalty.read` and `penalty.resolve`.
+- Finance workflow uses Admin Web with the appropriate penalty/report
+  permissions.
 
 ## 5. Authentication policy
 
-- Identity provider: Microsoft Entra ID của tổ chức, **single-tenant**.
-- Không có public signup/email-password riêng của IMeal.
-- PostgreSQL lưu immutable Entra identity (`tenant_id + object_id`) và role IMeal.
-- Email/display name là profile; không dùng email domain làm authorization boundary.
-- User `disabled` trong IMeal có thể login Entra thành công nhưng API trả `ACCOUNT_DISABLED`.
-- Mọi protected API phải đọc account status authoritative phía server; token/role còn hạn không bypass được `disabled`.
-- Trước khi disable, Admin bắt buộc xem preview future registrations/delegations và xác nhận cleanup trong cùng workflow.
-- Cleanup chuyển future registrations sang canceled với reason `ACCOUNT_DISABLED`, revoke delegation liên quan, không tính vào Kitchen preparation totals và không tạo no-show/penalty. Lịch sử, actor, time và reason vẫn được giữ để audit.
+- Production authentication is **allowlist-A email OTP only**.
+- OTP request responses are generic for allowlisted, unknown and disabled
+  addresses; only an active allowlist record can create a challenge/outbox row.
+- OTP values are never persisted or logged. Verification is single-use and
+  bounded by expiry and attempt/rate limits.
+- Successful verification creates only a high-entropy opaque session token;
+  PostgreSQL stores its one-way hash and minimized metadata.
+- Every protected request re-resolves current account status and permissions.
+  Disabling an account revokes sessions and rejects subsequent requests.
+- There is no federated identity-provider login, username/password login,
+  authorization, manual-code login, client-supplied role or local production
+  bypass.
+- Before disabling an account, Admin must preview future registrations and
+  delegations and confirm cleanup in one audited workflow.
+- Cleanup changes future registrations to `canceled` with reason
+  `ACCOUNT_DISABLED`, revokes related delegations, excludes them from Kitchen
+  preparation totals and prevents no-show/penalty creation; history, actor,
+  time and reason remain auditable.
 
 ## 6. Weekly menu
 
@@ -162,7 +178,8 @@ Trong UI Kitchen có thể tiếp tục gọi thao tác là **Check-in**, nhưng
 - Happy path Kitchen không tick từng item: scan → xem presenter + danh sách/số suất Staff đã chọn → confirm giao.
 - Kitchen không được thêm/bớt item; nếu Staff đổi ý, Staff cập nhật pickup intent trên mobile và đưa QR mới trước khi Kitchen resolve/confirm.
 - Multi-item confirmation là all-or-nothing; conflict ở một item rollback toàn batch và Kitchen phải resolve lại.
-- Employee-code recovery được phép với Kitchen confirmation, reason, audit và rate limit.
+- No manual-code recovery or manual serving bypass exists. QR/GPS failures
+  expose only Retry/Refresh and require a fresh server-validated flow.
 
 ## 9. Pickup delegation / nhận hộ
 
@@ -176,8 +193,11 @@ Trong UI Kitchen có thể tiếp tục gọi thao tác là **Check-in**, nhưng
 6. Khi accepted, B có quyền nhận registration của A trong ngày X.
 7. Trước khi đưa QR, B chọn trên mobile các suất B thực sự dự định lấy; nếu chỉ có một suất eligible thì app chọn mặc định.
 8. B dùng **QR của chính B** tại Kitchen; QR mang pickup intent ngắn hạn của B.
-9. Kitchen scan B, nhìn thấy chính xác danh sách/số suất B đã chọn và **chỉ confirm trong happy path**, không phải tick lại từng item.
-10. Nếu B đổi ý/số khay thực tế khác intent trước khi confirm, Kitchen dùng action chỉnh sửa exception rồi confirm.
+9. Kitchen scan B, nhìn thấy chính xác danh sách/số suất B đã chọn và **chỉ
+   confirm trong happy path**, không phải tick lại từng item.
+10. Nếu B đổi intent hoặc số khay thực tế không khớp danh sách đã chọn, không
+   confirm và không chỉnh sửa trên Kitchen; B phải cập nhật intent rồi đưa QR
+   mới để Kitchen resolve lại.
 11. Serving lưu owner, receiver, Kitchen actor và pickup type.
 
 ### 9.2 Delegation rules
@@ -246,9 +266,14 @@ No-show worker bắt đầu lúc **13:45** và retry/recovery phải idempotent.
 
 ## 13. Pickup serving authorization policy
 
-Pickup resolve/confirm authorization does not depend on client network location. Requests still require an active authenticated Kitchen principal with kitchen.serve permission and all QR, pickup-session, serving-window, and database eligibility checks. A replacement pickup user-verification mechanism will be specified separately.
+Pickup resolve/confirm authorization does not depend on client network location.
+Requests require an active opaque session for a Kitchen principal with
+`kitchen.serve` permission plus all QR, pickup-session, serving-window and
+database eligibility checks.
 
-Serving/check-in and employee-code recovery remain subject to Kitchen confirmation, reason/audit requirements where applicable, rate limiting, HTTPS, and all server-side business rules. Login, menu, registration, history, penalty, delegation and notification flows use the normal API path and retain their existing authentication and authorization requirements.
+There is no manual-code recovery or manual serving bypass. Login, menu,
+registration, history, penalty, delegation and notification flows use the
+allowlist-A OTP/opaque-session API path and retain server-side authorization.
 
 ## 14. Notifications
 
@@ -387,12 +412,11 @@ Khuyến nghị giữ **Admin Web** cho workflow bảng/bulk/report; mobile tậ
 
 | Policy                | Canonical value                                                                          |
 | --------------------- | ---------------------------------------------------------------------------------------- |
-| Week/service dates    | Monday-start; mặc định Monday–Friday; holiday disable explicit                           |
+| Pickup recovery      | No manual-code bypass; refresh QR and re-resolve exact intent             |
 | Cutoff boundary       | `server_now < 14:00` ngày trước; đúng 14:00 đã khóa                                      |
 | Serving/no-show       | Serving 10:30–13:30; no-show worker bắt đầu 13:45 VN                                     |
 | QR/pickup session     | QR TTL 5s; skew 2s; pickup session TTL 30s                                               |
 | Push provider         | Persisted inbox + Expo Push delivery                                                     |
-| Employee-code serving | Recovery; confirm + reason + audit + rate limit                                 |
 | Pickup intent         | Staff chọn trước các suất sẽ lấy; Kitchen happy path scan + confirm, không tick item     |
 | Serving finality      | Confirm là cuối cùng; Kitchen chỉ confirm khi đủ khay và giao bổ sung nếu thiếu          |
 | Batch serving         | All-or-nothing transaction                                                               |

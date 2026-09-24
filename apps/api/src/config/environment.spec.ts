@@ -112,14 +112,19 @@ describe('API environment validation', () => {
     setValidProductionEnvironment();
     delete process.env.OTP_PROVIDER_FROM;
 
-    expect(() => validateApiEnvironment()).toThrow('sender identity');
+    expect(() => validateApiEnvironment()).toThrow('OTP_PROVIDER_FROM');
   });
 
-  it('rejects production when the OTP provider is not configured over HTTPS', () => {
+  it.each([
+    'http://provider.example.test/send',
+    'https://',
+    'https:///send',
+    'not-a-url',
+  ])('rejects production when the OTP provider URL is invalid: %s', (url) => {
     setValidProductionEnvironment();
-    process.env.OTP_PROVIDER_URL = 'http://provider.example.test/send';
+    process.env.OTP_PROVIDER_URL = url;
 
-    expect(() => validateApiEnvironment()).toThrow('OTP provider configuration');
+    expect(() => validateApiEnvironment()).toThrow('OTP_PROVIDER_URL');
   });
 
   it.each([
