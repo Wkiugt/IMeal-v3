@@ -152,6 +152,20 @@ describe('PickupController (e2e)', () => {
     );
   });
 
+  it('/internal/api/v1/pickup/confirm rejects client registration aliases and GPS', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/internal/api/v1/pickup/confirm')
+      .send({
+        pickupSessionId: 'sess-123',
+        idempotencyKey: 'idem-1',
+        registrationIds: ['reg-1'],
+        presenterEvidence,
+      });
+
+    expect(res.status).toBe(400);
+    expect(confirmPickup).not.toHaveBeenCalled();
+  });
+
   it('requires a valid opaque session with the current kitchen permission', async () => {
     const kitchenUser: AuthenticatedUser = {
       id: 'kitchen-1',

@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RegistrationService } from '../src/RegistrationService';
 import { prisma } from '../src/db';
+import { randomUUID } from 'node:crypto';
+
 
 describe('Domain Tests: Concurrency', () => {
   beforeEach(() => {
@@ -255,5 +257,147 @@ describe('Domain Tests: Concurrency', () => {
       where: { registrationId: { in: [reg1.id, reg2.id, reg3.id] } },
     });
     expect(servingCount).toBe(1); // Only the manual serve of reg2
+  });
+  it('serializes accepted delegation revoke/serve and commits one winner', async () => {
+    const owner = await prisma.user.create({
+      data: { email: `owner-${randomUUID()}@example.test`, name: 'Owner' },
+    });
+    const delegate = await prisma.user.create({
+      data: {
+        email: `delegate-${randomUUID()}@example.test`,
+        name: 'Delegate',
+      },
+    });
+    const registration = await prisma.registration.create({
+      data: {
+        userId: owner.id,
+        mealDate: new Date('2026-09-24T00:00:00.000Z'),
+        status: 'ACTIVE',
+      },
+    });
+    const delegation = await prisma.pickupDelegation.create({
+      data: {
+        registrationId: registration.id,
+        delegateUserId: delegate.id,
+        status: 'ACCEPTED',
+      },
+    });
+
+    const serve = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registration.id} FOR UPDATE`;
+      const current = await tx.pickupDelegation.findUnique({
+        where: { id: delegation.id },
+      });
+      if (current?.status !== 'ACCEPTED') return 'LOST';
+      await tx.pickupDelegation.update({
+        where: { id: delegation.id },
+        data: { status: 'COMPLETED' },
+      });
+      await tx.mealServing.create({
+        data: {
+          registrationId: registration.id,
+          ownerUserId: owner.id,
+          receiverType: 'PROXY',
+          delegationId: delegation.id,
+        },
+      });
+      await tx.registration.update({
+        where: { id: registration.id },
+        data: { status: 'SERVED' },
+      });
+      return 'SERVED';
+    });
+
+    const revoke = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registration.id} FOR UPDATE`;
+      const current = await tx.pickupDelegation.findUnique({
+        where: { id: delegation.id },
+      });
+      if (current?.status !== 'ACCEPTED') return 'LOST';
+      await tx.pickupDelegation.update({
+        where: { id: delegation.id },
+        data: { status: 'REVOKED' },
+      });
+      return 'REVOKED';
+    });
+
+    const results = await Promise.all([serve, revoke]);
+    expect(results.filter((result) => result !== 'LOST')).toHaveLength(1);
+
+    const finalDelegation = await prisma.pickupDelegation.findUniqueOrThrow({
+      where: { id: delegation.id },
+    });
+    const finalRegistration = await prisma.registration.findUniqueOrThrow({
+      where: { id: registration.id },
+    });
+    const serving = await prisma.mealServing.findUnique({
+      where: { registrationId: registration.id },
+    });
+
+    if (finalDelegation.status === 'COMPLETED') {
+      expect(finalRegistration.status).toBe('SERVED');
+      expect(serving).toMatchObject({ delegationId: delegation.id });
+    } else {
+      expect(finalDelegation.status).toBe('REVOKED');
+      expect(finalRegistration.status).toBe('ACTIVE');
+      expect(serving).toBeNull();
+    }
+  });
+
+  it('rolls back every serving when a later locked registration is stale', async () => {
+    const owner = await prisma.user.create({
+      data: { email: `batch-${randomUUID()}@example.test` },
+    });
+    const first = await prisma.registration.create({
+      data: {
+        userId: owner.id,
+        mealDate: new Date('2026-09-24T00:00:00.000Z'),
+        status: 'ACTIVE',
+      },
+    });
+    const stale = await prisma.registration.create({
+      data: {
+        userId: owner.id,
+        mealDate: new Date('2026-09-24T00:00:00.000Z'),
+        status: 'CANCELLED',
+      },
+    });
+
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const registrations = await tx.$queryRaw<
+          Array<{ id: string; status: string }>
+        >`
+          SELECT id, status
+          FROM registrations
+          WHERE id IN (${first.id}, ${stale.id})
+          ORDER BY id
+          FOR UPDATE
+        `;
+        for (const registration of registrations) {
+          if (registration.status !== 'ACTIVE') {
+            throw new Error('stale registration');
+          }
+        }
+        await tx.mealServing.create({
+          data: { registrationId: first.id, ownerUserId: owner.id },
+        });
+        await tx.registration.update({
+          where: { id: first.id },
+          data: { status: 'SERVED' },
+        });
+      }),
+    ).rejects.toThrow('stale registration');
+
+    expect(
+      await prisma.mealServing.count({
+        where: { registrationId: { in: [first.id, stale.id] } },
+      }),
+    ).toBe(0);
+    expect(
+      await prisma.registration.findUniqueOrThrow({
+        where: { id: first.id },
+      }),
+    ).toMatchObject({ status: 'ACTIVE' });
   });
 });

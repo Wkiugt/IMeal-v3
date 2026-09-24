@@ -104,3 +104,12 @@
 - [!] Pickup e2e verification is blocked before test discovery because `packages/domain/test/setup.ts` reports `DATABASE_URL is not set in environment or .env.test`; no live DB/e2e claim.
 - [x] Task 7 report: `task-7-report.md`; no Task 8/9/10/11 changes and no operational seed data.
 - [x] Task 7 commits `9fc188e` (`feat(pickup): enforce exact intent and presenter gps at qr generation`) and `be5a37c` (`fix(pickup): reject stale location policy evidence`); review package: `review-9fc188e..be5a37c.diff`.
+
+- [x] Official Task 8 brief generated/read from the approved plan (artifact: `task-8-brief.md`).
+- [x] RED Task 8 idempotency regression observed before the confirm cutover; domain concurrency tests added for delegation revoke/serve winner and all-or-none rollback.
+- [x] Task 8 implemented: exact session-only confirmation under one transaction, deterministic session/registration/delegation/account locks, current actor/account/permission revalidation, current daily-menu/revision and presenter evidence revalidation, exact QR/intent/verification nonce linkage, accepted-delegation completion race winner, immutable serving/audit/idempotency snapshots, consumed session, and post-commit realtime emission.
+- [x] Task 8 review fixes: restored all pre-existing pickup confirmation tests; SELF serving no longer completes unrelated accepted delegations or records a delegation ID; ready AppSetting cannot bypass missing/disabled/current-revision menu checks; persisted verification nonce and session QR/intent/verification IDs are compared before writes.
+- [x] Task 8 focused pickup suite — 41 tests passed; full API suite — 20 files, 169 tests passed.
+- [x] Task 8 API/core TypeScript validation, root typecheck, API lint, and diff-check passed; API lint retains only pre-existing repository warnings.
+- [!] Task 8 PostgreSQL domain concurrency and pickup e2e verification blocked before discovery: `DATABASE_URL is not set in environment or .env.test`.
+- [x] Task 8 report: `task-8-report.md`; no mobile Task 9, Admin Task 10, or docs Task 11 production changes.

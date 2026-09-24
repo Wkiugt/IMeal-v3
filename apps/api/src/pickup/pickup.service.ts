@@ -115,14 +115,103 @@ function toMealDateKey(value: Date | string): string {
 interface LockedRegistration {
   id: string;
   status: string;
-  user_id: string;
+  userId: string;
+  mealDate: Date;
+  mealChoice: string;
+  serviceLocationId: string | null;
+  serviceLocationCode: string | null;
+  serviceLocationName: string | null;
+  serviceLocationAddress: string | null;
+  serviceLocationEffectiveFrom: Date | null;
+  mealServingId: string | null;
 }
 
 interface LockedDelegation {
   id: string;
   status: string;
-  registration_id: string;
-  delegate_user_id: string;
+  registrationId: string;
+  delegateUserId: string;
+}
+
+interface LockedAccount {
+  id: string;
+  email: string;
+  name: string | null;
+  isActive: boolean;
+  hasKitchenServe: boolean;
+}
+
+interface LockedPickupSession extends PickupSessionRecord {
+  presenterUserId: string | null;
+  mealDate: Date | null;
+  registrationIds: string[];
+  intentRegistrationIds: string[];
+  intentHash: string | null;
+  intentNonce: string | null;
+  locationId: string | null;
+  servingVerificationId: string | null;
+  consumedAt: Date | null;
+  expiresAt: Date;
+  createdAt: Date;
+}
+
+interface ServingConfirmRequestRow {
+  id: string;
+  callerUserId: string;
+  idempotencyKey: string;
+  status: string;
+  requestBodyHash: string | null;
+  intentHash: string | null;
+  pickupSessionId: string | null;
+  resultSnapshot: unknown;
+}
+
+interface ConfirmServingSummary {
+  id: string;
+  registrationId: string;
+  servedAt: string;
+}
+
+export interface ConfirmPickupResult {
+  success: true;
+  servedCount: number;
+  servings: ConfirmServingSummary[];
+}
+
+function sha256(value: string): string {
+  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function canonicalConfirmBody(body: v1.ConfirmPickupInput): string {
+  return JSON.stringify({ pickupSessionId: body.pickupSessionId });
+}
+
+function asConfirmResult(value: unknown): ConfirmPickupResult | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<ConfirmPickupResult>;
+  const servedCount = candidate.servedCount;
+  if (
+    candidate.success !== true ||
+    typeof servedCount !== 'number' ||
+    !Number.isInteger(servedCount) ||
+    !Array.isArray(candidate.servings)
+  ) {
+    return null;
+  }
+  const servings = candidate.servings.filter(
+    (serving): serving is ConfirmServingSummary =>
+      !!serving &&
+      typeof serving === 'object' &&
+      typeof serving.id === 'string' &&
+      typeof serving.registrationId === 'string' &&
+      typeof serving.servedAt === 'string',
+  );
+  if (servings.length !== candidate.servings.length) return null;
+  return {
+    success: true,
+    servedCount,
+    servings,
+  };
 }
 export interface PickupSessionRecord {
   id: string;
@@ -401,6 +490,7 @@ export class PickupService {
 
   private persistPresenterVerification(
     qrHash: string,
+    intentNonce: string,
     presenterUserId: string,
     verification: Extract<GpsVerificationResult, { result: 'VALID' }>,
     at: Date,
@@ -408,6 +498,7 @@ export class PickupService {
     return this.prisma.servingVerification.create({
       data: {
         id: qrHash,
+        intentNonce,
         presenterUserId,
         locationId: verification.locationId,
         locationPolicyId: verification.locationPolicyId,
@@ -493,6 +584,7 @@ export class PickupService {
     const signed = this.generateSignedQr(userId, registrationIds, mealDate, now);
     await this.persistPresenterVerification(
       signed.qrHash,
+      signed.nonce,
       userId,
       gps,
       now,
@@ -799,12 +891,68 @@ export class PickupService {
       },
     });
   }
+  private async assertServingReadyInTransaction(
+    tx: Prisma.TransactionClient,
+    mealDateKey: string,
+    at: Date,
+  ): Promise<string | null> {
+    if (!isWithinServingWindow(at)) {
+      throw new ForbiddenException({
+        code: 'PICKUP_WINDOW_CLOSED',
+        message: PICKUP_WINDOW_CLOSED_MESSAGE,
+        details: PICKUP_AVAILABILITY_DETAILS,
+      });
+    }
+    if (getBusinessDate(at) !== mealDateKey) {
+      throw pickupError(
+        'PICKUP_INTENT_CONFLICT',
+        'Pickup session is not for the current serving date.',
+      );
+    }
+    const kitchenSignal = await tx.appSetting.findUnique({
+      where: { key: `isServingReady:${mealDateKey}` },
+    });
+    const mealDay = await tx.mealDay.findFirst({
+      where: {
+        dailyMenu: { date: parseMealDate(mealDateKey) },
+        mealType: 'LUNCH',
+      },
+      include: {
+        dailyMenu: {
+          include: {
+            revisions: {
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+              select: { id: true },
+            },
+          },
+        },
+      },
+    });
+    const currentMenu = mealDay?.dailyMenu;
+    const menuRevisionId = currentMenu?.revisions?.[0]?.id ?? null;
+    if (!mealDay || !currentMenu || !currentMenu.isEnabled || !menuRevisionId) {
+      throw pickupError(
+        'PICKUP_INTENT_CONFLICT',
+        'The serving menu is no longer available.',
+      );
+    }
+    if (kitchenSignal?.value !== 'true' && !mealDay.isServingReady) {
+      throw new ForbiddenException({
+        code: 'PICKUP_NOT_READY',
+        message: PICKUP_NOT_READY_MESSAGE,
+        details: PICKUP_AVAILABILITY_DETAILS,
+      });
+    }
+    return menuRevisionId;
+  }
+
 
   async confirmPickup(
     body: v1.ConfirmPickupInput,
-    caller: AuthenticatedUser | string,
-  ) {
-    const unsafeBody = body as v1.ConfirmPickupInput & {
+    kitchenActor: AuthenticatedUser,
+  ): Promise<ConfirmPickupResult> {
+    const unsafeBody = (body ?? {}) as v1.ConfirmPickupInput & {
       registrationIds?: unknown;
       pickupSessionToken?: unknown;
     };
@@ -817,280 +965,683 @@ export class PickupService {
         'Confirmation must use the exact resolved pickup session.',
       );
     }
-    const callerUserId = typeof caller === 'string' ? caller : caller.id;
-    const pickupSessionId = body?.pickupSessionId;
-    if (!pickupSessionId) {
-      throw new BadRequestException({
-        code: 'PICKUP_INTENT_REQUIRED',
-        message: 'Pickup session ID is required.',
-      });
-    }
-    const session = await this.prisma.pickupSession.findUnique({
-      where: { id: pickupSessionId },
-    });
-    if (!session) {
-      throw new BadRequestException({
-        code: 'PICKUP_INTENT_CONFLICT',
-        message: 'Invalid pickup session.',
-      });
-    }
-    if (session.expiresAt.getTime() < Date.now()) {
-      throw new BadRequestException({
-        code: 'PICKUP_SESSION_EXPIRED',
-        message: 'Pickup session has expired',
-      });
-    }
-    const registrationIds = canonicalRegistrationIds(session.registrationIds);
-    const idempotencyKey = body.idempotencyKey;
-
-    // 1. Check idempotency first (outside transaction, to avoid lock contention if already succeeded)
-    const existingReq = await this.prisma.servingConfirmRequest.findUnique({
-      where: {
-        callerUserId_idempotencyKey: {
-          callerUserId,
-          idempotencyKey,
-        },
-      },
-    });
-
-    if (existingReq) {
-      if (existingReq.status === 'SUCCESS') {
-        const servings = await this.prisma.mealServing.findMany({
-          where: { registrationId: { in: registrationIds } },
-        });
-        const sortedServings = registrationIds
-          .map((id) => servings.find((s) => s.registrationId === id))
-          .filter((s): s is NonNullable<typeof s> => !!s);
-        return {
-          success: true,
-          servedCount: sortedServings.length,
-          servings: sortedServings.map((s) => ({
-            id: s.id,
-            registrationId: s.registrationId,
-            servedAt: s.servedAt,
-          })),
-        };
-      }
-      throw new BadRequestException(
-        `Previous request failed with status: ${existingReq.status}`,
-      );
-    }
-
-    // 2. The session is immutable: confirmation can never submit a subset or expansion.
-    if (!exactRegistrationSet(registrationIds, session.registrationIds)) {
+    const parsedBody = v1.ConfirmPickupSchema.safeParse(body);
+    if (!parsedBody.success) {
       throw pickupError(
-        'PICKUP_INTENT_CONFLICT',
-        'Pickup session intent is invalid.',
+        'PICKUP_INTENT_REQUIRED',
+        'Pickup session and idempotency key are required.',
+      );
+    }
+    if (
+      !kitchenActor ||
+      kitchenActor.isActive === false ||
+      !kitchenActor.id ||
+      kitchenActor.id !== kitchenActor.userId ||
+      !kitchenActor.permissions.includes('kitchen.serve')
+    ) {
+      throw pickupForbiddenError(
+        'SESSION_REVOKED',
+        'An active Kitchen serving session is required.',
       );
     }
 
-    await this.checkServingWindow();
-    const confirmationTime = new Date();
-    const confirmationDate = this.getTodayDate(confirmationTime);
-    const confirmationDateKey = getBusinessDate(confirmationTime);
+    const input = parsedBody.data;
+    const callerUserId = kitchenActor.id;
+    const pickupSessionId = input.pickupSessionId;
+    const idempotencyKey = input.idempotencyKey;
+    const requestBodyHash = sha256(canonicalConfirmBody(input));
+    const requestId = crypto.randomUUID();
+    let confirmationTime: Date;
 
-    // 3. Transaction
-    try {
-      const result = await this.prisma.$transaction(
-        async (tx) => {
-          const kitchenSignal = await tx.appSetting.findUnique({
-            where: { key: `isServingReady:${confirmationDateKey}` },
-          });
-          const mealDay =
-            kitchenSignal?.value === 'true'
-              ? null
-              : await tx.mealDay.findFirst({
-                  where: {
-                    dailyMenu: { date: confirmationDate },
-                    mealType: 'LUNCH',
-                  },
-                });
 
-          if (kitchenSignal?.value !== 'true' && !mealDay?.isServingReady) {
-            throw new Error(
-              'Meal pickup is not currently available. Kitchen signal is off.',
+    const transactionResult = await this.prisma.$transaction(
+      async (tx) => {
+        const insertedRequests =
+          (await tx.$queryRaw<ServingConfirmRequestRow[]>`
+            INSERT INTO "serving_confirm_requests"
+              (
+                "id",
+                "caller_user_id",
+                "idempotency_key",
+                "status",
+                "request_body_hash",
+                "pickup_session_id"
+              )
+            VALUES
+              (
+                ${requestId},
+                ${callerUserId},
+                ${idempotencyKey},
+                'PROCESSING',
+                ${requestBodyHash},
+                ${pickupSessionId}
+              )
+            ON CONFLICT ("caller_user_id", "idempotency_key") DO NOTHING
+            RETURNING
+              "id",
+              "caller_user_id" AS "callerUserId",
+              "idempotency_key" AS "idempotencyKey",
+              "status",
+              "request_body_hash" AS "requestBodyHash",
+              "intent_hash" AS "intentHash",
+              "pickup_session_id" AS "pickupSessionId",
+              "result_snapshot" AS "resultSnapshot"
+          `) ?? [];
+        let confirmRequest = insertedRequests[0];
+        let isNewRequest = !!confirmRequest;
+
+        if (!confirmRequest) {
+          const existingRequests =
+            (await tx.$queryRaw<ServingConfirmRequestRow[]>`
+              SELECT
+                "id",
+                "caller_user_id" AS "callerUserId",
+                "idempotency_key" AS "idempotencyKey",
+                "status",
+                "request_body_hash" AS "requestBodyHash",
+                "intent_hash" AS "intentHash",
+                "pickup_session_id" AS "pickupSessionId",
+                "result_snapshot" AS "resultSnapshot"
+              FROM "serving_confirm_requests"
+              WHERE
+                "caller_user_id" = ${callerUserId}
+                AND "idempotency_key" = ${idempotencyKey}
+              FOR UPDATE
+            `) ?? [];
+          confirmRequest = existingRequests[0];
+        }
+
+        if (!confirmRequest) {
+          throw pickupError(
+            'PICKUP_INTENT_CONFLICT',
+            'The confirmation request could not be established.',
+          );
+        }
+        if (
+          !isNewRequest &&
+          (confirmRequest.requestBodyHash !== requestBodyHash ||
+            confirmRequest.pickupSessionId !== pickupSessionId)
+        ) {
+          throw pickupError(
+            'IDEMPOTENCY_CONFLICT',
+            'The idempotency key was already used for a different request.',
+          );
+        }
+        if (!isNewRequest) {
+          if (confirmRequest.status !== 'SUCCESS') {
+            throw pickupError(
+              'IDEMPOTENCY_CONFLICT',
+              'The idempotency key is already being processed.',
             );
           }
-
-          // Row-level lock Registrations & PickupDelegations
-          if (registrationIds.length === 0) {
-            throw new Error('No registration IDs provided');
+          const originalResult = asConfirmResult(confirmRequest.resultSnapshot);
+          if (!originalResult) {
+            throw pickupError(
+              'PICKUP_INTENT_CONFLICT',
+              'The original confirmation result is unavailable.',
+            );
           }
+          return {
+            response: originalResult,
+            isNewRequest: false,
+            mealDate: originalResult.servings[0]?.servedAt.slice(0, 10) ?? '',
+            requestId: confirmRequest.id,
+          };
+        }
+        confirmationTime = new Date();
 
-          const regs = await tx.$queryRaw<LockedRegistration[]>`
-            SELECT id, status, "user_id"
-            FROM registrations
-            WHERE id IN (${Prisma.join(registrationIds)})
-            ORDER BY id
+
+        const lockedSessions =
+          (await tx.$queryRaw<LockedPickupSession[]>`
+            SELECT
+              "id",
+              "user_id" AS "userId",
+              "presenter_user_id" AS "presenterUserId",
+              "meal_date" AS "mealDate",
+              "registration_ids" AS "registrationIds",
+              "intent_registration_ids" AS "intentRegistrationIds",
+              "intent_hash" AS "intentHash",
+              "intent_nonce" AS "intentNonce",
+              "qr_hash" AS "qrHash",
+              "location_id" AS "locationId",
+              "serving_verification_id" AS "servingVerificationId",
+              "expires_at" AS "expiresAt",
+              "consumed_at" AS "consumedAt",
+              "created_at" AS "createdAt"
+            FROM "pickup_sessions"
+            WHERE "id" = ${pickupSessionId}
             FOR UPDATE
-          `;
-
-          if (regs.length !== registrationIds.length) {
-            throw new Error('Some registrations not found');
-          }
-
-          const delegations = await tx.$queryRaw<LockedDelegation[]>`
-            SELECT id, status, registration_id, "delegate_user_id"
-            FROM pickup_delegations
-            WHERE registration_id IN (${Prisma.join(registrationIds)})
-            ORDER BY id
-            FOR UPDATE
-          `;
-          const acceptedDelegationsByRegistration = new Map(
-            delegations
-              .filter((delegation) => delegation.status === 'ACCEPTED')
-              .map((delegation) => [delegation.registration_id, delegation]),
+          `) ?? [];
+        const session = lockedSessions[0];
+        if (!session) {
+          throw pickupError('PICKUP_INTENT_CONFLICT', 'Invalid pickup session.');
+        }
+        if (
+          session.consumedAt ||
+          session.expiresAt.getTime() <= confirmationTime.getTime()
+        ) {
+          throw pickupError(
+            'PICKUP_SESSION_EXPIRED',
+            session.consumedAt
+              ? 'Pickup session has already been consumed.'
+              : 'Pickup session has expired',
           );
-          const acceptedDelegateIds = [
-            ...new Set(
-              delegations
-                .filter((delegation) => delegation.status === 'ACCEPTED')
-                .map((delegation) => delegation.delegate_user_id),
-            ),
-          ];
-          const delegateUsers = acceptedDelegateIds.length
-            ? await tx.user.findMany({
-                where: { id: { in: acceptedDelegateIds } },
-                select: { id: true, name: true, email: true },
-              })
-            : [];
+        }
+        if (
+          !session.presenterUserId ||
+          session.presenterUserId !== session.userId ||
+          !session.mealDate ||
+          !session.intentHash ||
+          !session.intentNonce ||
+          !session.qrHash ||
+          session.intentHash !== session.qrHash ||
+          !session.locationId ||
+          !session.servingVerificationId ||
+          session.servingVerificationId !== session.qrHash
+        ) {
+          throw pickupError(
+            'PICKUP_INTENT_CONFLICT',
+            'Pickup session intent is invalid.',
+          );
+        }
 
-          // Re-validate rules
-          const existingServings = await tx.mealServing.findMany({
-            where: { registrationId: { in: registrationIds } },
-          });
+        let registrationIds: string[];
+        let intentRegistrationIds: string[];
+        try {
+          registrationIds = canonicalRegistrationIds(session.registrationIds);
+          intentRegistrationIds = canonicalRegistrationIds(
+            session.intentRegistrationIds,
+          );
+        } catch {
+          throw pickupError(
+            'PICKUP_INTENT_CONFLICT',
+            'Pickup session intent is invalid.',
+          );
+        }
+        if (!exactRegistrationSet(registrationIds, session.registrationIds)) {
+          throw pickupError(
+            'PICKUP_INTENT_CONFLICT',
+            'Pickup session registration order is invalid.',
+          );
+        }
+        if (!exactRegistrationSet(registrationIds, intentRegistrationIds)) {
+          throw pickupError(
+            'PICKUP_INTENT_CONFLICT',
+            'Pickup session intent does not match its registration set.',
+          );
+        }
+        const mealDateKey = toMealDateKey(session.mealDate);
+        const menuRevisionId = await this.assertServingReadyInTransaction(
+          tx,
+          mealDateKey,
+          confirmationTime,
+        );
 
-          if (existingServings.length > 0) {
-            // Check if this is a concurrent idempotency success
-            const req = await tx.servingConfirmRequest.findUnique({
-              where: {
-                callerUserId_idempotencyKey: { callerUserId, idempotencyKey },
-              },
-            });
-            if (req && req.status === 'SUCCESS') {
-              const sortedExisting = registrationIds
-                .map((id) =>
-                  existingServings.find((s) => s.registrationId === id),
+        const registrations =
+          (await tx.$queryRaw<LockedRegistration[]>`
+            SELECT
+              r."id",
+              r."status",
+              r."user_id" AS "userId",
+              r."meal_date" AS "mealDate",
+              r."meal_choice" AS "mealChoice",
+              r."service_location_id" AS "serviceLocationId",
+              r."service_location_code" AS "serviceLocationCode",
+              r."service_location_name" AS "serviceLocationName",
+              r."service_location_address" AS "serviceLocationAddress",
+              r."service_location_effective_from" AS "serviceLocationEffectiveFrom",
+              ms."id" AS "mealServingId"
+            FROM "registrations" r
+            LEFT JOIN "meal_servings" ms
+              ON ms."registration_id" = r."id"
+            WHERE r."id" IN (${Prisma.join(registrationIds)})
+            ORDER BY r."id"
+            FOR UPDATE OF r
+          `) ?? [];
+        if (
+          registrations.length !== registrationIds.length ||
+          !registrationIds.every(
+            (registrationId, index) =>
+              registrations[index]?.id === registrationId,
+          )
+        ) {
+          throw pickupError(
+            'PICKUP_INTENT_CONFLICT',
+            'One or more selected meals are no longer available.',
+          );
+        }
+
+        const delegations =
+          (await tx.$queryRaw<LockedDelegation[]>`
+            SELECT
+              d."id",
+              d."status",
+              d."registration_id" AS "registrationId",
+              d."delegate_user_id" AS "delegateUserId"
+            FROM "pickup_delegations" d
+            WHERE d."registration_id" IN (${Prisma.join(registrationIds)})
+            ORDER BY d."registration_id", d."id"
+            FOR UPDATE OF d
+          `) ?? [];
+        const acceptedByRegistration = new Map<string, LockedDelegation>();
+        for (const delegation of delegations) {
+          if (delegation.status !== 'ACCEPTED') continue;
+          if (acceptedByRegistration.has(delegation.registrationId)) {
+            throw pickupError(
+              'PICKUP_INTENT_CONFLICT',
+              'The selected meal has conflicting accepted delegations.',
+            );
+          }
+          acceptedByRegistration.set(delegation.registrationId, delegation);
+        }
+
+        const accountIds = [
+          ...new Set([
+            callerUserId,
+            session.userId,
+            session.presenterUserId,
+            ...registrations.map((registration) => registration.userId),
+            ...delegations.map((delegation) => delegation.delegateUserId),
+          ]),
+        ].sort();
+        const accounts =
+          (await tx.$queryRaw<LockedAccount[]>`
+            SELECT
+              u."id",
+              u."email",
+              u."name",
+              u."is_active" AS "isActive",
+              (
+                EXISTS (
+                  SELECT 1
+                  FROM "user_permissions" up
+                  JOIN "permissions" p ON p."id" = up."permission_id"
+                  WHERE up."user_id" = u."id"
+                    AND p."name" = 'kitchen.serve'
                 )
-                .filter((s): s is NonNullable<typeof s> => !!s);
-              return sortedExisting;
-            }
-            throw new Error('One or more meals have already been served');
-          }
+                OR EXISTS (
+                  SELECT 1
+                  FROM "user_roles" ur
+                  JOIN "roles" r ON r."id" = ur."role_id"
+                  JOIN "role_permissions" rp ON rp."role_id" = r."id"
+                  JOIN "permissions" p ON p."id" = rp."permission_id"
+                  WHERE ur."user_id" = u."id"
+                    AND p."name" = 'kitchen.serve'
+                )
+              ) AS "hasKitchenServe"
+            FROM "users" u
+            WHERE u."id" IN (${Prisma.join(accountIds)})
+            ORDER BY u."id"
+            FOR UPDATE
+          `) ?? [];
+        if (accounts.length !== accountIds.length) {
+          throw pickupError(
+            'PICKUP_INTENT_CONFLICT',
+            'A serving participant is no longer available.',
+          );
+        }
+        const accountById = new Map(accounts.map((account) => [account.id, account]));
+        const kitchenAccount = accountById.get(callerUserId);
+        const presenterAccount = accountById.get(session.presenterUserId);
+        if (
+          !kitchenAccount?.isActive ||
+          !kitchenAccount.hasKitchenServe ||
+          !presenterAccount?.isActive
+        ) {
+          throw pickupForbiddenError(
+            'SESSION_REVOKED',
+            'An active serving participant is required.',
+          );
+        }
 
-          for (const r of regs) {
-            if (r.status !== 'ACTIVE') {
-              throw new Error(`Registration ${r.id} is not ACTIVE`);
-            }
+        const registrationLocationIds = new Set<string>();
+        for (const registration of registrations) {
+          if (
+            registration.status !== 'ACTIVE' ||
+            registration.mealServingId ||
+            toMealDateKey(registration.mealDate) !== mealDateKey ||
+            !registration.serviceLocationId ||
+            !registration.serviceLocationCode
+          ) {
+            throw pickupError(
+              'PICKUP_INTENT_CONFLICT',
+              'One or more selected meals are no longer eligible for pickup.',
+            );
           }
+          const owner = accountById.get(registration.userId);
+          if (!owner?.isActive) {
+            throw pickupError(
+              'PICKUP_INTENT_CONFLICT',
+              'One or more meal owners are no longer active.',
+            );
+          }
+          registrationLocationIds.add(registration.serviceLocationId);
+        }
+        if (
+          registrationLocationIds.size !== 1 ||
+          !registrationLocationIds.has(session.locationId)
+        ) {
+          throw pickupError(
+            'PICKUP_INTENT_CONFLICT',
+            'The serving location no longer matches the resolved session.',
+          );
+        }
 
-          // Insert ServingConfirmRequest
-          await tx.servingConfirmRequest.create({
+        const verification = await tx.servingVerification.findUnique({
+          where: { id: session.servingVerificationId },
+          select: {
+            id: true,
+            intentNonce: true,
+            presenterUserId: true,
+            locationId: true,
+            locationPolicyId: true,
+            result: true,
+            capturedAt: true,
+            accuracyMeters: true,
+            safeVerificationCode: true,
+            retentionUntil: true,
+          },
+        });
+        const location = await tx.location.findUnique({
+          where: { id: session.locationId },
+          select: {
+            id: true,
+            shortCode: true,
+            displayName: true,
+            address: true,
+            isActive: true,
+            effectiveFrom: true,
+            effectiveTo: true,
+          },
+        });
+        const policy = await tx.locationPolicy.findFirst({
+          where: {
+            locationId: session.locationId,
+            isActive: true,
+            effectiveFrom: { lte: confirmationTime },
+            OR: [
+              { effectiveTo: null },
+              { effectiveTo: { gt: confirmationTime } },
+            ],
+          },
+          orderBy: { effectiveFrom: 'desc' },
+        });
+        if (
+          !verification ||
+          verification.id !== session.qrHash ||
+          verification.intentNonce !== session.intentNonce ||
+          verification.result !== 'VALID' ||
+          verification.presenterUserId !== session.presenterUserId ||
+          verification.locationId !== session.locationId ||
+          !verification.locationPolicyId ||
+          !policy ||
+          verification.locationPolicyId !== policy.id ||
+          !location ||
+          !location.isActive ||
+          location.effectiveFrom > confirmationTime ||
+          (location.effectiveTo && location.effectiveTo <= confirmationTime)
+        ) {
+          throw pickupError(
+            'PICKUP_INTENT_CONFLICT',
+            'Pickup verification no longer matches the selected intent.',
+          );
+        }
+        const capturedAt = safeDate(verification.capturedAt);
+        if (
+          capturedAt.getTime() > confirmationTime.getTime() ||
+          (verification.retentionUntil &&
+            verification.retentionUntil <= confirmationTime) ||
+          verification.accuracyMeters == null ||
+          !Number.isFinite(verification.accuracyMeters) ||
+          verification.accuracyMeters < 0
+        ) {
+          throw pickupForbiddenError(
+            'GPS_RETRY_REQUIRED',
+            'A fresh presenter location is required.',
+            { action: 'REFRESH' },
+          );
+        }
+        if (safeDate(policy.updatedAt).getTime() > capturedAt.getTime()) {
+          throw pickupForbiddenError(
+            'GPS_RETRY_REQUIRED',
+            'A fresh presenter location is required.',
+            { action: 'REFRESH' },
+          );
+        }
+        const evidenceAgeSeconds =
+          (confirmationTime.getTime() - capturedAt.getTime()) / 1000;
+        if (
+          evidenceAgeSeconds > policy.maxFixAgeSeconds ||
+          verification.accuracyMeters > policy.maxAccuracyMeters
+        ) {
+          throw pickupForbiddenError(
+            'GPS_RETRY_REQUIRED',
+            'A fresh presenter location is required.',
+            { action: 'REFRESH' },
+          );
+        }
+
+        const servingPlans = registrations.map((registration) => {
+          const acceptedDelegation = acceptedByRegistration.get(registration.id);
+          const receiverType =
+            registration.userId === session.presenterUserId
+              ? ('SELF' as const)
+              : acceptedDelegation?.delegateUserId === session.presenterUserId
+                ? ('PROXY' as const)
+                : null;
+          if (!receiverType) {
+            throw pickupError(
+              'PICKUP_INTENT_CONFLICT',
+              'The presenter is no longer authorized for every selected meal.',
+            );
+          }
+          return { registration, acceptedDelegation, receiverType };
+        });
+
+        const delegationsToComplete: LockedDelegation[] = [];
+        for (const plan of servingPlans) {
+          if (plan.receiverType === 'PROXY' && plan.acceptedDelegation) {
+            delegationsToComplete.push(plan.acceptedDelegation);
+          }
+        }
+        delegationsToComplete.sort((left, right) =>
+          left.id.localeCompare(right.id),
+        );
+        for (const delegation of delegationsToComplete) {
+          const changed = await tx.pickupDelegation.updateMany({
+            where: { id: delegation.id, status: 'ACCEPTED' },
+            data: { status: 'COMPLETED' },
+          });
+          if (changed.count !== 1) {
+            throw pickupError(
+              'PICKUP_INTENT_CONFLICT',
+              'A delegation changed before serving could be committed.',
+            );
+          }
+        }
+
+        const servingSummaries: ConfirmServingSummary[] = [];
+        for (const plan of servingPlans) {
+          const owner = accountById.get(plan.registration.userId);
+          if (!owner) {
+            throw pickupError(
+              'PICKUP_INTENT_CONFLICT',
+              'The meal owner is no longer available.',
+            );
+          }
+          const servedAt = confirmationTime.toISOString();
+          const serving = await tx.mealServing.create({
             data: {
-              callerUserId,
-              idempotencyKey,
-              status: 'SUCCESS',
+              registrationId: plan.registration.id,
+              ownerUserId: owner.id,
+              ownerEmailSnapshot: owner.email,
+              ownerNameSnapshot: owner.name,
+              presenterUserId: session.presenterUserId,
+              receiverType: plan.receiverType,
+              kitchenUserId: callerUserId,
+              kitchenPermissionContext: 'kitchen.serve',
+              scannerDeviceId: null,
+              locationId: location.id,
+              locationShortCode:
+                plan.registration.serviceLocationCode ?? location.shortCode,
+              locationNameSnapshot:
+                plan.registration.serviceLocationName ?? location.displayName,
+              locationAddressSnapshot:
+                plan.registration.serviceLocationAddress ?? location.address,
+              mealDate: parseMealDate(mealDateKey),
+              menuRevisionId,
+              requestId,
+              pickupSessionId,
+              intentHash: session.intentHash,
+              verificationOutcome: verification.safeVerificationCode,
+              servingVerificationId: verification.id,
+              delegationId:
+                plan.receiverType === 'PROXY'
+                  ? plan.acceptedDelegation?.id ?? null
+                  : null,
+              servedAt: confirmationTime,
+            },
+          });
+          await tx.registration.update({
+            where: { id: plan.registration.id },
+            data: { status: 'SERVED' },
+          });
+          await tx.mealEvent.create({
+            data: {
+              mealServingId: serving.id,
+              eventType: 'PICKUP_CONFIRMED',
+            },
+          });
+          await tx.auditLog.create({
+            data: {
+              userId: callerUserId,
+              action: 'SERVING_CONFIRMED',
+              details: JSON.stringify({
+                requestId,
+                registrationId: plan.registration.id,
+                owner: {
+                  id: owner.id,
+                  email: owner.email,
+                  name: owner.name,
+                },
+                presenter: {
+                  id: session.presenterUserId,
+                  email: accountById.get(session.presenterUserId)?.email ?? null,
+                  name: accountById.get(session.presenterUserId)?.name ?? null,
+                },
+                receiverType: plan.receiverType,
+                kitchen: {
+                  id: callerUserId,
+                  email: kitchenAccount.email,
+                  name: kitchenAccount.name,
+                  permissionContext: 'kitchen.serve',
+                },
+                location: {
+                  id: location.id,
+                  shortCode:
+                    plan.registration.serviceLocationCode ??
+                    location.shortCode,
+                  name:
+                    plan.registration.serviceLocationName ??
+                    location.displayName,
+                  address:
+                    plan.registration.serviceLocationAddress ?? location.address,
+                },
+                delegationId:
+                  plan.receiverType === 'PROXY'
+                    ? plan.acceptedDelegation?.id ?? null
+                    : null,
+                pickupSessionId,
+                intentHash: session.intentHash,
+                mealDate: mealDateKey,
+                mealChoice: plan.registration.mealChoice,
+                menuRevisionId,
+                verification: {
+                  id: verification.id,
+                  result: verification.result,
+                  safeVerificationCode: verification.safeVerificationCode,
+                  capturedAt: capturedAt.toISOString(),
+                  accuracyMeters: verification.accuracyMeters,
+                },
+                servedAt,
+              }),
             },
           });
 
-          // Update PickupDelegation status (if any were ACCEPTED)
-          if (delegations.length > 0) {
-            const acceptedDelegationIds = delegations
-              .filter((d) => d.status === 'ACCEPTED')
-              .map((d) => d.id);
-
-            if (acceptedDelegationIds.length > 0) {
-              await tx.pickupDelegation.updateMany({
-                where: { id: { in: acceptedDelegationIds } },
-                data: { status: 'COMPLETED' },
-              });
-            }
-          }
-
-          // Insert MealServing and MealEvent
-          const servings = [];
-          for (const regId of registrationIds) {
-            const serving = await tx.mealServing.create({
-              data: {
-                registrationId: regId,
+          if (
+            this.notificationsService &&
+            plan.receiverType === 'PROXY' &&
+            plan.acceptedDelegation
+          ) {
+            await this.notificationsService.publish(tx, {
+              userId: plan.registration.userId,
+              kind: 'PROXY_PICKUP_COMPLETED',
+              payload: {
+                servingId: serving.id,
+                registrationId: plan.registration.id,
+                mealDate: mealDateKey,
+                delegateName: displayNotificationName(
+                  accountById.get(session.presenterUserId),
+                ),
               },
+              dedupeKey: `proxy-pickup-completed:${plan.registration.userId}:${serving.id}`,
             });
-            servings.push(serving);
-
-            await tx.mealEvent.create({
-              data: {
-                mealServingId: serving.id,
-                eventType: 'PICKUP_CONFIRMED',
-              },
-            });
-
-            const registration = regs.find((item) => item.id === regId);
-            const acceptedDelegation =
-              acceptedDelegationsByRegistration.get(regId);
-            if (
-              this.notificationsService &&
-              registration &&
-              acceptedDelegation &&
-              session.userId !== registration.user_id &&
-              acceptedDelegation.delegate_user_id === session.userId
-            ) {
-              const delegate = delegateUsers.find(
-                (user) => user.id === acceptedDelegation.delegate_user_id,
-              );
-              await this.notificationsService.publish(tx, {
-                userId: registration.user_id,
-                kind: 'PROXY_PICKUP_COMPLETED',
-                payload: {
-                  servingId: serving.id,
-                  registrationId: regId,
-                  mealDate: confirmationDateKey,
-                  delegateName: displayNotificationName(delegate),
-                },
-                dedupeKey: `proxy-pickup-completed:${registration.user_id}:${serving.id}`,
-              });
-            }
           }
-
-          // Close PickupSession (set expiresAt to now)
-          await tx.pickupSession.update({
-            where: { id: pickupSessionId },
-            data: { expiresAt: new Date() },
+          servingSummaries.push({
+            id: serving.id,
+            registrationId: serving.registrationId,
+            servedAt:
+              serving.servedAt instanceof Date
+                ? serving.servedAt.toISOString()
+                : servedAt,
           });
+        }
 
-          return servings;
-        },
-        { isolationLevel: 'ReadCommitted' },
-      );
-
-      // Emit realtime serving event to Kitchen Dashboard
-      if (this.kitchenEventsService) {
-        this.kitchenEventsService.emitEvent({
-          eventType: 'SERVING_CONFIRMED',
-          mealDate: this.getTodayDate().toISOString().split('T')[0],
-          payload: {
-            servedCount: result.length,
-            servings: result.map((s) => ({
-              id: s.id,
-              registrationId: s.registrationId,
-              servedAt: s.servedAt,
-            })),
+        const response: ConfirmPickupResult = {
+          success: true,
+          servedCount: servingSummaries.length,
+          servings: servingSummaries,
+        };
+        await tx.pickupSession.update({
+          where: { id: pickupSessionId },
+          data: { consumedAt: confirmationTime, expiresAt: confirmationTime },
+        });
+        await tx.servingConfirmRequest.update({
+          where: { id: confirmRequest.id },
+          data: {
+            status: 'SUCCESS',
+            requestBodyHash,
+            intentHash: session.intentHash,
+            pickupSessionId,
+            resultServingIds: servingSummaries.map((serving) => serving.id),
+            resultSnapshot: response as unknown as Prisma.InputJsonValue,
+            originalResultRequestId: null,
+            completedAt: confirmationTime,
+            conflictCode: null,
           },
         });
-      }
+        isNewRequest = true;
+        return {
+          response,
+          isNewRequest,
+          mealDate: mealDateKey,
+          requestId,
+        };
+      },
+      { isolationLevel: 'ReadCommitted' },
+    );
 
-      return {
-        success: true,
-        servedCount: result.length,
-        servings: result.map((s) => ({
-          id: s.id,
-          registrationId: s.registrationId,
-          servedAt: s.servedAt,
-        })),
-      };
-    } catch (error: unknown) {
-      throw new BadRequestException(
-        error instanceof Error ? error.message : 'Transaction failed',
-      );
+    if (transactionResult.isNewRequest && this.kitchenEventsService) {
+      this.kitchenEventsService.emitEvent({
+        eventType: 'SERVING_CONFIRMED',
+        mealDate: transactionResult.mealDate,
+        requestId: transactionResult.requestId,
+        payload: {
+          servedCount: transactionResult.response.servedCount,
+          servings: transactionResult.response.servings,
+        },
+      });
     }
+    return transactionResult.response;
   }
 }

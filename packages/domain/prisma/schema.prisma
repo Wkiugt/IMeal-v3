@@ -787,7 +787,8 @@ model ServingVerification {
   // Database CHECK: VALID evidence requires non-null finite accuracy; failed verification may omit it.
   accuracyMeters    Float?                    @map("accuracy_meters")
   safeVerificationCode String                  @map("safe_verification_code")
-  retentionUntil    DateTime?                 @map("retention_until")
+  intentNonce          String?                 @map("intent_nonce")
+  retentionUntil       DateTime?               @map("retention_until")
   createdAt         DateTime                  @default(now()) @map("created_at")
 
   presenter       User                   @relation("ServingVerificationPresenter", fields: [presenterUserId], references: [id], onDelete: Cascade)

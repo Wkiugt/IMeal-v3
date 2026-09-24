@@ -1,0 +1,2345 @@
+diff --git a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md
+index e55936a..37d745c 100644
+--- a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md
++++ b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md
+@@ -96,10 +96,20 @@
+ - [x] Task 6 review-fix commit `0e87b57` — `feat(admin): add approved locations roster imports and snapshots`; report at `task-6-report.md`; review package input baseline `9ac7a1e`.
+ 
+ - [x] Official Task 7 brief generated/read from plan lines 679–776; artifact: `task-7-brief.md`.
+-- [x] RED Task 7 pickup tests observed failing before exact-intent/presenter-evidence implementation; policy-identity revalidation regression also observed RED before the fix.
++- [x] RED Task 7 pickup tests observed failing before exact-intent/presenter-evidence implementation; review regressions for in-place policy updates, QR meal-date drift, and unknown service locations also observed RED before their fixes.
+ - [x] Task 7 implemented: strict sorted non-empty intent, five-second/two-second-skew signed QR, presenter-only fresh GPS on every generate, safe verification persistence, strict Kitchen QR-only resolve, server-side registration snapshot/location/policy revalidation, exact replay-safe 30-second session binding, and session-only confirm transport.
+-- [x] Focused pickup GREEN: `pickup.service.spec.ts` — 25 tests passed; full API unit suite — 20 files, 153 tests passed.
++- [x] Task 7 review fixes: compare signed QR meal date with current registration context; map unknown locations to `PICKUP_INTENT_CONFLICT`; and reject evidence captured before a newer in-place policy update (`GPS_RETRY_REQUIRED`/`REFRESH`) without storing raw coordinates. Resolve continues to emit `receiverType: SELF` until Task 8 owns self/delegate attribution.
++- [x] Focused pickup GREEN: `pickup.service.spec.ts` — 28 tests passed; full API unit suite — 20 files, 156 tests passed.
+ - [x] API TypeScript validation passed; API lint exited 0 with only pre-existing warnings; `git diff --check` passed.
+ - [!] Pickup e2e verification is blocked before test discovery because `packages/domain/test/setup.ts` reports `DATABASE_URL is not set in environment or .env.test`; no live DB/e2e claim.
+ - [x] Task 7 report: `task-7-report.md`; no Task 8/9/10/11 changes and no operational seed data.
+-- [x] Task 7 commit `9fc188e` — `feat(pickup): enforce exact intent and presenter gps at qr generation`; review package: `review-0e87b57..9fc188e.diff`.
++- [x] Task 7 commits `9fc188e` (`feat(pickup): enforce exact intent and presenter gps at qr generation`) and `be5a37c` (`fix(pickup): reject stale location policy evidence`); review package: `review-9fc188e..be5a37c.diff`.
++
++- [x] Official Task 8 brief generated/read from the approved plan (artifact: `task-8-brief.md`).
++- [x] RED Task 8 idempotency regression observed before the confirm cutover; domain concurrency tests added for delegation revoke/serve winner and all-or-none rollback.
++- [x] Task 8 implemented: exact session-only confirmation under one transaction, deterministic session/registration/delegation/account locks, current actor/account/permission revalidation, current daily-menu/revision and presenter evidence revalidation, exact QR/intent/verification nonce linkage, accepted-delegation completion race winner, immutable serving/audit/idempotency snapshots, consumed session, and post-commit realtime emission.
++- [x] Task 8 review fixes: restored all pre-existing pickup confirmation tests; SELF serving no longer completes unrelated accepted delegations or records a delegation ID; ready AppSetting cannot bypass missing/disabled/current-revision menu checks; persisted verification nonce and session QR/intent/verification IDs are compared before writes.
++- [x] Task 8 focused pickup suite — 41 tests passed; full API suite — 20 files, 169 tests passed.
++- [x] Task 8 API/core TypeScript validation, root typecheck, API lint, and diff-check passed; API lint retains only pre-existing repository warnings.
++- [!] Task 8 PostgreSQL domain concurrency and pickup e2e verification blocked before discovery: `DATABASE_URL is not set in environment or .env.test`.
++- [x] Task 8 report: `task-8-report.md`; no mobile Task 9, Admin Task 10, or docs Task 11 production changes.
+diff --git a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-8-brief.md b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-8-brief.md
+new file mode 100644
+index 0000000..84cafac
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-8-brief.md
+@@ -0,0 +1,71 @@
++### Task 8: Complete all-or-nothing confirm, delegation races, idempotency, and immutable serving audit
++
++**Files:**
++- Modify: `apps/api/src/pickup/pickup.service.ts`
++- Modify: `apps/api/src/pickup/pickup.service.spec.ts`, `apps/api/test/pickup.e2e-spec.ts`
++- Modify: `packages/domain/prisma/schema.prisma` only if Task 2 requires a narrowly scoped confirm/audit field adjustment
++- Create/Modify: `packages/domain/test/concurrency.test.ts`
++
++**Interfaces:**
++- Consumes: exact resolved session and `ConfirmPickupInput` from Task 7, current permissions from session guard, registration/delegation snapshots.
++- Produces: `confirmPickup(input: ConfirmPickupInput, kitchenActor: AuthenticatedUser): Promise<ConfirmPickupResponse>` with all-or-nothing result and immutable serving/audit records.
++
++- [ ] **Step 1: Write failing transaction tests**
++
++Cover observable races and retry semantics:
++
++```ts
++it('commits every item or none when one registration is stale', async () => {
++  // make one locked registration invalid; assert zero MealServing rows are created
++});
++
++it('serializes accepted delegation revoke/serve and chooses one committed winner', async () => {
++  // concurrent transactions produce either completed serving or committed revoke,
++  // never both and never a partial delegation state
++});
++
++it('returns the original result for the same caller/key/body and conflicts on a changed body', async () => {
++  // same exact request is idempotent; changed session/intent context fails
++});
++
++it('records owner, presenter/receiver, Kitchen actor, pickup type, location, delegation, intent/session and verification snapshots', async () => {
++  // assert immutable serving/audit fields are populated from server state
++});
++```
++
++- [ ] **Step 2: Run the RED transaction tests**
++
++Run:
++
++```sh
++yarn workspace @imeal/api exec vitest run src/pickup/pickup.service.spec.ts test/pickup.e2e-spec.ts
++yarn workspace @imeal/core exec vitest run test/concurrency.test.ts
++```
++
++Expected: FAIL because confirm currently accepts arbitrary registration subsets instead of the exact set owned by the `PickupSession`, records only registration/served time, and does not bind caller/body/location/verification snapshots.
++
++- [ ] **Step 3: Implement the transaction cutover**
++
++Require `kitchen.serve` on the current Kitchen principal. Bind idempotency to caller and the canonical pickup session/intent body. In one transaction, load the exact sorted registration set from `pickupSessionId`, lock registrations and relevant delegations in deterministic order, revalidate account status, exact set, session expiry, serving window, menu/registration/delegation state, stored presenter evidence, and duplicate serving constraints. Insert either all serving/audit rows or none. Mark accepted delegation completed only in the same transaction. Set session consumed/expired atomically. Return the original result on exact idempotent retry and an idempotency conflict for a changed key/body.
++
++Do not require Kitchen GPS or Kitchen-to-location match. Preserve owner attribution for proxy pickup and record presenter/receiver separately. Emit realtime events only after commit.
++
++- [ ] **Step 4: Run the GREEN transaction tests**
++
++Run:
++
++```sh
++yarn workspace @imeal/api exec vitest run src/pickup/pickup.service.spec.ts test/pickup.e2e-spec.ts
++yarn workspace @imeal/core exec vitest run test/concurrency.test.ts
++```
++
++Expected: PASS for all-or-nothing behavior, deterministic delegation races, duplicate/concurrent safety, exact idempotency and immutable actor/location/verification history.
++
++- [ ] **Step 5: Commit serving transaction behavior**
++
++```sh
++git add apps/api/src/pickup apps/api/test/pickup.e2e-spec.ts packages/domain/test/concurrency.test.ts packages/domain/prisma/schema.prisma
++ git commit -m "feat(pickup): make serving exact atomic and auditable"
++```
++
++---
+diff --git a/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-8-report.md b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-8-report.md
+new file mode 100644
+index 0000000..c1df129
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-8-report.md
+@@ -0,0 +1,60 @@
++# Task 8 Report — atomic exact-session confirm, delegation races, idempotency, and immutable serving audit
++
++## Status
++
++DONE_WITH_CONCERN — Task 8 implementation and reachable API/static verification are complete. PostgreSQL-backed domain concurrency and pickup HTTP e2e suites are blocked before test discovery because this workspace has no `DATABASE_URL`/`.env.test` PostgreSQL configuration. No live database coverage is claimed.
++
++## Scope implemented
++
++- `PickupService.confirmPickup` now accepts only the exact `ConfirmPickupInput` session/idempotency body and the current `AuthenticatedUser` Kitchen actor. It requires an active actor with current `kitchen.serve` permission and does not accept Kitchen GPS or a client location.
++- Confirmation claims `(callerUserId, idempotencyKey)` inside the transaction with a unique insert and row lock. The canonical session body hash is persisted. An exact successful retry returns the stored result snapshot; a changed body/session returns `IDEMPOTENCY_CONFLICT`.
++- One transaction locks the PickupSession, exact sorted session registration IDs, all relevant delegations sorted by registration/id, and all participant account rows deterministically. It revalidates session expiry/consumption, exact intent arrays/hash/nonce plus QR-hash/verification linkage, meal date, serving window/readiness, current account activity/permission, registration status/date/location, delegation authority, current location/policy, presenter verification freshness/accuracy/retention, and duplicate serving state.
++- The serving-ready setting is only a readiness signal: confirmation always loads the current daily menu/meal day, requires an enabled menu and current revision, and persists the returned `menuRevisionId` on each serving.
++- Accepted delegations are transitioned to `COMPLETED` only inside the same transaction and only for the exact accepted delegation authorizing a `PROXY` receiver. Owner self pickup remains `SELF` without mutating unrelated accepted delegations or recording a delegation ID; delegate pickup remains owner-attributed with `PROXY`, presenter, and delegation snapshots. Revoke/serve transactions use the same registration-first lock order, so one committed delegation winner is authoritative.
++- Every `MealServing`, registration status update, meal event, delegation completion, audit snapshot, idempotency result snapshot, and consumed session update is committed or rolled back together. Serving rows retain owner, presenter/receiver, Kitchen actor/permission context, location snapshots, meal/menu reference, request/session/intent/verification IDs/outcome, delegation ID, and served time. Audit details contain immutable server-resolved snapshots and no raw coordinates or QR payload.
++- Realtime `SERVING_CONFIRMED` is emitted only after the transaction resolves, and not for an idempotent replay.
++- Serving verification rows now retain the signed QR intent nonce; confirmation compares the session QR hash, intent hash, nonce, verification ID, and persisted verification nonce before any serving writes. The migration is additive and stores no QR payload or raw GPS.
++- Added domain concurrency/rollback coverage, restored all pre-existing pickup confirmation tests, and added pickup regressions for exact idempotency, expired sessions, post-commit realtime, SELF delegation isolation, session linkage, menu invariants, menu revision snapshots, and strict-body transport. No mobile Task 9, Admin Task 10, or docs Task 11 production work was added.
++
++## TDD / verification
++
++### RED
++
++- Added the idempotency-conflict regression first and ran it before the implementation. It failed because the prior confirm path returned an empty successful result for a changed body instead of `IDEMPOTENCY_CONFLICT`.
++- The domain concurrency tests were added for the PostgreSQL transaction boundary but could not reach test discovery in this environment because the shared DB setup requires `DATABASE_URL`.
++
++### GREEN / reachable checks
++
++- `corepack yarn workspace @imeal/api exec vitest run src/pickup/pickup.service.spec.ts` — **41 tests passed**.
++- `corepack yarn workspace @imeal/api exec vitest run` — **20 files, 169 tests passed**.
++- `corepack yarn workspace @imeal/api exec tsc --noEmit -p tsconfig.json` — passed.
++- `corepack yarn workspace @imeal/core exec tsc --noEmit -p tsconfig.json` — passed, including `test/concurrency.test.ts`.
++- `corepack yarn typecheck` — passed.
++- `corepack yarn workspace @imeal/api lint` — exited 0; only pre-existing warnings remain in unrelated files.
++- `git diff --cached --check -- ':!.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/review-be5a37c..task8.diff'` — passed; the generated review patch is excluded because diff-format blank-line markers are reported as trailing whitespace.
++
++### Database/e2e limit
++
++- `corepack yarn workspace @imeal/api exec vitest run --config ./vitest.config.e2e.ts test/pickup.e2e-spec.ts` — blocked before tests by `packages/domain/test/setup.ts`: `DATABASE_URL is not set in environment or .env.test`.
++- `corepack yarn workspace @imeal/core exec vitest run test/concurrency.test.ts` — blocked before tests by the same setup error.
++- `corepack yarn workspace @imeal/core exec vitest run` — all four domain suites blocked before test discovery by the same setup error.
++- No live PostgreSQL migration application, row-lock, unique-conflict, delegation-race, rollback, or live HTTP authorization assertion is claimed. Configure a reachable PostgreSQL `DATABASE_URL` (or `packages/domain/.env.test`) and rerun the two commands above before production approval.
++
++## Files changed
++
++- `apps/api/src/pickup/pickup.service.ts`
++- `apps/api/src/pickup/pickup.service.spec.ts`
++- `apps/api/test/pickup.e2e-spec.ts`
++- `packages/domain/test/concurrency.test.ts`
++- `packages/domain/prisma/schema.prisma`
++- `packages/domain/prisma/migrations/20260924150000_bind_serving_verification_nonce/migration.sql`
++- `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-8-brief.md`
++- `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/task-8-report.md`
++- `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/progress.md`
++
++Added one additive `serving_verifications.intent_nonce` schema/migration field to bind the persisted presenter verification to the resolved signed QR nonce. No operational location seed data was added.
++
++## Commit / review package
++
++- Commit: final Task 8 implementation commit on this branch (`HEAD`).
++- Review package: `.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/review-be5a37c..task8.diff`, containing only the Task 8 implementation/tests and Task 8 brief/report/ledger updates relative to approved Task 7 `be5a37c`.
+diff --git a/apps/api/src/pickup/pickup.service.spec.ts b/apps/api/src/pickup/pickup.service.spec.ts
+index ca44486..2f011eb 100644
+--- a/apps/api/src/pickup/pickup.service.spec.ts
++++ b/apps/api/src/pickup/pickup.service.spec.ts
+@@ -1,8 +1,10 @@
+ import { ForbiddenException, NotFoundException } from '@nestjs/common';
+ import { PickupService } from './pickup.service.js';
+ import { vi } from 'vitest';
++import { createHash } from 'node:crypto';
+ import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
+ 
++
+ const mockPrisma = {
+   registration: {
+     findUnique: vi.fn(),
+@@ -304,57 +306,472 @@ describe('PickupService', () => {
+   });
+ 
+   describe('confirmPickup', () => {
++    const kitchenActor = {
++      id: 'kitchen-1',
++      userId: 'kitchen-1',
++      email: 'kitchen@example.test',
++      roles: ['kitchen'],
++      permissions: ['kitchen.serve'],
++      sessionId: 'session-kitchen',
++      isActive: true,
++    };
++    const session = {
++      id: 'session-1',
++      userId: 'presenter-1',
++      presenterUserId: 'presenter-1',
++      mealDate: new Date('2026-09-24T00:00:00.000Z'),
++      registrationIds: ['reg-1'],
++      intentRegistrationIds: ['reg-1'],
++      intentHash: 'qr-hash-1',
++      intentNonce: 'nonce-1',
++      qrHash: 'qr-hash-1',
++      locationId: 'location-1',
++      servingVerificationId: 'qr-hash-1',
++      expiresAt: new Date('2026-09-24T04:00:30.000Z'),
++      consumedAt: null,
++      createdAt: new Date('2026-09-24T03:59:30.000Z'),
++    };
++    const verification = {
++      id: 'qr-hash-1',
++      intentNonce: 'nonce-1',
++      presenterUserId: 'presenter-1',
++      locationId: 'location-1',
++      locationPolicyId: 'policy-1',
++      result: 'VALID',
++      capturedAt: new Date('2026-09-24T03:59:00.000Z'),
++      accuracyMeters: 12,
++      safeVerificationCode: 'GPS_VALID',
++      retentionUntil: new Date('2027-09-24T03:59:00.000Z'),
++    };
++    const location = {
++      id: 'location-1',
++      shortCode: 'HQ',
++      displayName: 'Approved HQ',
++      address: 'Approved address',
++      isActive: true,
++      effectiveFrom: new Date('2026-09-01T00:00:00.000Z'),
++      effectiveTo: null,
++    };
++    const policy = {
++      id: 'policy-1',
++      updatedAt: new Date('2026-09-01T00:00:00.000Z'),
++      maxFixAgeSeconds: 120,
++      maxAccuracyMeters: 50,
++    };
++
++    function makeRegistration(id: string, status = 'ACTIVE') {
++      return {
++        id,
++        status,
++        userId: 'presenter-1',
++        mealDate: new Date('2026-09-24T00:00:00.000Z'),
++        mealChoice: 'REGULAR',
++        serviceLocationId: 'location-1',
++        serviceLocationCode: 'HQ',
++        serviceLocationName: 'Approved HQ',
++        serviceLocationAddress: 'Approved address',
++        serviceLocationEffectiveFrom: new Date('2026-09-01T00:00:00.000Z'),
++        mealServingId: null,
++      };
++    }
++
++    function makeAccount(
++      id: string,
++      hasKitchenServe = false,
++    ) {
++      return {
++        id,
++        email: `${id}@example.test`,
++        name: id,
++        isActive: true,
++        hasKitchenServe,
++      };
++    }
++
++    function makeTransaction(
++      overrides: {
++        session?: typeof session;
++        registrations?: ReturnType<typeof makeRegistration>[];
++        delegations?: Array<{
++          id: string;
++          status: string;
++          registrationId: string;
++          delegateUserId: string;
++        }>;
++        accounts?: ReturnType<typeof makeAccount>[];
++        servingVerification?: typeof verification | null;
++      } = {},
++    ) {
++      const tx = {
++        $queryRaw: vi
++          .fn()
++          .mockResolvedValueOnce([
++            {
++              id: 'request-1',
++              callerUserId: 'kitchen-1',
++              idempotencyKey: 'key-1',
++              status: 'PROCESSING',
++              requestBodyHash: null,
++              intentHash: null,
++              pickupSessionId: 'session-1',
++              resultSnapshot: null,
++            },
++          ])
++          .mockResolvedValueOnce([
++            overrides.session ?? session,
++          ])
++          .mockResolvedValueOnce(
++            overrides.registrations ?? [makeRegistration('reg-1')],
++          )
++          .mockResolvedValueOnce(overrides.delegations ?? [])
++          .mockResolvedValueOnce(
++            overrides.accounts ?? [
++              makeAccount('kitchen-1', true),
++              makeAccount('presenter-1'),
++            ],
++          ),
++        servingVerification: {
++          findUnique: vi
++            .fn()
++            .mockResolvedValue(overrides.servingVerification ?? verification),
++        },
++        location: {
++          findUnique: vi.fn().mockResolvedValue(location),
++        },
++        locationPolicy: {
++          findFirst: vi.fn().mockResolvedValue(policy),
++        },
++        pickupDelegation: {
++          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
++        },
++        mealServing: {
++          create: vi.fn().mockImplementation(async ({ data }) => ({
++            id: `serving-${data.registrationId}`,
++            registrationId: data.registrationId,
++            servedAt: data.servedAt,
++          })),
++        },
++        registration: {
++          update: vi.fn().mockResolvedValue({}),
++        },
++        mealEvent: {
++          create: vi.fn().mockResolvedValue({}),
++        },
++        auditLog: {
++          create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
++        },
++        pickupSession: {
++          update: vi.fn().mockResolvedValue({}),
++        },
++        servingConfirmRequest: {
++          update: vi.fn().mockResolvedValue({}),
++        },
++      };
++      return tx;
++    }
++
+     beforeEach(() => {
++      vi.useFakeTimers();
++      vi.setSystemTime(new Date('2026-09-24T04:00:00.000Z'));
+       vi.spyOn(service, 'checkServingWindow').mockResolvedValue(undefined);
++      vi.spyOn(
++        service as unknown as {
++          assertServingReadyInTransaction: () => Promise<string | null>;
++        },
++        'assertServingReadyInTransaction',
++      ).mockResolvedValue('menu-revision-1');
+     });
+ 
+-    it('returns previously generated servings on idempotency retry', async () => {
+-      mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
+-        id: 'session1',
+-        expiresAt: new Date(Date.now() + 10000),
+-        registrationIds: ['reg1'],
++    it('commits every item or none when one locked registration is stale', async () => {
++      const tx = makeTransaction({
++        session: {
++          ...session,
++          registrationIds: ['reg-1', 'reg-2'],
++          intentRegistrationIds: ['reg-1', 'reg-2'],
++        },
++        registrations: [
++          makeRegistration('reg-1'),
++          makeRegistration('reg-2', 'CANCELLED'),
++        ],
+       });
+-      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce({
+-        status: 'SUCCESS',
++      mockPrisma.$transaction.mockImplementationOnce(async (callback) =>
++        callback(tx as never),
++      );
++
++      await expect(
++        service.confirmPickup(
++          { pickupSessionId: 'session-1', idempotencyKey: 'key-1' },
++          kitchenActor,
++        ),
++      ).rejects.toMatchObject({
++        response: { code: 'PICKUP_INTENT_CONFLICT' },
+       });
+-      mockPrisma.mealServing.findMany.mockResolvedValueOnce([
+-        { id: 'serving1', registrationId: 'reg1', servedAt: new Date() },
+-      ]);
++      expect(tx.mealServing.create).not.toHaveBeenCalled();
++      expect(tx.pickupDelegation.updateMany).not.toHaveBeenCalled();
++    });
++
++    it('returns the original result for the same caller/key/body', async () => {
++      const originalResult = {
++        success: true as const,
++        servedCount: 1,
++        servings: [
++          {
++            id: 'serving-1',
++            registrationId: 'reg-1',
++            servedAt: '2026-09-24T04:00:00.000Z',
++          },
++        ],
++      };
++      const tx = makeTransaction();
++      tx.$queryRaw = vi
++        .fn()
++        .mockResolvedValueOnce([])
++        .mockResolvedValueOnce([
++          {
++            id: 'request-1',
++            callerUserId: 'kitchen-1',
++            idempotencyKey: 'key-1',
++            status: 'SUCCESS',
++            requestBodyHash: createHash('sha256')
++              .update(JSON.stringify({ pickupSessionId: 'session-1' }))
++              .digest('hex'),
++            intentHash: 'intent-hash-1',
++            pickupSessionId: 'session-1',
++            resultSnapshot: originalResult,
++          },
++        ]);
++      mockPrisma.$transaction.mockImplementationOnce(async (callback) =>
++        callback(tx as never),
++      );
++
++      await expect(
++        service.confirmPickup(
++          { pickupSessionId: 'session-1', idempotencyKey: 'key-1' },
++          kitchenActor,
++        ),
++      ).resolves.toEqual(originalResult);
++      expect(tx.mealServing.create).not.toHaveBeenCalled();
++    });
++
++    it('conflicts when a successful key is reused for a changed session body', async () => {
++      const tx = makeTransaction();
++      tx.$queryRaw = vi
++        .fn()
++        .mockResolvedValueOnce([])
++        .mockResolvedValueOnce([
++          {
++            id: 'request-1',
++            callerUserId: 'kitchen-1',
++            idempotencyKey: 'key-1',
++            status: 'SUCCESS',
++            requestBodyHash: 'body-for-session-b',
++            intentHash: 'intent-hash-1',
++            pickupSessionId: 'session-b',
++            resultSnapshot: {
++              success: true,
++              servedCount: 1,
++              servings: [],
++            },
++          },
++        ]);
++      mockPrisma.$transaction.mockImplementationOnce(async (callback) =>
++        callback(tx as never),
++      );
++
++      await expect(
++        service.confirmPickup(
++          { pickupSessionId: 'session-1', idempotencyKey: 'key-1' },
++          kitchenActor,
++        ),
++      ).rejects.toMatchObject({
++        response: { code: 'IDEMPOTENCY_CONFLICT' },
++      });
++    });
++
++    it('records immutable owner, proxy, kitchen, location, intent and verification snapshots', async () => {
++      const tx = makeTransaction({
++        session: {
++          ...session,
++          userId: 'delegate-1',
++          presenterUserId: 'delegate-1',
++          intentHash: 'qr-hash-proxy',
++          qrHash: 'qr-hash-proxy',
++          intentNonce: 'nonce-proxy',
++          servingVerificationId: 'qr-hash-proxy',
++        },
++        registrations: [
++          {
++            ...makeRegistration('reg-1'),
++            userId: 'owner-1',
++          },
++        ],
++        delegations: [
++          {
++            id: 'delegation-1',
++            status: 'ACCEPTED',
++            registrationId: 'reg-1',
++            delegateUserId: 'delegate-1',
++          },
++        ],
++        accounts: [
++          makeAccount('kitchen-1', true),
++          makeAccount('delegate-1'),
++          {
++            ...makeAccount('owner-1'),
++            email: 'owner@example.test',
++            name: 'Owner',
++          },
++        ],
++        servingVerification: {
++          ...verification,
++          id: 'qr-hash-proxy',
++          intentNonce: 'nonce-proxy',
++          presenterUserId: 'delegate-1',
++        },
++      });
++      mockPrisma.$transaction.mockImplementationOnce(async (callback) =>
++        callback(tx as never),
++      );
++
++      const result = await service.confirmPickup(
++        { pickupSessionId: 'session-1', idempotencyKey: 'key-1' },
++        kitchenActor,
++      );
++
++      expect(result).toMatchObject({
++        success: true,
++        servedCount: 1,
++      });
++      expect(tx.mealServing.create).toHaveBeenCalledWith({
++        data: expect.objectContaining({
++          registrationId: 'reg-1',
++          ownerUserId: 'owner-1',
++          ownerEmailSnapshot: 'owner@example.test',
++          ownerNameSnapshot: 'Owner',
++          presenterUserId: 'delegate-1',
++          receiverType: 'PROXY',
++          intentHash: 'qr-hash-proxy',
++          servingVerificationId: 'qr-hash-proxy',
++          menuRevisionId: 'menu-revision-1',
++          pickupSessionId: 'session-1',
++          delegationId: 'delegation-1',
++        }),
++      });
++      expect(tx.auditLog.create).toHaveBeenCalledWith({
++        data: expect.objectContaining({
++          userId: 'kitchen-1',
++          action: 'SERVING_CONFIRMED',
++          details: expect.stringContaining('"receiverType":"PROXY"'),
++        }),
++      });
++      expect(tx.pickupDelegation.updateMany).toHaveBeenCalledWith({
++        where: { id: 'delegation-1', status: 'ACCEPTED' },
++        data: { status: 'COMPLETED' },
++      });
++      expect(tx.pickupSession.update).toHaveBeenCalledWith({
++        where: { id: 'session-1' },
++        data: expect.objectContaining({ consumedAt: expect.any(Date) }),
++      });
++    });
++    it('emits realtime only after the serving transaction resolves', async () => {
++      const tx = makeTransaction();
++      let committed = false;
++      const emitEvent = vi.fn(() => {
++        expect(committed).toBe(true);
++      });
++      const serviceWithEvents = new PickupService({ emitEvent } as never);
++      vi.spyOn(serviceWithEvents, 'checkServingWindow').mockResolvedValue(
++        undefined,
++      );
++      vi.spyOn(
++        serviceWithEvents as unknown as {
++          assertServingReadyInTransaction: () => Promise<null>;
++        },
++        'assertServingReadyInTransaction',
++      ).mockResolvedValue(null);
++      mockPrisma.$transaction.mockImplementationOnce(async (callback) => {
++        const result = await callback(tx as never);
++        committed = true;
++        return result;
++      });
++
++      await serviceWithEvents.confirmPickup(
++        { pickupSessionId: 'session-1', idempotencyKey: 'key-1' },
++        kitchenActor,
++      );
++
++      expect(emitEvent).toHaveBeenCalledWith(
++        expect.objectContaining({
++          eventType: 'SERVING_CONFIRMED',
++          mealDate: '2026-09-24',
++        }),
++      );
++    });
++
++    it('returns previously generated servings on idempotency retry', async () => {
++      const originalResult = {
++        success: true as const,
++        servedCount: 1,
++        servings: [
++          {
++            id: 'serving1',
++            registrationId: 'reg-1',
++            servedAt: '2026-09-24T04:00:00.000Z',
++          },
++        ],
++      };
++      const tx = makeTransaction();
++      tx.$queryRaw = vi
++        .fn()
++        .mockResolvedValueOnce([])
++        .mockResolvedValueOnce([
++          {
++            id: 'request-1',
++            callerUserId: 'kitchen-1',
++            idempotencyKey: 'key-1',
++            status: 'SUCCESS',
++            requestBodyHash: createHash('sha256')
++              .update(JSON.stringify({ pickupSessionId: 'session-1' }))
++              .digest('hex'),
++            intentHash: 'intent-hash-1',
++            pickupSessionId: 'session-1',
++            resultSnapshot: originalResult,
++          },
++        ]);
++      mockPrisma.$transaction.mockImplementationOnce(async (callback) =>
++        callback(tx as never),
++      );
+ 
+       const result = await service.confirmPickup(
+         {
+-          pickupSessionId: 'session1',
+-          idempotencyKey: 'key1',
++          pickupSessionId: 'session-1',
++          idempotencyKey: 'key-1',
+         },
+-        'caller1',
++        kitchenActor,
+       );
+ 
+       expect(result.success).toBe(true);
+       expect(result.servedCount).toBe(1);
+-      expect(result.servings[0].registrationId).toBe('reg1');
++      expect(result.servings[0].registrationId).toBe('reg-1');
++      expect(tx.mealServing.create).not.toHaveBeenCalled();
+     });
+ 
+     it('processes transaction if not idempotently fulfilled', async () => {
+-      mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
+-        id: 'session1',
+-        expiresAt: new Date(Date.now() + 10000),
+-        registrationIds: ['reg1'],
+-      });
+-      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
+-
+-      mockPrisma.$transaction.mockResolvedValueOnce([
+-        { id: 'serving1', registrationId: 'reg1', servedAt: new Date() },
+-      ]);
++      const tx = makeTransaction();
++      mockPrisma.$transaction.mockImplementationOnce(async (callback) =>
++        callback(tx as never),
++      );
+ 
+       const result = await service.confirmPickup(
+         {
+-          pickupSessionId: 'session1',
+-          idempotencyKey: 'key2',
++          pickupSessionId: 'session-1',
++          idempotencyKey: 'key-2',
+         },
+-        'caller2',
++        kitchenActor,
+       );
+ 
+       expect(result.success).toBe(true);
++      expect(result.servedCount).toBe(1);
+       expect(mockPrisma.$transaction).toHaveBeenCalled();
+     });
+ 
+@@ -365,48 +782,57 @@ describe('PickupService', () => {
+       vi.spyOn(serviceWithEvents, 'checkServingWindow').mockResolvedValue(
+         undefined,
+       );
+-
+-      mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
+-        id: 'session1',
+-        expiresAt: new Date(Date.now() + 10000),
+-        registrationIds: ['reg1'],
++      vi.spyOn(
++        serviceWithEvents as unknown as {
++          assertServingReadyInTransaction: () => Promise<null>;
++        },
++        'assertServingReadyInTransaction',
++      ).mockResolvedValue(null);
++      const tx = makeTransaction();
++      let committed = false;
++      mockPrisma.$transaction.mockImplementationOnce(async (callback) => {
++        const result = await callback(tx as never);
++        committed = true;
++        return result;
+       });
+-      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
+-
+-      mockPrisma.$transaction.mockResolvedValueOnce([
+-        { id: 'serving1', registrationId: 'reg1', servedAt: new Date() },
+-      ]);
+ 
+       const result = await serviceWithEvents.confirmPickup(
+         {
+-          pickupSessionId: 'session1',
++          pickupSessionId: 'session-1',
+           idempotencyKey: 'key-events',
+         },
+-        'caller-event',
++        kitchenActor,
+       );
+ 
+       expect(result.success).toBe(true);
++      expect(committed).toBe(true);
+       expect(emitSpy).toHaveBeenCalledTimes(1);
+       expect(emitSpy).toHaveBeenCalledWith(
+         expect.objectContaining({
+           eventType: 'SERVING_CONFIRMED',
++          mealDate: '2026-09-24',
+         }),
+       );
+     });
++
+     it('throws if pickup session is expired', async () => {
+-      mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
+-        id: 'session1',
+-        expiresAt: new Date(Date.now() - 10000), // expired
+-        registrationIds: ['reg1'],
++      const tx = makeTransaction({
++        session: {
++          ...session,
++          expiresAt: new Date('2026-09-24T03:59:00.000Z'),
++        },
+       });
++      mockPrisma.$transaction.mockImplementationOnce(async (callback) =>
++        callback(tx as never),
++      );
+ 
+       await expect(
+         service.confirmPickup(
+           {
+-            pickupSessionId: 'session1',
+-            idempotencyKey: 'key3',
++            pickupSessionId: 'session-1',
++            idempotencyKey: 'key-3',
+           },
+-          'caller3',
++          kitchenActor,
+         ),
+       ).rejects.toMatchObject({
+         response: {
+@@ -414,61 +840,194 @@ describe('PickupService', () => {
+           message: 'Pickup session has expired',
+         },
+       });
++      expect(tx.mealServing.create).not.toHaveBeenCalled();
+     });
+ 
+     it('gracefully handles concurrent idempotency inside transaction', async () => {
+-      mockPrisma.pickupSession.findUnique.mockResolvedValueOnce({
+-        id: 'session1',
+-        expiresAt: new Date(Date.now() + 10000),
+-        registrationIds: ['reg1'],
++      const requestBodyHash = createHash('sha256')
++        .update(JSON.stringify({ pickupSessionId: 'session-1' }))
++        .digest('hex');
++      const tx = makeTransaction();
++      tx.$queryRaw = vi
++        .fn()
++        .mockResolvedValueOnce([])
++        .mockResolvedValueOnce([
++          {
++            id: 'request-1',
++            callerUserId: 'kitchen-1',
++            idempotencyKey: 'key-4',
++            status: 'PROCESSING',
++            requestBodyHash,
++            intentHash: null,
++            pickupSessionId: 'session-1',
++            resultSnapshot: null,
++          },
++        ]);
++      mockPrisma.$transaction.mockImplementationOnce(async (callback) =>
++        callback(tx as never),
++      );
++
++      await expect(
++        service.confirmPickup(
++          {
++            pickupSessionId: 'session-1',
++            idempotencyKey: 'key-4',
++          },
++          kitchenActor,
++        ),
++      ).rejects.toMatchObject({
++        response: {
++          code: 'IDEMPOTENCY_CONFLICT',
++        },
+       });
+-      mockPrisma.servingConfirmRequest.findUnique.mockResolvedValueOnce(null);
++      expect(tx.mealServing.create).not.toHaveBeenCalled();
++    });
+ 
+-      let txCallback:
+-        | ((tx: unknown) => Promise<Array<{ registrationId: string }>>)
+-        | undefined;
+-      mockPrisma.$transaction.mockImplementationOnce(async (cb) => {
+-        txCallback = cb as (
+-          tx: unknown,
+-        ) => Promise<Array<{ registrationId: string }>>;
+-        return [
+-          { id: 'serving1', registrationId: 'reg1', servedAt: new Date() },
+-        ];
++    it('does not complete or audit an unrelated accepted delegation for SELF pickup', async () => {
++      const tx = makeTransaction({
++        delegations: [
++          {
++            id: 'delegation-unrelated',
++            status: 'ACCEPTED',
++            registrationId: 'reg-1',
++            delegateUserId: 'other-delegate',
++          },
++        ],
++        accounts: [
++          makeAccount('kitchen-1', true),
++          makeAccount('presenter-1'),
++          makeAccount('other-delegate'),
++        ],
+       });
++      mockPrisma.$transaction.mockImplementationOnce(async (callback) =>
++        callback(tx as never),
++      );
+ 
+-      await service.confirmPickup(
+-        {
+-          pickupSessionId: 'session1',
+-          idempotencyKey: 'key4',
+-        },
+-        'caller4',
++      const result = await service.confirmPickup(
++        { pickupSessionId: 'session-1', idempotencyKey: 'key-self' },
++        kitchenActor,
++      );
++
++      expect(result).toMatchObject({ success: true, servedCount: 1 });
++      expect(tx.pickupDelegation.updateMany).not.toHaveBeenCalled();
++      expect(tx.mealServing.create).toHaveBeenCalledWith({
++        data: expect.objectContaining({
++          receiverType: 'SELF',
++          delegationId: null,
++        }),
++      });
++      const auditDetails = JSON.parse(
++        tx.auditLog.create.mock.calls[0][0].data.details,
++      ) as { delegationId: string | null };
++      expect(auditDetails.delegationId).toBeNull();
++    });
++
++    it.each([
++      ['intent hash', { intentHash: 'tampered-intent' }],
++      ['QR hash', { qrHash: 'tampered-qr' }],
++      ['verification link', { servingVerificationId: 'tampered-verification' }],
++      ['intent nonce', { intentNonce: 'tampered-nonce' }],
++    ])('rejects a mismatched session %s before serving writes', async (_name, patch) => {
++      const tx = makeTransaction({
++        session: { ...session, ...patch },
++      });
++      mockPrisma.$transaction.mockImplementationOnce(async (callback) =>
++        callback(tx as never),
++      );
++
++      await expect(
++        service.confirmPickup(
++          { pickupSessionId: 'session-1', idempotencyKey: 'key-integrity' },
++          kitchenActor,
++        ),
++      ).rejects.toMatchObject({
++        response: { code: 'PICKUP_INTENT_CONFLICT' },
++      });
++      expect(tx.mealServing.create).not.toHaveBeenCalled();
++      expect(tx.registration.update).not.toHaveBeenCalled();
++      expect(tx.pickupSession.update).not.toHaveBeenCalled();
++    });
++
++
++  });
++  describe('serving menu invariant', () => {
++    const assertServingReady = (
++      tx: unknown,
++      mealDateKey = '2026-09-24',
++    ) => {
++      const privateService = service as unknown as {
++        assertServingReadyInTransaction: (
++          transaction: unknown,
++          dateKey: string,
++          at: Date,
++        ) => Promise<string | null>;
++      };
++      return privateService.assertServingReadyInTransaction(
++        tx,
++        mealDateKey,
++        new Date('2026-09-24T04:00:00.000Z'),
+       );
++    };
+ 
+-      expect(txCallback).toBeDefined();
++    it('does not let a ready signal bypass a disabled current menu', async () => {
++      const tx = {
++        appSetting: {
++          findUnique: vi.fn().mockResolvedValue({ value: 'true' }),
++        },
++        mealDay: {
++          findFirst: vi.fn().mockResolvedValue({
++            isServingReady: false,
++            dailyMenu: {
++              isEnabled: false,
++              revisions: [{ id: 'revision-1' }],
++            },
++          }),
++        },
++      };
+ 
+-      const mockTx = {
++      await expect(assertServingReady(tx)).rejects.toMatchObject({
++        response: { code: 'PICKUP_INTENT_CONFLICT' },
++      });
++      expect(tx.mealDay.findFirst).toHaveBeenCalledTimes(1);
++    });
++
++    it('rejects a ready signal when the current menu or revision is missing', async () => {
++      const tx = {
+         appSetting: {
+           findUnique: vi.fn().mockResolvedValue({ value: 'true' }),
+         },
+-        $queryRaw: vi
+-          .fn()
+-          .mockResolvedValue([{ id: 'reg1', status: 'ACTIVE' }]),
+-        mealServing: {
+-          findMany: vi
+-            .fn()
+-            .mockResolvedValue([{ id: 'serving1', registrationId: 'reg1' }]),
++        mealDay: {
++          findFirst: vi.fn().mockResolvedValue({
++            isServingReady: false,
++            dailyMenu: { isEnabled: true, revisions: [] },
++          }),
+         },
+-        servingConfirmRequest: {
+-          findUnique: vi.fn().mockResolvedValue({ status: 'SUCCESS' }),
++      };
++
++      await expect(assertServingReady(tx)).rejects.toMatchObject({
++        response: { code: 'PICKUP_INTENT_CONFLICT' },
++      });
++      expect(tx.mealDay.findFirst).toHaveBeenCalledTimes(1);
++    });
++
++    it('returns the current menu revision when the ready signal is true', async () => {
++      const tx = {
++        appSetting: {
++          findUnique: vi.fn().mockResolvedValue({ value: 'true' }),
++        },
++        mealDay: {
++          findFirst: vi.fn().mockResolvedValue({
++            isServingReady: false,
++            dailyMenu: {
++              isEnabled: true,
++              revisions: [{ id: 'revision-current' }],
++            },
++          }),
+         },
+       };
+ 
+-      const capturedCallback = txCallback;
+-      if (!capturedCallback) {
+-        throw new Error('Transaction callback was not captured');
+-      }
+-      const result = await capturedCallback(mockTx);
+-      expect(result[0].registrationId).toBe('reg1'); // Graceful return!
++      await expect(assertServingReady(tx)).resolves.toBe('revision-current');
++      expect(tx.mealDay.findFirst).toHaveBeenCalledTimes(1);
+     });
+   });
+   describe('Task 7 exact intent and presenter evidence', () => {
+@@ -918,4 +1477,5 @@ describe('PickupService', () => {
+       });
+     });
+   });
++
+ });
+diff --git a/apps/api/src/pickup/pickup.service.ts b/apps/api/src/pickup/pickup.service.ts
+index 5b65882..c0a9064 100644
+--- a/apps/api/src/pickup/pickup.service.ts
++++ b/apps/api/src/pickup/pickup.service.ts
+@@ -115,14 +115,103 @@ function toMealDateKey(value: Date | string): string {
+ interface LockedRegistration {
+   id: string;
+   status: string;
+-  user_id: string;
++  userId: string;
++  mealDate: Date;
++  mealChoice: string;
++  serviceLocationId: string | null;
++  serviceLocationCode: string | null;
++  serviceLocationName: string | null;
++  serviceLocationAddress: string | null;
++  serviceLocationEffectiveFrom: Date | null;
++  mealServingId: string | null;
+ }
+ 
+ interface LockedDelegation {
+   id: string;
+   status: string;
+-  registration_id: string;
+-  delegate_user_id: string;
++  registrationId: string;
++  delegateUserId: string;
++}
++
++interface LockedAccount {
++  id: string;
++  email: string;
++  name: string | null;
++  isActive: boolean;
++  hasKitchenServe: boolean;
++}
++
++interface LockedPickupSession extends PickupSessionRecord {
++  presenterUserId: string | null;
++  mealDate: Date | null;
++  registrationIds: string[];
++  intentRegistrationIds: string[];
++  intentHash: string | null;
++  intentNonce: string | null;
++  locationId: string | null;
++  servingVerificationId: string | null;
++  consumedAt: Date | null;
++  expiresAt: Date;
++  createdAt: Date;
++}
++
++interface ServingConfirmRequestRow {
++  id: string;
++  callerUserId: string;
++  idempotencyKey: string;
++  status: string;
++  requestBodyHash: string | null;
++  intentHash: string | null;
++  pickupSessionId: string | null;
++  resultSnapshot: unknown;
++}
++
++interface ConfirmServingSummary {
++  id: string;
++  registrationId: string;
++  servedAt: string;
++}
++
++export interface ConfirmPickupResult {
++  success: true;
++  servedCount: number;
++  servings: ConfirmServingSummary[];
++}
++
++function sha256(value: string): string {
++  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
++}
++
++function canonicalConfirmBody(body: v1.ConfirmPickupInput): string {
++  return JSON.stringify({ pickupSessionId: body.pickupSessionId });
++}
++
++function asConfirmResult(value: unknown): ConfirmPickupResult | null {
++  if (!value || typeof value !== 'object') return null;
++  const candidate = value as Partial<ConfirmPickupResult>;
++  const servedCount = candidate.servedCount;
++  if (
++    candidate.success !== true ||
++    typeof servedCount !== 'number' ||
++    !Number.isInteger(servedCount) ||
++    !Array.isArray(candidate.servings)
++  ) {
++    return null;
++  }
++  const servings = candidate.servings.filter(
++    (serving): serving is ConfirmServingSummary =>
++      !!serving &&
++      typeof serving === 'object' &&
++      typeof serving.id === 'string' &&
++      typeof serving.registrationId === 'string' &&
++      typeof serving.servedAt === 'string',
++  );
++  if (servings.length !== candidate.servings.length) return null;
++  return {
++    success: true,
++    servedCount,
++    servings,
++  };
+ }
+ export interface PickupSessionRecord {
+   id: string;
+@@ -401,6 +490,7 @@ export class PickupService {
+ 
+   private persistPresenterVerification(
+     qrHash: string,
++    intentNonce: string,
+     presenterUserId: string,
+     verification: Extract<GpsVerificationResult, { result: 'VALID' }>,
+     at: Date,
+@@ -408,6 +498,7 @@ export class PickupService {
+     return this.prisma.servingVerification.create({
+       data: {
+         id: qrHash,
++        intentNonce,
+         presenterUserId,
+         locationId: verification.locationId,
+         locationPolicyId: verification.locationPolicyId,
+@@ -493,6 +584,7 @@ export class PickupService {
+     const signed = this.generateSignedQr(userId, registrationIds, mealDate, now);
+     await this.persistPresenterVerification(
+       signed.qrHash,
++      signed.nonce,
+       userId,
+       gps,
+       now,
+@@ -799,12 +891,68 @@ export class PickupService {
+       },
+     });
+   }
++  private async assertServingReadyInTransaction(
++    tx: Prisma.TransactionClient,
++    mealDateKey: string,
++    at: Date,
++  ): Promise<string | null> {
++    if (!isWithinServingWindow(at)) {
++      throw new ForbiddenException({
++        code: 'PICKUP_WINDOW_CLOSED',
++        message: PICKUP_WINDOW_CLOSED_MESSAGE,
++        details: PICKUP_AVAILABILITY_DETAILS,
++      });
++    }
++    if (getBusinessDate(at) !== mealDateKey) {
++      throw pickupError(
++        'PICKUP_INTENT_CONFLICT',
++        'Pickup session is not for the current serving date.',
++      );
++    }
++    const kitchenSignal = await tx.appSetting.findUnique({
++      where: { key: `isServingReady:${mealDateKey}` },
++    });
++    const mealDay = await tx.mealDay.findFirst({
++      where: {
++        dailyMenu: { date: parseMealDate(mealDateKey) },
++        mealType: 'LUNCH',
++      },
++      include: {
++        dailyMenu: {
++          include: {
++            revisions: {
++              orderBy: { createdAt: 'desc' },
++              take: 1,
++              select: { id: true },
++            },
++          },
++        },
++      },
++    });
++    const currentMenu = mealDay?.dailyMenu;
++    const menuRevisionId = currentMenu?.revisions?.[0]?.id ?? null;
++    if (!mealDay || !currentMenu || !currentMenu.isEnabled || !menuRevisionId) {
++      throw pickupError(
++        'PICKUP_INTENT_CONFLICT',
++        'The serving menu is no longer available.',
++      );
++    }
++    if (kitchenSignal?.value !== 'true' && !mealDay.isServingReady) {
++      throw new ForbiddenException({
++        code: 'PICKUP_NOT_READY',
++        message: PICKUP_NOT_READY_MESSAGE,
++        details: PICKUP_AVAILABILITY_DETAILS,
++      });
++    }
++    return menuRevisionId;
++  }
++
+ 
+   async confirmPickup(
+     body: v1.ConfirmPickupInput,
+-    caller: AuthenticatedUser | string,
+-  ) {
+-    const unsafeBody = body as v1.ConfirmPickupInput & {
++    kitchenActor: AuthenticatedUser,
++  ): Promise<ConfirmPickupResult> {
++    const unsafeBody = (body ?? {}) as v1.ConfirmPickupInput & {
+       registrationIds?: unknown;
+       pickupSessionToken?: unknown;
+     };
+@@ -817,280 +965,683 @@ export class PickupService {
+         'Confirmation must use the exact resolved pickup session.',
+       );
+     }
+-    const callerUserId = typeof caller === 'string' ? caller : caller.id;
+-    const pickupSessionId = body?.pickupSessionId;
+-    if (!pickupSessionId) {
+-      throw new BadRequestException({
+-        code: 'PICKUP_INTENT_REQUIRED',
+-        message: 'Pickup session ID is required.',
+-      });
+-    }
+-    const session = await this.prisma.pickupSession.findUnique({
+-      where: { id: pickupSessionId },
+-    });
+-    if (!session) {
+-      throw new BadRequestException({
+-        code: 'PICKUP_INTENT_CONFLICT',
+-        message: 'Invalid pickup session.',
+-      });
+-    }
+-    if (session.expiresAt.getTime() < Date.now()) {
+-      throw new BadRequestException({
+-        code: 'PICKUP_SESSION_EXPIRED',
+-        message: 'Pickup session has expired',
+-      });
+-    }
+-    const registrationIds = canonicalRegistrationIds(session.registrationIds);
+-    const idempotencyKey = body.idempotencyKey;
+-
+-    // 1. Check idempotency first (outside transaction, to avoid lock contention if already succeeded)
+-    const existingReq = await this.prisma.servingConfirmRequest.findUnique({
+-      where: {
+-        callerUserId_idempotencyKey: {
+-          callerUserId,
+-          idempotencyKey,
+-        },
+-      },
+-    });
+-
+-    if (existingReq) {
+-      if (existingReq.status === 'SUCCESS') {
+-        const servings = await this.prisma.mealServing.findMany({
+-          where: { registrationId: { in: registrationIds } },
+-        });
+-        const sortedServings = registrationIds
+-          .map((id) => servings.find((s) => s.registrationId === id))
+-          .filter((s): s is NonNullable<typeof s> => !!s);
+-        return {
+-          success: true,
+-          servedCount: sortedServings.length,
+-          servings: sortedServings.map((s) => ({
+-            id: s.id,
+-            registrationId: s.registrationId,
+-            servedAt: s.servedAt,
+-          })),
+-        };
+-      }
+-      throw new BadRequestException(
+-        `Previous request failed with status: ${existingReq.status}`,
++    const parsedBody = v1.ConfirmPickupSchema.safeParse(body);
++    if (!parsedBody.success) {
++      throw pickupError(
++        'PICKUP_INTENT_REQUIRED',
++        'Pickup session and idempotency key are required.',
+       );
+     }
+-
+-    // 2. The session is immutable: confirmation can never submit a subset or expansion.
+-    if (!exactRegistrationSet(registrationIds, session.registrationIds)) {
+-      throw pickupError(
+-        'PICKUP_INTENT_CONFLICT',
+-        'Pickup session intent is invalid.',
++    if (
++      !kitchenActor ||
++      kitchenActor.isActive === false ||
++      !kitchenActor.id ||
++      kitchenActor.id !== kitchenActor.userId ||
++      !kitchenActor.permissions.includes('kitchen.serve')
++    ) {
++      throw pickupForbiddenError(
++        'SESSION_REVOKED',
++        'An active Kitchen serving session is required.',
+       );
+     }
+ 
+-    await this.checkServingWindow();
+-    const confirmationTime = new Date();
+-    const confirmationDate = this.getTodayDate(confirmationTime);
+-    const confirmationDateKey = getBusinessDate(confirmationTime);
+-
+-    // 3. Transaction
+-    try {
+-      const result = await this.prisma.$transaction(
+-        async (tx) => {
+-          const kitchenSignal = await tx.appSetting.findUnique({
+-            where: { key: `isServingReady:${confirmationDateKey}` },
+-          });
+-          const mealDay =
+-            kitchenSignal?.value === 'true'
+-              ? null
+-              : await tx.mealDay.findFirst({
+-                  where: {
+-                    dailyMenu: { date: confirmationDate },
+-                    mealType: 'LUNCH',
+-                  },
+-                });
+-
+-          if (kitchenSignal?.value !== 'true' && !mealDay?.isServingReady) {
+-            throw new Error(
+-              'Meal pickup is not currently available. Kitchen signal is off.',
++    const input = parsedBody.data;
++    const callerUserId = kitchenActor.id;
++    const pickupSessionId = input.pickupSessionId;
++    const idempotencyKey = input.idempotencyKey;
++    const requestBodyHash = sha256(canonicalConfirmBody(input));
++    const requestId = crypto.randomUUID();
++    let confirmationTime: Date;
++
++
++    const transactionResult = await this.prisma.$transaction(
++      async (tx) => {
++        const insertedRequests =
++          (await tx.$queryRaw<ServingConfirmRequestRow[]>`
++            INSERT INTO "serving_confirm_requests"
++              (
++                "id",
++                "caller_user_id",
++                "idempotency_key",
++                "status",
++                "request_body_hash",
++                "pickup_session_id"
++              )
++            VALUES
++              (
++                ${requestId},
++                ${callerUserId},
++                ${idempotencyKey},
++                'PROCESSING',
++                ${requestBodyHash},
++                ${pickupSessionId}
++              )
++            ON CONFLICT ("caller_user_id", "idempotency_key") DO NOTHING
++            RETURNING
++              "id",
++              "caller_user_id" AS "callerUserId",
++              "idempotency_key" AS "idempotencyKey",
++              "status",
++              "request_body_hash" AS "requestBodyHash",
++              "intent_hash" AS "intentHash",
++              "pickup_session_id" AS "pickupSessionId",
++              "result_snapshot" AS "resultSnapshot"
++          `) ?? [];
++        let confirmRequest = insertedRequests[0];
++        let isNewRequest = !!confirmRequest;
++
++        if (!confirmRequest) {
++          const existingRequests =
++            (await tx.$queryRaw<ServingConfirmRequestRow[]>`
++              SELECT
++                "id",
++                "caller_user_id" AS "callerUserId",
++                "idempotency_key" AS "idempotencyKey",
++                "status",
++                "request_body_hash" AS "requestBodyHash",
++                "intent_hash" AS "intentHash",
++                "pickup_session_id" AS "pickupSessionId",
++                "result_snapshot" AS "resultSnapshot"
++              FROM "serving_confirm_requests"
++              WHERE
++                "caller_user_id" = ${callerUserId}
++                AND "idempotency_key" = ${idempotencyKey}
++              FOR UPDATE
++            `) ?? [];
++          confirmRequest = existingRequests[0];
++        }
++
++        if (!confirmRequest) {
++          throw pickupError(
++            'PICKUP_INTENT_CONFLICT',
++            'The confirmation request could not be established.',
++          );
++        }
++        if (
++          !isNewRequest &&
++          (confirmRequest.requestBodyHash !== requestBodyHash ||
++            confirmRequest.pickupSessionId !== pickupSessionId)
++        ) {
++          throw pickupError(
++            'IDEMPOTENCY_CONFLICT',
++            'The idempotency key was already used for a different request.',
++          );
++        }
++        if (!isNewRequest) {
++          if (confirmRequest.status !== 'SUCCESS') {
++            throw pickupError(
++              'IDEMPOTENCY_CONFLICT',
++              'The idempotency key is already being processed.',
+             );
+           }
+-
+-          // Row-level lock Registrations & PickupDelegations
+-          if (registrationIds.length === 0) {
+-            throw new Error('No registration IDs provided');
++          const originalResult = asConfirmResult(confirmRequest.resultSnapshot);
++          if (!originalResult) {
++            throw pickupError(
++              'PICKUP_INTENT_CONFLICT',
++              'The original confirmation result is unavailable.',
++            );
+           }
+-
+-          const regs = await tx.$queryRaw<LockedRegistration[]>`
+-            SELECT id, status, "user_id"
+-            FROM registrations
+-            WHERE id IN (${Prisma.join(registrationIds)})
+-            ORDER BY id
++          return {
++            response: originalResult,
++            isNewRequest: false,
++            mealDate: originalResult.servings[0]?.servedAt.slice(0, 10) ?? '',
++            requestId: confirmRequest.id,
++          };
++        }
++        confirmationTime = new Date();
++
++
++        const lockedSessions =
++          (await tx.$queryRaw<LockedPickupSession[]>`
++            SELECT
++              "id",
++              "user_id" AS "userId",
++              "presenter_user_id" AS "presenterUserId",
++              "meal_date" AS "mealDate",
++              "registration_ids" AS "registrationIds",
++              "intent_registration_ids" AS "intentRegistrationIds",
++              "intent_hash" AS "intentHash",
++              "intent_nonce" AS "intentNonce",
++              "qr_hash" AS "qrHash",
++              "location_id" AS "locationId",
++              "serving_verification_id" AS "servingVerificationId",
++              "expires_at" AS "expiresAt",
++              "consumed_at" AS "consumedAt",
++              "created_at" AS "createdAt"
++            FROM "pickup_sessions"
++            WHERE "id" = ${pickupSessionId}
+             FOR UPDATE
+-          `;
++          `) ?? [];
++        const session = lockedSessions[0];
++        if (!session) {
++          throw pickupError('PICKUP_INTENT_CONFLICT', 'Invalid pickup session.');
++        }
++        if (
++          session.consumedAt ||
++          session.expiresAt.getTime() <= confirmationTime.getTime()
++        ) {
++          throw pickupError(
++            'PICKUP_SESSION_EXPIRED',
++            session.consumedAt
++              ? 'Pickup session has already been consumed.'
++              : 'Pickup session has expired',
++          );
++        }
++        if (
++          !session.presenterUserId ||
++          session.presenterUserId !== session.userId ||
++          !session.mealDate ||
++          !session.intentHash ||
++          !session.intentNonce ||
++          !session.qrHash ||
++          session.intentHash !== session.qrHash ||
++          !session.locationId ||
++          !session.servingVerificationId ||
++          session.servingVerificationId !== session.qrHash
++        ) {
++          throw pickupError(
++            'PICKUP_INTENT_CONFLICT',
++            'Pickup session intent is invalid.',
++          );
++        }
++
++        let registrationIds: string[];
++        let intentRegistrationIds: string[];
++        try {
++          registrationIds = canonicalRegistrationIds(session.registrationIds);
++          intentRegistrationIds = canonicalRegistrationIds(
++            session.intentRegistrationIds,
++          );
++        } catch {
++          throw pickupError(
++            'PICKUP_INTENT_CONFLICT',
++            'Pickup session intent is invalid.',
++          );
++        }
++        if (!exactRegistrationSet(registrationIds, session.registrationIds)) {
++          throw pickupError(
++            'PICKUP_INTENT_CONFLICT',
++            'Pickup session registration order is invalid.',
++          );
++        }
++        if (!exactRegistrationSet(registrationIds, intentRegistrationIds)) {
++          throw pickupError(
++            'PICKUP_INTENT_CONFLICT',
++            'Pickup session intent does not match its registration set.',
++          );
++        }
++        const mealDateKey = toMealDateKey(session.mealDate);
++        const menuRevisionId = await this.assertServingReadyInTransaction(
++          tx,
++          mealDateKey,
++          confirmationTime,
++        );
+ 
+-          if (regs.length !== registrationIds.length) {
+-            throw new Error('Some registrations not found');
++        const registrations =
++          (await tx.$queryRaw<LockedRegistration[]>`
++            SELECT
++              r."id",
++              r."status",
++              r."user_id" AS "userId",
++              r."meal_date" AS "mealDate",
++              r."meal_choice" AS "mealChoice",
++              r."service_location_id" AS "serviceLocationId",
++              r."service_location_code" AS "serviceLocationCode",
++              r."service_location_name" AS "serviceLocationName",
++              r."service_location_address" AS "serviceLocationAddress",
++              r."service_location_effective_from" AS "serviceLocationEffectiveFrom",
++              ms."id" AS "mealServingId"
++            FROM "registrations" r
++            LEFT JOIN "meal_servings" ms
++              ON ms."registration_id" = r."id"
++            WHERE r."id" IN (${Prisma.join(registrationIds)})
++            ORDER BY r."id"
++            FOR UPDATE OF r
++          `) ?? [];
++        if (
++          registrations.length !== registrationIds.length ||
++          !registrationIds.every(
++            (registrationId, index) =>
++              registrations[index]?.id === registrationId,
++          )
++        ) {
++          throw pickupError(
++            'PICKUP_INTENT_CONFLICT',
++            'One or more selected meals are no longer available.',
++          );
++        }
++
++        const delegations =
++          (await tx.$queryRaw<LockedDelegation[]>`
++            SELECT
++              d."id",
++              d."status",
++              d."registration_id" AS "registrationId",
++              d."delegate_user_id" AS "delegateUserId"
++            FROM "pickup_delegations" d
++            WHERE d."registration_id" IN (${Prisma.join(registrationIds)})
++            ORDER BY d."registration_id", d."id"
++            FOR UPDATE OF d
++          `) ?? [];
++        const acceptedByRegistration = new Map<string, LockedDelegation>();
++        for (const delegation of delegations) {
++          if (delegation.status !== 'ACCEPTED') continue;
++          if (acceptedByRegistration.has(delegation.registrationId)) {
++            throw pickupError(
++              'PICKUP_INTENT_CONFLICT',
++              'The selected meal has conflicting accepted delegations.',
++            );
+           }
+-
+-          const delegations = await tx.$queryRaw<LockedDelegation[]>`
+-            SELECT id, status, registration_id, "delegate_user_id"
+-            FROM pickup_delegations
+-            WHERE registration_id IN (${Prisma.join(registrationIds)})
+-            ORDER BY id
++          acceptedByRegistration.set(delegation.registrationId, delegation);
++        }
++
++        const accountIds = [
++          ...new Set([
++            callerUserId,
++            session.userId,
++            session.presenterUserId,
++            ...registrations.map((registration) => registration.userId),
++            ...delegations.map((delegation) => delegation.delegateUserId),
++          ]),
++        ].sort();
++        const accounts =
++          (await tx.$queryRaw<LockedAccount[]>`
++            SELECT
++              u."id",
++              u."email",
++              u."name",
++              u."is_active" AS "isActive",
++              (
++                EXISTS (
++                  SELECT 1
++                  FROM "user_permissions" up
++                  JOIN "permissions" p ON p."id" = up."permission_id"
++                  WHERE up."user_id" = u."id"
++                    AND p."name" = 'kitchen.serve'
++                )
++                OR EXISTS (
++                  SELECT 1
++                  FROM "user_roles" ur
++                  JOIN "roles" r ON r."id" = ur."role_id"
++                  JOIN "role_permissions" rp ON rp."role_id" = r."id"
++                  JOIN "permissions" p ON p."id" = rp."permission_id"
++                  WHERE ur."user_id" = u."id"
++                    AND p."name" = 'kitchen.serve'
++                )
++              ) AS "hasKitchenServe"
++            FROM "users" u
++            WHERE u."id" IN (${Prisma.join(accountIds)})
++            ORDER BY u."id"
+             FOR UPDATE
+-          `;
+-          const acceptedDelegationsByRegistration = new Map(
+-            delegations
+-              .filter((delegation) => delegation.status === 'ACCEPTED')
+-              .map((delegation) => [delegation.registration_id, delegation]),
++          `) ?? [];
++        if (accounts.length !== accountIds.length) {
++          throw pickupError(
++            'PICKUP_INTENT_CONFLICT',
++            'A serving participant is no longer available.',
+           );
+-          const acceptedDelegateIds = [
+-            ...new Set(
+-              delegations
+-                .filter((delegation) => delegation.status === 'ACCEPTED')
+-                .map((delegation) => delegation.delegate_user_id),
+-            ),
+-          ];
+-          const delegateUsers = acceptedDelegateIds.length
+-            ? await tx.user.findMany({
+-                where: { id: { in: acceptedDelegateIds } },
+-                select: { id: true, name: true, email: true },
+-              })
+-            : [];
+-
+-          // Re-validate rules
+-          const existingServings = await tx.mealServing.findMany({
+-            where: { registrationId: { in: registrationIds } },
+-          });
+-
+-          if (existingServings.length > 0) {
+-            // Check if this is a concurrent idempotency success
+-            const req = await tx.servingConfirmRequest.findUnique({
+-              where: {
+-                callerUserId_idempotencyKey: { callerUserId, idempotencyKey },
+-              },
+-            });
+-            if (req && req.status === 'SUCCESS') {
+-              const sortedExisting = registrationIds
+-                .map((id) =>
+-                  existingServings.find((s) => s.registrationId === id),
+-                )
+-                .filter((s): s is NonNullable<typeof s> => !!s);
+-              return sortedExisting;
+-            }
+-            throw new Error('One or more meals have already been served');
++        }
++        const accountById = new Map(accounts.map((account) => [account.id, account]));
++        const kitchenAccount = accountById.get(callerUserId);
++        const presenterAccount = accountById.get(session.presenterUserId);
++        if (
++          !kitchenAccount?.isActive ||
++          !kitchenAccount.hasKitchenServe ||
++          !presenterAccount?.isActive
++        ) {
++          throw pickupForbiddenError(
++            'SESSION_REVOKED',
++            'An active serving participant is required.',
++          );
++        }
++
++        const registrationLocationIds = new Set<string>();
++        for (const registration of registrations) {
++          if (
++            registration.status !== 'ACTIVE' ||
++            registration.mealServingId ||
++            toMealDateKey(registration.mealDate) !== mealDateKey ||
++            !registration.serviceLocationId ||
++            !registration.serviceLocationCode
++          ) {
++            throw pickupError(
++              'PICKUP_INTENT_CONFLICT',
++              'One or more selected meals are no longer eligible for pickup.',
++            );
++          }
++          const owner = accountById.get(registration.userId);
++          if (!owner?.isActive) {
++            throw pickupError(
++              'PICKUP_INTENT_CONFLICT',
++              'One or more meal owners are no longer active.',
++            );
+           }
++          registrationLocationIds.add(registration.serviceLocationId);
++        }
++        if (
++          registrationLocationIds.size !== 1 ||
++          !registrationLocationIds.has(session.locationId)
++        ) {
++          throw pickupError(
++            'PICKUP_INTENT_CONFLICT',
++            'The serving location no longer matches the resolved session.',
++          );
++        }
+ 
+-          for (const r of regs) {
+-            if (r.status !== 'ACTIVE') {
+-              throw new Error(`Registration ${r.id} is not ACTIVE`);
+-            }
++        const verification = await tx.servingVerification.findUnique({
++          where: { id: session.servingVerificationId },
++          select: {
++            id: true,
++            intentNonce: true,
++            presenterUserId: true,
++            locationId: true,
++            locationPolicyId: true,
++            result: true,
++            capturedAt: true,
++            accuracyMeters: true,
++            safeVerificationCode: true,
++            retentionUntil: true,
++          },
++        });
++        const location = await tx.location.findUnique({
++          where: { id: session.locationId },
++          select: {
++            id: true,
++            shortCode: true,
++            displayName: true,
++            address: true,
++            isActive: true,
++            effectiveFrom: true,
++            effectiveTo: true,
++          },
++        });
++        const policy = await tx.locationPolicy.findFirst({
++          where: {
++            locationId: session.locationId,
++            isActive: true,
++            effectiveFrom: { lte: confirmationTime },
++            OR: [
++              { effectiveTo: null },
++              { effectiveTo: { gt: confirmationTime } },
++            ],
++          },
++          orderBy: { effectiveFrom: 'desc' },
++        });
++        if (
++          !verification ||
++          verification.id !== session.qrHash ||
++          verification.intentNonce !== session.intentNonce ||
++          verification.result !== 'VALID' ||
++          verification.presenterUserId !== session.presenterUserId ||
++          verification.locationId !== session.locationId ||
++          !verification.locationPolicyId ||
++          !policy ||
++          verification.locationPolicyId !== policy.id ||
++          !location ||
++          !location.isActive ||
++          location.effectiveFrom > confirmationTime ||
++          (location.effectiveTo && location.effectiveTo <= confirmationTime)
++        ) {
++          throw pickupError(
++            'PICKUP_INTENT_CONFLICT',
++            'Pickup verification no longer matches the selected intent.',
++          );
++        }
++        const capturedAt = safeDate(verification.capturedAt);
++        if (
++          capturedAt.getTime() > confirmationTime.getTime() ||
++          (verification.retentionUntil &&
++            verification.retentionUntil <= confirmationTime) ||
++          verification.accuracyMeters == null ||
++          !Number.isFinite(verification.accuracyMeters) ||
++          verification.accuracyMeters < 0
++        ) {
++          throw pickupForbiddenError(
++            'GPS_RETRY_REQUIRED',
++            'A fresh presenter location is required.',
++            { action: 'REFRESH' },
++          );
++        }
++        if (safeDate(policy.updatedAt).getTime() > capturedAt.getTime()) {
++          throw pickupForbiddenError(
++            'GPS_RETRY_REQUIRED',
++            'A fresh presenter location is required.',
++            { action: 'REFRESH' },
++          );
++        }
++        const evidenceAgeSeconds =
++          (confirmationTime.getTime() - capturedAt.getTime()) / 1000;
++        if (
++          evidenceAgeSeconds > policy.maxFixAgeSeconds ||
++          verification.accuracyMeters > policy.maxAccuracyMeters
++        ) {
++          throw pickupForbiddenError(
++            'GPS_RETRY_REQUIRED',
++            'A fresh presenter location is required.',
++            { action: 'REFRESH' },
++          );
++        }
++
++        const servingPlans = registrations.map((registration) => {
++          const acceptedDelegation = acceptedByRegistration.get(registration.id);
++          const receiverType =
++            registration.userId === session.presenterUserId
++              ? ('SELF' as const)
++              : acceptedDelegation?.delegateUserId === session.presenterUserId
++                ? ('PROXY' as const)
++                : null;
++          if (!receiverType) {
++            throw pickupError(
++              'PICKUP_INTENT_CONFLICT',
++              'The presenter is no longer authorized for every selected meal.',
++            );
+           }
++          return { registration, acceptedDelegation, receiverType };
++        });
+ 
+-          // Insert ServingConfirmRequest
+-          await tx.servingConfirmRequest.create({
++        const delegationsToComplete: LockedDelegation[] = [];
++        for (const plan of servingPlans) {
++          if (plan.receiverType === 'PROXY' && plan.acceptedDelegation) {
++            delegationsToComplete.push(plan.acceptedDelegation);
++          }
++        }
++        delegationsToComplete.sort((left, right) =>
++          left.id.localeCompare(right.id),
++        );
++        for (const delegation of delegationsToComplete) {
++          const changed = await tx.pickupDelegation.updateMany({
++            where: { id: delegation.id, status: 'ACCEPTED' },
++            data: { status: 'COMPLETED' },
++          });
++          if (changed.count !== 1) {
++            throw pickupError(
++              'PICKUP_INTENT_CONFLICT',
++              'A delegation changed before serving could be committed.',
++            );
++          }
++        }
++
++        const servingSummaries: ConfirmServingSummary[] = [];
++        for (const plan of servingPlans) {
++          const owner = accountById.get(plan.registration.userId);
++          if (!owner) {
++            throw pickupError(
++              'PICKUP_INTENT_CONFLICT',
++              'The meal owner is no longer available.',
++            );
++          }
++          const servedAt = confirmationTime.toISOString();
++          const serving = await tx.mealServing.create({
+             data: {
+-              callerUserId,
+-              idempotencyKey,
+-              status: 'SUCCESS',
++              registrationId: plan.registration.id,
++              ownerUserId: owner.id,
++              ownerEmailSnapshot: owner.email,
++              ownerNameSnapshot: owner.name,
++              presenterUserId: session.presenterUserId,
++              receiverType: plan.receiverType,
++              kitchenUserId: callerUserId,
++              kitchenPermissionContext: 'kitchen.serve',
++              scannerDeviceId: null,
++              locationId: location.id,
++              locationShortCode:
++                plan.registration.serviceLocationCode ?? location.shortCode,
++              locationNameSnapshot:
++                plan.registration.serviceLocationName ?? location.displayName,
++              locationAddressSnapshot:
++                plan.registration.serviceLocationAddress ?? location.address,
++              mealDate: parseMealDate(mealDateKey),
++              menuRevisionId,
++              requestId,
++              pickupSessionId,
++              intentHash: session.intentHash,
++              verificationOutcome: verification.safeVerificationCode,
++              servingVerificationId: verification.id,
++              delegationId:
++                plan.receiverType === 'PROXY'
++                  ? plan.acceptedDelegation?.id ?? null
++                  : null,
++              servedAt: confirmationTime,
++            },
++          });
++          await tx.registration.update({
++            where: { id: plan.registration.id },
++            data: { status: 'SERVED' },
++          });
++          await tx.mealEvent.create({
++            data: {
++              mealServingId: serving.id,
++              eventType: 'PICKUP_CONFIRMED',
++            },
++          });
++          await tx.auditLog.create({
++            data: {
++              userId: callerUserId,
++              action: 'SERVING_CONFIRMED',
++              details: JSON.stringify({
++                requestId,
++                registrationId: plan.registration.id,
++                owner: {
++                  id: owner.id,
++                  email: owner.email,
++                  name: owner.name,
++                },
++                presenter: {
++                  id: session.presenterUserId,
++                  email: accountById.get(session.presenterUserId)?.email ?? null,
++                  name: accountById.get(session.presenterUserId)?.name ?? null,
++                },
++                receiverType: plan.receiverType,
++                kitchen: {
++                  id: callerUserId,
++                  email: kitchenAccount.email,
++                  name: kitchenAccount.name,
++                  permissionContext: 'kitchen.serve',
++                },
++                location: {
++                  id: location.id,
++                  shortCode:
++                    plan.registration.serviceLocationCode ??
++                    location.shortCode,
++                  name:
++                    plan.registration.serviceLocationName ??
++                    location.displayName,
++                  address:
++                    plan.registration.serviceLocationAddress ?? location.address,
++                },
++                delegationId:
++                  plan.receiverType === 'PROXY'
++                    ? plan.acceptedDelegation?.id ?? null
++                    : null,
++                pickupSessionId,
++                intentHash: session.intentHash,
++                mealDate: mealDateKey,
++                mealChoice: plan.registration.mealChoice,
++                menuRevisionId,
++                verification: {
++                  id: verification.id,
++                  result: verification.result,
++                  safeVerificationCode: verification.safeVerificationCode,
++                  capturedAt: capturedAt.toISOString(),
++                  accuracyMeters: verification.accuracyMeters,
++                },
++                servedAt,
++              }),
+             },
+           });
+ 
+-          // Update PickupDelegation status (if any were ACCEPTED)
+-          if (delegations.length > 0) {
+-            const acceptedDelegationIds = delegations
+-              .filter((d) => d.status === 'ACCEPTED')
+-              .map((d) => d.id);
+-
+-            if (acceptedDelegationIds.length > 0) {
+-              await tx.pickupDelegation.updateMany({
+-                where: { id: { in: acceptedDelegationIds } },
+-                data: { status: 'COMPLETED' },
+-              });
+-            }
+-          }
+-
+-          // Insert MealServing and MealEvent
+-          const servings = [];
+-          for (const regId of registrationIds) {
+-            const serving = await tx.mealServing.create({
+-              data: {
+-                registrationId: regId,
+-              },
+-            });
+-            servings.push(serving);
+-
+-            await tx.mealEvent.create({
+-              data: {
+-                mealServingId: serving.id,
+-                eventType: 'PICKUP_CONFIRMED',
++          if (
++            this.notificationsService &&
++            plan.receiverType === 'PROXY' &&
++            plan.acceptedDelegation
++          ) {
++            await this.notificationsService.publish(tx, {
++              userId: plan.registration.userId,
++              kind: 'PROXY_PICKUP_COMPLETED',
++              payload: {
++                servingId: serving.id,
++                registrationId: plan.registration.id,
++                mealDate: mealDateKey,
++                delegateName: displayNotificationName(
++                  accountById.get(session.presenterUserId),
++                ),
+               },
++              dedupeKey: `proxy-pickup-completed:${plan.registration.userId}:${serving.id}`,
+             });
+-
+-            const registration = regs.find((item) => item.id === regId);
+-            const acceptedDelegation =
+-              acceptedDelegationsByRegistration.get(regId);
+-            if (
+-              this.notificationsService &&
+-              registration &&
+-              acceptedDelegation &&
+-              session.userId !== registration.user_id &&
+-              acceptedDelegation.delegate_user_id === session.userId
+-            ) {
+-              const delegate = delegateUsers.find(
+-                (user) => user.id === acceptedDelegation.delegate_user_id,
+-              );
+-              await this.notificationsService.publish(tx, {
+-                userId: registration.user_id,
+-                kind: 'PROXY_PICKUP_COMPLETED',
+-                payload: {
+-                  servingId: serving.id,
+-                  registrationId: regId,
+-                  mealDate: confirmationDateKey,
+-                  delegateName: displayNotificationName(delegate),
+-                },
+-                dedupeKey: `proxy-pickup-completed:${registration.user_id}:${serving.id}`,
+-              });
+-            }
+           }
+-
+-          // Close PickupSession (set expiresAt to now)
+-          await tx.pickupSession.update({
+-            where: { id: pickupSessionId },
+-            data: { expiresAt: new Date() },
++          servingSummaries.push({
++            id: serving.id,
++            registrationId: serving.registrationId,
++            servedAt:
++              serving.servedAt instanceof Date
++                ? serving.servedAt.toISOString()
++                : servedAt,
+           });
++        }
+ 
+-          return servings;
+-        },
+-        { isolationLevel: 'ReadCommitted' },
+-      );
+-
+-      // Emit realtime serving event to Kitchen Dashboard
+-      if (this.kitchenEventsService) {
+-        this.kitchenEventsService.emitEvent({
+-          eventType: 'SERVING_CONFIRMED',
+-          mealDate: this.getTodayDate().toISOString().split('T')[0],
+-          payload: {
+-            servedCount: result.length,
+-            servings: result.map((s) => ({
+-              id: s.id,
+-              registrationId: s.registrationId,
+-              servedAt: s.servedAt,
+-            })),
++        const response: ConfirmPickupResult = {
++          success: true,
++          servedCount: servingSummaries.length,
++          servings: servingSummaries,
++        };
++        await tx.pickupSession.update({
++          where: { id: pickupSessionId },
++          data: { consumedAt: confirmationTime, expiresAt: confirmationTime },
++        });
++        await tx.servingConfirmRequest.update({
++          where: { id: confirmRequest.id },
++          data: {
++            status: 'SUCCESS',
++            requestBodyHash,
++            intentHash: session.intentHash,
++            pickupSessionId,
++            resultServingIds: servingSummaries.map((serving) => serving.id),
++            resultSnapshot: response as unknown as Prisma.InputJsonValue,
++            originalResultRequestId: null,
++            completedAt: confirmationTime,
++            conflictCode: null,
+           },
+         });
+-      }
++        isNewRequest = true;
++        return {
++          response,
++          isNewRequest,
++          mealDate: mealDateKey,
++          requestId,
++        };
++      },
++      { isolationLevel: 'ReadCommitted' },
++    );
+ 
+-      return {
+-        success: true,
+-        servedCount: result.length,
+-        servings: result.map((s) => ({
+-          id: s.id,
+-          registrationId: s.registrationId,
+-          servedAt: s.servedAt,
+-        })),
+-      };
+-    } catch (error: unknown) {
+-      throw new BadRequestException(
+-        error instanceof Error ? error.message : 'Transaction failed',
+-      );
++    if (transactionResult.isNewRequest && this.kitchenEventsService) {
++      this.kitchenEventsService.emitEvent({
++        eventType: 'SERVING_CONFIRMED',
++        mealDate: transactionResult.mealDate,
++        requestId: transactionResult.requestId,
++        payload: {
++          servedCount: transactionResult.response.servedCount,
++          servings: transactionResult.response.servings,
++        },
++      });
+     }
++    return transactionResult.response;
+   }
+ }
+diff --git a/apps/api/test/pickup.e2e-spec.ts b/apps/api/test/pickup.e2e-spec.ts
+index c35ccb3..6ded1f7 100644
+--- a/apps/api/test/pickup.e2e-spec.ts
++++ b/apps/api/test/pickup.e2e-spec.ts
+@@ -152,6 +152,20 @@ describe('PickupController (e2e)', () => {
+     );
+   });
+ 
++  it('/internal/api/v1/pickup/confirm rejects client registration aliases and GPS', async () => {
++    const res = await request(app.getHttpServer())
++      .post('/internal/api/v1/pickup/confirm')
++      .send({
++        pickupSessionId: 'sess-123',
++        idempotencyKey: 'idem-1',
++        registrationIds: ['reg-1'],
++        presenterEvidence,
++      });
++
++    expect(res.status).toBe(400);
++    expect(confirmPickup).not.toHaveBeenCalled();
++  });
++
+   it('requires a valid opaque session with the current kitchen permission', async () => {
+     const kitchenUser: AuthenticatedUser = {
+       id: 'kitchen-1',
+diff --git a/packages/domain/prisma/migrations/20260924150000_bind_serving_verification_nonce/migration.sql b/packages/domain/prisma/migrations/20260924150000_bind_serving_verification_nonce/migration.sql
+new file mode 100644
+index 0000000..aa76bbe
+--- /dev/null
++++ b/packages/domain/prisma/migrations/20260924150000_bind_serving_verification_nonce/migration.sql
+@@ -0,0 +1,2 @@
++ALTER TABLE "serving_verifications"
++  ADD COLUMN "intent_nonce" TEXT;
+diff --git a/packages/domain/prisma/schema.prisma b/packages/domain/prisma/schema.prisma
+index a395df3..e09863f 100644
+--- a/packages/domain/prisma/schema.prisma
++++ b/packages/domain/prisma/schema.prisma
+@@ -787,7 +787,8 @@ model ServingVerification {
+   // Database CHECK: VALID evidence requires non-null finite accuracy; failed verification may omit it.
+   accuracyMeters    Float?                    @map("accuracy_meters")
+   safeVerificationCode String                  @map("safe_verification_code")
+-  retentionUntil    DateTime?                 @map("retention_until")
++  intentNonce          String?                 @map("intent_nonce")
++  retentionUntil       DateTime?               @map("retention_until")
+   createdAt         DateTime                  @default(now()) @map("created_at")
+ 
+   presenter       User                   @relation("ServingVerificationPresenter", fields: [presenterUserId], references: [id], onDelete: Cascade)
+diff --git a/packages/domain/test/concurrency.test.ts b/packages/domain/test/concurrency.test.ts
+index 20ad2ea..0fe298d 100644
+--- a/packages/domain/test/concurrency.test.ts
++++ b/packages/domain/test/concurrency.test.ts
+@@ -1,6 +1,8 @@
+ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+ import { RegistrationService } from '../src/RegistrationService';
+ import { prisma } from '../src/db';
++import { randomUUID } from 'node:crypto';
++
+ 
+ describe('Domain Tests: Concurrency', () => {
+   beforeEach(() => {
+@@ -256,4 +258,146 @@ describe('Domain Tests: Concurrency', () => {
+     });
+     expect(servingCount).toBe(1); // Only the manual serve of reg2
+   });
++  it('serializes accepted delegation revoke/serve and commits one winner', async () => {
++    const owner = await prisma.user.create({
++      data: { email: `owner-${randomUUID()}@example.test`, name: 'Owner' },
++    });
++    const delegate = await prisma.user.create({
++      data: {
++        email: `delegate-${randomUUID()}@example.test`,
++        name: 'Delegate',
++      },
++    });
++    const registration = await prisma.registration.create({
++      data: {
++        userId: owner.id,
++        mealDate: new Date('2026-09-24T00:00:00.000Z'),
++        status: 'ACTIVE',
++      },
++    });
++    const delegation = await prisma.pickupDelegation.create({
++      data: {
++        registrationId: registration.id,
++        delegateUserId: delegate.id,
++        status: 'ACCEPTED',
++      },
++    });
++
++    const serve = prisma.$transaction(async (tx) => {
++      await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registration.id} FOR UPDATE`;
++      const current = await tx.pickupDelegation.findUnique({
++        where: { id: delegation.id },
++      });
++      if (current?.status !== 'ACCEPTED') return 'LOST';
++      await tx.pickupDelegation.update({
++        where: { id: delegation.id },
++        data: { status: 'COMPLETED' },
++      });
++      await tx.mealServing.create({
++        data: {
++          registrationId: registration.id,
++          ownerUserId: owner.id,
++          receiverType: 'PROXY',
++          delegationId: delegation.id,
++        },
++      });
++      await tx.registration.update({
++        where: { id: registration.id },
++        data: { status: 'SERVED' },
++      });
++      return 'SERVED';
++    });
++
++    const revoke = prisma.$transaction(async (tx) => {
++      await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registration.id} FOR UPDATE`;
++      const current = await tx.pickupDelegation.findUnique({
++        where: { id: delegation.id },
++      });
++      if (current?.status !== 'ACCEPTED') return 'LOST';
++      await tx.pickupDelegation.update({
++        where: { id: delegation.id },
++        data: { status: 'REVOKED' },
++      });
++      return 'REVOKED';
++    });
++
++    const results = await Promise.all([serve, revoke]);
++    expect(results.filter((result) => result !== 'LOST')).toHaveLength(1);
++
++    const finalDelegation = await prisma.pickupDelegation.findUniqueOrThrow({
++      where: { id: delegation.id },
++    });
++    const finalRegistration = await prisma.registration.findUniqueOrThrow({
++      where: { id: registration.id },
++    });
++    const serving = await prisma.mealServing.findUnique({
++      where: { registrationId: registration.id },
++    });
++
++    if (finalDelegation.status === 'COMPLETED') {
++      expect(finalRegistration.status).toBe('SERVED');
++      expect(serving).toMatchObject({ delegationId: delegation.id });
++    } else {
++      expect(finalDelegation.status).toBe('REVOKED');
++      expect(finalRegistration.status).toBe('ACTIVE');
++      expect(serving).toBeNull();
++    }
++  });
++
++  it('rolls back every serving when a later locked registration is stale', async () => {
++    const owner = await prisma.user.create({
++      data: { email: `batch-${randomUUID()}@example.test` },
++    });
++    const first = await prisma.registration.create({
++      data: {
++        userId: owner.id,
++        mealDate: new Date('2026-09-24T00:00:00.000Z'),
++        status: 'ACTIVE',
++      },
++    });
++    const stale = await prisma.registration.create({
++      data: {
++        userId: owner.id,
++        mealDate: new Date('2026-09-24T00:00:00.000Z'),
++        status: 'CANCELLED',
++      },
++    });
++
++    await expect(
++      prisma.$transaction(async (tx) => {
++        const registrations = await tx.$queryRaw<
++          Array<{ id: string; status: string }>
++        >`
++          SELECT id, status
++          FROM registrations
++          WHERE id IN (${first.id}, ${stale.id})
++          ORDER BY id
++          FOR UPDATE
++        `;
++        for (const registration of registrations) {
++          if (registration.status !== 'ACTIVE') {
++            throw new Error('stale registration');
++          }
++        }
++        await tx.mealServing.create({
++          data: { registrationId: first.id, ownerUserId: owner.id },
++        });
++        await tx.registration.update({
++          where: { id: first.id },
++          data: { status: 'SERVED' },
++        });
++      }),
++    ).rejects.toThrow('stale registration');
++
++    expect(
++      await prisma.mealServing.count({
++        where: { registrationId: { in: [first.id, stale.id] } },
++      }),
++    ).toBe(0);
++    expect(
++      await prisma.registration.findUniqueOrThrow({
++        where: { id: first.id },
++      }),
++    ).toMatchObject({ status: 'ACTIVE' });
++  });
+ });
