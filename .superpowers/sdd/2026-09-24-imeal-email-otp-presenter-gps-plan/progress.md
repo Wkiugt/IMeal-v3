@@ -96,10 +96,11 @@
 - [x] Task 6 review-fix commit `0e87b57` — `feat(admin): add approved locations roster imports and snapshots`; report at `task-6-report.md`; review package input baseline `9ac7a1e`.
 
 - [x] Official Task 7 brief generated/read from plan lines 679–776; artifact: `task-7-brief.md`.
-- [x] RED Task 7 pickup tests observed failing before exact-intent/presenter-evidence implementation; policy-identity revalidation regression also observed RED before the fix.
+- [x] RED Task 7 pickup tests observed failing before exact-intent/presenter-evidence implementation; review regressions for in-place policy updates, QR meal-date drift, and unknown service locations also observed RED before their fixes.
 - [x] Task 7 implemented: strict sorted non-empty intent, five-second/two-second-skew signed QR, presenter-only fresh GPS on every generate, safe verification persistence, strict Kitchen QR-only resolve, server-side registration snapshot/location/policy revalidation, exact replay-safe 30-second session binding, and session-only confirm transport.
-- [x] Focused pickup GREEN: `pickup.service.spec.ts` — 25 tests passed; full API unit suite — 20 files, 153 tests passed.
+- [x] Task 7 review fixes: compare signed QR meal date with current registration context; map unknown locations to `PICKUP_INTENT_CONFLICT`; and reject evidence captured before a newer in-place policy update (`GPS_RETRY_REQUIRED`/`REFRESH`) without storing raw coordinates. Resolve continues to emit `receiverType: SELF` until Task 8 owns self/delegate attribution.
+- [x] Focused pickup GREEN: `pickup.service.spec.ts` — 28 tests passed; full API unit suite — 20 files, 156 tests passed.
 - [x] API TypeScript validation passed; API lint exited 0 with only pre-existing warnings; `git diff --check` passed.
 - [!] Pickup e2e verification is blocked before test discovery because `packages/domain/test/setup.ts` reports `DATABASE_URL is not set in environment or .env.test`; no live DB/e2e claim.
 - [x] Task 7 report: `task-7-report.md`; no Task 8/9/10/11 changes and no operational seed data.
-- [x] Task 7 commit `9fc188e` — `feat(pickup): enforce exact intent and presenter gps at qr generation`; review package: `review-0e87b57..9fc188e.diff`.
+- [x] Task 7 commits `9fc188e` (`feat(pickup): enforce exact intent and presenter gps at qr generation`) and `be5a37c` (`fix(pickup): reject stale location policy evidence`); review package: `review-9fc188e..be5a37c.diff`.
