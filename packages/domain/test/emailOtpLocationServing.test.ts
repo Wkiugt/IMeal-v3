@@ -180,4 +180,34 @@ describe('Task 2 persistence boundaries', () => {
       }),
     ).rejects.toMatchObject({ code: 'P2004' });
   });
+
+  it('keeps serving verification IDs unique', async () => {
+    const user = await createUser('verification-id@example.test');
+    const location = await createLocation('TEST-F');
+    const verificationId = 'verification-id';
+
+    await prisma.servingVerification.create({
+      data: {
+        id: verificationId,
+        presenterUserId: user.id,
+        locationId: location.id,
+        result: 'GPS_UNAVAILABLE',
+        capturedAt: TEST_DATE,
+        safeVerificationCode: 'GPS_UNAVAILABLE',
+      },
+    });
+
+    await expect(
+      prisma.servingVerification.create({
+        data: {
+          id: verificationId,
+          presenterUserId: user.id,
+          locationId: location.id,
+          result: 'GPS_STALE',
+          capturedAt: TEST_DATE,
+          safeVerificationCode: 'GPS_STALE',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'P2002' });
+  });
 });

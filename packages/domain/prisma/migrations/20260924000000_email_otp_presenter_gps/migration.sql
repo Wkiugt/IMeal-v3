@@ -291,6 +291,7 @@ CREATE TABLE "serving_verifications" (
   "retention_until" TIMESTAMP(3),
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
+  CONSTRAINT "serving_verifications_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "serving_verifications_accuracy_check"
     CHECK (
       (
