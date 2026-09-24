@@ -34,6 +34,56 @@ export class RegistrationService {
     return true;
   }
 
+  static buildLocationSnapshot(
+    assignment: {
+      id: string;
+      serviceLocationCode: string;
+      effectiveFrom: Date;
+      location: {
+        id: string;
+        displayName: string;
+        address: string;
+      };
+    },
+    snapshotAt: Date,
+  ) {
+    return {
+      serviceLocationId: assignment.location.id,
+      serviceLocationAssignmentId: assignment.id,
+      serviceLocationCode: assignment.serviceLocationCode,
+      serviceLocationName: assignment.location.displayName,
+      serviceLocationAddress: assignment.location.address,
+      serviceLocationEffectiveFrom: new Date(assignment.effectiveFrom),
+      serviceLocationSnapshotAt: new Date(snapshotAt),
+    };
+  }
+
+  static buildEffectiveAssignmentWhere(
+    userId: string,
+    normalizedEmail: string | undefined,
+    targetDate: Date,
+  ) {
+    return {
+      isActive: true,
+      AND: [
+        {
+          OR: normalizedEmail ? [{ userId }, { normalizedEmail }] : [{ userId }],
+        },
+        { effectiveFrom: { lte: targetDate } },
+        {
+          OR: [{ effectiveTo: null }, { effectiveTo: { gt: targetDate } }],
+        },
+      ],
+      location: {
+        is: {
+          isActive: true,
+          effectiveFrom: { lte: targetDate },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gt: targetDate } }],
+        },
+      },
+    };
+  }
+
   static async registerMeal(
     userId: string,
     targetDate: Date,
@@ -51,18 +101,61 @@ export class RegistrationService {
       throw new Error('Menu is not available for this date.');
     }
 
-    return await prisma.registration.upsert({
-      where: {
-        userId_mealDate: { userId, mealDate: targetDate },
-      },
-      update: {
-        status: 'ACTIVE',
-      },
-      create: {
-        userId,
-        mealDate: targetDate,
-        status: 'ACTIVE',
-      },
+    return prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { email: true },
+      });
+      const normalizedEmail = user?.email
+        .normalize('NFKC')
+        .trim()
+        .toLowerCase();
+      const assignment = await tx.employeeLocationAssignment.findFirst({
+        where: this.buildEffectiveAssignmentWhere(
+          userId,
+          normalizedEmail,
+          targetDate,
+        ),
+        include: { location: true },
+        orderBy: { effectiveFrom: 'desc' },
+      });
+      const existing = await tx.registration.findUnique({
+        where: {
+          userId_mealDate: { userId, mealDate: targetDate },
+        },
+      });
+      const locationSnapshot = assignment
+        ? this.buildLocationSnapshot(assignment, currentTime)
+        : undefined;
+
+      if (existing) {
+        const updateData: {
+          status: 'ACTIVE';
+          serviceLocationId?: string;
+          serviceLocationAssignmentId?: string;
+          serviceLocationCode?: string;
+          serviceLocationName?: string;
+          serviceLocationAddress?: string;
+          serviceLocationEffectiveFrom?: Date;
+          serviceLocationSnapshotAt?: Date;
+        } = { status: 'ACTIVE' };
+        if (!existing.serviceLocationSnapshotAt && locationSnapshot) {
+          Object.assign(updateData, locationSnapshot);
+        }
+        return tx.registration.update({
+          where: { id: existing.id },
+          data: updateData,
+        });
+      }
+
+      return tx.registration.create({
+        data: {
+          userId,
+          mealDate: targetDate,
+          status: 'ACTIVE',
+          ...locationSnapshot,
+        },
+      });
     });
   }
 

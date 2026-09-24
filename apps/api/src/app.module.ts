@@ -9,7 +9,7 @@ import { RegistrationsModule } from './registrations/registrations.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { PickupModule } from './pickup/pickup.module.js';
 import { KitchenModule } from './kitchen/kitchen.module.js';
-
+import { LocationsModule } from './locations/locations.module.js';
 @Module({
   imports: [
     AuthModule,
@@ -20,6 +20,7 @@ import { KitchenModule } from './kitchen/kitchen.module.js';
     NotificationsModule,
     PickupModule,
     KitchenModule,
+    LocationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

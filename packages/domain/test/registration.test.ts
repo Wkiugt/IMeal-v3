@@ -62,6 +62,51 @@ describe('Domain Tests: Registration Rules', () => {
     });
   });
 
+  describe('Service-location snapshots', () => {
+    it('copies the effective assignment and location values without exposing mutable references', () => {
+      const snapshotAt = new Date('2026-09-24T03:00:00.000Z');
+      const assignment = {
+        id: 'assignment-1',
+        serviceLocationCode: 'LOC-A',
+        effectiveFrom: new Date('2026-09-01T00:00:00.000Z'),
+        location: {
+          id: 'location-1',
+          displayName: 'Approved location',
+          address: 'Approved address',
+        },
+      };
+
+      expect(
+        RegistrationService.buildLocationSnapshot(assignment, snapshotAt),
+      ).toEqual({
+        serviceLocationId: 'location-1',
+        serviceLocationAssignmentId: 'assignment-1',
+        serviceLocationCode: 'LOC-A',
+        serviceLocationName: 'Approved location',
+        serviceLocationAddress: 'Approved address',
+        serviceLocationEffectiveFrom: assignment.effectiveFrom,
+        serviceLocationSnapshotAt: snapshotAt,
+      });
+    });
+
+    it('filters assignments to locations effective on the meal date', () => {
+      const mealDate = new Date('2026-09-24T00:00:00.000Z');
+      const where = RegistrationService.buildEffectiveAssignmentWhere(
+        'user-1',
+        'employee@example.test',
+        mealDate,
+      );
+
+      expect(where.location).toEqual({
+        is: {
+          isActive: true,
+          effectiveFrom: { lte: mealDate },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gt: mealDate } }],
+        },
+      });
+    });
+  });
+
   describe('Integration with DB', () => {
     it('Cancel registration atomically revokes active delegation', async () => {
       const user1 = await prisma.user.create({ data: { email: 'u1@ex.com' } });
