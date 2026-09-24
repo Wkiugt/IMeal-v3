@@ -1,374 +1,158 @@
-# Local Role Testing Guide
+# Local role and OTP testing (non-production only)
 
-This guide covers local testing for the `staff`, `kitchen`, and `admin` roles without Microsoft Entra authentication.
+This guide is for automated tests and local development. It is **not** a
+production authentication procedure. Production accepts only allowlist-A email
+OTP and opaque PostgreSQL-backed sessions. There is no supported local
+username/password, Entra/federated, email-domain, employee-code, or client-role
+login path.
 
-## 1. Prerequisites
+## 1. Safety boundary
 
-- Node.js 20+
-- Corepack enabled
-- Docker Desktop running with Linux containers
-- A phone on the same LAN as the development machine for physical mobile testing
+- Never put real secrets, real employee data, real addresses, coordinates or
+  roster assignments in this guide, `.env.example`, fixtures intended for
+  source control, screenshots or test output.
+- Local data must be synthetic and isolated from any production database.
+- The only auth bypass is the test-harness pair below. It is rejected by
+  production startup validation and must never be enabled in a deployed API,
+  worker, mobile build or Admin Web session.
+- The bypass is an automated/controller-test seam, not a user login method. It
+  injects the synthetic principal used by API guard tests; role/permission
+  guards also bypass only while that exact test flag is active.
 
-Install dependencies from the repository root:
+## 2. Prerequisites
 
-```powershell
-corepack yarn install
-```
+- Node.js `>=18`
+- Corepack with Yarn `4.18.0`
+- Docker Desktop with Linux containers for PostgreSQL-backed checks
+- A disposable database/schema for DB or API e2e tests
 
-The local credentials are stored in the ignored root `.env` file. Do not commit `.env` or copy its passwords into documentation.
-
-Configured usernames:
-
-| Role    | Usernames                | Surface              |
-| ------- | ------------------------ | -------------------- |
-| Staff   | `staff01` … `staff05`    | Mobile employee flow |
-| Kitchen | `kitchen01`, `kitchen02` | Mobile kitchen flow  |
-| Admin   | `admin01`                | Admin Web            |
-
-## 2. Start PostgreSQL, PgBouncer, MinIO, and migrations
-
-Start the dependencies and apply Prisma migrations:
-
-```powershell
-docker compose up -d db pgbouncer minio minio-create-bucket migrate
-```
-
-Check service status:
+Install without changing the lockfile:
 
 ```powershell
-docker compose ps
+corepack enable
+corepack prepare yarn@4.18.0 --activate
+yarn install --immutable
 ```
 
-The API local configuration uses:
+For local infrastructure, copy `.env.example` to the ignored `.env`, replace
+placeholders out of band, and start only synthetic/local services:
+
+```powershell
+Copy-Item .env.example .env
+docker compose up --build
+```
+
+The API and worker validate the same OTP/session/provider/GPS/serving contract
+as production. A real local OTP-provider smoke requires a disposable provider
+configuration supplied outside source control; it must not be replaced with a
+local password endpoint.
+
+## 3. Test-harness bypass
+
+Use this only for tests that explicitly need the guard seam:
 
 ```text
-AUTH_MODE=local
-REQUIRE_AUTH=true
+NODE_ENV=test
+AUTH_MODE=otp
+REQUIRE_AUTH=false
 ```
 
-A successful local login lazily upserts the configured user and its role into PostgreSQL. No separate user seed command is required.
+`REQUIRE_AUTH=false` is accepted only when `NODE_ENV=test`. Any other
+combination, especially production, fails closed. Do not copy this block into a
+runtime `.env` used by a long-lived API, worker, mobile app or Admin Web.
 
-## 3. Start the API
-
-Run the API from the repository root:
+Typical scoped commands:
 
 ```powershell
-corepack yarn workspace @imeal/api start:dev
+yarn workspace @imeal/api exec vitest run src/config/environment.spec.ts
+yarn workspace @imeal/api exec vitest run src/auth
+nyarn workspace @imeal/api exec vitest run src/pickup
+nyarn workspace @imeal/api exec vitest run src/admin
 ```
 
-Expected health response:
+Tests that exercise real OTP/session persistence should set `REQUIRE_AUTH=true`,
+provide synthetic allowlist rows and use an out-of-band disposable provider.
+The provider payload may contain only the minimum verification copy and must not
+be printed in test logs.
+
+## 4. Synthetic role smoke matrix
+
+Use test factories or an isolated seeded test schema to create synthetic users
+with server-side assignments. Do not encode roles, employee codes, location
+codes or account state in a token or request body.
+
+| Principal | Expected local assertion |
+| --- | --- |
+| Synthetic Staff | Own registration/history/delegation APIs resolve from server state |
+| Synthetic Kitchen | Resolve/confirm requires `kitchen.serve`; scanner sends QR only and no GPS |
+| Synthetic Staff + Kitchen | Can use both surfaces only when both server assignments exist |
+| Synthetic Admin | Can use explicitly permitted allowlist/location/roster/audit operations; cannot grant `admin` in Admin Web |
+| Disabled synthetic user | Protected request resolves current status and is rejected; active sessions are revoked |
+| Non-allowlisted/disabled email | OTP request response is indistinguishable and creates no session |
+
+The guard bypass is useful for controller/permission tests, but it does not
+prove OTP hashing, session revocation, roster assignment, GPS policy or serving
+transaction behavior. Use focused service and DB suites for those contracts.
+
+## 5. OTP/session checks
+
+Verify the following with synthetic fixtures and a disposable provider/mock at
+the final delivery boundary:
+
+1. Allowlist-A emails receive a generic request response and an outbox record;
+   unknown/disabled addresses receive the same response without an outbox row.
+2. Only an OTP verifier/hash and expiry/attempt metadata are persisted. Clear
+   OTP values never appear in logs or provider operator payloads beyond final
+   delivery.
+3. A valid OTP is single-use and creates only an opaque session token. The
+   database stores its hash, not the token.
+4. Logout, expiry, account disable, compromise, replay and explicit revocation
+   invalidate the session; every request re-resolves current permissions.
+5. Reusing a confirmation idempotency key with the same body returns the stored
+   result; changing the intent/body returns a conflict.
+
+## 6. Presenter GPS and Kitchen checks
+
+- Presenter mobile captures a fresh **foreground** fix only during QR generate or
+  refresh and stops collection on blur, completion, cancellation or unmount.
+- GPS policy is resolved from the server-managed employee location. It cannot
+  select a more permissive location or grant entitlement.
+- Unavailable, denied, stale, inaccurate and outside-geofence results expose
+  only `Retry` and `Refresh`; there is no manual fallback.
+- Owner GPS is not collected for proxy pickup. Kitchen resolve receives only the
+  QR; confirm receives only `pickupSessionId` and `idempotencyKey`.
+- The exact sorted registration set is preserved through QR, resolve and the
+  30-second session. Kitchen cannot add/remove items.
+- Serving is only 10:30–13:30 in `Asia/Ho_Chi_Minh`; multi-item confirmation is
+  all-or-nothing and idempotent; successful serving is final.
+
+Focused checks:
 
 ```powershell
-curl.exe http://localhost:3000/health
+yarn workspace @imeal/contracts test
+yarn workspace @imeal/api exec vitest run src/pickup src/admin
+yarn workspace @imeal/worker exec vitest run src/otp-delivery-worker.service.spec.ts
+yarn workspace @imeal/core test
 ```
 
-Expected status: `200`.
-
-The API reads the root `.env` because the API start scripts load `../../.env`.
-
-## 4. Verify authentication with curl
-
-Use the password for the selected user from `.env`.
-
-### Login
-
-```powershell
-$body = @{ username = "staff01"; password = "<password-from-.env>" } | ConvertTo-Json
-$login = Invoke-RestMethod `
-  -Method Post `
-  -Uri http://localhost:3000/auth/local-login `
-  -ContentType "application/json" `
-  -Body $body
-
-$token = $login.accessToken
-$login.user
-```
-
-Expected profile properties:
-
-```text
-roles contains staff
-permissions is an array
-```
-
-### Read the current profile
-
-```powershell
-Invoke-RestMethod `
-  -Uri http://localhost:3000/auth/me `
-  -Headers @{ Authorization = "Bearer $token" }
-```
-
-### Negative checks
-
-Missing or invalid credentials must return `401`:
-
-```powershell
-$body = @{ username = "staff01"; password = "wrong-password" } | ConvertTo-Json
-Invoke-WebRequest `
-  -Method Post `
-  -Uri http://localhost:3000/auth/local-login `
-  -ContentType "application/json" `
-  -Body $body `
-  -SkipHttpErrorCheck
-```
-
-Calling a protected endpoint without a Bearer token must also return `401`.
-
-## 5. Test the mobile app
-
-Use one of these connectivity modes. Start the API first; it listens on `0.0.0.0:3000`.
-
-### Android Emulator or Android over USB
-
-Install Expo Go SDK 51 from [expo.dev/go](https://expo.dev/go); the current store build may only support the latest SDK. With one ADB target, run:
-
-```powershell
-corepack yarn workspace @imeal/mobile android:local
-```
-
-The script reverses Metro `8081` and API `3000` through ADB, then runs Expo with `--localhost`. Requirements: `adb` on `PATH`, one connected target, and Expo Go SDK 51.
-
-For multiple targets, choose a serial and reverse ports explicitly:
-
-```powershell
-adb devices
-adb -s <serial> reverse tcp:8081 tcp:8081
-adb -s <serial> reverse tcp:3000 tcp:3000
-corepack yarn workspace @imeal/mobile start --localhost
-```
-
-Select the target that was reversed from the Expo terminal. Verify with:
-
-```powershell
-adb -s <serial> reverse --list
-```
-
-The app should load its bundle and call `http://127.0.0.1:3000/api` through the reverse.
-
-### Android phone on the same LAN
-
-Expo SDK 51 on Windows can advertise the wrong Metro URL, `exp://127.0.0.1:8081`, because its older `internal-ip`/`default-gateway` path expects WMIC, which may be missing. The phone cannot fetch Metro and Expo Go shows `Something went wrong`.
-
-Install Expo Go SDK 51 from [expo.dev/go](https://expo.dev/go). Keep `EXPO_PUBLIC_API_URL` empty, ensure the API binds to `0.0.0.0:3000`, allow inbound TCP `3000` and `8081` in Windows Firewall, and run the normal command:
-
-```powershell
-corepack yarn workspace @imeal/mobile start:lan
-```
-
-The root Node launcher used by `start:lan` selects the LAN IPv4 and sets `REACT_NATIVE_PACKAGER_HOSTNAME=<LAN-IP>`, which fixes the advertised host. Expo output must show `exp://<LAN-IP>:8081`, never `exp://127.0.0.1:8081`; stop and rerun if it shows the loopback address.
-
-If the launcher reports multiple candidate IPv4 addresses, list Windows IPv4 addresses and select the address for the active LAN:
-
-```powershell
-Get-NetIPAddress -AddressFamily IPv4 |
-  Where-Object { $_.IPAddress -notlike '127.*' } |
-  Format-Table InterfaceAlias, IPAddress
-$env:IMEAL_LAN_HOST = "<LAN IPv4>"
-corepack yarn workspace @imeal/mobile start:lan
-```
-
-Do not use ngrok or cloudflared for LAN mode.
-
-### Android phone outside the LAN
-
-Remote mode uses two independent user-owned endpoints:
-
-- ngrok v3 for the API on port `3000`; its URL ends with `/api`.
-- A public HTTP/WebSocket proxy for Metro on port `8081`; Cloudflare Quick Tunnel is the documented fallback.
-
-Start a temporary LAN Metro session, create both endpoints, and keep both tunnels alive:
-
-```powershell
-ngrok http 3000
-corepack yarn workspace @imeal/mobile start:lan
-cloudflared tunnel --url http://localhost:8081
-```
-
-Set the resulting origins in the ignored root `.env`:
-
-```dotenv
-EXPO_PUBLIC_API_URL=https://<api-id>.ngrok-free.app/api
-EXPO_PACKAGER_PROXY_URL=https://<metro-id>.trycloudflare.com
-```
-
-Stop the temporary Metro session, then restart it with:
-
-```powershell
-corepack yarn workspace @imeal/mobile start:remote
-```
-
-The API ngrok URL and Metro proxy URL are different endpoints. Restart `start:remote` whenever either URL changes. Cloudflare Quick Tunnel is for Metro only; do not use it for the API because kitchen realtime requires SSE. If `cloudflared` is unavailable, use another user-owned public HTTP/WebSocket reverse proxy to `localhost:8081`.
-
-Never use Expo's built-in tunnel mode or restore its removed tunnel dependency. `Cannot read properties of undefined (reading 'body')` identifies the Expo shared-tunnel failure, not an API ngrok outage.
-
-For web, Android, or iOS targets, use the corresponding Expo command:
-
-```powershell
-corepack yarn workspace @imeal/mobile web
-corepack yarn workspace @imeal/mobile android
-corepack yarn workspace @imeal/mobile ios
-```
-
-Set `EXPO_PUBLIC_API_URL` only for production, remote mode, a reverse proxy, or a non-default API port.
-
-### Staff checklist
-
-For each staff account, use the mobile login form:
-
-1. Login with `staff01` … `staff05`.
-2. Confirm navigation to the employee dashboard.
-3. Open the calendar and registration flow.
-4. Register one meal day.
-5. Reload the screen and confirm the registration remains active.
-6. Logout and login with another staff account.
-7. Confirm the second account does not see the first account's personal data.
-
-### Kitchen checklist
-
-For `kitchen01` and `kitchen02`:
-
-1. Login with the selected kitchen account.
-2. Confirm navigation to the kitchen dashboard.
-3. Open the scanner screen.
-4. Load the dashboard snapshot for today's date.
-5. Toggle the serving-ready signal.
-6. Confirm the signal and dashboard counters update.
-7. Logout and repeat with the second kitchen account.
-
-A kitchen account is not automatically a staff account. If a kitchen user must also register personal meals, the database role assignment must explicitly include `staff` as well.
-
-## 6. Test the Admin Web dashboard
-
-Start the Vite development server:
-
-```powershell
-$env:VITE_API_URL = "http://localhost:3000"
-corepack yarn workspace @imeal/admin-web dev --host 0.0.0.0
-```
-
-Open:
-
-```text
-http://localhost:5173
-```
-
-Use `admin01` and its password from `.env`.
-
-### Admin checklist
-
-1. Confirm the local username/password form is shown.
-2. Login as `admin01`.
-3. Confirm the weekly menu view loads.
-4. Confirm the penalties view is accessible.
-5. Update a menu field and verify the server response.
-6. Resolve or waive a penalty only when test data exists.
-7. Logout and confirm the login form returns.
-8. Refresh after login and confirm the session is restored from `sessionStorage`.
-
-The Admin Web uses API URL `http://localhost:3000` and does not require any `VITE_ENTRA_*` variables in local mode.
-
-## 7. API role smoke matrix
-
-| Check                              | Staff |                          Kitchen |                                Admin |
-| ---------------------------------- | ----: | -------------------------------: | -----------------------------------: |
-| `POST /auth/local-login`           |   Yes |                              Yes |                                  Yes |
-| `GET /auth/me`                     |   Yes |                              Yes |                                  Yes |
-| Employee registration flow         |   Yes | No, unless also assigned `staff` |                                   No |
-| Kitchen dashboard and serving flow |    No |                              Yes | Only with `kitchen.serve` permission |
-
-Serving authorization no longer depends on an internal LAN source IP; a valid bearer token with `kitchen.serve` permission is required.
-
-| Weekly menu administration | No | Yes, according to current migration permissions | Yes |
-| Penalty administration | No | No | Yes |
-
-The source of truth for role permissions is the canonical role/permission migration under `packages/domain/prisma/migrations/`.
-
-## 8. Stop the local stack
-
-Stop containers while preserving volumes:
-
-```powershell
-docker compose stop
-```
-
-Remove containers but preserve database data:
-
-```powershell
-docker compose down
-```
-
-Remove containers and local database/MinIO volumes:
-
-```powershell
-docker compose down -v
-```
-
-Use `down -v` only when intentionally resetting local test data.
-
-## 9. Automated checks
-
-Run the API tests:
-
-```powershell
-corepack yarn workspace @imeal/api test
-```
-
-Run all workspace typechecks:
-
-```powershell
-corepack yarn typecheck
-```
-
-Build API and Admin Web:
-
-```powershell
-corepack yarn workspace @imeal/api build
-corepack yarn workspace @imeal/admin-web build
-```
-
-## 10. Troubleshooting
-
-### Docker engine unavailable
-
-Start Docker Desktop and verify:
-
-```powershell
-docker version
-docker compose ps
-```
-
-### API returns database errors
-
-Run migrations again:
-
-```powershell
-docker compose up -d migrate
-```
-
-Then restart the API.
-
-### Mobile phone cannot reach the API
-
-- Run `corepack yarn workspace @imeal/mobile start:lan`; do not use `start --lan`.
-- Keep `EXPO_PUBLIC_API_URL` empty. The launcher sets `REACT_NATIVE_PACKAGER_HOSTNAME`; Expo output must show `exp://<LAN-IP>:8081`, not `exp://127.0.0.1:8081`.
-- If the launcher reports multiple candidate IPv4 addresses, set `IMEAL_LAN_HOST` to the active LAN IPv4 before rerunning.
-- Confirm the phone and development machine share a LAN, Windows Firewall allows inbound TCP `3000` and `8081`, and the API listens on `0.0.0.0:3000`.
-- Do not use ngrok or cloudflared for LAN mode.
-
-### Login returns `401`
-
-- Confirm `AUTH_MODE=local` in `.env`.
-- Confirm the username exactly matches one entry in `LOCAL_AUTH_USERS`.
-- Confirm the password is copied from `.env`.
-- Restart the API after changing `.env`.
-
-### Entra variables are requested
-
-The API is not in local mode. Set:
-
-```text
-AUTH_MODE=local
-```
-
-Then restart the API, mobile app, and Admin Web dev servers.
+## 7. Client environment names
+
+Mobile reads only:
+
+- `EXPO_PUBLIC_API_URL` for an explicit API origin (ending in `/api` where the
+  app expects it).
+- `EXPO_PACKAGER_PROXY_URL` only for a remote Metro development session.
+- `EXPO_PUBLIC_EAS_PROJECT_ID` for push registration configuration.
+
+Admin Web reads `VITE_API_URL`. Do not put API secrets, OTP/provider keys,
+session secrets, location coordinates or role claims in any client variable.
+
+## 8. Verification limitations
+
+A local unit run does not prove live PostgreSQL, external OTP delivery, native
+Expo permission/GPS behavior, device integrity or organization-approved roster
+configuration. Before production, operators must import and approve exactly
+four real locations plus the roster/allowlist outside source control, exercise
+the provider and worker delivery path, and run the API/worker/domain e2e checks
+against PostgreSQL. Record PostgreSQL/native runtime blockers exactly; do not
+replace them with fabricated data or claim production readiness from this guide.

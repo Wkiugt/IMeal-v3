@@ -123,9 +123,9 @@ export function otpProviderConfiguration(
   const apiKey = env.OTP_PROVIDER_API_KEY?.trim() || null;
   const from = env.OTP_PROVIDER_FROM?.trim() || null;
   if (env.NODE_ENV === 'production') {
-    if (!url || !apiKey || !/^https:\/\//i.test(url)) {
+    if (!url || !apiKey || !from || !/^https:\/\//i.test(url)) {
       throw new Error(
-        'OTP provider configuration requires an HTTPS URL and API key in production',
+        'OTP provider configuration requires an HTTPS URL, API key and sender identity in production',
       );
     }
   }

@@ -16,9 +16,26 @@ function setValidProductionEnvironment() {
   process.env.OTP_DELIVERY_ENCRYPTION_KEY = 'e'.repeat(32);
   process.env.OTP_PROVIDER_URL = 'https://provider.example.test/send';
   process.env.OTP_PROVIDER_API_KEY = 'provider-key';
+  process.env.OTP_PROVIDER_FROM = 'imeal@example.test';
+  process.env.OTP_EXPIRY_SECONDS = '600';
+  process.env.OTP_RESEND_SECONDS = '60';
+  process.env.OTP_ATTEMPT_LIMIT = '5';
+  process.env.OTP_RATE_WINDOW_SECONDS = '3600';
+  process.env.OTP_ADDRESS_RATE_LIMIT = '5';
+  process.env.OTP_CLIENT_RATE_LIMIT = '20';
   process.env.SESSION_HASH_SECRET = 's'.repeat(32);
   process.env.SESSION_IDLE_TIMEOUT_SECONDS = '1800';
   process.env.SESSION_ABSOLUTE_TIMEOUT_SECONDS = '604800';
+  process.env.GPS_DEFAULT_GEOFENCE_RADIUS_METERS = '150';
+  process.env.GPS_DEFAULT_MAX_FIX_AGE_SECONDS = '30';
+  process.env.GPS_DEFAULT_MAX_ACCURACY_METERS = '100';
+  process.env.SERVING_TIME_ZONE = 'Asia/Ho_Chi_Minh';
+  process.env.SERVING_WINDOW_START = '10:30';
+  process.env.SERVING_WINDOW_END = '13:30';
+  process.env.NO_SHOW_PROCESSING_TIME = '13:45';
+  process.env.QR_TTL_SECONDS = '5';
+  process.env.QR_CLOCK_SKEW_SECONDS = '2';
+  process.env.PICKUP_SESSION_TTL_SECONDS = '30';
 }
 
 afterEach(() => {
@@ -34,7 +51,7 @@ describe('API environment validation', () => {
     expect(validateApiEnvironment()).toBeUndefined();
   });
 
-  it('accepts OTP-only production authentication with session settings', () => {
+  it('accepts OTP-only production authentication with operational settings', () => {
     setValidProductionEnvironment();
 
     expect(() => validateApiEnvironment()).not.toThrow();
@@ -68,16 +85,16 @@ describe('API environment validation', () => {
     process.env.REQUIRE_AUTH = 'false';
 
     expect(() => validateApiEnvironment()).toThrow(
-      'REQUIRE_AUTH=false is only allowed in tests',
+      'REQUIRE_AUTH=true is required',
     );
   });
 
   it('rejects missing production security settings', () => {
     process.env.NODE_ENV = 'production';
     process.env.REQUIRE_AUTH = 'true';
+    process.env.AUTH_MODE = 'otp';
     delete process.env.DATABASE_URL;
     delete process.env.QR_SIGNING_SECRET;
-    delete process.env.AUTH_MODE;
 
     expect(() => validateApiEnvironment()).toThrow(
       'DATABASE_URL, QR_SIGNING_SECRET',
@@ -91,10 +108,75 @@ describe('API environment validation', () => {
     expect(() => validateApiEnvironment()).toThrow('OTP_DELIVERY_ENCRYPTION_KEY');
   });
 
+  it('rejects production when the OTP sender identity is missing', () => {
+    setValidProductionEnvironment();
+    delete process.env.OTP_PROVIDER_FROM;
+
+    expect(() => validateApiEnvironment()).toThrow('sender identity');
+  });
+
   it('rejects production when the OTP provider is not configured over HTTPS', () => {
     setValidProductionEnvironment();
     process.env.OTP_PROVIDER_URL = 'http://provider.example.test/send';
 
     expect(() => validateApiEnvironment()).toThrow('OTP provider configuration');
+  });
+
+  it.each([
+    'OTP_EXPIRY_SECONDS',
+    'OTP_RESEND_SECONDS',
+    'OTP_ATTEMPT_LIMIT',
+    'OTP_RATE_WINDOW_SECONDS',
+    'OTP_ADDRESS_RATE_LIMIT',
+    'OTP_CLIENT_RATE_LIMIT',
+  ])('rejects production when %s is missing', (name) => {
+    setValidProductionEnvironment();
+    delete process.env[name];
+
+    expect(() => validateApiEnvironment()).toThrow(name);
+  });
+
+  it.each([
+    'GPS_DEFAULT_GEOFENCE_RADIUS_METERS',
+    'GPS_DEFAULT_MAX_FIX_AGE_SECONDS',
+    'GPS_DEFAULT_MAX_ACCURACY_METERS',
+  ])('rejects production when %s is missing', (name) => {
+    setValidProductionEnvironment();
+    delete process.env[name];
+
+    expect(() => validateApiEnvironment()).toThrow(name);
+  });
+
+  it.each([
+    'SERVING_TIME_ZONE',
+    'SERVING_WINDOW_START',
+    'SERVING_WINDOW_END',
+    'NO_SHOW_PROCESSING_TIME',
+    'QR_TTL_SECONDS',
+    'QR_CLOCK_SKEW_SECONDS',
+    'PICKUP_SESSION_TTL_SECONDS',
+  ])('rejects production when %s is missing', (name) => {
+    setValidProductionEnvironment();
+    delete process.env[name];
+
+    expect(() => validateApiEnvironment()).toThrow(name);
+  });
+
+  it('rejects production when fixed serving timing drifts from the contract', () => {
+    setValidProductionEnvironment();
+    process.env.SERVING_WINDOW_START = '11:00';
+
+    expect(() => validateApiEnvironment()).toThrow(
+      'SERVING_WINDOW_START must be 10:30',
+    );
+  });
+
+  it('rejects an absolute session timeout shorter than the idle timeout', () => {
+    setValidProductionEnvironment();
+    process.env.SESSION_ABSOLUTE_TIMEOUT_SECONDS = '60';
+
+    expect(() => validateApiEnvironment()).toThrow(
+      'SESSION_ABSOLUTE_TIMEOUT_SECONDS must be >= SESSION_IDLE_TIMEOUT_SECONDS',
+    );
   });
 });

@@ -79,14 +79,52 @@ function setting(
   name: string,
   fallback: number,
   minimum: number,
+  required = false,
 ): number {
   const raw = env[name]?.trim();
-  if (!raw) return fallback;
+  if (!raw) {
+    if (required) {
+      throw new Error(`Missing required worker environment variable: ${name}`);
+    }
+    return fallback;
+  }
   const value = Number(raw);
   if (!Number.isInteger(value) || value < minimum) {
     throw new Error(`${name} must be an integer >= ${minimum}`);
   }
   return value;
+}
+
+const WORKER_NUMERIC_SETTINGS = [
+  ['OTP_DELIVERY_BATCH_SIZE', DEFAULT_BATCH_SIZE, 1],
+  ['OTP_DELIVERY_MAX_ATTEMPTS', DEFAULT_MAX_ATTEMPTS, 1],
+  ['OTP_DELIVERY_RETRY_BASE_SECONDS', DEFAULT_RETRY_BASE_SECONDS, 1],
+  ['OTP_DELIVERY_RETRY_MAX_SECONDS', DEFAULT_RETRY_MAX_SECONDS, 1],
+  ['OTP_DELIVERY_CLAIM_TIMEOUT_SECONDS', DEFAULT_CLAIM_TIMEOUT_SECONDS, 1],
+] as const;
+
+const FIXED_OPERATIONAL_SETTINGS = [
+  ['SERVING_TIME_ZONE', 'Asia/Ho_Chi_Minh'],
+  ['SERVING_WINDOW_START', '10:30'],
+  ['SERVING_WINDOW_END', '13:30'],
+  ['NO_SHOW_PROCESSING_TIME', '13:45'],
+  ['QR_TTL_SECONDS', '5'],
+  ['QR_CLOCK_SKEW_SECONDS', '2'],
+  ['PICKUP_SESSION_TTL_SECONDS', '30'],
+] as const;
+
+function requireFixedSetting(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  expected: string,
+): void {
+  const value = env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing required worker environment variable: ${name}`);
+  }
+  if (value !== expected) {
+    throw new Error(`${name} must be ${expected}`);
+  }
 }
 
 function providerCode(error: unknown): string {
@@ -197,9 +235,12 @@ function providerConfig(env: NodeJS.ProcessEnv): WorkerOtpProviderConfig {
   const url = env.OTP_PROVIDER_URL?.trim() || null;
   const apiKey = env.OTP_PROVIDER_API_KEY?.trim() || null;
   const from = env.OTP_PROVIDER_FROM?.trim() || null;
-  if (env.NODE_ENV === 'production' && (!url || !apiKey || !/^https:\/\//i.test(url))) {
+  if (
+    env.NODE_ENV === 'production' &&
+    (!url || !apiKey || !from || !/^https:\/\//i.test(url))
+  ) {
     throw new Error(
-      'OTP provider configuration requires an HTTPS URL and API key in production',
+      'OTP provider configuration requires an HTTPS URL, API key and sender identity in production',
     );
   }
   return { url, apiKey, from };
@@ -210,27 +251,47 @@ export function validateWorkerEnvironment(
 ): void {
   const secret = env.OTP_DELIVERY_ENCRYPTION_KEY?.trim();
   if (!secret) {
-    throw new Error('Missing required worker environment variable: OTP_DELIVERY_ENCRYPTION_KEY');
+    throw new Error(
+      'Missing required worker environment variable: OTP_DELIVERY_ENCRYPTION_KEY',
+    );
   }
   if (secret.length < 32) {
     throw new Error('OTP_DELIVERY_ENCRYPTION_KEY must contain at least 32 characters');
   }
+
+  const isProduction = env.NODE_ENV === 'production';
+  if (isProduction && !env.DATABASE_URL?.trim()) {
+    throw new Error(
+      'Missing required worker environment variable: DATABASE_URL',
+    );
+  }
   providerConfig(env);
-  const retryBaseSeconds = setting(
-    env,
-    'OTP_DELIVERY_RETRY_BASE_SECONDS',
-    DEFAULT_RETRY_BASE_SECONDS,
-    1,
-  );
-  setting(env, 'OTP_DELIVERY_BATCH_SIZE', DEFAULT_BATCH_SIZE, 1);
-  setting(env, 'OTP_DELIVERY_MAX_ATTEMPTS', DEFAULT_MAX_ATTEMPTS, 1);
-  setting(env, 'OTP_DELIVERY_RETRY_MAX_SECONDS', DEFAULT_RETRY_MAX_SECONDS, retryBaseSeconds);
-  setting(
-    env,
-    'OTP_DELIVERY_CLAIM_TIMEOUT_SECONDS',
-    DEFAULT_CLAIM_TIMEOUT_SECONDS,
-    1,
-  );
+
+  let retryBaseSeconds: number | undefined;
+  let retryMaxSeconds: number | undefined;
+  for (const [name, fallback, minimum] of WORKER_NUMERIC_SETTINGS) {
+    const value = setting(env, name, fallback, minimum, isProduction);
+    if (name === 'OTP_DELIVERY_RETRY_BASE_SECONDS') {
+      retryBaseSeconds = value;
+    }
+    if (name === 'OTP_DELIVERY_RETRY_MAX_SECONDS') {
+      retryMaxSeconds = value;
+    }
+  }
+  if (
+    retryBaseSeconds !== undefined &&
+    retryMaxSeconds !== undefined &&
+    retryMaxSeconds < retryBaseSeconds
+  ) {
+    throw new Error(
+      'OTP_DELIVERY_RETRY_MAX_SECONDS must be >= OTP_DELIVERY_RETRY_BASE_SECONDS',
+    );
+  }
+  if (isProduction) {
+    for (const [name, expected] of FIXED_OPERATIONAL_SETTINGS) {
+      requireFixedSetting(env, name, expected);
+    }
+  }
 }
 
 @Injectable()

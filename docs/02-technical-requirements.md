@@ -8,18 +8,40 @@ Tài liệu này định nghĩa kiến trúc kỹ thuật đích cho IMeal v2 sa
 
 ```mermaid
 flowchart LR
-    M[React Native / Expo Mobile] --> EN[Microsoft Entra ID]
-    M -->|HTTPS API| RP[Reverse Proxy]
-    K[Kitchen device] -->|HTTPS API| RP
-    AW[Admin Web] -->|HTTPS| RP
+    M[React Native / Expo Mobile] -->|HTTPS + opaque session| RP[Reverse Proxy]
+    K[Kitchen device] -->|HTTPS + opaque session| RP
+    AW[Admin Web] -->|HTTPS + opaque session| RP
     RP --> API[NestJS API]
     API --> PG[(PostgreSQL)]
+    API --> OTP[OTP provider via outbox]
     API --> PUSH[Push provider]
     API --> IMG[Image/Object storage]
     JOB[Worker / Cron] --> API
     API --> WS[WebSocket/SSE realtime]
     WS --> K
 ```
+
+Production identity bootstrap is email OTP through allowlist A. The API, worker and
+mobile/Admin Web use the environment contract documented in §8.2; no alternate
+federated or local production login path exists.
+
+| Layer               | Technology/decision                                                                |
+| ------------------- | ---------------------------------------------------------------------------------- |
+| Mobile              | React Native + Expo + TypeScript                                                   |
+| Navigation          | Expo Router or equivalent Expo-native routing                                      |
+| Client server-state | TanStack Query                                                                     |
+| Auth                | Allowlist-A email OTP + opaque PostgreSQL-backed sessions                         |
+| Backend             | NestJS (Fastify Adapter) + TypeScript                                              |
+| API validation      | Zod or Nest-compatible schema validation; one canonical contract strategy          |
+| Database            | PostgreSQL + PgBouncer (for high-concurrency connection pooling)                   |
+| ORM/migrations      | Prisma recommended; migration files checked into source                            |
+| Realtime Kitchen    | WebSocket preferred; SSE acceptable for one-way log/count updates                  |
+| Jobs                | Linux worker/cron process; persisted `job_runs`                                    |
+| Reverse proxy       | Caddy or Nginx                                                                     |
+| Packaging           | Docker Compose                                                                     |
+| Admin Web           | Next.js/React recommended, using the same NestJS API                               |
+| Image storage       | File/object storage (MinIO/NAS/Cloudinary-equivalent), DB stores metadata/URL only |
+| Push                | Expo Push default; persisted notification inbox is authoritative                   |
 
 ## 3. Target stack
 
@@ -29,7 +51,7 @@ flowchart LR
 | Navigation          | Expo Router or equivalent Expo-native routing                                      |
 | Client server-state | TanStack Query                                                                     |
 | Local UI state      | Zustand (ultra-fast, lightweight) to avoid React context re-render bloat           |
-| Auth                | Microsoft Entra ID, OAuth2/OIDC Authorization Code + PKCE                          |
+| Auth                | Allowlist-A email OTP + opaque PostgreSQL-backed sessions                         |
 | Backend             | NestJS (Fastify Adapter) + TypeScript                                              |
 | API validation      | Zod or Nest-compatible schema validation; one canonical contract strategy          |
 | Database            | PostgreSQL + PgBouncer (for high-concurrency connection pooling)                   |
@@ -66,37 +88,45 @@ Shared packages may contain API DTO/types and pure domain helpers, but backend r
 
 ## 5. Authentication architecture
 
-### 5.1 Microsoft Entra
+### 5.1 Allowlist-A email OTP
 
-- IMeal is registered in the organization Microsoft Entra tenant.
-- Application access is **single-tenant**.
-- Mobile is a public client: no client secret is embedded in the app.
-- Mobile uses Authorization Code + PKCE.
-- API validates token signature, issuer, audience, tenant and expiry.
-- Canonical user identity: `entra_tenant_id + entra_object_id`.
-- Email/UPN is display/profile data, not immutable authorization identity.
+- Production authentication accepts only an administrator-provisioned, active
+  allowlist-A email for `SESSION_LOGIN`.
+- Unknown, non-allowlisted, disabled and expired-email attempts return the same
+  non-disclosing response; the API never confirms whether an address exists.
+- OTP verifiers are hashed; clear codes are single-use, bounded by expiry/attempt,
+  resend and per-address/client rate limits, and are never logged or persisted.
+- OTP delivery is transactional outbox work. Provider payloads are encrypted until
+  the worker reaches the final delivery boundary and contain only destination,
+  purpose and clear code.
+- Successful verification creates only a high-entropy opaque session token. The
+  database stores its one-way hash, expiry/revocation metadata and minimized
+  hashed device/IP/user-agent metadata.
+- Every protected request resolves current account status, roles and permissions
+  from PostgreSQL. Logout, disable, compromise, replay, explicit revocation and
+  expiry invalidate sessions.
 
-### 5.2 App registrations
+### 5.2 Non-production harness boundary
 
-Preferred topology:
+The only bypass is the explicit test harness combination
+`NODE_ENV=test` and `REQUIRE_AUTH=false`. It injects a synthetic test principal
+for automated/controller tests, is not an end-user login flow, must not share
+production credentials or authorization data, and is rejected by production
+configuration validation. `AUTH_MODE=otp` remains mandatory outside that harness.
 
-- `IMeal Mobile` app registration.
-- `IMeal API` app registration exposing the API scope/audience.
-- Redirect URI(s) configured for Android/iOS mobile callback.
-- Entra administrator supplies Tenant ID, Client ID(s), redirect URI registration and consent/config required by organization policy. **Concrete IEC values are intentionally TBD until the Entra administrator provisions them.**
+### 5.3 Account and roster provisioning
 
-### 5.3 Auto provisioning
+Allowlist records, employee identity, role/permission assignments, account status
+and employee-to-location roster assignments are administrator-managed PostgreSQL
+data. Email domain, display name, client claims, employee code supplied by a
+client, GPS and QR payloads never grant identity, authorization or location.
+Exactly four real locations must be imported and approved outside source control
+before production; this repository contains no fabricated names, coordinates,
+addresses, employees or assignments.
 
-On first successful API-authenticated login:
-
-1. Validate Entra tenant/token.
-2. Find user by tenant/object ID.
-3. If absent, create user with `status=active` and role `staff`.
-4. Update safe profile fields such as display name/email/last login.
-5. Never overwrite IMeal role, employee code or account status from client claims.
-
-`kitchen` is a server-side/manual assignment that Admin Web may manage. `admin` is never grantable from Admin Web; Admin-role lifecycle uses an audited server-side operation bound to explicit Entra identity.
-
+`kitchen` is a server-side assignment independent of `staff`; `admin` is not
+grantable through Admin Web. Account disable previews and atomically cancels
+future commitments, revokes active delegations, and revokes sessions.
 ## 6. Authorization
 
 - RBAC data stored in PostgreSQL.
@@ -107,7 +137,12 @@ On first successful API-authenticated login:
 - `admin`: user/account + `staff`/`kitchen` role management, penalty/audit/jobs; Admin-role lifecycle is outside Admin Web.
 - Sensitive capabilities are explicit permissions: at minimum `penalty.read`, `penalty.resolve`.
 - `admin` does not imply Kitchen serving permission; callers need the exact role/permission required by each operation.
-- Admin Web may manage `staff`/`kitchen` assignments but cannot grant or revoke `admin`. First/future Admin-role lifecycle is handled outside Admin Web by an audited server-side operation bound to explicit Entra tenant/object ID.
+- Admin Web may manage `staff`/`kitchen` assignments but cannot grant or revoke
+  `admin`; any Admin-role lifecycle remains a separately audited server-side
+  operation. Account disable is one atomic workflow: preview future commitments,
+  require confirmation, cancel/revoke them, persist audit and revoke sessions.
+- API/worker provider calls use outbound HTTPS with secrets injected at runtime;
+  clients never call a federated identity service as part of this contract.
 - Account disable is one atomic Admin workflow: preview all unserved registrations/delegations from the current business date onward, require explicit confirmation, set account disabled, cancel those registrations with `account_disabled`, revoke active delegations and persist audit/notifications. These cancellations never enter preparation totals, no-show or penalty processing.
 
 ## 7. Network topology
@@ -131,8 +166,8 @@ The API remains reachable through its configured HTTPS entry point, while authen
 Requirements:
 
 - PostgreSQL port 5432: not publicly exposed and preferably not exposed to general LAN.
-- API server → Microsoft Entra endpoints: outbound HTTPS allowed.
-- Mobile → Microsoft Entra: Internet access required for login/token renewal.
+- API/worker provider calls use outbound HTTPS with secrets injected at runtime;
+  clients never call a federated identity service as part of this contract.
 - Kitchen menu management and Admin Web always require their explicit server-side role/permission checks.
 - Pickup resolve/confirm always require an active authenticated Kitchen principal with `kitchen.serve` permission plus QR, pickup-session, serving-window, and database eligibility validation.
 
@@ -144,6 +179,10 @@ Canonical v2 endpoint semantics:
 
 | Method     | Path                                        | Role/permission         | Purpose                                                                                                                                             |
 | ---------- | ------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST       | `/auth/otp/request`                       | public                 | Non-disclosing allowlist-A OTP request; response never contains the code                                                                      |
+| POST       | `/auth/otp/verify`                        | public                 | Atomically consume OTP and return opaque session token + expiry + safe user profile                                                            |
+| POST       | `/auth/logout`                            | signed-in              | Revoke the current opaque session                                                                                                              |
+| GET        | `/auth/me`                                | signed-in              | Resolve current account status/roles/permissions from PostgreSQL                                                                                |
 | GET        | `/v1/me`                                    | signed-in              | Profile/roles/account state                                                                                                                         |
 | GET        | `/v1/menu/weeks/:weekStart`                 | signed-in              | Published menu + registration state                                                                                                                 |
 | PUT        | `/v1/me/registrations/week`                 | staff                  | Batch tick/untick weekly registrations                                                                                                              |
@@ -184,7 +223,38 @@ Exact path spelling may change only with the shared API contract. Mobile, Admin 
 - List APIs use cursor pagination with a bounded server maximum; no unbounded Admin export endpoint.
 - Realtime events carry `{ eventId, eventType, mealDate, occurredAt, requestId, payload }`; clients deduplicate by `eventId` and re-fetch snapshot after reconnect.
 
-### 8.2 Staff notification contract
+### 8.2 Runtime environment contract
+
+Production startup is fail-closed. API validation requires `DATABASE_URL`,
+`AUTH_MODE=otp`, `REQUIRE_AUTH=true`, `QR_SIGNING_SECRET`, `OTP_HASH_SECRET`,
+`OTP_DELIVERY_ENCRYPTION_KEY`, `OTP_PROVIDER_URL` (HTTPS),
+`OTP_PROVIDER_API_KEY`, all OTP expiry/resend/attempt/rate-limit settings,
+`SESSION_HASH_SECRET`, `SESSION_IDLE_TIMEOUT_SECONDS` and
+`SESSION_ABSOLUTE_TIMEOUT_SECONDS`.
+
+The same API validation requires positive GPS policy bounds:
+`GPS_DEFAULT_GEOFENCE_RADIUS_METERS`, `GPS_DEFAULT_MAX_FIX_AGE_SECONDS` and
+`GPS_DEFAULT_MAX_ACCURACY_METERS`. These are policy defaults/guards only; the
+four real location records and their coordinates/policies are imported through
+authorized operations, not seeded from this repository.
+
+The serving contract is fixed and validated at startup:
+`SERVING_TIME_ZONE=Asia/Ho_Chi_Minh`, `SERVING_WINDOW_START=10:30`,
+`SERVING_WINDOW_END=13:30`, `NO_SHOW_PROCESSING_TIME=13:45`,
+`QR_TTL_SECONDS=5`, `QR_CLOCK_SKEW_SECONDS=2` and
+`PICKUP_SESSION_TTL_SECONDS=30`.
+
+Worker startup additionally requires `DATABASE_URL`, the encrypted OTP delivery
+key, HTTPS provider settings and every `OTP_DELIVERY_*` batch/retry/claim setting.
+It validates the same serving invariants. Test-only defaults are available to
+unit tests, never to production.
+
+Mobile uses only `EXPO_PUBLIC_API_URL` (plus the optional
+`EXPO_PACKAGER_PROXY_URL` for remote Metro sessions); Admin Web uses `VITE_API_URL`.
+Neither client receives secrets, provider keys, GPS policy coordinates or
+authorization claims.
+
+### 8.3 Staff notification contract
 
 The notification contract is structured and owner-scoped. Each persisted item is:
 
@@ -252,7 +322,7 @@ Publishers render and persist both Vietnamese and English copy at write time. Da
 contains QR, auth, or session data. `remindersEnabled` defaults to `true` and is one shared
 opt-out for both scheduled reminders; transactional event notifications remain enabled.
 
-### 8.3 Notification persistence and delivery
+### 8.4 Notification persistence and delivery
 
 API producers and worker producers insert/upsert the `notifications` row and a
 `NOTIFICATION_CREATED` `outbox_events` row in the same PostgreSQL transaction. Notification
@@ -275,7 +345,7 @@ permanent failures. Network errors, HTTP 429/5xx, and `MessageRateExceeded` retr
 processing after five minutes. Sanitize provider errors and log only notification/delivery
 IDs, attempt, provider code, and sanitized error; never log token or copy body.
 
-### 8.4 Permission and navigation requirements
+### 8.5 Permission and navigation requirements
 
 On the first authenticated native session, mobile shows a one-time contextual explainer.
 Only `Enable` calls the OS permission prompt; `Not now` marks it seen. A denied permission
@@ -299,38 +369,67 @@ to Delegation. No-show, legacy, and other readable items remain available in the
 - Registration mutation is allowed only when one server clock snapshot is strictly earlier than 14:00 on the preceding day; exactly 14:00 is locked.
 - Cancel atomically revokes `pending|accepted` delegation for that registration, writes audit/events and creates persisted notifications.
 
-## 10. Dynamic QR and pickup session
+## 10. Dynamic QR, presenter GPS and pickup session
 
 ### 10.1 QR requirements
 
-Suggested logical payload:
+The server signs an exact sorted, unique, non-empty pickup intent:
 
 ```text
-imeal:v2:{userId}:{mealDate}:{pickupIntent}:{exp}:{nonce}:{sig}
+imeal:v2:{presenterUserId}:{mealDate}:{registrationIds}:{exp}:{nonce}:{sig}
 ```
 
-`pickupIntent` is a compact signed representation/reference of registration IDs the presenter selected on mobile. It is not an authorization grant; current DB state always wins.
+The intent is not an entitlement. Current PostgreSQL state always wins.
 
-- HMAC or asymmetric server signature.
-- TTL: 5 seconds.
-- Allowed clock skew: at most 2 seconds.
-- Server rejects wrong meal date, invalid signature, expired/future-abnormal expiry.
-- If only one eligible pickup item exists, mobile selects it by default; if multiple exist, Staff chooses intended items before presenting QR.
-- QR should refresh automatically before/at expiry without losing the current pickup intent.
+- TTL is exactly 5 seconds; accepted clock skew is at most 2 seconds.
+- The server rejects a wrong meal date, invalid signature, malformed ordering,
+  expired/future-abnormal expiry, stale/ineligible registration or changed
+  presenter/delegation state without substituting another item.
+- If one eligible item exists, mobile auto-selects it. With multiple items,
+  presenter mobile requires explicit selection, sorts IDs, and preserves that
+  exact set through QR, resolve and confirm.
+- Refresh reissues the same selected intent only after a new presenter fix.
+  Selection, focus, eligibility, delegation or GPS-state changes clear the QR.
 
-### 10.2 Why scan and confirm are separate
+### 10.2 Presenter-only foreground GPS
 
-The QR may expire while Kitchen reads the resolved user and hands over the meal. Therefore:
+Before each QR generation/refresh, the presenter requests a fresh foreground
+Expo location fix and sends `capturedAt`, latitude, longitude and accuracy. The
+server resolves the employee's fixed roster location and evaluates the imported
+location policy for freshness, accuracy and geofence. Client coordinates never
+select a different site or grant serving entitlement.
 
-1. Mobile loads `/me/pickup-options`; one eligible item is selected automatically, while multiple items are chosen by Staff.
-2. Mobile calls `POST /me/qr` with the selected registration IDs; server validates that set and issues/refreshes the signed 5s QR.
-3. `/pickup/resolve` validates the 5s QR and revalidates every registration in the signed pickup intent.
-4. Server returns a signed `pickupSession` with TTL 30 seconds containing presenter identity and validated intended pickup items.
-5. Kitchen checks the displayed names/count and confirms the Staff-selected set; Kitchen never re-selects items.
-6. `/pickup/confirm` re-checks registrations/delegations/current serving state in DB and commits.
+GPS is collected only while the presenter pickup flow is focused and actively
+generating/refreshing. Collection stops on blur, cancellation, completion or
+unmount. Owner GPS is not collected merely because a delegation exists.
+Kitchen resolve and confirm send no GPS.
 
-`pickupSession` is not sufficient to bypass current DB validation. Resolve and confirm are allowed only during 10:30–13:30 of the meal date.
+Unavailable, denied, stale, inaccurate and outside-geofence results expose only
+safe `Retry` or `Refresh` recovery. There is no manual bypass, silent fallback,
+automatic site substitution or alternate item set.
 
+### 10.3 Why scan and confirm are separate
+
+The QR may expire while Kitchen reviews the exact set:
+
+1. Mobile loads `/me/pickup-options`; one eligible item is selected
+   automatically, while multiple items require explicit presenter selection.
+2. Mobile calls `POST /me/qr` with sorted selected registration IDs and fresh
+   presenter evidence; the server validates location/evidence and issues the
+   signed 5-second QR.
+3. Kitchen calls resolve with only the raw QR and an authenticated Kitchen
+   session. The API validates QR and revalidates every registration in the
+   exact intent.
+4. Server creates a resolved pickup session lasting exactly 30 seconds with
+   presenter identity, immutable exact registration set and verification context.
+5. Kitchen reviews presenter/names/count and confirms; Kitchen cannot add, remove
+   or replace registrations.
+6. Kitchen confirms with only `pickupSessionId` and an idempotency key. The API
+   rechecks account/delegation/registration/location/GPS/window state in the
+   all-or-nothing transaction.
+
+`pickupSession` never bypasses current DB validation. Resolve and confirm are
+allowed only during 10:30–13:30 of the meal date, and Kitchen has no GPS path.
 ## 11. Serving concurrency and idempotency
 
 Core serving algorithm:
@@ -339,6 +438,7 @@ Core serving algorithm:
 BEGIN
   resolve selected registration(s)
   SELECT registration/delegation rows FOR UPDATE
+  verify exact pickup intent/session and presenter verification context
   verify still eligible
   verify no existing serving
   insert final serving
@@ -358,7 +458,6 @@ Required protections:
 - If revoke races with proxy serving, transaction order determines exactly one valid outcome.
 - Multi-item confirm is all-or-nothing: any invalid selected registration rolls back the entire batch and returns `PICKUP_STATE_CHANGED` with safe per-item conflict details.
 - Successful serving confirmation is final. Kitchen confirms only after checking the Staff-selected set and sufficient trays; any immediate tray shortage is completed physically without rewriting serving history.
-- Employee-code recovery uses the same resolve/confirm transaction, requires reason and is rate-limited/audited; item selection is allowed here because this is a recovery path.
 
 ## 12. Realtime Kitchen dashboard
 
@@ -449,18 +548,28 @@ Do not add Kubernetes, Kafka or Redis solely for the baseline 200–300 users.
 - Before production rollout: PostgreSQL backup/checkpoint and tested restore.
 - Rollback covers compatible application/API version rollback, backward-compatible schema strategy and PostgreSQL restore; it never rolls data back to Firebase.
 
-## 18. Security requirements
+## 18. Security and privacy requirements
 
-- HTTPS everywhere.
-- No Microsoft client secret in mobile binary.
-- Rate limit/auth abuse protection for public APIs.
-- Serving endpoints protected by token + explicit permission + DB invariants.
-- Disabled account is rejected after authoritative server-side status lookup on every protected API.
-- Log no access/refresh tokens, QR secrets or full sensitive token payload.
-- Audit role changes, delegation lifecycle, serving and penalty resolution.
-- Input schema validation on all mutations.
-- Secrets injected through environment/secret manager, never repository.
-
+- HTTPS everywhere; secrets are injected through an environment/secret manager,
+  never committed to the repository or shipped to mobile/Admin Web.
+- Production accepts only allowlist-A email OTP and opaque server sessions.
+  `REQUIRE_AUTH=false` is rejected outside the test harness.
+- Rate limit/auth abuse protection covers OTP request/verify and public APIs.
+- OTP clear codes, session secrets, QR payloads, provider payloads and raw
+  coordinates are not logged; retained verification evidence is minimized,
+  access-controlled and audited.
+- Serving endpoints require an active opaque session, explicit permission and
+  all server-side QR/session/window/registration/delegation invariants.
+- Only the presenter device supplies foreground GPS during QR generation/refresh.
+  GPS does not grant entitlement or replace authorization; Kitchen sends no GPS.
+- Disabled accounts are rejected after authoritative server-side status lookup on
+  every protected API. Roles, status, employee code and location are never client
+  claims.
+- Exactly four real location records and administrator roster assignments are
+  imported/approved outside source control before production. No fabricated
+  names, addresses, coordinates, employees or assignments are permitted.
+- Input schema validation applies to every mutation; all-or-nothing serving and
+  request idempotency prevent partial or duplicate handover.
 ## 19. Performance/NFR
 
 Baseline scale: 200–300 users, <= ~1,500 weekday registration choices/week and hundreds of serving events/day.
@@ -487,5 +596,8 @@ Production **must** provide centralized server logging, health monitoring and al
 
 - Firebase Auth/Firestore/Vercel Cron/Cloud Functions contain demo-pitching data only and are deleted/decommissioned at the **start of re-development**.
 - Legacy Firebase data is not retained for v2: do not export, map, transform, reconcile, dual-write or import it.
-- Dev, staging and production v2 start with fresh PostgreSQL datasets and Entra auto-provisioned users.
+- Dev, staging and production v2 start with fresh PostgreSQL datasets. Before
+  production, administrators import/approve exactly four real locations and the
+  employee allowlist/roster through audited operations; source control contains
+  no fabricated operational records.
 - All rollback/recovery is within the v2 application/PostgreSQL stack; there is no Firebase rollback path.

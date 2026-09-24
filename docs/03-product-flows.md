@@ -42,36 +42,45 @@ Jobs / Health
 ```mermaid
 sequenceDiagram
     actor U as User
-    participant M as Mobile
-    participant E as Microsoft Entra
+    participant M as Mobile/Admin Web
     participant API as NestJS API
     participant DB as PostgreSQL
+    participant W as OTP worker/provider
 
-    U->>M: Mở app
-    M->>E: Authorization Code + PKCE
-    E-->>M: Token
-    M->>API: Authenticated request
-    API->>API: Verify issuer/audience/tenant/token
-    API->>DB: Find user by tenant + object ID
-    alt First login
-        API->>DB: Create active user + staff role
-    else Existing
-        API->>DB: Refresh safe profile + lastLogin
-    end
-    DB-->>API: User + roles + status
-    API-->>M: Session profile
+    U->>M: Mở app/web
+    M->>API: POST /auth/otp/request { email, purpose: SESSION_LOGIN }
+    API->>DB: Resolve allowlist-A email without enumeration
+    API->>DB: Store OTP verifier/expiry and encrypted outbox payload when eligible
+    API-->>M: Same accepted response for every address
+    W->>DB: Claim due OTP outbox row
+    W-->>U: Minimum verification email
+    U->>M: Enter code
+    M->>API: POST /auth/otp/verify
+    API->>DB: Atomically consume challenge and resolve current account
+    API-->>M: Opaque session token + expiry + safe user profile
+    M->>API: Protected request with opaque session
+    API->>DB: Re-resolve status, roles and permissions
 ```
+
+OTP request never reveals whether an address is unknown, disabled or not
+allowlisted. Clear OTP values are never shown in logs, responses or persisted
+records. A successful verification creates only a server-backed opaque session;
+logout, expiry, disable or revocation invalidates it.
 
 ### Outcomes
 
-| Condition                                      | Outcome                                            |
-| ---------------------------------------------- | -------------------------------------------------- |
-| Valid company Entra account, first login       | Auto-provision `staff`, open app                   |
-| Valid existing active user                     | Load latest roles and open app                     |
-| User disabled in IMeal                         | `ACCOUNT_DISABLED` screen                          |
-| Wrong tenant/token                             | Access denied                                      |
-| Entra login succeeds but IMeal API unreachable | Show server/network recovery, not “wrong password” |
+| Condition | Outcome |
+| --- | --- |
+| Active allowlist-A email and valid OTP | Create opaque session, load current permissions and open app |
+| Unknown, disabled, expired or non-allowlisted email | Same generic accepted/request or invalid-code response; no session |
+| Wrong/expired/replayed code | `OTP_INVALID_OR_EXPIRED`; no session |
+| Disabled account after a prior session | `ACCOUNT_DISABLED`/session invalid; protected actions blocked |
+| API/worker/provider unavailable | Safe server/network recovery; no alternate login path |
 
+The only authentication bypass is `NODE_ENV=test` with `REQUIRE_AUTH=false` for
+automated harness/controller tests. It is non-production, not a user login flow,
+must not use production credentials or data, and is rejected by production
+startup validation.
 ## 3. Staff Home
 
 Home summarizes current and next actions rather than duplicating all screens.
@@ -196,20 +205,22 @@ Cutoff boundary is strict: request snapshot `< 14:00` is editable; exactly `14:0
 
 ## 5. Staff QR flow
 
-### 5.1 Open QR
+### 5.1 Open and refresh QR
 
 Preconditions:
 
-- Today has active registration OR user has accepted delegation(s) eligible today.
-- User account active.
+- Today has an active registration or accepted delegation eligible today.
+- The presenter account/session is active and current permissions allow pickup.
+- Employee-to-location assignment and an effective imported location policy exist.
 
 Flow:
 
 ```mermaid
 sequenceDiagram
-    actor S as Staff
+    actor S as Presenter
     participant M as Mobile
     participant API as API
+    participant GPS as Expo foreground GPS
 
     S->>M: Mở mã nhận suất
     M->>API: GET /me/pickup-options
@@ -217,41 +228,42 @@ sequenceDiagram
     alt Exactly one eligible item
         M->>M: Auto-select item
     else Multiple eligible items
-        S->>M: Chọn các suất sẽ lấy
+        S->>M: Chọn exact set các suất sẽ lấy
     end
-    M->>API: POST /me/qr + selected registration IDs
+    M->>GPS: Request fresh foreground presenter fix
+    GPS-->>M: capturedAt + coordinates + accuracy
+    M->>API: POST /me/qr { sorted IDs, presenterEvidence }
     API-->>M: Signed QR + 5s expiry
-    loop while screen active
-        M->>API: POST /me/qr refresh same pickup intent
+    loop while focused and refreshing
+        M->>GPS: Capture a new foreground fix
+        M->>API: POST /me/qr with same exact intent + new evidence
         API-->>M: New signed QR + 5s expiry
     end
 ```
 
-Before showing the QR, mobile builds a **pickup intent**:
+Before showing the QR, mobile builds a **sorted, unique, non-empty exact pickup
+intent**:
 
-- If B has exactly one eligible item, it is selected automatically; no extra tap is required.
-- If B has multiple eligible items (own meal + accepted delegations), B selects the meals B intends to take **on B's phone**, not on the Kitchen scanner.
+- One eligible item is selected automatically; no extra tap is required.
+- Multiple eligible items require explicit selection on the presenter phone, not
+  on the Kitchen scanner.
+- Selection, focus, eligibility, delegation or GPS verification changes clear
+  the QR. Refresh preserves the exact set only after a fresh presenter fix.
 
-Example:
+The server resolves the presenter's fixed roster location and evaluates
+freshness, accuracy and geofence policy. Presenter coordinates cannot select a
+different site or grant entitlement. Owner GPS is never collected merely because
+the presenter is receiving a delegated item.
 
-```text
-Mã nhận suất
-Nguyễn Văn B · NV105
+If GPS is unavailable, denied, stale, inaccurate or outside the geofence, the
+screen exposes only **Retry** and **Refresh**. There is no manual bypass, silent
+fallback, automatic site substitution or alternate item set. Collection stops
+when the screen loses focus, QR generation completes/cancels, or the screen
+unmounts.
 
-Bạn sẽ nhận hôm nay:
-☑ Suất của bạn
-☑ Nhận hộ Nguyễn Văn A
-☐ Nhận hộ Nguyễn Văn C
-
-[ QR NHẬN 2 SUẤT ]
-
-Tự làm mới mỗi 5 giây
-```
-
-The refreshed QR preserves the current pickup intent. The intent is signed/short-lived but never overrides current DB eligibility. If network fails, keep clear expired state and retry; never present an expired QR as valid.
-
-QR validation allows at most 2 seconds clock skew. QR availability and serving are restricted to the 10:30–13:30 serving window.
-
+The refreshed QR preserves the exact intent. QR TTL is exactly 5 seconds and
+accepted clock skew is at most 2 seconds. QR availability and serving remain
+restricted to the 10:30–13:30 `Asia/Ho_Chi_Minh` serving window.
 ## 6. Delegation / nhận hộ flow
 
 ### 6.1 A requests B
@@ -466,13 +478,17 @@ sequenceDiagram
     participant API as API
     participant DB as PostgreSQL
 
-    K->>SC: Scan QR của B
-    SC->>API: /pickup/resolve raw QR + signed pickup intent
-    API->>API: Verify Kitchen role + permission + QR signature + 5s expiry
-    API->>DB: Revalidate every registration in B's pickup intent
-    DB-->>API: Validated intended pickup items
-    API-->>SC: 30s pickup session + intended items
+    K->>SC: Scan QR của presenter
+    SC->>API: /pickup/resolve { qr } + authenticated Kitchen session
+    API->>API: Verify Kitchen permission + QR signature + 5s expiry/skew
+    API->>DB: Revalidate presenter, exact intent, registrations, delegation, location/GPS context
+    DB-->>API: Validated immutable exact pickup set
+    API-->>SC: 30s pickup session + intended items + safe verification status
 ```
+
+Kitchen sends only the raw QR to resolve and never sends GPS/evidence. A valid
+resolve binds the exact sorted registration set, presenter, effective location,
+GPS verification result and nonce to a pickup session lasting exactly 30 seconds.
 
 ### Normal case: one meal
 
@@ -487,7 +503,7 @@ Cơm gà
 
 ### Proxy/multi-item case
 
-B already selected B + A on B's phone before presenting the QR:
+B selected the exact B + A set on B's phone before presenting the QR:
 
 ```text
 Nguyễn Văn B · NV105
@@ -499,10 +515,10 @@ Nguyễn Văn B · NV105
 [ XÁC NHẬN GIAO 2 SUẤT ]
 ```
 
-**Happy path:** Kitchen does not tick each item. Kitchen verifies presenter/names/count against the trays being handed over and presses one large confirm action.
-
-Kitchen cannot add/remove items. If the employee changes intent, they update the selection on mobile and present a refreshed QR before resolve/confirm.
-
+**Happy path:** Kitchen verifies presenter/names/count against the trays being
+handed over and presses one confirm action. Kitchen cannot tick, add, remove or
+replace items. If intent changes, the presenter updates mobile selection and
+shows a refreshed QR before resolve.
 ## 10. Kitchen serving confirmation
 
 ```mermaid
@@ -513,44 +529,47 @@ sequenceDiagram
     participant DB as PostgreSQL
     participant RT as Realtime
 
-    K->>UI: Confirm resolved pickup intent (or exception-edited set)
-    UI->>API: pickupSession + registration IDs + idempotency key
-    API->>DB: BEGIN + lock rows
-    API->>DB: Revalidate all selected items, account status, 30s session and 10:30–13:30 window
-    API->>DB: Insert meal_servings + meal_events
-    API->>DB: Mark proxy delegation consumed
+    K->>UI: Confirm resolved exact pickup intent
+    UI->>API: { pickupSessionId, idempotencyKey }
+    API->>DB: BEGIN + deterministic locks
+    API->>DB: Revalidate exact set, actor/account/delegation, location/GPS context, 30s session and serving window
+    API->>DB: Insert immutable meal_servings + meal_events, consume proxy delegation
     API->>DB: COMMIT
-    API->>RT: Publish serving events
-    API-->>UI: Confirmed servings
+    API->>RT: Publish serving events after commit
+    API-->>UI: Confirmed all-or-nothing result
 ```
 
-Confirmation is all-or-nothing. If any selected item changed after resolve, DB rolls back the whole batch and UI keeps context but disables handover until re-resolve.
+Confirm accepts only the resolved `pickupSessionId` and an idempotency key.
+Kitchen sends no registration IDs, coordinates or GPS. The API loads the exact
+session set and revalidates every item, current account/permission state,
+delegation acceptance, registration/location snapshot, presenter verification,
+30-second session and 10:30–13:30 `Asia/Ho_Chi_Minh` window.
+
+Confirmation is all-or-nothing and idempotent. If any item is stale/ineligible,
+the entire batch commits zero servings and returns a safe conflict; Kitchen must
+resolve again. The same caller/key/body returns the original result, while key
+reuse with another body/intent returns `IDEMPOTENCY_CONFLICT`.
 
 ### Outcomes
 
-| Outcome                               | Kitchen UI                                                        |
-| ------------------------------------- | ----------------------------------------------------------------- |
-| Self serving success                  | Green success with owner/name/time                                |
-| Proxy success                         | Green success: “B đã nhận hộ A”                                   |
-| Already served                        | Warning with existing receiver/time                               |
-| Delegation revoked                    | Error/re-resolve; do not serve                                    |
-| QR expired at resolve                 | Ask user show refreshed QR                                        |
-| Pickup session expired before confirm | Re-scan/re-resolve                                                |
-| Any selected item changed             | `PICKUP_STATE_CHANGED`; no item committed; re-resolve whole batch |
-| Outside 10:30–13:30                   | Disable serving and show canonical service window                 |
-| Account disabled after resolve        | No serving; refresh authoritative account/pickup state            |
-| Network/database failure              | No success display; allow safe retry with same idempotency key    |
+| Outcome | Kitchen UI |
+| --- | --- |
+| Self serving success | Green success with owner/name/time |
+| Proxy success | Green success: “B đã nhận hộ A” |
+| Already served/delegation revoked | Conflict; do not serve; resolve again |
+| QR expired at resolve | Ask presenter to show refreshed QR |
+| Pickup session expired before confirm | Re-scan/re-resolve |
+| Any selected item changed | `PICKUP_STATE_CHANGED`; no item committed |
+| GPS verification invalid | Safe Retry/Refresh status; Kitchen cannot bypass |
+| Outside 10:30–13:30 | Disable serving and show canonical service window |
+| Account disabled after resolve | No serving; refresh authoritative state |
+| Network/database failure | No success display; retry same idempotency key |
+## 11. Recovery boundaries
 
-## 11. Manual employee-code recovery
-
-Kitchen can search employee code/name when QR/camera unavailable.
-
-- This is a recovery path, not a bypass.
-- Backend resolves the same eligible pickup items.
-- Because the Staff pickup-intent QR is unavailable, Kitchen may select the actual recovery items here and then confirm.
-- Event stores source=`EMPLOYEE_CODE` or equivalent.
-- Kitchen must enter/select a recovery reason; endpoint is rate-limited and fully audited.
-
+There is no employee-code, username/password, local-login or manual location
+bypass in production. If QR/GPS verification fails, the presenter receives only
+the approved Retry/Refresh recovery. If the exact intent becomes stale, the
+presenter must select/refresh again; Kitchen cannot substitute an item.
 ## 12. Kitchen lists and realtime log
 
 ### Chưa nhận
@@ -609,9 +628,17 @@ Delegation status does not replace serving: accepted but unused delegation can s
 ### Users / Staff-Kitchen Roles
 
 - Search user.
-- Show Entra/profile identity and IMeal roles.
+- Show normalized allowlist email/profile identity, current account status and
+  server-resolved IMeal roles/permissions.
 - Manage `staff`/`kitchen` role assignments with actor audit; **Admin Web cannot grant or revoke `admin`**.
 - Disable/enable IMeal account.
+- Manage only the four approved location records and their effective GPS
+  policies; no seed action exists and real names/addresses/coordinates remain
+  outside source control until organization approval/import.
+- Preview and atomically commit roster imports that fix employee-to-location
+  assignments; preserve effective assignment/location snapshots in history.
+- Show redacted audit outcomes only; raw OTP/session/GPS evidence is not an
+  operational dashboard.
 - Admin-role lifecycle is handled outside Admin Web by audited server-side operations.
 - Admin does not gain Kitchen serving permission implicitly.
 - Assign/revoke `penalty.read`, `penalty.resolve` with audit.
@@ -655,7 +682,7 @@ Served: 12:08:31
 | Success                | State server-confirmed, include date/person/outcome                           |
 | Error                  | Safe message + concrete retry/recovery                                        |
 | Expired QR             | Visually invalid; refresh/retry                                               |
-| Offline                | Distinguish Entra/login/API connectivity failure                             |
+| Offline                | Distinguish OTP/session/API/provider connectivity failure                    |
 | Destructive            | Revoke/role/waive/account-disable cleanup confirm where appropriate           |
 | Realtime reconnect     | Re-fetch authoritative snapshot                                               |
 | Account disabled       | Block protected actions and explain that Admin controls account state         |

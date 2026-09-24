@@ -40,6 +40,29 @@ function encryptedPayload(): string {
     .join('.');
 }
 
+function validWorkerEnvironment(): NodeJS.ProcessEnv {
+  return {
+    NODE_ENV: 'production',
+    DATABASE_URL: 'postgresql://localhost/imeal',
+    OTP_DELIVERY_ENCRYPTION_KEY: SECRET,
+    OTP_PROVIDER_URL: 'https://provider.example.test/send',
+    OTP_PROVIDER_FROM: 'imeal@example.test',
+    OTP_PROVIDER_API_KEY: 'provider-key',
+    OTP_DELIVERY_BATCH_SIZE: '100',
+    OTP_DELIVERY_MAX_ATTEMPTS: '4',
+    OTP_DELIVERY_RETRY_BASE_SECONDS: '60',
+    OTP_DELIVERY_RETRY_MAX_SECONDS: '900',
+    OTP_DELIVERY_CLAIM_TIMEOUT_SECONDS: '300',
+    SERVING_TIME_ZONE: 'Asia/Ho_Chi_Minh',
+    SERVING_WINDOW_START: '10:30',
+    SERVING_WINDOW_END: '13:30',
+    NO_SHOW_PROCESSING_TIME: '13:45',
+    QR_TTL_SECONDS: '5',
+    QR_CLOCK_SKEW_SECONDS: '2',
+    PICKUP_SESSION_TTL_SECONDS: '30',
+  };
+}
+
 function delivery(overrides: Partial<ClaimedOtpDelivery> = {}): ClaimedOtpDelivery {
   return {
     id: 'outbox-1',
@@ -133,7 +156,47 @@ describe('OtpDeliveryWorker', () => {
       'OTP_DELIVERY_ENCRYPTION_KEY',
     );
   });
+  it('accepts a complete production worker contract', () => {
+    expect(() => validateWorkerEnvironment(validWorkerEnvironment())).not.toThrow();
+  });
 
+  it.each([
+    'DATABASE_URL',
+    'OTP_DELIVERY_BATCH_SIZE',
+    'OTP_DELIVERY_MAX_ATTEMPTS',
+    'OTP_DELIVERY_RETRY_BASE_SECONDS',
+    'OTP_DELIVERY_RETRY_MAX_SECONDS',
+    'OTP_DELIVERY_CLAIM_TIMEOUT_SECONDS',
+    'SERVING_TIME_ZONE',
+    'SERVING_WINDOW_START',
+    'SERVING_WINDOW_END',
+    'NO_SHOW_PROCESSING_TIME',
+    'QR_TTL_SECONDS',
+    'QR_CLOCK_SKEW_SECONDS',
+    'PICKUP_SESSION_TTL_SECONDS',
+  ])('rejects production when %s is missing', (name) => {
+    const env = validWorkerEnvironment();
+    delete env[name];
+
+    expect(() => validateWorkerEnvironment(env)).toThrow(name);
+  });
+
+  it('rejects production when serving invariants drift', () => {
+    const env = validWorkerEnvironment();
+    env.QR_TTL_SECONDS = '30';
+
+    expect(() => validateWorkerEnvironment(env)).toThrow('QR_TTL_SECONDS must be 5');
+  });
+
+  it('rejects a retry ceiling below the retry base', () => {
+    const env = validWorkerEnvironment();
+    env.OTP_DELIVERY_RETRY_BASE_SECONDS = '900';
+    env.OTP_DELIVERY_RETRY_MAX_SECONDS = '60';
+
+    expect(() => validateWorkerEnvironment(env)).toThrow(
+      'OTP_DELIVERY_RETRY_MAX_SECONDS must be >= OTP_DELIVERY_RETRY_BASE_SECONDS',
+    );
+  });
   it('runs the scheduled entrypoint with a generated timestamp', async () => {
     process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
     const provider: OtpProvider = { send: vi.fn().mockResolvedValue(undefined) };

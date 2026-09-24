@@ -4,111 +4,152 @@
 
 IMeal v2 dùng backend server-authoritative:
 
-- Microsoft Entra ID quản lý identity.
-- NestJS xác thực token và enforce business rules.
-- PostgreSQL là source of truth duy nhất cho business data.
-- Mobile/Admin Web không ghi database trực tiếp.
-- Serving/check-in mutations go through the authenticated Kitchen API path.
+- Allowlist-A email OTP is the sole production authentication method.
+- NestJS consumes/atomically verifies OTP challenges and resolves opaque
+  PostgreSQL-backed sessions before enforcing business rules.
+- PostgreSQL is the source of truth for identity, allowlist, account status,
+  authorization, roster/location, registration and serving data.
+- Mobile/Admin Web never write the database directly; serving/check-in mutations
+  go through the authenticated Kitchen API path.
 - WebSocket/SSE phục vụ realtime dashboard sau database commit.
 
 ```mermaid
 flowchart TB
     MOB[Mobile]
     ADM[Admin Web]
-    ENTRA[Microsoft Entra ID]
     RP[Reverse Proxy]
     API[NestJS API]
     PG[(PostgreSQL)]
+    OTP[OTP delivery outbox/provider]
     JOB[Worker/Cron]
     PUSH[Notification Provider]
 
-    MOB --> ENTRA
-    MOB --> RP
-    ADM --> RP
+    MOB -->|HTTPS + opaque session| RP
+    ADM -->|HTTPS + opaque session| RP
     RP --> API
     API --> PG
-    JOB -->|authenticated internal job API| API
+    API --> OTP
+    JOB -->|outbox/session-aware worker| PG
     API --> PUSH
 ```
 
-## 2. PostgreSQL table registry
-
-| Table                      | Purpose/source of truth                                   |
-| -------------------------- | --------------------------------------------------------- |
-| `users`                    | IMeal user mapped to Entra identity                       |
-| `roles`                    | Canonical roles                                           |
-| `user_roles`               | User-role assignments + audit                             |
-| `permissions`              | Canonical sensitive capability codes                      |
-| `role_permissions`         | Default permission grants by role                         |
-| `user_permissions`         | Exceptional direct grants/revocations + audit             |
-| `weekly_menus`             | Weekly menu lifecycle                                     |
-| `daily_menus`              | One fixed meal per date                                   |
-| `daily_menu_revisions`     | Immutable menu content revisions for history/notification |
-| `meal_days`                | Locked/snapshot operational day data                      |
-| `registrations`            | One reserved meal per user/date, with a meal choice      |
-| `pickup_delegations`       | A→B receive-on-behalf authorization                       |
-| `serving_confirm_requests` | Request-level idempotency and result for batch confirm    |
-| `meal_servings`            | Immutable final serving; at most one per registration     |
-| `meal_events`              | Immutable meal lifecycle audit ledger                     |
-| `penalties`                | No-show financial state                                   |
-| `notifications`            | Persisted notification inbox                              |
-| `push_devices`             | Device push token metadata if push enabled                |
-| `job_runs`                 | Job execution history                                     |
-| `outbox_events`            | Transactional notification-created delivery work                         |
-| `notification_deliveries`  | Per-notification/per-device delivery state and retry metadata             |
-| `audit_logs`               | Generic sensitive admin/audit actions                     |
+| Table                          | Purpose/source of truth                                                   |
+| ------------------------------ | ------------------------------------------------------------------------- |
+| `users`                        | Canonical employee identity, status and profile                           |
+| `otp_allowlist`                | Administrator-managed allowlist-A email eligibility                       |
+| `otp_challenges`               | Hashed verifier, expiry, attempts and atomic-use state                    |
+| `otp_delivery_outbox`          | Encrypted provider payload, claim/retry state and redacted delivery audit |
+| `auth_sessions`                | One-way opaque session hash, expiry/revocation and minimized metadata     |
+| `roles`                        | Canonical roles                                                            |
+| `user_roles`                   | User-role assignments + audit                                             |
+| `permissions`                  | Canonical sensitive capability codes                                       |
+| `role_permissions`             | Default permission grants by role                                          |
+| `user_permissions`             | Exceptional direct grants/revocations + audit                              |
+| `locations`                    | Exactly four organization-approved operational location records            |
+| `location_policies`            | Effective geofence/freshness/accuracy policy per location                 |
+| `employee_location_assignments`| Effective roster assignment and immutable employee/location snapshots      |
+| `roster_import_batches`        | Preview/commit result and idempotent import audit                          |
+| `weekly_menus`                 | Weekly menu lifecycle                                                      |
+| `daily_menus`                  | One fixed meal per date                                                    |
+| `daily_menu_revisions`         | Immutable menu content revisions for history/notification                  |
+| `meal_days`                    | Locked/snapshot operational day data                                       |
+| `registrations`                | One reserved meal per user/date plus location/name/address snapshot        |
+| `pickup_delegations`           | A→B receive-on-behalf authorization                                        |
+| `pickup_sessions`              | Exact QR intent, presenter/GPS verification and 30-second session          |
+| `serving_verifications`        | Safe presenter GPS verification result; no raw coordinate history          |
+| `serving_confirm_requests`     | Request-level idempotency and result for batch confirm                     |
+| `meal_servings`                | Immutable final serving; at most one per registration                      |
+| `meal_events`                  | Immutable meal lifecycle audit ledger                                      |
+| `penalties`                    | No-show financial state                                                    |
+| `notifications`                | Persisted notification inbox                                               |
+| `push_devices`                 | Device push token metadata if push enabled                                 |
+| `job_runs`                     | Job execution history                                                      |
+| `outbox_events`                | Transactional notification-created delivery work                          |
+| `notification_deliveries`      | Per-notification/per-device delivery state and retry metadata              |
+| `audit_logs`                   | Generic sensitive admin/audit actions                                      |
 
 ## 3. Entity relationships
 
 ```mermaid
 erDiagram
+    USER ||--o{ OTP_ALLOWLIST : eligible_email
+    USER ||--o{ OTP_CHALLENGE : requests
+    USER ||--o{ AUTH_SESSION : owns
     USER ||--o{ USER_ROLE : has
     ROLE ||--o{ USER_ROLE : grants
     ROLE ||--o{ ROLE_PERMISSION : grants
     PERMISSION ||--o{ ROLE_PERMISSION : includes
     USER ||--o{ USER_PERMISSION : overrides
     PERMISSION ||--o{ USER_PERMISSION : controls
+    LOCATION ||--o{ LOCATION_POLICY : governs
+    USER ||--o{ EMPLOYEE_LOCATION_ASSIGNMENT : assigned
+    LOCATION ||--o{ EMPLOYEE_LOCATION_ASSIGNMENT : serves
     WEEKLY_MENU ||--o{ DAILY_MENU : contains
     DAILY_MENU ||--o{ DAILY_MENU_REVISION : revisions
     USER ||--o{ REGISTRATION : owns
     DAILY_MENU_REVISION ||--o{ REGISTRATION : menu_history
+    LOCATION ||--o{ REGISTRATION : effective_snapshot
     REGISTRATION ||--o{ PICKUP_DELEGATION : delegates
+    PICKUP_SESSION ||--o{ SERVING_CONFIRM_REQUEST : confirms
+    PICKUP_SESSION ||--o{ SERVING_VERIFICATION : verifies
     SERVING_CONFIRM_REQUEST ||--o{ MEAL_SERVING : creates
     USER ||--o{ PICKUP_DELEGATION : delegate
     REGISTRATION ||--o{ MEAL_SERVING : serving_attempts
     USER ||--o{ MEAL_SERVING : receiver
     USER ||--o{ MEAL_SERVING : kitchen_actor
+    LOCATION ||--o{ MEAL_SERVING : served_at
     REGISTRATION ||--o{ MEAL_EVENT : audits
     REGISTRATION ||--o| PENALTY : causes
     USER ||--o{ NOTIFICATION : receives
 ```
 
-## 4. `users`
+## 4. `users`, allowlist and opaque sessions
 
 ```text
 users
 ──────────────────────────────
 id                  UUID PK
-entra_tenant_id     UUID/string NOT NULL
-entra_object_id     UUID/string NOT NULL
-display_name        text NOT NULL
-email               text NULL
+email               text NOT NULL, normalized
+display_name        text NULL
 employee_code       text NULL
 status              active | disabled
 created_at          timestamptz
 updated_at          timestamptz
 last_login_at       timestamptz NULL
 
-UNIQUE(entra_tenant_id, entra_object_id)
+UNIQUE(email)
 UNIQUE(employee_code) WHERE employee_code IS NOT NULL
 ```
 
-Rules:
+Production identity starts only when an administrator has imported an active
+allowlist-A row for the normalized email. Email domain, profile text, employee
+code supplied by a client, role claims and GPS never authorize a user.
+Unknown/disabled/non-allowlisted request attempts remain indistinguishable.
 
-- First valid Entra login creates active Staff user.
-- Safe profile fields may sync from Entra on login.
-- Roles, employee code and IMeal status never come from mobile-provided values.
+```text
+otp_allowlist
+  id, normalized_email, user_id NULL, purpose=SESSION_LOGIN
+  is_active, effective_from, effective_to, reason, audit_actor_id, timestamps
 
+otp_challenges
+  id, allowlist_id, verifier_hash, expires_at, attempt_count, max_attempts
+  consumed_at NULL, client_hash NULL, created_at
+
+auth_sessions
+  id, user_id, token_hash UNIQUE, purpose=SESSION_LOGIN
+  created_at, last_used_at, idle_expires_at, absolute_expires_at
+  revoked_at NULL, revocation_reason NULL, device_hash/client_ip_hash/user_agent_hash
+  created_by_audit_id
+```
+
+Only the clear OTP and opaque session token cross the HTTPS boundary. The
+database stores the OTP verifier and session hash, never either secret. Every
+protected request resolves current account status and permissions; logout,
+disable, compromise, replay, explicit revocation and expiry invalidate sessions.
+
+The only bypass is the non-production harness pair `NODE_ENV=test` and
+`REQUIRE_AUTH=false`. It injects a synthetic principal for automated tests and
+is rejected in production; it is not documented or supported as production auth.
 ## 5. Roles
 
 ```text
@@ -156,18 +197,62 @@ revoked_at NULL
 UNIQUE(user_id, role_id) for active assignment
 ```
 
-Auto provisioning adds `staff`. Admin Web may manage `staff`/`kitchen` assignments with audit, but **cannot grant or revoke `admin`**. Admin-role lifecycle is performed only by an audited server-side operation bound to explicit Entra identity.
+Allowlist import and roster commit never auto-grant roles. Admin Web may manage
+`staff`/`kitchen` assignments with audit, but **cannot grant or revoke `admin`**.
+Admin-role lifecycle is a separately audited server-side operation.
 
 `staff` and `kitchen` are independent. Assigning `kitchen` never grants Staff registration/QR/delegation capabilities; a Kitchen employee who also eats must hold both roles.
 
 ### 5.1 Account disable transaction
 
-1. Preview active roles plus every unserved registration and active delegation from the current business date onward.
+1. Preview active roles plus every unserved registration and active delegation
+   from the current business date onward.
 2. Admin confirms the named account and affected commitment count.
-3. In one transaction, lock the user/registration/delegation rows, set `users.status=disabled`, cancel each affected registration with `cancel_reason=account_disabled`, revoke `pending|accepted` delegations, and insert audit/notifications.
+3. In one transaction, lock the user/registration/delegation/session rows, set
+   `users.status=disabled`, revoke every active `auth_session`, cancel each
+   affected registration with `cancel_reason=account_disabled`, revoke
+   `pending|accepted` delegations, and insert audit/notifications.
 4. Already served rows remain historical and are not rewritten.
 5. `account_disabled` cancellations are excluded from Kitchen preparation/dashboard totals and no-show/penalty selection.
 6. If the preview became stale, return a conflict with a refreshed preview; never apply a partial cleanup.
+### 5.2 Locations and fixed roster assignments
+
+Exactly four real operational location records are in scope. Their names,
+addresses, coordinates, scanner assignments and employee roster rows are
+organization-owned inputs and are intentionally absent from source control.
+Production is blocked until all four records and the approved roster import have
+been completed through authorized Admin operations; no seed endpoint or
+fabricated fixture is allowed.
+
+```text
+locations
+  id, short_code UNIQUE, display_name, serving_point_name, address,
+  time_zone=Asia/Ho_Chi_Minh, is_active, effective_from/to, audited metadata
+
+location_policies
+  id, location_id, latitude, longitude, geofence_radius_meters,
+  max_fix_age_seconds, max_accuracy_meters, effective_from/to, is_active
+
+employee_location_assignments
+  id, user_id, location_id, employee_code, effective_from/to, is_active,
+  imported_by, import_batch_id, audit timestamps
+```
+
+Roster import validates normalized email, name, employee code, active state,
+role and location code before an atomic, repeatable commit. Location selection
+is server-side; email domain, mobile coordinates, QR data and client role/status
+claims cannot change an assignment. Registration creation/reactivation resolves
+the effective assignment and stores immutable location, assignment, name and
+address snapshots for history. Serving retains those snapshots and the
+server-resolved location/verification context even after future roster/policy
+changes.
+
+Presenter GPS is an additional serving-time signal only. The API evaluates a
+fresh foreground presenter fix against the effective policy and persists only
+safe verification result, timestamp, accuracy and location ID. It does not
+collect owner GPS for proxy pickup. GPS failure returns only safe `Retry` or
+`Refresh`; Kitchen sends no GPS.
+
 
 ## 6. Weekly and daily menus
 
@@ -273,6 +358,12 @@ user_id         UUID FK users
 meal_date       date NOT NULL
 meal_choice     REGULAR | VEGETARIAN NOT NULL DEFAULT REGULAR
 menu_revision_id UUID FK daily_menu_revisions NOT NULL
+service_location_id UUID FK locations NOT NULL
+location_assignment_id UUID FK employee_location_assignments NOT NULL
+owner_name_snapshot text NOT NULL
+employee_code_snapshot text NOT NULL
+location_name_snapshot text NOT NULL
+location_address_snapshot text NOT NULL
 status          registered | canceled | no_show
 registered_at   timestamptz
 canceled_at     timestamptz NULL
@@ -300,13 +391,15 @@ registered → no_show      after service end AND no serving
 
 If serving exists, registration is considered fulfilled regardless of `status=registered` storage state.
 
-### 8.2 Weekly batch save
 
 One API request contains requested dates and, for ACTIVE items, the requested `meal_choice`. Backend:
 
 1. Capture server `now` once in VN business context.
 2. Validate each date/menu/cutoff/current transition and the lunar meal-choice policy.
-3. Use `INSERT ... ON CONFLICT`/equivalent ORM upsert for register/re-register and store the current immutable `menu_revision_id` and `meal_choice`.
+3. Use `INSERT ... ON CONFLICT`/equivalent ORM upsert for register/re-register,
+   resolve the effective employee-location assignment server-side, and store the
+   current immutable `menu_revision_id`, `meal_choice`, location/assignment ID
+   and owner/location snapshots.
 4. Cancel only valid active registration.
 5. When canceling, lock and revoke any `pending|accepted` delegation, append audit/events and create notifications in the same transaction.
 6. Return result per requested date.
@@ -341,45 +434,59 @@ A partial unique index enforces one active delegation per registration.
 
 `active delegation` means `pending|accepted`. Registration cancellation atomically transitions it to `revoked`; cancel/accept/revoke/serve races lock the same registration/delegation rows and return a canonical conflict to the losing transaction.
 
-## 10. Dynamic QR and pickup session
+## 10. Dynamic QR, presenter GPS and pickup session
 
-### 10.1 QR and pickup intent
+### 10.1 QR and exact pickup intent
 
-QR identifies the presenting user **and a short-lived pickup intent**, not a new entitlement:
-
-```text
-imeal:v2:{presentingUserId}:{mealDate}:{pickupIntent}:{exp}:{nonce}:{sig}
-```
-
-`GET /me/pickup-options` first returns the presenter's currently eligible own/delegated items. If exactly one eligible item exists, mobile selects it automatically; with multiple eligible items, Staff selects the intended set. `POST /me/qr` then validates those registration IDs and returns a QR whose `pickupIntent` is a compact signed list/reference/hash for that validated selection.
-
-TTL 5 seconds; allowed clock skew at most 2 seconds. Refresh reissues the QR for the same selected intent while the screen remains active; eligibility is still rechecked on resolve/confirm.
-
-On resolve:
-
-- Validate Kitchen caller and required `kitchen.serve` permission.
-- Verify signature/expiry/date.
-- Load presenting user.
-- Load all currently eligible pickup items for the presenter (own active unserved registration + accepted unserved delegations).
-- Revalidate that every registration in `pickupIntent` is currently eligible and belongs to the presenter pickup context.
-- Do not silently substitute a different item set if the intent is stale; return authoritative conflict/re-resolve state.
-
-### 10.2 Pickup session
-
-Because Kitchen confirmation may take longer than 5 seconds, resolve returns a signed 30-second session:
+QR identifies the presenter and a short-lived exact pickup intent, not a new
+entitlement:
 
 ```text
-pickupSession
-  presenter_user_id
-  meal_date
-  intended_registration_ids validated snapshot/reference
-  issued_at
-  expires_at
-  nonce/session_id
+imeal:v2:{presenterUserId}:{mealDate}:{sortedRegistrationIds}:{exp}:{nonce}:{sig}
 ```
 
-`expires_at = issued_at + 30 seconds`. Kitchen confirms `intended_registration_ids` directly without re-selecting or editing them. Confirm always re-queries current DB state; a stale pickup session or Staff intent cannot override a revoke, serving, account status or registration change.
+`GET /me/pickup-options` returns the presenter's eligible own/delegated items.
+Exactly one item is auto-selected; multiple items require explicit selection on
+the presenter device. `POST /me/qr` accepts only a sorted, unique, non-empty set
+plus fresh presenter evidence and signs that exact set.
 
+- TTL is exactly 5 seconds; accepted clock skew is at most 2 seconds.
+- Refresh repeats the same exact set only after a fresh foreground presenter fix.
+- Selection, focus, eligibility, delegation or GPS-state changes clear the QR.
+- Wrong date, malformed order, invalid signature, expired/future-abnormal expiry
+  and stale/ineligible intent are rejected without replacement.
+
+### 10.2 Presenter-only GPS verification
+
+The server resolves the employee's fixed effective roster location and policy.
+Only a foreground presenter fix is evaluated for freshness, accuracy and
+geofence. The result stores location ID, safe result, verification timestamp
+and accuracy; raw coordinates are not retained as history. Owner GPS is never
+collected merely because a delegation exists. Kitchen resolve/confirm sends no
+GPS.
+
+Unavailable, denied, stale, inaccurate and outside-geofence outcomes expose only
+safe `Retry`/`Refresh` recovery. GPS never grants entitlement, chooses a site or
+bypasses session, QR, delegation, registration, window or concurrency checks.
+
+### 10.3 Pickup session
+
+Because Kitchen confirmation may take longer than 5 seconds, resolve creates an
+opaque 30-second session:
+
+```text
+pickup_session
+  id, presenter_user_id, meal_date
+  exact_sorted_registration_ids, intent_hash, qr_nonce
+  serving_verification_id, location_id, issued_at, expires_at
+```
+
+Resolve accepts only QR plus an authenticated Kitchen session. It revalidates
+the exact set and stores immutable presenter/location/verification context.
+Confirm accepts only `pickupSessionId` and an idempotency key; Kitchen cannot
+re-select, add or remove registrations. Confirm re-queries current database
+state and fails the entire batch if any item, delegation, account, location,
+verification, serving-window or session condition changed.
 ## 11. `meal_servings`
 
 ### 11.1 `serving_confirm_requests`
@@ -417,70 +524,56 @@ owner_user_id         UUID FK
 receiver_user_id      UUID FK
 pickup_type           SELF | PROXY
 served_by_user_id     UUID FK    # Kitchen actor
-served_at              timestamptz
-source                 QR | EMPLOYEE_CODE | other approved source
-confirm_request_id     UUID FK serving_confirm_requests
+location_id           UUID FK
+owner_name_snapshot   text
+receiver_name_snapshot text
+employee_code_snapshot text
+location_name_snapshot text
+location_address_snapshot text
+delegation_id         UUID NULL
+pickup_session_id     UUID FK
+serving_verification_id UUID FK
+served_at             timestamptz
+source                QR
+confirm_request_id    UUID FK serving_confirm_requests
 created_at
 
 UNIQUE(registration_id)
 ```
 
-Canonical rule:
-
-> A registration has at most one serving. Successful confirmation is final in core v2 and remains immutable evidence during the canonical 1-year retention window.
-
-For `SELF`: receiver = owner.
-For `PROXY`: receiver is delegate with accepted delegation at transaction time.
-
+Serving is immutable evidence of owner, presenter/receiver, Kitchen actor,
+pickup type, delegation, exact intent/session, effective location snapshot,
+verification result and time. Raw coordinates, OTP values, session tokens and QR
+payloads are not included in normal logs or operational dashboards.
 ## 12. Serving transaction
 
 Pseudo-flow:
 
 ```text
 BEGIN
-
-lock existing serving_confirm_request claim by caller + idempotency key
-lock all registrations selected for serving in deterministic ID order
-lock relevant active delegations
-
-validate every selected registration
-if any deterministic conflict:
-    insert no serving
-    update serving_confirm_request = rejected + authoritative result
-    COMMIT
-    return rejected result
-
-for each registration:
-    assert meal_date == business today
-    assert server time is within 10:30–13:30
-    assert owner and receiver accounts active
-    assert registration active
-    assert no serving exists
-
-    if receiver == owner:
-        pickup_type = SELF
-    else:
-        assert accepted delegation(owner → receiver)
-        pickup_type = PROXY
-
-    insert meal_serving
-    insert SERVED meal_event
-    if PROXY:
-        mark delegation consumed
-        insert persisted notification to owner
-
-update serving_confirm_request = succeeded + authoritative result
+  lock serving_confirm_request by caller + idempotency key
+  compare request hash; replay same result or return IDEMPOTENCY_CONFLICT
+  lock pickup session and exact registration/delegation rows in deterministic order
+  verify session TTL, exact intent hash/nonce, presenter verification and location
+  verify current actor/account permissions and 10:30–13:30 serving window
+  verify every registration remains eligible and has no serving
+  if any deterministic conflict:
+      insert no serving
+      update request = rejected + safe authoritative result
+      COMMIT
+      return rejected result
+  insert every meal_serving with owner/receiver/Kitchen/location snapshots
+  insert immutable SERVED meal_events
+  mark accepted proxy delegations consumed
+  update request = succeeded + result
 COMMIT
 ```
 
-The batch is all-or-nothing. Any deterministic item conflict commits a `rejected` request result with zero servings and returns `PICKUP_STATE_CHANGED`; Kitchen must resolve again before handing over meals. Successful servings and the `succeeded` result commit in the same transaction. Retrying returns the stored result without inserting another serving.
+The batch is all-or-nothing. A stale/ineligible item commits zero servings and
+returns `PICKUP_STATE_CHANGED`; Kitchen must resolve again. Successful serving
+is final, and the same idempotency key/body returns the stored result without a
+duplicate serving. Realtime events are published only after commit.
 
-Post-commit:
-
-- publish realtime Kitchen event;
-- update/read dashboard from authoritative DB.
-
-Do not emit “success” realtime event before commit.
 
 ## 13. Concurrency cases
 
@@ -763,15 +856,26 @@ Fields: actor, action, entity type/id, before/after safe metadata, timestamp, re
 
 ## 21. Data ownership
 
-- Entra owns identity authentication.
-- PostgreSQL `users/user_roles` own IMeal authorization.
+- Allowlist-A + OTP challenge state own production authentication eligibility.
+- `auth_sessions` own opaque session hashes and revocation/expiry metadata.
+- PostgreSQL `users/user_roles` own employee identity, current status and IMeal authorization.
 - PostgreSQL `permissions/role_permissions/user_permissions` own sensitive capability grants.
+- `locations/location_policies/employee_location_assignments` own the four approved
+  locations, effective policies and fixed roster assignment.
+- Registration owns reservation intent plus immutable effective
+  location/assignment/name/address snapshots.
+- Serving owns actual handover evidence, presenter/receiver, Kitchen actor,
+  delegation, exact intent/session, location and safe verification snapshots.
 - Daily menu owns meal description for future dates; meal-day snapshot preserves historical display.
-- Registration owns reservation intent.
-- Serving owns actual handover evidence.
 - Delegation owns authorization to receive on behalf of owner.
-- Penalty owns financial resolution.
-- Events/audit are append-oriented evidence.
+- Penalty owns financial resolution; events/audit are append-oriented evidence.
+- OTP verifiers are retained only through challenge expiry/consumption and never
+  clear codes; provider payloads are encrypted and delivery logs are redacted.
+- Session records retain only hashes/minimized metadata for the configured idle
+  and absolute lifetime; revocation/audit reasons remain safe and bounded.
+- GPS evidence retains safe verification result, location ID, timestamp and
+  accuracy only for the approved dispute/audit period; raw coordinates are not
+  operational history.
 
 ## 22. Retention
 
@@ -783,43 +887,60 @@ Canonical history retention is **1 year** for meal lifecycle/business audit data
 
 ## 23. Security invariants
 
-- Mobile cannot set `served_at`, role, penalty status or audit actor.
-- Kitchen can serve only with the required `kitchen.serve` permission and all server-side pickup validation.
-- Kitchen token without `kitchen` role cannot call serving API.
-- Public user cannot create accepted delegation on behalf of B; B must call accept.
-- Owner cannot delegate someone else's registration.
-- QR signature/expiry is verified server-side.
-- QR scan alone cannot mark serving.
-- No serving if DB no longer considers owner/receiver eligible.
-- Every protected API rejects `status=disabled` after server-side lookup.
-- Multi-item serving never partially commits; successful confirm is final and no reversal endpoint exists.
-- Resolve and confirm always enforce authentication, permission, QR/session, serving-window and database invariants.
-- Worker has no independent business-write path; scheduled work calls authenticated internal job APIs/application services governed by the same domain invariants.
-
+- Mobile cannot set `served_at`, role, account status, location assignment,
+  presenter/receiver, penalty status or audit actor.
+- Kitchen can serve only with an active opaque session, `kitchen.serve`
+  permission and all server-side pickup validation. Kitchen sends no GPS.
+- Public callers cannot create accepted delegation on behalf of B; B must accept.
+- Owner cannot delegate someone else's registration; no self-delegation, chain or
+  delegate re-delegation.
+- QR signature/expiry, exact sorted intent, 2-second skew and 30-second session
+  are verified server-side.
+- Presenter GPS is foreground-only and additional. It cannot grant entitlement,
+  select a different location or bypass authentication, authorization,
+  registration, delegation, window or concurrency checks.
+- GPS failure exposes only safe Retry/Refresh. Raw coordinates and clear OTP,
+  session, QR or provider payloads never appear in routine logs.
+- No serving if DB no longer considers owner/receiver/account/location/evidence
+  eligible. Every protected API rechecks current status and permissions.
+- Multi-item serving never partially commits; successful confirm is final and no
+  reversal endpoint exists. Same idempotency key/body cannot double-serve.
+- Worker has no independent business-write path; scheduled work uses the same
+  application invariants and records sanitized `job_runs`.
 ## 24. Clean-slate provisioning
 
 1. Create a fresh PostgreSQL database from checked-in migrations.
-2. Bootstrap the first Admin with an audited one-shot command and explicit Entra tenant/object ID; Admin Web never grants `admin`.
-3. Auto-provision all other users from Entra with `staff` only; Admin Web may manage Staff/Kitchen assignments and allowed permissions.
-4. Firebase legacy is removed from project dependency at re-development kickoff; import/retain no Firebase business history for v2 and never dual-write.
-5. Seed only organization configuration and approved synthetic/UAT data.
-6. Verify PostgreSQL backup/restore and application/schema rollback before production; rollback never targets Firebase.
-
+2. Configure production with `AUTH_MODE=otp`, `REQUIRE_AUTH=true`, all
+   API/worker OTP/session/provider/GPS/serving settings, and no harness bypass.
+3. Import/approve exactly four real location records and the employee allowlist/
+   roster through audited Admin operations. Do not fabricate names, addresses,
+   coordinates, employees, scanner assignments or roster rows in source control.
+4. Admin Web manages only approved `staff`/`kitchen` assignments, allowlist,
+   location/policy and roster operations; it never grants `admin`.
+5. Firebase legacy is removed from project dependency at re-development kickoff;
+   import/retain no Firebase business history and never dual-write.
+6. Verify PostgreSQL backup/restore, API/worker startup validation and
+   application/schema rollback before production; rollback never targets Firebase.
 ## 25. Backend acceptance criteria
 
-- Entra first-login auto provisioning works and never auto-grants Kitchen/Admin.
-- Weekly registration duplicate/concurrency tests pass.
-- One meal/date rule enforced.
-- Staff-selected pickup intent + QR 5s/skew 2s resolve + 30s pickup session works without stale authorization bypass; one-item pickup adds no Staff selection step and Kitchen happy path adds no per-item ticking.
-- Self/proxy concurrent/retried confirm creates at most one immutable final serving.
-- Delegation revoke/serve race has one deterministic valid result.
-- Cancel registration atomically revokes active delegation.
-- Canceled registration history resolves its immutable menu revision even before cutoff.
-- Multi-item confirm is all-or-nothing.
-- Serving confirm is final and immutable; Kitchen has no item-edit or reversal operation.
-- Disabled account is denied on every protected API.
-- Realtime dashboard reconciles to DB.
-- Serving resolve/confirm authorization remains network-neutral while enforcing Kitchen permission and all QR/session/window/database invariants.
-- No-show/penalty retry is idempotent.
-- One-year retention cleanup is dependency-safe/idempotent and does not mutate retained audit evidence.
-- Backup/restore, application/schema rollback and clean-slate provisioning tested before production.
+- Unknown/disabled/non-allowlisted OTP attempts are indistinguishable and never
+  create a session; OTP is hashed, one-use, throttled, expiry-bound and redacted.
+- Production accepts only allowlist-A OTP and opaque/hash-backed sessions;
+  `NODE_ENV=test` + `REQUIRE_AUTH=false` is the only non-production harness bypass.
+- Exactly four real locations and approved roster assignments are imported before
+  production; no fabricated location/employee data exists in source control.
+- Registration and serving history retain fixed location/assignment/name/address
+  snapshots; client claims cannot change role, status or location.
+- Presenter-only foreground GPS is evaluated at QR generate/refresh; owner GPS is
+  not collected for proxy pickup; Kitchen resolve/confirm sends no GPS.
+- GPS failures expose only Retry/Refresh. QR exact sorted intent, TTL 5, skew 2,
+  resolved session 30 and 10:30–13:30 serving window are server-enforced.
+- Stale/ineligible intent rejects without substitution; confirm cannot alter the
+  resolved set. Delegation acceptance/no-chain/no-self and revoke/serve races are
+  deterministic.
+- Multi-item confirm is atomic and idempotent; duplicate/concurrent retry cannot
+  double-serve. Successful serving is final and immutable.
+- OTP/session/GPS evidence is minimized, access-controlled and audited; residual
+  screenshot, compromised-device and GPS-spoofing risks are reduced, not removed.
+- Weekly registration, menu, notification, no-show, backup/restore and
+  migration/startup verification remain covered by their owning suites.
