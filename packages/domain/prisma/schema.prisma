@@ -609,6 +609,7 @@ model OtpDeliveryOutbox {
   nextAttemptAt      DateTime    @default(now()) @map("next_attempt_at")
   processedAt        DateTime?   @map("processed_at")
   lastError          String?     @map("last_error")
+  claimToken         String?     @map("claim_token")
   createdAt          DateTime    @default(now()) @map("created_at")
   updatedAt          DateTime    @updatedAt @map("updated_at")
 

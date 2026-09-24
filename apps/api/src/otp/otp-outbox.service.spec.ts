@@ -12,6 +12,7 @@ describe('OtpOutboxService', () => {
           id: 'outbox-1',
           challenge_id: 'challenge-1',
           provider_payload_ref: 'v1.encrypted',
+          claim_token: 'claim-token-1',
           attempt_count: 1,
           destination: 'employee@example.test',
           purpose: 'SESSION_LOGIN',
@@ -29,6 +30,7 @@ describe('OtpOutboxService', () => {
         id: 'outbox-1',
         challengeId: 'challenge-1',
         providerPayloadRef: 'v1.encrypted',
+        claimToken: 'claim-token-1',
         attemptCount: 1,
         destination: 'employee@example.test',
         purpose: 'SESSION_LOGIN',
@@ -45,19 +47,18 @@ describe('OtpOutboxService', () => {
       otpDeliveryOutbox: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     };
     const service = new OtpOutboxService(prisma as never);
-
-    await service.markProcessed('outbox-1', NOW);
-    await service.markFailed('outbox-1', NOW, {
+    await service.markProcessed('outbox-1', 'claim-token-1', NOW);
+    await service.markFailed('outbox-1', 'claim-token-1', NOW, {
       code: 'PROVIDER_TRANSIENT',
       retryAt: new Date(NOW.getTime() + 10_000),
     });
 
     expect(prisma.otpDeliveryOutbox.updateMany).toHaveBeenNthCalledWith(1, {
-      where: { id: 'outbox-1', status: 'PROCESSING' },
+      where: { id: 'outbox-1', status: 'PROCESSING', claimToken: 'claim-token-1' },
       data: { status: 'PROCESSED', processedAt: NOW, lastError: null },
     });
     expect(prisma.otpDeliveryOutbox.updateMany).toHaveBeenNthCalledWith(2, {
-      where: { id: 'outbox-1', status: 'PROCESSING' },
+      where: { id: 'outbox-1', status: 'PROCESSING', claimToken: 'claim-token-1' },
       data: {
         status: 'PENDING',
         processedAt: null,

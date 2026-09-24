@@ -1,4 +1,4 @@
-import { createDecipheriv, createHash } from 'node:crypto';
+import { createDecipheriv, createHash, randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Prisma, PrismaClient } from '@prisma/client';
@@ -19,6 +19,7 @@ export type ClaimedOtpDelivery = {
   id: string;
   challengeId: string;
   providerPayloadRef: string;
+  claimToken: string;
   attemptCount: number;
   attemptsBeforeClaim?: number;
   destination: string;
@@ -42,12 +43,16 @@ export type OtpClaimValidation =
       valid: false;
       reason: 'EXPIRED' | 'CONSUMED' | 'CLAIM_LOST';
     };
-
 export interface OtpDeliveryOutboxPort {
   claimBatch(now: Date, limit: number): Promise<ClaimedOtpDelivery[]>;
-  validateClaim(id: string, now: Date): Promise<OtpClaimValidation>;
-  markProcessed(id: string, now: Date): Promise<boolean>;
-  markFailed(id: string, now: Date, failure: DeliveryFailure): Promise<boolean>;
+  validateClaim(id: string, claimToken: string, now: Date): Promise<OtpClaimValidation>;
+  markProcessed(id: string, claimToken: string, now: Date): Promise<boolean>;
+  markFailed(
+    id: string,
+    claimToken: string,
+    now: Date,
+    failure: DeliveryFailure,
+  ): Promise<boolean>;
 }
 
 export type DeliveryRunResult = {
@@ -282,6 +287,7 @@ type ClaimedRow = {
   id: string;
   challenge_id: string;
   provider_payload_ref: string;
+  claim_token: string;
   attempt_count: number;
   attempt_count_before_claim: number;
   destination: string;
@@ -319,6 +325,7 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
       1,
     );
     const staleAt = new Date(now.getTime() - claimTimeoutSeconds * 1000);
+    const claimToken = randomUUID();
     return this.prisma.$transaction(async (tx) => {
       if (typeof tx.$executeRaw === 'function') {
         await tx.$executeRaw(Prisma.sql`
@@ -327,10 +334,14 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
               "processed_at" = ${now},
               "next_attempt_at" = ${now},
               "last_error" = 'MAX_ATTEMPTS',
+              "claim_token" = NULL,
               "updated_at" = ${now}
-          WHERE "status" IN ('PENDING', 'PROCESSING')
-            AND "processed_at" IS NULL
+          WHERE "processed_at" IS NULL
             AND "attempt_count" >= ${maxAttempts}
+            AND (
+              "status" = 'PENDING'
+              OR ("status" = 'PROCESSING' AND "updated_at" <= ${staleAt})
+            )
         `);
       }
       if (typeof tx.$executeRaw === 'function') {
@@ -340,6 +351,7 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
               "processed_at" = ${now},
               "next_attempt_at" = ${now},
               "last_error" = 'OTP_EXPIRED',
+              "claim_token" = NULL,
               "updated_at" = ${now}
           FROM "otp_challenges" AS c
           WHERE c."id" = o."challenge_id"
@@ -371,6 +383,7 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
         ), claimed AS (
           UPDATE "otp_delivery_outboxes" AS o
           SET "status" = 'PROCESSING',
+              "claim_token" = ${claimToken},
               "attempt_count" = o."attempt_count" + 1,
               "updated_at" = ${now}
           FROM due
@@ -379,6 +392,7 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
             o."id",
             o."challenge_id",
             o."provider_payload_ref",
+            o."claim_token",
             o."attempt_count",
             o."attempt_count" - 1 AS "attempt_count_before_claim"
         )
@@ -386,6 +400,7 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
           claimed."id",
           claimed."challenge_id",
           claimed."provider_payload_ref",
+          claimed."claim_token",
           claimed."attempt_count",
           claimed."attempt_count_before_claim",
           c."normalized_email" AS "destination",
@@ -400,6 +415,7 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
         id: row.id,
         challengeId: row.challenge_id,
         providerPayloadRef: row.provider_payload_ref,
+        claimToken: row.claim_token,
         attemptCount: row.attempt_count,
         attemptsBeforeClaim: row.attempt_count_before_claim,
         destination: row.destination,
@@ -408,7 +424,11 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
       }));
     });
   }
-  async validateClaim(id: string, now: Date): Promise<OtpClaimValidation> {
+  async validateClaim(
+    id: string,
+    claimToken: string,
+    now: Date,
+  ): Promise<OtpClaimValidation> {
     const rows = await this.prisma.$queryRaw<CurrentClaimRow[]>(Prisma.sql`
       SELECT
         o."status",
@@ -420,6 +440,7 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
       INNER JOIN "otp_challenges" AS c
         ON c."id" = o."challenge_id"
       WHERE o."id" = ${id}
+        AND o."claim_token" = ${claimToken}
       LIMIT 1
     `);
     const row = rows[0];
@@ -440,24 +461,28 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
     };
   }
 
-  async markProcessed(id: string, now: Date): Promise<boolean> {
+  async markProcessed(
+    id: string,
+    claimToken: string,
+    now: Date,
+  ): Promise<boolean> {
     const result = await this.prisma.otpDeliveryOutbox.updateMany({
-      where: { id, status: 'PROCESSING' },
+      where: { id, status: 'PROCESSING', claimToken },
       data: { status: 'PROCESSED', processedAt: now, lastError: null },
     });
     if (result.count !== 1) return false;
     await this.recordAudit(id, 'OTP_DELIVERY_SENT', { result: 'SENT' });
     return true;
   }
-
   async markFailed(
     id: string,
+    claimToken: string,
     now: Date,
     failure: DeliveryFailure,
   ): Promise<boolean> {
     const terminal = failure.retryAt === null;
     const result = await this.prisma.otpDeliveryOutbox.updateMany({
-      where: { id, status: 'PROCESSING' },
+      where: { id, status: 'PROCESSING', claimToken },
       data: {
         status: terminal ? 'FAILED' : 'PENDING',
         ...(terminal ? { processedAt: now } : { processedAt: null }),
@@ -515,6 +540,10 @@ export class OtpDeliveryWorker {
   }
 
   @Cron('*/15 * * * * *')
+  async handleOtpDeliveryCron(): Promise<DeliveryRunResult> {
+    return this.processOnce(new Date());
+  }
+
   async processOnce(now: Date): Promise<DeliveryRunResult> {
     const env = process.env;
     const maxAttempts = setting(env, 'OTP_DELIVERY_MAX_ATTEMPTS', DEFAULT_MAX_ATTEMPTS, 1);
@@ -546,7 +575,7 @@ export class OtpDeliveryWorker {
       const currentNow = this.clock();
       const attemptsBeforeClaim = row.attemptsBeforeClaim ?? row.attemptCount;
       if (attemptsBeforeClaim >= maxAttempts) {
-        await this.outbox.markFailed(row.id, currentNow, {
+        await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
           code: 'MAX_ATTEMPTS',
           retryAt: null,
         });
@@ -555,19 +584,25 @@ export class OtpDeliveryWorker {
         continue;
       }
 
-      const validation = await this.outbox.validateClaim(row.id, currentNow);
+      const validation = await this.outbox.validateClaim(
+        row.id,
+        row.claimToken,
+        currentNow,
+      );
       if (!validation.valid) {
         if (validation.reason === 'CLAIM_LOST') {
           this.logger.warn(`otp-delivery=${row.id} result=skipped reason=claim-lost`);
           continue;
         }
         const code = validation.reason === 'CONSUMED' ? 'OTP_CONSUMED' : 'OTP_EXPIRED';
-        await this.outbox.markFailed(row.id, currentNow, {
+        await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
           code,
           retryAt: null,
         });
         result.suppressed += 1;
-        this.logger.warn(`otp-delivery=${row.id} result=suppressed reason=${validation.reason.toLowerCase()}`);
+        this.logger.warn(
+          `otp-delivery=${row.id} result=suppressed reason=${validation.reason.toLowerCase()}`,
+        );
         continue;
       }
 
@@ -578,7 +613,7 @@ export class OtpDeliveryWorker {
           encryptionSecret(env),
         );
       } catch {
-        await this.outbox.markFailed(row.id, currentNow, {
+        await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
           code: 'PAYLOAD_INVALID',
           retryAt: null,
         });
@@ -590,7 +625,43 @@ export class OtpDeliveryWorker {
         payload.destination !== validation.destination ||
         payload.purpose !== validation.purpose
       ) {
-        await this.outbox.markFailed(row.id, currentNow, {
+        await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
+          code: 'PAYLOAD_MISMATCH',
+          retryAt: null,
+        });
+        result.failed += 1;
+        this.logger.error(`otp-delivery=${row.id} result=failed reason=payload-mismatch`);
+        continue;
+      }
+
+      const finalNow = this.clock();
+      const finalValidation = await this.outbox.validateClaim(
+        row.id,
+        row.claimToken,
+        finalNow,
+      );
+      if (!finalValidation.valid) {
+        if (finalValidation.reason === 'CLAIM_LOST') {
+          this.logger.warn(`otp-delivery=${row.id} result=skipped reason=claim-lost`);
+          continue;
+        }
+        const code =
+          finalValidation.reason === 'CONSUMED' ? 'OTP_CONSUMED' : 'OTP_EXPIRED';
+        await this.outbox.markFailed(row.id, row.claimToken, finalNow, {
+          code,
+          retryAt: null,
+        });
+        result.suppressed += 1;
+        this.logger.warn(
+          `otp-delivery=${row.id} result=suppressed reason=${finalValidation.reason.toLowerCase()}`,
+        );
+        continue;
+      }
+      if (
+        payload.destination !== finalValidation.destination ||
+        payload.purpose !== finalValidation.purpose
+      ) {
+        await this.outbox.markFailed(row.id, row.claimToken, finalNow, {
           code: 'PAYLOAD_MISMATCH',
           retryAt: null,
         });
@@ -601,7 +672,7 @@ export class OtpDeliveryWorker {
 
       try {
         await this.provider.send(payload);
-        const marked = await this.outbox.markProcessed(row.id, currentNow);
+        const marked = await this.outbox.markProcessed(row.id, row.claimToken, finalNow);
         if (marked) result.sent += 1;
         this.logger.log(`otp-delivery=${row.id} result=sent`);
       } catch (error) {
@@ -613,14 +684,14 @@ export class OtpDeliveryWorker {
           retryBaseSeconds * 2 ** Math.max(0, row.attemptCount - 1),
         );
         const retryAt = canRetry
-          ? new Date(currentNow.getTime() + delaySeconds * 1000)
+          ? new Date(finalNow.getTime() + delaySeconds * 1000)
           : null;
         const failureCode = canRetry
           ? 'PROVIDER_TRANSIENT'
           : transient
             ? 'PROVIDER_TRANSIENT_MAX_ATTEMPTS'
             : 'PROVIDER_PERMANENT';
-        const marked = await this.outbox.markFailed(row.id, currentNow, {
+        const marked = await this.outbox.markFailed(row.id, row.claimToken, finalNow, {
           code: failureCode,
           retryAt,
         });

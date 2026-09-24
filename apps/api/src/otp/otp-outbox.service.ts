@@ -1,14 +1,15 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
   encryptOtpProviderPayload,
   type OtpProviderInput,
 } from './otp-provider.js';
-
 export type ClaimedOtpDelivery = {
   id: string;
   challengeId: string;
   providerPayloadRef: string;
+  claimToken: string;
   attemptCount: number;
   destination: string;
   purpose: OtpProviderInput['purpose'];
@@ -20,11 +21,11 @@ export type OtpDeliveryFailure = {
   retryAt: Date | null;
 };
 
-
 type ClaimedRow = {
   id: string;
   challenge_id: string;
   provider_payload_ref: string;
+  claim_token: string;
   attempt_count: number;
   destination: string;
   purpose: OtpProviderInput['purpose'];
@@ -73,6 +74,7 @@ export class OtpOutboxService {
       Math.min(MAX_CLAIM_LIMIT, Math.floor(limit)),
     );
     const staleAt = new Date(now.getTime() - PROCESSING_TIMEOUT_MS);
+    const claimToken = randomUUID();
 
     return this.prisma.$transaction(async (tx) => {
       if (typeof tx.$executeRaw === 'function') {
@@ -82,6 +84,7 @@ export class OtpOutboxService {
               "processed_at" = ${now},
               "next_attempt_at" = ${now},
               "last_error" = 'OTP_EXPIRED',
+              "claim_token" = NULL,
               "updated_at" = ${now}
           FROM "otp_challenges" AS c
           WHERE c."id" = o."challenge_id"
@@ -113,6 +116,7 @@ export class OtpOutboxService {
         ), claimed AS (
           UPDATE "otp_delivery_outboxes" AS o
           SET "status" = 'PROCESSING',
+              "claim_token" = ${claimToken},
               "attempt_count" = o."attempt_count" + 1,
               "updated_at" = ${now}
           FROM due
@@ -121,12 +125,14 @@ export class OtpOutboxService {
             o."id",
             o."challenge_id",
             o."provider_payload_ref",
+            o."claim_token",
             o."attempt_count"
         )
         SELECT
           claimed."id",
           claimed."challenge_id",
           claimed."provider_payload_ref",
+          claimed."claim_token",
           claimed."attempt_count",
           c."normalized_email" AS "destination",
           c."purpose",
@@ -136,11 +142,11 @@ export class OtpOutboxService {
           ON c."id" = claimed."challenge_id"
         ORDER BY claimed."id"
       `);
-
       return rows.map((row) => ({
         id: row.id,
         challengeId: row.challenge_id,
         providerPayloadRef: row.provider_payload_ref,
+        claimToken: row.claim_token,
         attemptCount: row.attempt_count,
         destination: row.destination,
         purpose: row.purpose,
@@ -149,9 +155,13 @@ export class OtpOutboxService {
     });
   }
 
-  async markProcessed(id: string, now: Date): Promise<boolean> {
+  async markProcessed(
+    id: string,
+    claimToken: string,
+    now: Date,
+  ): Promise<boolean> {
     const result = await this.prisma.otpDeliveryOutbox.updateMany({
-      where: { id, status: 'PROCESSING' },
+      where: { id, status: 'PROCESSING', claimToken },
       data: {
         status: 'PROCESSED',
         processedAt: now,
@@ -163,12 +173,13 @@ export class OtpOutboxService {
 
   async markFailed(
     id: string,
+    claimToken: string,
     now: Date,
     failure: OtpDeliveryFailure,
   ): Promise<boolean> {
     const terminal = failure.retryAt === null;
     const result = await this.prisma.otpDeliveryOutbox.updateMany({
-      where: { id, status: 'PROCESSING' },
+      where: { id, status: 'PROCESSING', claimToken },
       data: {
         status: terminal ? 'FAILED' : 'PENDING',
         ...(terminal ? { processedAt: now } : { processedAt: null }),

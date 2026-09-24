@@ -1,8 +1,10 @@
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { Logger } from '@nestjs/common';
+import type { PrismaClient } from '@prisma/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   OtpDeliveryWorker,
+  WorkerOtpOutboxService,
   type ClaimedOtpDelivery,
   type OtpClaimValidation,
   type OtpDeliveryOutboxPort,
@@ -43,6 +45,7 @@ function delivery(overrides: Partial<ClaimedOtpDelivery> = {}): ClaimedOtpDelive
     id: 'outbox-1',
     challengeId: 'challenge-1',
     providerPayloadRef: encryptedPayload(),
+    claimToken: 'claim-token-1',
     attemptCount: 1,
     destination: DESTINATION,
     purpose: 'SESSION_LOGIN',
@@ -72,26 +75,33 @@ function fakeOutbox(
     processed,
     failures,
     claimBatch: vi.fn(async () => rows),
-    validateClaim: vi.fn(async (id: string, now: Date): Promise<OtpClaimValidation> => {
-      const row = rows.find((candidate) => candidate.id === id);
-      if (!row) return { valid: false, reason: 'CLAIM_LOST' as const };
-      if (row.expiresAt <= now) {
-        return { valid: false, reason: 'EXPIRED' as const };
-      }
-      return validation?.(row, now) ?? {
-        valid: true,
-        destination: row.destination,
-        purpose: row.purpose,
-        expiresAt: row.expiresAt,
-      };
-    }),
-    markProcessed: vi.fn(async (id: string, now: Date) => {
+    validateClaim: vi.fn(
+      async (
+        id: string,
+        _claimToken: string,
+        now: Date,
+      ): Promise<OtpClaimValidation> => {
+        const row = rows.find((candidate) => candidate.id === id);
+        if (!row) return { valid: false, reason: 'CLAIM_LOST' as const };
+        if (row.expiresAt <= now) {
+          return { valid: false, reason: 'EXPIRED' as const };
+        }
+        return validation?.(row, now) ?? {
+          valid: true,
+          destination: row.destination,
+          purpose: row.purpose,
+          expiresAt: row.expiresAt,
+        };
+      },
+    ),
+    markProcessed: vi.fn(async (id: string, _claimToken: string, now: Date) => {
       outbox.processed.push({ id, now });
       return true;
     }),
     markFailed: vi.fn(
       async (
         id: string,
+        _claimToken: string,
         now: Date,
         failure: { code: string; retryAt: Date | null },
       ) => {
@@ -122,6 +132,42 @@ describe('OtpDeliveryWorker', () => {
     expect(() => validateWorkerEnvironment(env)).toThrow(
       'OTP_DELIVERY_ENCRYPTION_KEY',
     );
+  });
+
+  it('runs the scheduled entrypoint with a generated timestamp', async () => {
+    process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
+    const provider: OtpProvider = { send: vi.fn().mockResolvedValue(undefined) };
+    const outbox = fakeOutbox([delivery()]);
+
+    const result = await new OtpDeliveryWorker(
+      undefined,
+      provider,
+      outbox,
+      () => NOW,
+    ).handleOtpDeliveryCron();
+
+    expect(result).toMatchObject({ claimed: 1, sent: 1, failed: 0, suppressed: 0 });
+  });
+
+  it('preserves active max-attempt PROCESSING claims during cleanup', async () => {
+    process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
+    process.env.OTP_DELIVERY_MAX_ATTEMPTS = '3';
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(0),
+      $queryRaw: vi.fn().mockResolvedValue([]),
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (value: typeof tx) => unknown) =>
+        callback(tx),
+      ),
+    };
+
+    await new WorkerOtpOutboxService(prisma as unknown as PrismaClient).claimBatch(NOW, 10);
+
+    const cleanupSql = JSON.stringify(tx.$executeRaw.mock.calls[0]?.[0]);
+    expect(cleanupSql).toContain('updated_at');
+    expect(cleanupSql).toContain(' <=');
+    expect(cleanupSql).toContain('PROCESSING');
   });
   it('claims and sends only at the provider boundary without logging the code or message', async () => {
     process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
@@ -227,6 +273,38 @@ describe('OtpDeliveryWorker', () => {
     const result = await new OtpDeliveryWorker(undefined, provider, outbox, () => NOW).processOnce(NOW);
 
     expect(result).toMatchObject({ claimed: 1, sent: 0, retried: 0, failed: 0, suppressed: 1 });
+    expect(provider.send).not.toHaveBeenCalled();
+    expect(outbox.failures[0]).toMatchObject({
+      code: 'OTP_CONSUMED',
+      retryAt: null,
+    });
+  });
+
+  it('revalidates claim ownership immediately before provider send', async () => {
+    process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
+    const provider: OtpProvider = { send: vi.fn().mockResolvedValue(undefined) };
+    let validations = 0;
+    const outbox = fakeOutbox([delivery()], (row) => {
+      validations += 1;
+      return validations === 1
+        ? {
+            valid: true,
+            destination: row.destination,
+            purpose: row.purpose,
+            expiresAt: row.expiresAt,
+          }
+        : { valid: false, reason: 'CONSUMED' };
+    });
+
+    const result = await new OtpDeliveryWorker(
+      undefined,
+      provider,
+      outbox,
+      () => NOW,
+    ).processOnce(NOW);
+
+    expect(validations).toBe(2);
+    expect(result).toMatchObject({ claimed: 1, sent: 0, suppressed: 1 });
     expect(provider.send).not.toHaveBeenCalled();
     expect(outbox.failures[0]).toMatchObject({
       code: 'OTP_CONSUMED',
