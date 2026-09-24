@@ -232,4 +232,191 @@ describe('local seed plan', () => {
     };
     expect(() => assertLocalSeedPlan(badPickupOrder)).toThrow(/pickupSessions/i);
   });
+
+  it('rejects non-finite, non-integer, and out-of-bounds policy thresholds', () => {
+    const plan = buildLocalSeedPlan(CONFIG);
+    const invalidThresholds: readonly [string, number][] = [
+      ['geofenceRadiusMeters', Number.NaN],
+      ['geofenceRadiusMeters', Number.POSITIVE_INFINITY],
+      ['geofenceRadiusMeters', 0],
+      ['geofenceRadiusMeters', 1.5],
+      ['maxFixAgeSeconds', Number.NaN],
+      ['maxFixAgeSeconds', Number.NEGATIVE_INFINITY],
+      ['maxFixAgeSeconds', -1],
+      ['maxFixAgeSeconds', 1.5],
+    ];
+    for (const [field, value] of invalidThresholds) {
+      const invalidPlan = {
+        ...plan,
+        locationPolicies: plan.locationPolicies.map((row, index) =>
+          index === 0 ? { ...row, [field]: value } : row,
+        ),
+      };
+      expect(() => assertLocalSeedPlan(invalidPlan)).toThrow(/locationPolicies/i);
+    }
+  });
+
+  it('rejects pickup location mismatches and unsupported optional foreign keys', () => {
+    const plan = buildLocalSeedPlan(CONFIG);
+    const session = plan.pickupSessions[0];
+    const otherLocationId = plan.locations.find((row) => row.id !== session.locationId)!.id;
+    const missingLocation = {
+      ...plan,
+      pickupSessions: plan.pickupSessions.map((row, index) =>
+        index === 0 ? { ...row, locationId: 'missing-location' } : row,
+      ),
+    };
+    const mismatchedLocation = {
+      ...plan,
+      pickupSessions: plan.pickupSessions.map((row, index) =>
+        index === 0 ? { ...row, locationId: otherLocationId } : row,
+      ),
+    };
+    expect(() => assertLocalSeedPlan(missingLocation)).toThrow(/pickupSessions/i);
+    expect(() => assertLocalSeedPlan(mismatchedLocation)).toThrow(/pickupSessions/i);
+
+    const unsupportedRosterReference = {
+      ...plan,
+      assignments: plan.assignments.map((row, index) =>
+        index === 0 ? { ...row, rosterImportBatchId: 'unsupported-batch' } : row,
+      ),
+    };
+    const unsupportedOriginalRequest = {
+      ...plan,
+      servingConfirmRequests: plan.servingConfirmRequests.map((row, index) =>
+        index === 0 ? { ...row, originalResultRequestId: plan.servingConfirmRequests[1].id } : row,
+      ),
+    };
+    expect(() => assertLocalSeedPlan(unsupportedRosterReference)).toThrow(/assignments/i);
+    expect(() => assertLocalSeedPlan(unsupportedOriginalRequest)).toThrow(/servingConfirmRequests/i);
+  });
+
+  it('rejects duplicate primary IDs for every affected row collection', () => {
+    const plan = buildLocalSeedPlan(CONFIG);
+    const duplicateAllowlistId = {
+      ...plan,
+      allowlists: plan.allowlists.map((row, index) =>
+        index === 0 ? { ...row, id: plan.allowlists[1].id } : row,
+      ),
+    };
+    const duplicateMealDayId = {
+      ...plan,
+      mealDays: plan.mealDays.map((row, index) =>
+        index === 0 ? { ...row, id: plan.mealDays[1].id } : row,
+      ),
+    };
+    const duplicatePenaltyId = {
+      ...plan,
+      penalties: plan.penalties.map((row, index) =>
+        index === 0 ? { ...row, id: plan.penalties[1].id } : row,
+      ),
+    };
+    const duplicateMealEventId = {
+      ...plan,
+      mealEvents: plan.mealEvents.map((row, index) =>
+        index === 0 ? { ...row, id: plan.mealEvents[1].id } : row,
+      ),
+    };
+    expect(() => assertLocalSeedPlan(duplicateAllowlistId)).toThrow(/allowlists/i);
+    expect(() => assertLocalSeedPlan(duplicateMealDayId)).toThrow(/mealDays/i);
+    expect(() => assertLocalSeedPlan(duplicatePenaltyId)).toThrow(/penalties/i);
+    expect(() => assertLocalSeedPlan(duplicateMealEventId)).toThrow(/mealEvents/i);
+  });
+
+  it('rejects serving split and completed-delegation consumption mismatches', () => {
+    const plan = buildLocalSeedPlan(CONFIG);
+    const selfIndex = plan.mealServings.findIndex((row) => row.receiverType === 'SELF');
+    const invalidSplit = {
+      ...plan,
+      mealServings: plan.mealServings.map((row, index) =>
+        index === selfIndex ? { ...row, receiverType: 'PROXY' as const } : row,
+      ),
+    };
+    const proxyIndex = plan.mealServings.findIndex((row) => row.receiverType === 'PROXY');
+    const unconsumedCompletedDelegation = {
+      ...plan,
+      mealServings: plan.mealServings.map((row, index) =>
+        index === proxyIndex ? { ...row, delegationId: null } : row,
+      ),
+    };
+    expect(() => assertLocalSeedPlan(invalidSplit)).toThrow(/mealServings/i);
+    expect(() => assertLocalSeedPlan(unconsumedCompletedDelegation)).toThrow(/mealServings/i);
+  });
+
+  it('requires exact pickup intent history and consumed timestamps', () => {
+    const plan = buildLocalSeedPlan(CONFIG);
+    const session = plan.pickupSessions[0];
+    const extraRegistrationId = plan.registrations
+      .map((row) => row.id)
+      .find((id) => id > session.registrationIds[0])!;
+    const mismatchedIntent = {
+      ...plan,
+      pickupSessions: plan.pickupSessions.map((row, index) =>
+        index === 0
+          ? { ...row, intentRegistrationIds: [row.registrationIds[0], extraRegistrationId] }
+          : row,
+      ),
+    };
+    const shiftedConsumedAt = new Date(session.consumedAt.getTime() + 1_000);
+    const shiftedExpiry = new Date(session.expiresAt.getTime() + 1_000);
+    const mismatchedConsumedAt = {
+      ...plan,
+      pickupSessions: plan.pickupSessions.map((row, index) =>
+        index === 0 ? { ...row, consumedAt: shiftedConsumedAt, expiresAt: shiftedExpiry } : row,
+      ),
+    };
+    expect(() => assertLocalSeedPlan(mismatchedIntent)).toThrow(/pickupSessions/i);
+    expect(() => assertLocalSeedPlan(mismatchedConsumedAt)).toThrow(/pickupSessions/i);
+  });
+
+  it('rejects invalid or non-midnight values for every date-only graph field', () => {
+    const plan = buildLocalSeedPlan(CONFIG);
+    const nonMidnight = new Date('2026-09-28T01:00:00.000Z');
+    const invalidDate = new Date(Number.NaN);
+    const invalidWeeklyStart = {
+      ...plan,
+      weeklyMenu: { ...plan.weeklyMenu, startDate: nonMidnight },
+    };
+    const invalidDailyDate = {
+      ...plan,
+      dailyMenus: plan.dailyMenus.map((row, index) =>
+        index === 0 ? { ...row, date: nonMidnight } : row,
+      ),
+    };
+    const invalidRegistrationDate = {
+      ...plan,
+      registrations: plan.registrations.map((row, index) =>
+        index === 0 ? { ...row, mealDate: nonMidnight } : row,
+      ),
+    };
+    const invalidRegistrationCalendarDate = {
+      ...plan,
+      registrations: plan.registrations.map((row, index) =>
+        index === 0 ? { ...row, mealDate: invalidDate } : row,
+      ),
+    };
+    const invalidPickupDate = {
+      ...plan,
+      pickupSessions: plan.pickupSessions.map((row, index) =>
+        index === 0 ? { ...row, mealDate: nonMidnight } : row,
+      ),
+    };
+    const invalidServingDate = {
+      ...plan,
+      mealServings: plan.mealServings.map((row, index) =>
+        index === 0 ? { ...row, mealDate: nonMidnight } : row,
+      ),
+    };
+    const invalidPublishedAt = {
+      ...plan,
+      weeklyMenu: { ...plan.weeklyMenu, publishedAt: invalidDate },
+    };
+    expect(() => assertLocalSeedPlan(invalidWeeklyStart)).toThrow(/weeklyMenu/i);
+    expect(() => assertLocalSeedPlan(invalidDailyDate)).toThrow(/dailyMenus/i);
+    expect(() => assertLocalSeedPlan(invalidRegistrationDate)).toThrow(/registrations/i);
+    expect(() => assertLocalSeedPlan(invalidRegistrationCalendarDate)).toThrow(LocalSeedPlanError);
+    expect(() => assertLocalSeedPlan(invalidPickupDate)).toThrow(/pickupSessions/i);
+    expect(() => assertLocalSeedPlan(invalidServingDate)).toThrow(/mealServings/i);
+    expect(() => assertLocalSeedPlan(invalidPublishedAt)).toThrow(/weeklyMenu/i);
+  });
 });

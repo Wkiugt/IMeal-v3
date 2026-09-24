@@ -180,6 +180,7 @@ export function buildLocalSeedPlan(config: LocalSeedConfig): LocalSeedPlan {
 export function assertLocalSeedPlan(plan: LocalSeedPlan): void {
   assertPlanCounts(plan);
   assertPlanKey(plan);
+  assertPrimaryIds(plan);
 
   const usersById = indexRows(plan.users, 'users', (row) => row.id);
   const usersByEmail = indexRows(plan.users, 'users', (row) => row.email);
@@ -749,6 +750,28 @@ function assertPlanKey(plan: LocalSeedPlan): void {
   }
 }
 
+function assertPrimaryIds(plan: LocalSeedPlan): void {
+  if (!plan.weeklyMenu.id) {
+    throw new LocalSeedPlanError('weeklyMenu', '<empty>', 'primary ID is empty');
+  }
+  indexRows(plan.users, 'users', (row) => row.id);
+  indexRows(plan.locations, 'locations', (row) => row.id);
+  indexRows(plan.locationPolicies, 'locationPolicies', (row) => row.id);
+  indexRows(plan.assignments, 'assignments', (row) => row.id);
+  indexRows(plan.allowlists, 'allowlists', (row) => row.id);
+  indexRows(plan.dailyMenus, 'dailyMenus', (row) => row.id);
+  indexRows(plan.mealDays, 'mealDays', (row) => row.id);
+  indexRows(plan.menuRevisions, 'menuRevisions', (row) => row.id);
+  indexRows(plan.registrations, 'registrations', (row) => row.id);
+  indexRows(plan.delegations, 'delegations', (row) => row.id);
+  indexRows(plan.penalties, 'penalties', (row) => row.id);
+  indexRows(plan.servingVerifications, 'servingVerifications', (row) => row.id);
+  indexRows(plan.pickupSessions, 'pickupSessions', (row) => row.id);
+  indexRows(plan.servingConfirmRequests, 'servingConfirmRequests', (row) => row.id);
+  indexRows(plan.mealServings, 'mealServings', (row) => row.id);
+  indexRows(plan.mealEvents, 'mealEvents', (row) => row.id);
+}
+
 function assertRoles(
   plan: LocalSeedPlan,
   usersById: ReadonlyMap<string, SeedUserRow>,
@@ -872,7 +895,9 @@ function assertPolicies(
       policy.longitude < -180 ||
       policy.longitude > 180 ||
       !Number.isFinite(policy.maxAccuracyMeters) ||
+      !Number.isInteger(policy.geofenceRadiusMeters) ||
       policy.geofenceRadiusMeters <= 0 ||
+      !Number.isInteger(policy.maxFixAgeSeconds) ||
       policy.maxFixAgeSeconds < 0 ||
       policy.maxAccuracyMeters < 0 ||
       !policy.isActive ||
@@ -920,6 +945,8 @@ function assertAssignments(
     if (
       !assignment.isActive ||
       assignment.effectiveTo !== null ||
+      assignment.rosterImportBatchId !== null ||
+      assignment.auditEventId !== null ||
       !sameInstant(assignment.effectiveFrom, FIXED_EFFECTIVE_FROM) ||
       !/^LOCAL-EMP-\d{4}$/.test(assignment.employeeCode) ||
       assignment.normalizedEmail !== user.email ||
@@ -989,7 +1016,11 @@ function assertAppSettings(plan: LocalSeedPlan): void {
 function assertMenus(plan: LocalSeedPlan): Map<string, SeedDailyMenuRow> {
   const weekStart = parseDateOnly(plan.key.weekStart, 'menus', 'weekStart');
   const serveDate = parseDateOnly(plan.key.serveDate, 'menus', 'serveDate');
+  assertDateOnly(plan.weeklyMenu.startDate, 'weeklyMenu', 'startDate');
+  assertDateOnly(plan.weeklyMenu.endDate, 'weeklyMenu', 'endDate');
   if (
+    !(plan.weeklyMenu.publishedAt instanceof Date) ||
+    !Number.isFinite(plan.weeklyMenu.publishedAt.getTime()) ||
     !sameInstant(plan.weeklyMenu.startDate, weekStart) ||
     !sameInstant(plan.weeklyMenu.endDate, dateAtOffset(weekStart, 6)) ||
     plan.weeklyMenu.publishedAt.getTime() >= weekStart.getTime()
@@ -1001,6 +1032,9 @@ function assertMenus(plan: LocalSeedPlan): Map<string, SeedDailyMenuRow> {
   for (let offset = 0; offset < 7; offset += 1) {
     const date = dateAtOffset(weekStart, offset);
     const dailyMenu = plan.dailyMenus[offset];
+    if (dailyMenu) {
+      assertDateOnly(dailyMenu.date, 'dailyMenus', dailyMenu.id);
+    }
     if (
       !dailyMenu ||
       dailyMenu.weeklyMenuId !== plan.weeklyMenu.id ||
@@ -1076,6 +1110,7 @@ function assertRegistrations(
   const weekStart = parseDateOnly(plan.key.weekStart, 'registrations', 'weekStart');
   const counts = { ACTIVE: 0, SERVED: 0, CANCELLED: 0, NO_SHOW: 0 };
   for (const [ordinal, registration] of plan.registrations.entries()) {
+    assertDateOnly(registration.mealDate, 'registrations', registration.id);
     if (!usersById.has(registration.userId) || !staffUserIds.has(registration.userId)) {
       throw new LocalSeedPlanError('registrations', registration.id, 'registration owner is outside staff-capable users');
     }
@@ -1245,6 +1280,8 @@ function assertServingGraph(
   const eventsByServing = new Map<string, SeedMealEventRow[]>();
   const qrHashes = new Set<string>();
   const requestCallerKeys = new Set<string>();
+  const receiverCounts = { SELF: 0, PROXY: 0 };
+  const completedDelegationUseCounts = new Map<string, number>();
   for (const event of plan.mealEvents) {
     if (!servingsById.has(event.mealServingId) || event.eventType !== 'PICKUP_CONFIRMED') {
       throw new LocalSeedPlanError('mealEvents', event.id, 'meal event reference or type is invalid');
@@ -1265,9 +1302,13 @@ function assertServingGraph(
   }
 
   for (const serving of plan.mealServings) {
+    assertDateOnly(serving.mealDate, 'mealServings', serving.id);
     const registration = registrationsById.get(serving.registrationId);
     const verification = verificationsById.get(serving.servingVerificationId);
     const session = sessionsById.get(serving.pickupSessionId);
+    if (session) {
+      assertDateOnly(session.mealDate, 'pickupSessions', session.id);
+    }
     const request = requestsById.get(serving.requestId);
     if (!session || qrHashes.has(session.qrHash)) {
       throw new LocalSeedPlanError('pickupSessions', session?.id ?? serving.pickupSessionId, 'qr hash is duplicated');
@@ -1315,10 +1356,12 @@ function assertServingGraph(
       throw new LocalSeedPlanError('mealServings', serving.id, 'menu revision does not match meal date');
     }
     if (serving.receiverType === 'SELF') {
+      receiverCounts.SELF += 1;
       if (serving.presenterUserId !== serving.ownerUserId || serving.delegationId !== null) {
         throw new LocalSeedPlanError('mealServings', serving.id, 'self serving relationship is invalid');
       }
     } else if (serving.receiverType === 'PROXY') {
+      receiverCounts.PROXY += 1;
       const delegation = serving.delegationId ? delegationsById.get(serving.delegationId) : undefined;
       if (
         !delegation ||
@@ -1329,6 +1372,10 @@ function assertServingGraph(
       ) {
         throw new LocalSeedPlanError('mealServings', serving.id, 'proxy serving relationship is invalid');
       }
+      completedDelegationUseCounts.set(
+        delegation.id,
+        (completedDelegationUseCounts.get(delegation.id) ?? 0) + 1,
+      );
     } else {
       throw new LocalSeedPlanError('mealServings', serving.id, `invalid receiver type ${String(serving.receiverType)}`);
     }
@@ -1352,15 +1399,19 @@ function assertServingGraph(
     if (
       session.userId !== serving.ownerUserId ||
       session.presenterUserId !== serving.presenterUserId ||
+      !locationsById.has(session.locationId) ||
+      session.locationId !== serving.locationId ||
       !sameInstant(session.mealDate, serving.mealDate) ||
       session.registrationIds.length !== 1 ||
       session.registrationIds[0] !== serving.registrationId ||
       !isSortedUnique(session.registrationIds) ||
       !isSortedUnique(session.intentRegistrationIds) ||
-      session.intentRegistrationIds[0] !== serving.registrationId ||
+      session.intentRegistrationIds.length !== session.registrationIds.length ||
+      session.intentRegistrationIds.some((id, index) => id !== session.registrationIds[index]) ||
       session.intentHash !== serving.intentHash ||
       session.servingVerificationId !== serving.servingVerificationId ||
       session.qrHash.length === 0 ||
+      session.consumedAt.getTime() !== serving.servedAt.getTime() ||
       session.consumedAt.getTime() + 30 * SECOND_MS !== session.expiresAt.getTime()
     ) {
       throw new LocalSeedPlanError('pickupSessions', session.id, 'pickup session graph or ordering is invalid');
@@ -1370,6 +1421,7 @@ function assertServingGraph(
       request.status !== 'SUCCESS' ||
       request.pickupSessionId !== serving.pickupSessionId ||
       request.intentHash !== serving.intentHash ||
+      request.originalResultRequestId !== null ||
       request.resultServingIds.length !== 1 ||
       request.resultServingIds[0] !== serving.id ||
       !isSortedUnique(request.resultServingIds) ||
@@ -1380,6 +1432,25 @@ function assertServingGraph(
     const events = eventsByServing.get(serving.id) ?? [];
     if (events.length !== 1) {
       throw new LocalSeedPlanError('mealEvents', serving.id, 'serving must have exactly one event');
+    }
+  }
+  if (receiverCounts.SELF !== 32 || receiverCounts.PROXY !== 8) {
+    throw new LocalSeedPlanError(
+      'mealServings',
+      'receiverType',
+      `expected 32 SELF and 8 PROXY servings, got ${receiverCounts.SELF} SELF and ${receiverCounts.PROXY} PROXY`,
+    );
+  }
+  for (const delegation of plan.delegations) {
+    if (
+      delegation.status === 'COMPLETED' &&
+      completedDelegationUseCounts.get(delegation.id) !== 1
+    ) {
+      throw new LocalSeedPlanError(
+        'delegations',
+        delegation.id,
+        'every completed delegation must be consumed by exactly one proxy serving',
+      );
     }
   }
 }
@@ -1435,6 +1506,19 @@ function parseDateOnly(value: string, entity: string, key: string): Date {
     throw new LocalSeedPlanError(entity, key, 'date is not a valid calendar date');
   }
   return date;
+}
+
+function assertDateOnly(value: Date, entity: string, key: string): void {
+  if (
+    !(value instanceof Date) ||
+    !Number.isFinite(value.getTime()) ||
+    value.getUTCHours() !== 0 ||
+    value.getUTCMinutes() !== 0 ||
+    value.getUTCSeconds() !== 0 ||
+    value.getUTCMilliseconds() !== 0
+  ) {
+    throw new LocalSeedPlanError(entity, key, 'date must be a valid UTC-midnight date-only value');
+  }
 }
 
 function assertMonday(date: Date, key: string): void {
