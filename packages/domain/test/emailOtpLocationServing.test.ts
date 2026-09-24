@@ -125,4 +125,41 @@ describe('Task 2 persistence boundaries', () => {
     expect(persisted.serviceLocationAddress).toBe(firstLocation.address);
     expect(persisted.serviceLocationSnapshotAt).toEqual(TEST_DATE);
   });
+
+  it('rejects a duplicate employee code across all active assignments', async () => {
+    const user = await createUser('active-code@example.test');
+    const firstLocation = await createLocation('TEST-C');
+    const secondLocation = await createLocation('TEST-D');
+
+    await prisma.employeeLocationAssignment.create({
+      data: {
+        userId: user.id,
+        normalizedEmail: user.email,
+        employeeName: 'Active Code Employee',
+        employeeCode: 'EMP-ACTIVE',
+        isActive: true,
+        role: 'staff',
+        serviceLocationCode: firstLocation.shortCode,
+        locationId: firstLocation.id,
+        effectiveFrom: TEST_DATE,
+        effectiveTo: new Date('2026-09-25T00:00:00.000Z'),
+      },
+    });
+
+    await expect(
+      prisma.employeeLocationAssignment.create({
+        data: {
+          userId: user.id,
+          normalizedEmail: user.email,
+          employeeName: 'Active Code Employee',
+          employeeCode: 'EMP-ACTIVE',
+          isActive: true,
+          role: 'staff',
+          serviceLocationCode: secondLocation.shortCode,
+          locationId: secondLocation.id,
+          effectiveFrom: new Date('2026-09-25T00:00:00.000Z'),
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'P2002' });
+  });
 });

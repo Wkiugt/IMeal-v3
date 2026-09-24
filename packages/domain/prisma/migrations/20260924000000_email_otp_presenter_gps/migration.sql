@@ -206,9 +206,19 @@ CREATE TABLE "location_policies" (
 
   CONSTRAINT "location_policies_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "location_policies_coordinate_check"
-    CHECK ("latitude" >= -90 AND "latitude" <= 90 AND "longitude" >= -180 AND "longitude" <= 180),
+    CHECK (
+      "latitude" NOT IN ('NaN'::double precision, 'Infinity'::double precision, '-Infinity'::double precision)
+      AND "longitude" NOT IN ('NaN'::double precision, 'Infinity'::double precision, '-Infinity'::double precision)
+      AND "latitude" >= -90 AND "latitude" <= 90
+      AND "longitude" >= -180 AND "longitude" <= 180
+    ),
   CONSTRAINT "location_policies_thresholds_check"
-    CHECK ("geofence_radius_meters" > 0 AND "max_fix_age_seconds" >= 0 AND "max_accuracy_meters" >= 0),
+    CHECK (
+      "geofence_radius_meters" > 0
+      AND "max_fix_age_seconds" >= 0
+      AND "max_accuracy_meters" NOT IN ('NaN'::double precision, 'Infinity'::double precision, '-Infinity'::double precision)
+      AND "max_accuracy_meters" >= 0
+    ),
   CONSTRAINT "location_policies_effective_dates_check"
     CHECK ("effective_to" IS NULL OR "effective_to" > "effective_from")
 );
@@ -283,7 +293,13 @@ CREATE TABLE "serving_verifications" (
 
   CONSTRAINT "serving_verifications_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "serving_verifications_accuracy_check"
-    CHECK ("accuracy_meters" IS NULL OR "accuracy_meters" >= 0)
+    CHECK (
+      "accuracy_meters" IS NULL
+      OR (
+        "accuracy_meters" NOT IN ('NaN'::double precision, 'Infinity'::double precision, '-Infinity'::double precision)
+        AND "accuracy_meters" >= 0
+      )
+    )
 );
 
 ALTER TABLE "registrations"
@@ -305,10 +321,20 @@ ALTER TABLE "pickup_sessions"
   ADD COLUMN "serving_verification_id" TEXT,
   ADD COLUMN "consumed_at" TIMESTAMP(3);
 
+-- The legacy array was nullable. Normalize NULL to an empty set before copying
+-- it into the new NOT NULL intent snapshot; no registration IDs are invented.
 UPDATE "pickup_sessions"
-SET "presenter_user_id" = "user_id",
-    "intent_registration_ids" = "registration_ids"
-WHERE "presenter_user_id" IS NULL;
+SET "registration_ids" = ARRAY[]::TEXT[]
+WHERE "registration_ids" IS NULL;
+
+UPDATE "pickup_sessions" AS ps
+SET "presenter_user_id" = CASE
+      WHEN EXISTS (SELECT 1 FROM "users" AS u WHERE u."id" = ps."user_id")
+        THEN ps."user_id"
+      ELSE NULL
+    END,
+    "intent_registration_ids" = COALESCE(ps."registration_ids", ARRAY[]::TEXT[])
+WHERE ps."presenter_user_id" IS NULL;
 
 ALTER TABLE "meal_servings"
   ADD COLUMN "owner_user_id" TEXT,
@@ -400,7 +426,7 @@ CREATE INDEX "employee_location_assignments_roster_batch_idx"
   ON "employee_location_assignments" ("roster_import_batch_id");
 CREATE UNIQUE INDEX "employee_location_assignments_active_employee_code_key"
   ON "employee_location_assignments" ("employee_code")
-  WHERE "is_active" AND "effective_to" IS NULL;
+  WHERE "is_active";
 
 CREATE INDEX "roster_import_rows_batch_id_outcome_idx"
   ON "roster_import_rows" ("batch_id", "outcome");
@@ -495,9 +521,14 @@ ALTER TABLE "registrations"
   FOREIGN KEY ("service_location_id") REFERENCES "locations" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
   ADD CONSTRAINT "registrations_service_location_assignment_id_fkey"
   FOREIGN KEY ("service_location_assignment_id") REFERENCES "employee_location_assignments" ("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- Legacy pickup rows predate the user foreign key. Preserve any historical
+-- orphan rows and enforce ownership for future writes; validation can occur
+-- after a later ownership-reconciliation migration.
 ALTER TABLE "pickup_sessions"
   ADD CONSTRAINT "pickup_sessions_user_id_fkey"
-  FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  NOT VALID;
+ALTER TABLE "pickup_sessions"
   ADD CONSTRAINT "pickup_sessions_presenter_user_id_fkey"
   FOREIGN KEY ("presenter_user_id") REFERENCES "users" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
   ADD CONSTRAINT "pickup_sessions_location_id_fkey"
