@@ -215,7 +215,14 @@ expect(v1.PresenterLocationEvidenceSchema.parse({
   longitude: 106.69,
   accuracyMeters: 12,
 })).toMatchObject({ accuracyMeters: 12 });
+expect(v1.ConfirmPickupSchema.parse({ pickupSessionId: 's', idempotencyKey: 'k' })).toEqual({
+  pickupSessionId: 's',
+  idempotencyKey: 'k',
+});
+expect(() => v1.ConfirmPickupSchema.parse({ pickupSessionId: '', idempotencyKey: 'k' })).toThrow();
 expect(() => v1.ConfirmPickupSchema.parse({ pickupSessionId: 's', idempotencyKey: '' })).toThrow();
+// Confirm validates only these non-empty identifiers; the server loads and checks the exact
+// registration set owned by the PickupSession during confirmation.
 expect(v1.PickupErrorCodeSchema.options).toEqual(expect.arrayContaining([
   'OTP_REQUEST_ACCEPTED',
   'OTP_INVALID_OR_EXPIRED',
@@ -245,7 +252,7 @@ Implement strict Zod schemas with these rules:
 - OTP response never contains the OTP code.
 - UTC timestamps must be ISO instants ending in `Z`.
 - Evidence latitude/longitude and non-negative accuracy are finite; registration IDs are non-empty, unique, and sorted by the service before schema output.
-- `ConfirmPickupSchema` requires a non-empty idempotency key and non-empty exact registration set.
+- `ConfirmPickupSchema` requires only non-empty `pickupSessionId` and `idempotencyKey`; the server loads the exact registration set owned by the `PickupSession` and checks it during confirmation.
 - GPS failure details contain only safe recovery instruction, never coordinates or precise distance.
 - Export all symbols through `v1/index.ts`.
 
@@ -795,7 +802,7 @@ it('serializes accepted delegation revoke/serve and chooses one committed winner
 });
 
 it('returns the original result for the same caller/key/body and conflicts on a changed body', async () => {
-  // same exact request is idempotent; changed registration set/location/session fails
+  // same exact request is idempotent; changed session/intent context fails
 });
 
 it('records owner, presenter/receiver, Kitchen actor, pickup type, location, delegation, intent/session and verification snapshots', async () => {
@@ -812,7 +819,7 @@ yarn workspace @imeal/api exec vitest run src/pickup/pickup.service.spec.ts test
 yarn workspace @imeal/core exec vitest run test/concurrency.test.ts
 ```
 
-Expected: FAIL because confirm currently accepts arbitrary session subsets, records only registration/served time, and does not bind caller/body/location/verification snapshots.
+Expected: FAIL because confirm currently accepts arbitrary registration subsets instead of the exact set owned by the `PickupSession`, records only registration/served time, and does not bind caller/body/location/verification snapshots.
 
 - [ ] **Step 3: Implement the transaction cutover**
 
