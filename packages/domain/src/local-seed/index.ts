@@ -77,13 +77,9 @@ function formatSummary(
   plan: LocalSeedPlan,
   result?: SeedWriteResult,
 ): string {
-  const counts = [
-    `${plan.counts.users} users`,
-    `${plan.counts.locations} locations`,
-    `${plan.counts.assignments} assignments`,
-    `${plan.counts.registrations} registrations`,
-    `${plan.counts.mealServings} servings`,
-  ].join(' / ');
+  const counts = Object.entries(plan.counts)
+    .map(([label, value]) => `${label}=${value}`)
+    .join(' ');
   const mode = result === undefined ? 'DRY-RUN: no database writes' : 'WRITE COMPLETE';
   const writes =
     result === undefined

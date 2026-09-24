@@ -104,8 +104,9 @@ export async function writeTransaction(
       stats,
       'users',
       row.id,
-      () => tx.user.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.user.findUnique({ where: { id: row.id } }),
       () => tx.user.upsert({ where: { id: row.id }, create: userCreate(row), update: userUpdate(row) }),
+      () => userUpdate(row),
     );
   }
 
@@ -122,7 +123,6 @@ export async function writeTransaction(
       () =>
         tx.userRole.findUnique({
           where: { userId_roleId: { userId: row.userId, roleId } },
-          select: { userId: true },
         }),
       () =>
         tx.userRole.upsert({
@@ -130,6 +130,7 @@ export async function writeTransaction(
           create: { userId: row.userId, roleId },
           update: {},
         }),
+      () => ({}),
     );
   }
 
@@ -138,8 +139,9 @@ export async function writeTransaction(
       stats,
       'locations',
       row.id,
-      () => tx.location.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.location.findUnique({ where: { id: row.id } }),
       () => tx.location.upsert({ where: { id: row.id }, create: locationCreate(row), update: locationUpdate(row) }),
+      () => locationUpdate(row),
     );
   }
 
@@ -148,13 +150,14 @@ export async function writeTransaction(
       stats,
       'locationPolicies',
       row.id,
-      () => tx.locationPolicy.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.locationPolicy.findUnique({ where: { id: row.id } }),
       () =>
         tx.locationPolicy.upsert({
           where: { id: row.id },
           create: locationPolicyCreate(row),
           update: locationPolicyUpdate(row),
         }),
+      () => locationPolicyUpdate(row),
     );
   }
 
@@ -163,13 +166,14 @@ export async function writeTransaction(
       stats,
       'assignments',
       row.id,
-      () => tx.employeeLocationAssignment.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.employeeLocationAssignment.findUnique({ where: { id: row.id } }),
       () =>
         tx.employeeLocationAssignment.upsert({
           where: { id: row.id },
           create: assignmentCreate(row),
           update: assignmentUpdate(row),
         }),
+      () => assignmentUpdate(row),
     );
   }
 
@@ -178,8 +182,9 @@ export async function writeTransaction(
       stats,
       'allowlists',
       row.id,
-      () => tx.otpAllowlist.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.otpAllowlist.findUnique({ where: { id: row.id } }),
       () => tx.otpAllowlist.upsert({ where: { id: row.id }, create: allowlistCreate(row), update: allowlistUpdate(row) }),
+      () => allowlistUpdate(row),
     );
   }
 
@@ -187,13 +192,14 @@ export async function writeTransaction(
     stats,
     'weeklyMenus',
     plan.weeklyMenu.id,
-    () => tx.weeklyMenu.findUnique({ where: { id: plan.weeklyMenu.id }, select: { id: true } }),
+    () => tx.weeklyMenu.findUnique({ where: { id: plan.weeklyMenu.id } }),
     () =>
       tx.weeklyMenu.upsert({
         where: { id: plan.weeklyMenu.id },
         create: weeklyMenuCreate(plan.weeklyMenu),
         update: weeklyMenuUpdate(plan.weeklyMenu),
       }),
+    () => weeklyMenuUpdate(plan.weeklyMenu),
   );
 
   for (const row of plan.dailyMenus) {
@@ -201,8 +207,9 @@ export async function writeTransaction(
       stats,
       'dailyMenus',
       row.id,
-      () => tx.dailyMenu.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.dailyMenu.findUnique({ where: { id: row.id } }),
       () => tx.dailyMenu.upsert({ where: { id: row.id }, create: dailyMenuCreate(row), update: dailyMenuUpdate(row) }),
+      () => dailyMenuUpdate(row),
     );
   }
 
@@ -211,8 +218,9 @@ export async function writeTransaction(
       stats,
       'mealDays',
       row.id,
-      () => tx.mealDay.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.mealDay.findUnique({ where: { id: row.id } }),
       () => tx.mealDay.upsert({ where: { id: row.id }, create: mealDayCreate(row), update: mealDayUpdate(row) }),
+      () => mealDayUpdate(row),
     );
   }
 
@@ -221,13 +229,14 @@ export async function writeTransaction(
       stats,
       'menuRevisions',
       row.id,
-      () => tx.dailyMenuRevision.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.dailyMenuRevision.findUnique({ where: { id: row.id } }),
       () =>
         tx.dailyMenuRevision.upsert({
           where: { id: row.id },
           create: menuRevisionCreate(row),
           update: menuRevisionUpdate(row),
         }),
+      () => menuRevisionUpdate(row),
     );
   }
 
@@ -236,8 +245,9 @@ export async function writeTransaction(
       stats,
       'appSettings',
       row.key,
-      () => tx.appSetting.findUnique({ where: { key: row.key }, select: { key: true } }),
+      () => tx.appSetting.findUnique({ where: { key: row.key } }),
       () => tx.appSetting.upsert({ where: { key: row.key }, create: appSettingCreate(row), update: appSettingUpdate(row) }),
+      () => appSettingUpdate(row),
     );
   }
 
@@ -246,13 +256,14 @@ export async function writeTransaction(
       stats,
       'registrations',
       row.id,
-      () => tx.registration.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.registration.findUnique({ where: { id: row.id } }),
       () =>
         tx.registration.upsert({
           where: { id: row.id },
           create: registrationCreate(row),
           update: registrationUpdate(row),
         }),
+      () => registrationUpdate(row),
     );
   }
 
@@ -261,13 +272,14 @@ export async function writeTransaction(
       stats,
       'delegations',
       row.id,
-      () => tx.pickupDelegation.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.pickupDelegation.findUnique({ where: { id: row.id } }),
       () =>
         tx.pickupDelegation.upsert({
           where: { id: row.id },
           create: delegationCreate(row),
           update: delegationUpdate(row),
         }),
+      () => delegationUpdate(row),
     );
   }
 
@@ -276,8 +288,9 @@ export async function writeTransaction(
       stats,
       'penalties',
       row.id,
-      () => tx.penalty.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.penalty.findUnique({ where: { id: row.id } }),
       () => tx.penalty.upsert({ where: { id: row.id }, create: penaltyCreate(row), update: penaltyUpdate(row) }),
+      () => penaltyUpdate(row),
     );
   }
 
@@ -286,13 +299,14 @@ export async function writeTransaction(
       stats,
       'servingVerifications',
       row.id,
-      () => tx.servingVerification.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.servingVerification.findUnique({ where: { id: row.id } }),
       () =>
         tx.servingVerification.upsert({
           where: { id: row.id },
           create: servingVerificationCreate(row),
           update: servingVerificationUpdate(row),
         }),
+      () => servingVerificationUpdate(row),
     );
   }
 
@@ -301,13 +315,14 @@ export async function writeTransaction(
       stats,
       'pickupSessions',
       row.id,
-      () => tx.pickupSession.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.pickupSession.findUnique({ where: { id: row.id } }),
       () =>
         tx.pickupSession.upsert({
           where: { id: row.id },
           create: pickupSessionCreate(row),
           update: pickupSessionUpdate(row),
         }),
+      () => pickupSessionUpdate(row),
     );
   }
 
@@ -316,13 +331,14 @@ export async function writeTransaction(
       stats,
       'servingConfirmRequests',
       row.id,
-      () => tx.servingConfirmRequest.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.servingConfirmRequest.findUnique({ where: { id: row.id } }),
       () =>
         tx.servingConfirmRequest.upsert({
           where: { id: row.id },
           create: servingConfirmRequestCreate(row),
           update: servingConfirmRequestUpdate(row),
         }),
+      () => servingConfirmRequestUpdate(row),
     );
   }
 
@@ -331,8 +347,9 @@ export async function writeTransaction(
       stats,
       'mealServings',
       row.id,
-      () => tx.mealServing.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.mealServing.findUnique({ where: { id: row.id } }),
       () => tx.mealServing.upsert({ where: { id: row.id }, create: mealServingCreate(row), update: mealServingUpdate(row) }),
+      () => mealServingUpdate(row),
     );
   }
 
@@ -341,8 +358,9 @@ export async function writeTransaction(
       stats,
       'mealEvents',
       row.id,
-      () => tx.mealEvent.findUnique({ where: { id: row.id }, select: { id: true } }),
+      () => tx.mealEvent.findUnique({ where: { id: row.id } }),
       () => tx.mealEvent.upsert({ where: { id: row.id }, create: mealEventCreate(row), update: mealEventUpdate(row) }),
+      () => mealEventUpdate(row),
     );
   }
 
@@ -375,16 +393,60 @@ async function upsertRow(
   key: string,
   findExisting: () => Promise<unknown>,
   upsert: () => Promise<unknown>,
+  expected: () => unknown,
 ): Promise<void> {
   try {
     const existing = await findExisting();
+    if (!existing) {
+      await upsert();
+      stats.created += 1;
+      return;
+    }
+    if (matchesSeedFields(existing, expected())) {
+      stats.unchanged += 1;
+      return;
+    }
     await upsert();
-    if (existing) stats.updated += 1;
-    else stats.created += 1;
+    stats.updated += 1;
   } catch (error) {
     if (error instanceof SeedOperationError) throw error;
     throw new SeedOperationError(entity, key, error);
   }
+}
+
+function matchesSeedFields(existing: unknown, expected: unknown): boolean {
+  if (!isRecord(existing) || !isRecord(expected)) {
+    return valuesEqual(existing, expected);
+  }
+  for (const [key, expectedValue] of Object.entries(expected)) {
+    if (expectedValue === undefined) continue;
+    if (!valuesEqual(existing[key], expectedValue)) return false;
+  }
+  return true;
+}
+
+function valuesEqual(left: unknown, right: unknown): boolean {
+  if (left instanceof Date || right instanceof Date) {
+    return left instanceof Date && right instanceof Date && left.getTime() === right.getTime();
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    return left.every((value, index) => valuesEqual(value, right[index]));
+  }
+  if (isRecord(left) || isRecord(right)) {
+    if (!isRecord(left) || !isRecord(right)) return false;
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    if (leftKeys.length !== rightKeys.length) return false;
+    return leftKeys.every(
+      (key) => Object.hasOwn(right, key) && valuesEqual(left[key], right[key]),
+    );
+  }
+  return Object.is(left, right);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && !(value instanceof Date);
 }
 
 function userCreate(row: SeedUserRow) {

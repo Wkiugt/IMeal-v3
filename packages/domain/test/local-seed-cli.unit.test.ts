@@ -14,6 +14,29 @@ const VALID_ENV = {
     'postgresql://postgres:super-secret@localhost:5432/imeal?schema=test_seed',
 };
 const VALID_ARGS = ['--base-email', 'seed@example.test'];
+const EXPECTED_COUNT_LABELS = [
+  'users=50',
+  'userRoles=56',
+  'locations=4',
+  'locationPolicies=4',
+  'assignments=50',
+  'allowlists=50',
+  'weeklyMenus=1',
+  'dailyMenus=7',
+  'mealDays=7',
+  'menuRevisions=7',
+  'registrations=126',
+  'pendingDelegations=4',
+  'acceptedDelegations=4',
+  'completedDelegations=8',
+  'penalties=10',
+  'servingVerifications=40',
+  'pickupSessions=40',
+  'servingConfirmRequests=40',
+  'mealServings=40',
+  'mealEvents=40',
+  'appSettings=1',
+] as const;
 
 function makeDeps(overrides: Partial<LocalSeedCliDeps> = {}): LocalSeedCliDeps {
   return {
@@ -56,10 +79,10 @@ describe('local seed CLI', () => {
     expect(result.kind === 'dry-run' && result.plan.users).toHaveLength(50);
     expect(createPrisma).not.toHaveBeenCalled();
     expect(writePlan).not.toHaveBeenCalled();
+    for (const countLabel of EXPECTED_COUNT_LABELS) {
+      expect(result.kind === 'dry-run' && result.summary).toContain(countLabel);
+    }
     expect(result.kind === 'dry-run' && result.summary).toContain('LOCAL/TEST ONLY');
-    expect(result.kind === 'dry-run' && result.summary).toContain(
-      '50 users / 4 locations / 50 assignments / 126 registrations / 40 servings',
-    );
     expect(result.kind === 'dry-run' && result.summary).not.toContain('super-secret');
     expect(result.kind === 'dry-run' && result.summary).not.toContain(
       'I_UNDERSTAND_LOCAL_ONLY',

@@ -23,7 +23,6 @@ export class LocalSeedConfigError extends Error {
 }
 
 const DEFAULT_WEEK_START = '2026-09-28';
-const DEFAULT_SERVE_DATE = '2026-09-28';
 const LOCAL_CONFIRMATION = 'I_UNDERSTAND_LOCAL_ONLY';
 const APPROVED_HOSTS: Record<string, true> = {
   localhost: true,
@@ -86,7 +85,7 @@ export function parseLocalSeedConfig(
     args.serveDate,
     env.IMEAL_LOCAL_SEED_SERVE_DATE,
     (value) => value,
-  ) ?? DEFAULT_SERVE_DATE;
+  ) ?? weekStart;
   const weekStartTime = parseDateOnly(weekStart);
   const serveDateTime = parseDateOnly(serveDate);
   const weekStartDay = new Date(weekStartTime).getUTCDay();

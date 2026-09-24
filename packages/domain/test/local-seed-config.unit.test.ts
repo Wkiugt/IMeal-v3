@@ -28,6 +28,24 @@ describe('local seed safety configuration', () => {
     expect(config.target.schema).toBe('test_seed');
     expect(config.dryRun).toBe(false);
   });
+  it('defaults serve date to an explicitly selected week start', () => {
+    const config = parseLocalSeedConfig(
+      ['--week-start', '2026-10-05'],
+      SAFE_ENV,
+    );
+
+    expect(config.weekStart).toBe('2026-10-05');
+    expect(config.serveDate).toBe('2026-10-05');
+  });
+  it('uses the selected week from the environment when serve date is omitted', () => {
+    const config = parseLocalSeedConfig([], {
+      ...SAFE_ENV,
+      IMEAL_LOCAL_SEED_WEEK_START: '2026-10-05',
+    });
+
+    expect(config.weekStart).toBe('2026-10-05');
+    expect(config.serveDate).toBe('2026-10-05');
+  });
 
   it('accepts explicit flags and fixed-range date values', () => {
     const config = parseLocalSeedConfig(

@@ -74,6 +74,51 @@ function canonicalRoleTransaction() {
 }
 
 describe('local seed writer boundaries', () => {
+  it('skips updates for unchanged seed-owned rows and reports them as unchanged', async () => {
+    const plan = buildPlan();
+    const tinyPlan: LocalSeedPlan = {
+      ...plan,
+      users: [plan.users[0]],
+      userRoles: [],
+      locations: [],
+      locationPolicies: [],
+      assignments: [],
+      allowlists: [],
+      dailyMenus: [],
+      mealDays: [],
+      menuRevisions: [],
+      appSettings: [],
+      registrations: [],
+      delegations: [],
+      penalties: [],
+      servingVerifications: [],
+      pickupSessions: [],
+      servingConfirmRequests: [],
+      mealServings: [],
+      mealEvents: [],
+    };
+    const userUpsert = vi.fn();
+    const weeklyMenuUpsert = vi.fn();
+    const transaction = {
+      ...canonicalRoleTransaction(),
+      user: {
+        findUnique: vi.fn(async () => ({ ...plan.users[0] })),
+        upsert: userUpsert,
+      },
+      weeklyMenu: {
+        findUnique: vi.fn(async () => ({ ...plan.weeklyMenu })),
+        upsert: weeklyMenuUpsert,
+      },
+    };
+    const { client } = makeClient(transaction);
+
+    const result = await writeLocalSeed(client, tinyPlan);
+
+    expect(result).toMatchObject({ created: 0, updated: 0, unchanged: 2 });
+    expect(userUpsert).not.toHaveBeenCalled();
+    expect(weeklyMenuUpsert).not.toHaveBeenCalled();
+  });
+
   it('caps maxAttempts at three and uses only the 25/50ms P2034 backoff sequence', async () => {
     const plan = buildPlan();
     const { client, transactionCall } = makeFailingClient(codedError('P2034', 'serialization conflict'));
