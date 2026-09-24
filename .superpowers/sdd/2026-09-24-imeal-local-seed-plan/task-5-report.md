@@ -65,3 +65,35 @@ Result: passed. Git emitted only the existing LF/CRLF working-copy warning.
 - A local PostgreSQL `DATABASE_URL` and disposable-schema migration run remain required to execute the new smoke assertions and verify the complete transaction against the current schema.
 - The DB smoke setup still fails before collection when PostgreSQL configuration is absent, intentionally preserving infrastructure evidence rather than converting the test to a mock.
 - Existing unrelated API roster/OTP working-tree changes were not modified.
+
+## Review fix round 1
+
+Addressed all five review findings in `packages/domain/test/local-seed.db.test.ts`:
+
+- The unrelated-row test now captures complete user/location rows, reruns the writer, and queries only the fixed literals `unrelated@example.net` and `EXT-KEEP` for unchanged-row assertions.
+- The smoke config now reads the disposable `process.env.DATABASE_URL` selected by `test/setup.ts` and derives host, database, and schema from that URL; it no longer hard-codes `test_seed`.
+- Every proxy serving now asserts that the completed delegation's `delegateUserId` equals the persisted serving presenter.
+- Penalty checks now load `userId`, match each reason to a distinct NO_SHOW registration, and assert the penalty owner equals that registration's owner.
+- Assignment checks map persisted location codes to persisted location IDs and assert the expected round-robin location ID for all 50 assignments.
+
+Review-fix DB smoke attempt:
+
+```text
+corepack.cmd yarn workspace @imeal/core exec vitest run --config ./vitest.config.ts test/local-seed.db.test.ts
+```
+
+Result: still unavailable before test collection with the exact setup failure:
+
+```text
+Error: DATABASE_URL is not set in environment or .env.test
+```
+
+Review-fix DB-independent verification:
+
+```text
+corepack.cmd yarn workspace @imeal/core exec vitest run --config ./vitest.unit.config.ts
+corepack.cmd yarn workspace @imeal/core exec tsc --noEmit -p tsconfig.json
+git diff --check -- packages/domain/test/local-seed.db.test.ts
+```
+
+Results: 5 unit-test files / 41 tests passed; TypeScript passed with no diagnostics; diff check passed with only the existing LF/CRLF warning.

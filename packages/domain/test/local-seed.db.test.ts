@@ -5,19 +5,33 @@ import { assertLocalSeedPlan, buildLocalSeedPlan } from '../src/local-seed/plan.
 import type { LocalSeedConfig, LocalSeedPlan } from '../src/local-seed/types.js';
 import { writeLocalSeed } from '../src/local-seed/writer.js';
 
-const CONFIG: LocalSeedConfig = {
-  baseEmail: 'seed@example.test',
-  weekStart: '2026-09-28',
-  serveDate: '2026-09-28',
-  dryRun: false,
-  databaseUrl: 'postgresql://postgres:postgres@localhost:5432/imeal?schema=test_seed',
-  target: {
-    nodeEnv: 'test',
-    host: 'localhost',
-    database: 'imeal',
-    schema: 'test_seed',
-  },
-};
+function selectedDisposableConfig(): LocalSeedConfig {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error('disposable DATABASE_URL must be selected by test setup');
+  }
+  const target = new URL(databaseUrl);
+  const database = decodeURIComponent(target.pathname.replace(/^\/+/, ''));
+  const schema = target.searchParams.get('schema');
+  if (!database || schema === null) {
+    throw new Error('disposable DATABASE_URL must include database and schema');
+  }
+  return {
+    baseEmail: 'seed@example.test',
+    weekStart: '2026-09-28',
+    serveDate: '2026-09-28',
+    dryRun: false,
+    databaseUrl,
+    target: {
+      nodeEnv: 'test',
+      host: target.hostname,
+      database,
+      schema,
+    },
+  };
+}
+
+const CONFIG = selectedDisposableConfig();
 
 const CANONICAL_ROLES = [
   { id: '10000000-0000-4000-8000-000000000001', name: 'staff' },
@@ -249,6 +263,7 @@ describe('local seed transactional writer', () => {
     const locations = await prisma.location.findMany({
       orderBy: { shortCode: 'asc' },
       select: {
+        id: true,
         shortCode: true,
         isActive: true,
         timeZone: true,
@@ -290,6 +305,10 @@ describe('local seed transactional writer', () => {
       expect(policy.maxFixAgeSeconds).toBeGreaterThan(0);
       expect(policy.maxAccuracyMeters).toBeGreaterThan(0);
     }
+    const locationIdByCode = new Map(
+      locations.map(({ shortCode, id }) => [shortCode, id]),
+    );
+
 
     const assignments = await prisma.employeeLocationAssignment.findMany({
       orderBy: { employeeCode: 'asc' },
@@ -306,11 +325,13 @@ describe('local seed transactional writer', () => {
     expect(new Set(assignments.map(({ userId }) => userId)).size).toBe(50);
     expect(new Set(assignments.map(({ employeeCode }) => employeeCode)).size).toBe(50);
     assignments.forEach((assignment, index) => {
+      const expectedLocationCode = LOCATION_CODES[index % LOCATION_CODES.length];
       expect(assignment.userId).not.toBeNull();
       expect(assignment.normalizedEmail).toBe(plan.users[index].email);
       expect(assignment.employeeCode).toBe(`LOCAL-EMP-${String(index + 1).padStart(4, '0')}`);
       expect(assignment.isActive).toBe(true);
-      expect(assignment.serviceLocationCode).toBe(LOCATION_CODES[index % LOCATION_CODES.length]);
+      expect(assignment.serviceLocationCode).toBe(expectedLocationCode);
+      expect(assignment.locationId).toBe(locationIdByCode.get(expectedLocationCode));
     });
 
     const userRoles = await prisma.userRole.findMany({
@@ -429,20 +450,29 @@ describe('local seed transactional writer', () => {
     }
 
     const penalties = await prisma.penalty.findMany({
-      select: { amount: true, status: true, reason: true },
+      select: { userId: true, amount: true, status: true, reason: true },
     });
     expect(penalties).toHaveLength(10);
-    const noShowIds = new Set(
-      registrations.filter(({ status }) => status === 'NO_SHOW').map(({ id }) => id),
+    const noShowOwnersByRegistrationId = new Map(
+      registrations
+        .filter(({ status }) => status === 'NO_SHOW')
+        .map(({ id, userId }) => [id, userId]),
     );
-    expect(
-      penalties.every(
-        ({ amount, status, reason }) =>
-          amount === 50000 &&
-          status === 'PENDING' &&
-          [...noShowIds].some((registrationId) => reason.endsWith(registrationId)),
-      ),
-    ).toBe(true);
+    const matchedNoShowIds = new Set<string>();
+    for (const penalty of penalties) {
+      expect(penalty.amount).toBe(50000);
+      expect(penalty.status).toBe('PENDING');
+      expect(penalty.reason).toContain('NO_SHOW_PENALTY_');
+      const registrationId = [...noShowOwnersByRegistrationId.keys()].find((id) =>
+        penalty.reason.endsWith(id),
+      );
+      if (!registrationId) {
+        throw new Error(`penalty reason does not identify a NO_SHOW registration: ${penalty.reason}`);
+      }
+      matchedNoShowIds.add(registrationId);
+      expect(penalty.userId).toBe(noShowOwnersByRegistrationId.get(registrationId));
+    }
+    expect(matchedNoShowIds.size).toBe(10);
 
     const delegations = await prisma.pickupDelegation.findMany({
       select: {
@@ -483,7 +513,9 @@ describe('local seed transactional writer', () => {
         registration: {
           select: { status: true, serviceLocationId: true, mealDate: true },
         },
-        delegation: { select: { id: true, status: true, registrationId: true } },
+        delegation: {
+          select: { id: true, status: true, registrationId: true, delegateUserId: true },
+        },
         pickupSession: {
           select: {
             id: true,
@@ -532,6 +564,7 @@ describe('local seed transactional writer', () => {
         expect(serving.delegation).toMatchObject({
           id: serving.delegationId,
           registrationId: serving.registrationId,
+          delegateUserId: serving.presenterUserId,
           status: 'COMPLETED',
         });
       }
@@ -606,7 +639,7 @@ describe('local seed transactional writer', () => {
     const plan = buildPlan();
     await writeLocalSeed(prisma, plan);
 
-    const unrelatedUser = await prisma.user.create({
+    const originalUser = await prisma.user.create({
       data: {
         id: 'unrelated-user-id',
         email: 'unrelated@example.net',
@@ -616,7 +649,7 @@ describe('local seed transactional writer', () => {
         remindersEnabled: false,
       },
     });
-    const unrelatedLocation = await prisma.location.create({
+    const originalLocation = await prisma.location.create({
       data: {
         id: 'unrelated-location-id',
         shortCode: 'EXT-KEEP',
@@ -634,10 +667,16 @@ describe('local seed transactional writer', () => {
         approvedScannerDeviceIds: [],
       },
     });
-    expect(await prisma.user.findUnique({ where: { id: unrelatedUser.id } })).toEqual(unrelatedUser);
-    expect(await prisma.location.findUnique({ where: { id: unrelatedLocation.id } })).toEqual(unrelatedLocation);
-  });
 
+    await writeLocalSeed(prisma, plan);
+
+    expect(
+      await prisma.user.findUnique({ where: { email: 'unrelated@example.net' } }),
+    ).toEqual(originalUser);
+    expect(
+      await prisma.location.findUnique({ where: { shortCode: 'EXT-KEEP' } }),
+    ).toEqual(originalLocation);
+  });
   it('rolls back all seed writes when a later serving foreign key fails', async () => {
     const plan = buildPlan();
     const invalidPlan: LocalSeedPlan = {
