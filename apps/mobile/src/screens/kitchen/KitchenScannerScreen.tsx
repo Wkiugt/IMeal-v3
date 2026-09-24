@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -10,7 +10,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useIsFocused } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import {
   CheckCircle2,
   ChevronLeft,
@@ -38,9 +38,10 @@ import { useLanguage } from '../../i18n/LanguageProvider';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { designTokens, getElevationStyle } from '../../ui/designTokens';
 import {
+  canApplyScanOperation,
   canResetScan,
+  canStartConfirm,
   getConfirmAttempt,
-  isCurrentScanOperation,
 } from './kitchenScannerRules';
 
 type Props = AppTabScreenProps<'KitchenScanner'>;
@@ -71,6 +72,8 @@ export function KitchenScannerScreen({ navigation }: Props) {
   const [feedback, setFeedback] = useState<ScanFeedback | null>(null);
   const idempotencyKey = useRef<string | null>(null);
   const scanGeneration = useRef(0);
+  const focusedRef = useRef(isFocused);
+  const confirmInFlight = useRef(false);
   const reduceMotion = useReducedMotion();
   const scanProgress = useRef(new Animated.Value(0)).current;
   const feedbackTimer = useRef<NodeJS.Timeout | undefined>(undefined);
@@ -107,12 +110,25 @@ export function KitchenScannerScreen({ navigation }: Props) {
     }, nextFeedback.autoDismissMs ?? 2600);
   };
 
-  useEffect(() => {
-    return () => {
-      scanGeneration.current += 1;
-      clearTimeout(feedbackTimer.current);
-    };
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      focusedRef.current = true;
+      return () => {
+        focusedRef.current = false;
+        scanGeneration.current += 1;
+        confirmInFlight.current = false;
+        clearTimeout(feedbackTimer.current);
+        feedbackTimer.current = undefined;
+        setFeedback(null);
+        setServingIntent(null);
+        setExpiresAt(null);
+        setSecondsLeft(0);
+        setScanned(false);
+        setLoading(false);
+        idempotencyKey.current = null;
+      };
+    }, []),
+  );
 
   useEffect(() => {
     scanProgress.stopAnimation();
@@ -162,6 +178,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
   const expired = Boolean(expiresAt && secondsLeft === 0);
   const resetScan = () => {
     scanGeneration.current += 1;
+    confirmInFlight.current = false;
     dismissFeedback();
     setServingIntent(null);
     setExpiresAt(null);
@@ -171,14 +188,18 @@ export function KitchenScannerScreen({ navigation }: Props) {
     idempotencyKey.current = null;
   };
   const resolveCode = async (payload: string) => {
-    if (!token) return;
+    if (!token || !focusedRef.current) return;
     const operationGeneration = ++scanGeneration.current;
     setLoading(true);
     try {
       idempotencyKey.current = null;
       const response = await pickupAPI.resolvePickup(token, { qr: payload });
       if (
-        !isCurrentScanOperation(scanGeneration.current, operationGeneration)
+        !canApplyScanOperation(
+          focusedRef.current,
+          scanGeneration.current,
+          operationGeneration,
+        )
       ) {
         return;
       }
@@ -187,7 +208,11 @@ export function KitchenScannerScreen({ navigation }: Props) {
       setExpiresAt(Number.isFinite(expiry) ? expiry : Date.now() + 30_000);
     } catch (error: unknown) {
       if (
-        !isCurrentScanOperation(scanGeneration.current, operationGeneration)
+        !canApplyScanOperation(
+          focusedRef.current,
+          scanGeneration.current,
+          operationGeneration,
+        )
       ) {
         return;
       }
@@ -199,7 +224,13 @@ export function KitchenScannerScreen({ navigation }: Props) {
       });
       setScanned(false);
     } finally {
-      if (isCurrentScanOperation(scanGeneration.current, operationGeneration)) {
+      if (
+        canApplyScanOperation(
+          focusedRef.current,
+          scanGeneration.current,
+          operationGeneration,
+        )
+      ) {
         setLoading(false);
       }
     }
@@ -213,8 +244,17 @@ export function KitchenScannerScreen({ navigation }: Props) {
   };
 
   const confirmServing = async () => {
-    if (!token || !servingIntent || expired) return;
+    if (
+      !token ||
+      !servingIntent ||
+      expired ||
+      !focusedRef.current ||
+      !canStartConfirm(confirmInFlight.current)
+    ) {
+      return;
+    }
     const operationGeneration = ++scanGeneration.current;
+    confirmInFlight.current = true;
     const confirmedIntent = servingIntent;
     const request = getConfirmAttempt(
       confirmedIntent.session.id,
@@ -226,7 +266,11 @@ export function KitchenScannerScreen({ navigation }: Props) {
     try {
       await pickupAPI.confirmPickup(token, request);
       if (
-        !isCurrentScanOperation(scanGeneration.current, operationGeneration)
+        !canApplyScanOperation(
+          focusedRef.current,
+          scanGeneration.current,
+          operationGeneration,
+        )
       ) {
         return;
       }
@@ -256,7 +300,11 @@ export function KitchenScannerScreen({ navigation }: Props) {
       });
     } catch (error: unknown) {
       if (
-        !isCurrentScanOperation(scanGeneration.current, operationGeneration)
+        !canApplyScanOperation(
+          focusedRef.current,
+          scanGeneration.current,
+          operationGeneration,
+        )
       ) {
         return;
       }
@@ -273,7 +321,14 @@ export function KitchenScannerScreen({ navigation }: Props) {
         onRetry: () => void confirmServing(),
       });
     } finally {
-      if (isCurrentScanOperation(scanGeneration.current, operationGeneration)) {
+      if (
+        canApplyScanOperation(
+          focusedRef.current,
+          scanGeneration.current,
+          operationGeneration,
+        )
+      ) {
+        confirmInFlight.current = false;
         setLoading(false);
       }
     }
@@ -519,6 +574,7 @@ export function KitchenScannerScreen({ navigation }: Props) {
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={t('scanner.retryScan')}
+                      disabled={loading}
                       onPress={feedback.onRetry ?? resetScan}
                       style={styles.feedbackRetry}
                     >

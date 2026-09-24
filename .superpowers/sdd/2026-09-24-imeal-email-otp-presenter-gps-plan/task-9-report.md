@@ -92,3 +92,11 @@ No Admin Web Task 10, docs Task 11, or fabricated operational location/roster da
 - Focused race-fix run — **7 files, 28 tests passed**.
 - Full mobile run — **25 files, 89 tests passed**.
 - Mobile TypeScript passed; prior Expo web export, root lint/build, and committed-range diff-check remain green. Native GPS/permission runtime remains unavailable in this workspace.
+
+## Review fix round 3
+
+- Kitchen Scanner now establishes a `useFocusEffect` boundary: blur invalidates the active scan generation, clears transient scanner state and the in-flight-confirmation guard, and stale resolve/confirm success, rejection, and finally continuations cannot update blurred state. Focused retries remain valid and preserve the resolved session/idempotency key.
+- Confirmation attempts now have a synchronous in-flight guard, and the feedback retry action is disabled while loading, preventing concurrent same-key requests and misleading follow-up `IDEMPOTENCY_CONFLICT` errors.
+- Focused review-fix run — **7 files, 30 tests passed**.
+- Full mobile run — **25 files, 91 tests passed**.
+- Mobile TypeScript, Expo web export, and diff-check passed. Native GPS/permission runtime remains unavailable in this workspace.

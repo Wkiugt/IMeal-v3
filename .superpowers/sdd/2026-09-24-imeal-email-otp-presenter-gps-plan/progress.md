@@ -125,3 +125,5 @@
 - [x] Task 9 review-fix mobile TypeScript, Expo web export, root lint/build, and diff-check passed; native GPS/permission runtime remains unavailable.
 - [x] Task 9 review-fix round 2: Scanner Cancel/Scan Again is disabled during confirm; scan-operation generation guards ignore stale resolve/confirm success, rejection, and finally paths after cancel/navigation/new scan.
 - [x] Task 9 review-fix round 2 focused suite — 7 files, 28 tests passed; full mobile suite — 25 files, 89 tests passed; mobile TypeScript passed.
+- [x] Task 9 review-fix round 3: Kitchen Scanner focus cleanup invalidates stale operations on blur, while focused retries preserve session/idempotency state; duplicate confirm attempts are rejected synchronously and feedback retry is disabled during loading.
+- [x] Task 9 review-fix round 3 verification — focused suite 7 files/30 tests, full mobile suite 25 files/91 tests, mobile TypeScript, Expo web export, and diff-check passed; native GPS/permission runtime remains unavailable.

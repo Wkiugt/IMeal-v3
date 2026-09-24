@@ -24,3 +24,17 @@ export function isCurrentScanOperation(
 export function canResetScan(isConfirming: boolean): boolean {
   return !isConfirming;
 }
+
+export function canApplyScanOperation(
+  isFocused: boolean,
+  currentGeneration: number,
+  operationGeneration: number,
+): boolean {
+  return (
+    isFocused && isCurrentScanOperation(currentGeneration, operationGeneration)
+  );
+}
+
+export function canStartConfirm(isInFlight: boolean): boolean {
+  return !isInFlight;
+}

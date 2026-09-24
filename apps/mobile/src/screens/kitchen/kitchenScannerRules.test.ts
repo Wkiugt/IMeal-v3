@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canApplyScanOperation,
   canResetScan,
+  canStartConfirm,
   getConfirmAttempt,
   isCurrentScanOperation,
 } from './kitchenScannerRules';
@@ -29,5 +31,15 @@ describe('KitchenScanner confirmation retry rules', () => {
   it('blocks cancel while confirmation is in flight', () => {
     expect(canResetScan(true)).toBe(false);
     expect(canResetScan(false)).toBe(true);
+  });
+
+  it('rejects operation updates while the scanner tab is blurred', () => {
+    expect(canApplyScanOperation(false, 3, 3)).toBe(false);
+    expect(canApplyScanOperation(true, 3, 3)).toBe(true);
+  });
+
+  it('blocks duplicate confirm attempts while the same request is pending', () => {
+    expect(canStartConfirm(true)).toBe(false);
+    expect(canStartConfirm(false)).toBe(true);
   });
 });
