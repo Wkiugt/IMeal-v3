@@ -60,7 +60,10 @@
 - [x] Focused Task 4/auth verification: 5 files, 33 tests passed; full API suite: 15 files, 125 tests passed.
 - [x] API TypeScript validation passed; API lint exited 0 with pre-existing warnings; `git diff --check` passed; Yarn immutable install passed with peer warnings.
 - [!] DB-backed session verification remains blocked by unavailable PostgreSQL/Docker (`localhost:6432` refused; Docker Linux engine unavailable); Prisma-mock/static verification is complete.
-- [!] Scope note: mobile/admin clients, `.env.example`, Docker Compose, and docs retain legacy references by explicit user instruction to exclude those tasks.
+- [x] Historical Task 4 scope note was superseded by Task 11: the current
+  mobile/admin clients, `.env.example`, Docker Compose and docs are aligned to
+  allowlist-A OTP and opaque sessions; no legacy production login guidance is
+  retained.
 - [x] Task 4 committed as `25246d1` — `feat(api): replace production jwt bootstrap with opaque sessions`.
 - [x] Task 4 report: `task-4-report.md`; review package input path is the plan workspace plus commit `25246d1`.
 - [!] Task 4 complete with DB verification blocked by unavailable PostgreSQL/Docker; focused/mock/static checks are green.
