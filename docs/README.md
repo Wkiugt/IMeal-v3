@@ -35,8 +35,10 @@ IMeal v2 là một re-platforming so với hệ thống web Firebase/Firestore h
 7. [07 — Architecture Decisions](./07-architecture-decisions.md) — quyết định kiến trúc và risk assessment.
 8. [08 — IMeal Design System](./08-imeal-design-system.md) — canonical visual tokens and reusable component contracts.
 9. [Local Role Testing Guide](./local-role-testing.md) — local Docker, OTP test harness và role smoke checklist; mọi bypass/fixture trong guide đều non-production.
-10. [Approved email OTP/GPS design](./superpowers/specs/2026-09-24-imeal-email-otp-presenter-gps-design.md) — source of truth cho OTP, opaque sessions, roster/location, GPS, exact intent và residual risk.
-11. [Implementation plan](./superpowers/plans/2026-09-24-imeal-email-otp-presenter-gps-plan.md) — task sequencing and verification matrix.
+10. [Local synthetic seed design](./superpowers/specs/2026-09-24-imeal-local-seed-design.md) — local-only seed safety contract, synthetic cohorts, deterministic data and rerun behavior.
+11. [Local synthetic seed implementation plan](./superpowers/plans/2026-09-24-imeal-local-seed-plan.md) — task sequencing and focused verification for the non-production seed workflow.
+12. [Approved email OTP/GPS design](./superpowers/specs/2026-09-24-imeal-email-otp-presenter-gps-design.md) — source of truth cho OTP, opaque sessions, roster/location, GPS, exact intent và residual risk.
+13. [Implementation plan](./superpowers/plans/2026-09-24-imeal-email-otp-presenter-gps-plan.md) — task sequencing and verification matrix.
 
 `08-imeal-design-system.md` is authoritative for visual tokens and reusable component contracts. `04-ui-ux-design.md` remains authoritative for workflow and recovery behavior; `System-design-UI/**` is preserved prototype provenance, not a competing runtime contract.
 

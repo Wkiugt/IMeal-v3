@@ -52,7 +52,64 @@ are available outside production for unit tests. These validators are
 intentionally not identical, and the API test-harness bypass does not make a
 worker runtime safe to deploy.
 
-## 3. Test-harness bypass
+## 3. Local synthetic seed
+
+The `seed:local` command is for synthetic local/test data only. Run it only
+against a disposable PostgreSQL database owned by the local environment. It
+never runs against production, staging, preview, remote, or any other shared
+database. The command requires all of these safety variables:
+
+- `NODE_ENV=development` or `NODE_ENV=test` (the invocation below uses
+  `test`);
+- `IMEAL_LOCAL_SEED=1`;
+- `IMEAL_LOCAL_SEED_CONFIRM=I_UNDERSTAND_LOCAL_ONLY`;
+- `IMEAL_LOCAL_SEED_BASE_EMAIL`, a synthetic `.test` base email; and
+- `DATABASE_URL`, which must be a PostgreSQL URL whose host is `localhost`,
+  `127.0.0.1`, `::1`, or the local Compose service `db`.
+
+Set `DATABASE_URL` in the ignored local `.env` or in the current PowerShell
+session before running the exact invocation below. Do not put a shared,
+staging, production, or real-data connection string in this guide.
+
+```powershell
+$env:NODE_ENV='test'
+$env:IMEAL_LOCAL_SEED='1'
+$env:IMEAL_LOCAL_SEED_CONFIRM='I_UNDERSTAND_LOCAL_ONLY'
+$env:IMEAL_LOCAL_SEED_BASE_EMAIL='imeal.seed@example.test'
+yarn workspace @imeal/core seed:local
+```
+
+The four synthetic locations are `LOCAL-A`, `LOCAL-B`, `LOCAL-C`, and
+`LOCAL-D`; no other location values are created by this workflow.
+The generated user addresses follow the base+-1..-49 convention: the base
+address plus suffixes `-1` through `-49`.
+
+The dry run validates the complete plan without writing. A write creates 50
+synthetic users, exactly four synthetic locations (`LOCAL-A` through
+`LOCAL-D`), 50 assignments, and the deterministic local role cohorts below.
+
+| Cohort | Count | Roles | May own generated registrations |
+| --- | ---: | --- | --- |
+| Staff only | 36 | `staff` | Yes |
+| Kitchen only | 6 | `kitchen` | No |
+| Staff + Kitchen | 5 | `staff`, `kitchen` | Yes |
+| Admin only | 2 | `admin` | No |
+| Admin + Staff | 1 | `admin`, `staff` | Yes |
+| **Total** | **50** |  | **42 owners** |
+
+Kitchen-only users do not receive `staff`, and roles are never inferred from
+email, client claims, or location data. The four location codes and all
+assignments are synthetic test fixtures, not approved operational sites.
+Real operational location data, coordinates, employee data, and roster
+assignments are never stored in source control.
+
+The seed is idempotent for the same base email, week, and serve date: reruns
+converge on the same rows and do not grow counts. It has no reset, purge, or
+delete mode; use a new disposable database (or a different synthetic
+keyspace) when an isolated dataset is needed. Never point this workflow at a
+database containing real operational data.
+
+## 4. Test-harness bypass
 
 Use this only for tests that explicitly need the guard seam:
 
@@ -79,7 +136,7 @@ provide synthetic allowlist rows and use an out-of-band disposable provider.
 The provider payload may contain only the minimum verification copy and must not
 be printed in test logs.
 
-## 4. Synthetic role smoke matrix
+## 5. Synthetic role smoke matrix
 
 Use test factories or an isolated seeded test schema to create synthetic users
 with server-side assignments. Do not encode roles, employee codes, location
@@ -98,7 +155,7 @@ The guard bypass is useful for controller/permission tests, but it does not
 prove OTP hashing, session revocation, roster assignment, GPS policy or serving
 transaction behavior. Use focused service and DB suites for those contracts.
 
-## 5. OTP/session checks
+## 6. OTP/session checks
 
 Verify the following with synthetic fixtures and a disposable provider/mock at
 the final delivery boundary:
@@ -115,7 +172,7 @@ the final delivery boundary:
 5. Reusing a confirmation idempotency key with the same body returns the stored
    result; changing the intent/body returns a conflict.
 
-## 6. Presenter GPS and Kitchen checks
+## 7. Presenter GPS and Kitchen checks
 
 - Presenter mobile captures a fresh **foreground** fix only during QR generate or
   refresh and stops collection on blur, completion, cancellation or unmount.
@@ -139,7 +196,7 @@ yarn workspace @imeal/worker exec vitest run src/otp-delivery-worker.service.spe
 yarn workspace @imeal/core test
 ```
 
-## 7. Client environment names
+## 8. Client environment names
 
 Mobile reads only:
 
@@ -151,7 +208,7 @@ Mobile reads only:
 Admin Web reads `VITE_API_URL`. Do not put API secrets, OTP/provider keys,
 session secrets, location coordinates or role claims in any client variable.
 
-## 8. Verification limitations
+## 9. Verification limitations
 
 A local unit run does not prove live PostgreSQL, external OTP delivery, native
 Expo permission/GPS behavior, device integrity or organization-approved roster
