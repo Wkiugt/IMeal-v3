@@ -14,7 +14,8 @@
     "vitest": "^4.1.11"
   },
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:unit": "vitest run --config ./vitest.unit.config.ts"
   },
   "dependencies": {
     "date-fns": "^4.4.0",
