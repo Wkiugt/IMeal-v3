@@ -1,5 +1,7 @@
+import { otpProviderConfiguration } from '../otp/otp-provider.js';
 const REQUIRED_API_ENV = ['DATABASE_URL', 'QR_SIGNING_SECRET'] as const;
 const OTP_HASH_SECRET = 'OTP_HASH_SECRET' as const;
+const OTP_DELIVERY_ENCRYPTION_KEY = 'OTP_DELIVERY_ENCRYPTION_KEY' as const;
 const SESSION_HASH_SECRET = 'SESSION_HASH_SECRET' as const;
 const SESSION_TIMEOUT_SETTINGS = [
   'SESSION_IDLE_TIMEOUT_SECONDS',
@@ -52,11 +54,12 @@ export function validateApiEnvironment(): void {
   }
 
   requireSecret(OTP_HASH_SECRET);
+  requireSecret(OTP_DELIVERY_ENCRYPTION_KEY);
   requireSecret(SESSION_HASH_SECRET);
+  otpProviderConfiguration(process.env);
   for (const name of SESSION_TIMEOUT_SETTINGS) {
     requirePositiveInteger(name);
   }
-
   if (process.env.QR_SIGNING_SECRET!.length < 32) {
     throw new Error('QR_SIGNING_SECRET must contain at least 32 characters');
   }

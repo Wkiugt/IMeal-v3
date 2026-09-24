@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { AllowlistService, type AllowlistResolution } from './allowlist.service.js';
 import { hashOtpCode, OtpService } from './otp.service.js';
+import { decryptOtpProviderPayload } from '../otp/otp-provider.js';
 
 type MockFunction = Mock;
 
@@ -163,6 +164,30 @@ describe('OtpService', () => {
     expect(JSON.stringify(prisma.otpDeliveryOutbox.create.mock.calls)).not.toContain(
       '123456',
     );
+  });
+  it('stores an encrypted provider payload that the worker can resolve without clear persistence', async () => {
+    const { service, allowlist, prisma } = installService();
+    vi.spyOn(allowlist, 'findEligible').mockResolvedValue(ALLOWLIST);
+
+    await service.request(
+      { email: EMAIL, purpose: 'SESSION_LOGIN' },
+      context,
+    );
+
+    const outboxInput = prisma.otpDeliveryOutbox.create.mock.calls[0][0] as {
+      data: { providerPayloadRef: string };
+    };
+    expect(
+      decryptOtpProviderPayload(
+        outboxInput.data.providerPayloadRef,
+        process.env.OTP_DELIVERY_ENCRYPTION_KEY ??
+          'test-only-otp-delivery-encryption-secret',
+      ),
+    ).toEqual({
+      destination: EMAIL,
+      code: '123456',
+      purpose: 'SESSION_LOGIN',
+    });
   });
 
   it('returns the same safe request shape while an active challenge is throttled', async () => {

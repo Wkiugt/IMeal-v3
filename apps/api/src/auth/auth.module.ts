@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { OtpOutboxService } from '../otp/otp-outbox.service.js';
 import { AllowlistService } from './allowlist.service.js';
 import { OtpService } from './otp.service.js';
 import { AuthController } from './auth.controller.js';
@@ -11,6 +12,7 @@ import { PermissionsGuard } from './permissions.guard.js';
   controllers: [AuthController],
   providers: [
     AllowlistService,
+    OtpOutboxService,
     OtpService,
     SessionService,
     SessionGuard,
@@ -19,6 +21,7 @@ import { PermissionsGuard } from './permissions.guard.js';
   ],
   exports: [
     AllowlistService,
+    OtpOutboxService,
     OtpService,
     SessionService,
     SessionGuard,

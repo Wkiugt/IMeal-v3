@@ -5,6 +5,8 @@ import {
 import { PrismaClient } from '@prisma/client';
 import { createHash, createHmac, randomInt, randomUUID } from 'node:crypto';
 import type { v1 } from '@imeal/contracts';
+import { OtpOutboxService } from '../otp/otp-outbox.service.js';
+import { otpDeliveryEncryptionSecret } from '../otp/otp-provider.js';
 import { AllowlistService } from './allowlist.service.js';
 import type {
   AuthenticatedUser,
@@ -25,7 +27,6 @@ export interface OtpRequestContext {
   clientFingerprint?: string;
   now?: Date;
 }
-
 export type OtpVerifyContext = OtpRequestContext;
 
 export interface OtpServiceConfig {
@@ -36,6 +37,7 @@ export interface OtpServiceConfig {
   addressRateLimit: number;
   clientRateLimit: number;
   hashSecret: string;
+  deliveryEncryptionSecret: string;
 }
 
 interface OtpFailure {
@@ -92,8 +94,14 @@ function hashMetadata(value: string | undefined, secret: string): string | null 
 @Injectable()
 export class OtpService {
   private readonly prisma = new PrismaClient();
+  private readonly outboxService: OtpOutboxService;
 
-  constructor(private readonly allowlistService: AllowlistService) {}
+  constructor(
+    private readonly allowlistService: AllowlistService,
+    outboxService?: OtpOutboxService,
+  ) {
+    this.outboxService = outboxService ?? new OtpOutboxService();
+  }
 
   getConfig(env: NodeJS.ProcessEnv = process.env): OtpServiceConfig {
     return {
@@ -134,6 +142,7 @@ export class OtpService {
         1,
       ),
       hashSecret: verifierSecret(env),
+      deliveryEncryptionSecret: otpDeliveryEncryptionSecret(env),
     };
   }
 
@@ -284,11 +293,12 @@ export class OtpService {
           data: { auditEventId: audit.id },
         });
       }
-      await tx.otpDeliveryOutbox.create({
-        data: {
-          challengeId: challenge.id,
-          providerPayloadRef: `otp-delivery:${challenge.id}:${randomUUID()}`,
-        },
+      await this.outboxService.enqueue(tx, {
+        challengeId: challenge.id,
+        destination: normalizedEmail,
+        code,
+        purpose: input.purpose,
+        encryptionSecret: config.deliveryEncryptionSecret,
       });
 
       return { accepted: true };

@@ -8,6 +8,12 @@ import { NoShowWorkerService } from './no-show-worker.service.js';
 import { WorkerNotificationPublisher } from './worker-notification-publisher.js';
 import { NotificationDispatchService } from './notification-dispatch.service.js';
 import { NotificationReminderService } from './notification-reminder.service.js';
+import {
+  OtpDeliveryWorker,
+  WORKER_OTP_PROVIDER,
+  WorkerConfiguredOtpProvider,
+  WorkerOtpOutboxService,
+} from './otp-delivery-worker.service.js';
 
 @Module({
   imports: [ScheduleModule.forRoot()],
@@ -20,6 +26,13 @@ import { NotificationReminderService } from './notification-reminder.service.js'
     WorkerNotificationPublisher,
     NotificationDispatchService,
     NotificationReminderService,
+    WorkerOtpOutboxService,
+    WorkerConfiguredOtpProvider,
+    OtpDeliveryWorker,
+    {
+      provide: WORKER_OTP_PROVIDER,
+      useExisting: WorkerConfiguredOtpProvider,
+    },
   ],
 })
 export class AppModule {}

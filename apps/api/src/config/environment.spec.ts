@@ -13,6 +13,9 @@ function setValidProductionEnvironment() {
   process.env.DATABASE_URL = 'postgresql://localhost/imeal';
   process.env.QR_SIGNING_SECRET = 'q'.repeat(32);
   process.env.OTP_HASH_SECRET = 'o'.repeat(32);
+  process.env.OTP_DELIVERY_ENCRYPTION_KEY = 'e'.repeat(32);
+  process.env.OTP_PROVIDER_URL = 'https://provider.example.test/send';
+  process.env.OTP_PROVIDER_API_KEY = 'provider-key';
   process.env.SESSION_HASH_SECRET = 's'.repeat(32);
   process.env.SESSION_IDLE_TIMEOUT_SECONDS = '1800';
   process.env.SESSION_ABSOLUTE_TIMEOUT_SECONDS = '604800';
@@ -79,5 +82,19 @@ describe('API environment validation', () => {
     expect(() => validateApiEnvironment()).toThrow(
       'DATABASE_URL, QR_SIGNING_SECRET',
     );
+  });
+
+  it('rejects production when the OTP payload encryption key is missing', () => {
+    setValidProductionEnvironment();
+    delete process.env.OTP_DELIVERY_ENCRYPTION_KEY;
+
+    expect(() => validateApiEnvironment()).toThrow('OTP_DELIVERY_ENCRYPTION_KEY');
+  });
+
+  it('rejects production when the OTP provider is not configured over HTTPS', () => {
+    setValidProductionEnvironment();
+    process.env.OTP_PROVIDER_URL = 'http://provider.example.test/send';
+
+    expect(() => validateApiEnvironment()).toThrow('OTP provider configuration');
   });
 });
