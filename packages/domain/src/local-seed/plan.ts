@@ -1252,6 +1252,49 @@ function assertPenalties(
   }
 }
 
+function assertServingAggregateInvariants(plan: LocalSeedPlan): void {
+  const receiverCounts = { SELF: 0, PROXY: 0 };
+  const completedDelegationUseCounts = new Map<string, number>();
+  for (const serving of plan.mealServings) {
+    if (serving.receiverType === 'SELF') {
+      receiverCounts.SELF += 1;
+    } else if (serving.receiverType === 'PROXY') {
+      receiverCounts.PROXY += 1;
+      if (serving.delegationId !== null) {
+        completedDelegationUseCounts.set(
+          serving.delegationId,
+          (completedDelegationUseCounts.get(serving.delegationId) ?? 0) + 1,
+        );
+      }
+    } else {
+      throw new LocalSeedPlanError(
+        'mealServings',
+        serving.id,
+        `invalid receiver type ${String(serving.receiverType)}`,
+      );
+    }
+  }
+  if (receiverCounts.SELF !== 32 || receiverCounts.PROXY !== 8) {
+    throw new LocalSeedPlanError(
+      'mealServings',
+      'receiverType',
+      `expected 32 SELF and 8 PROXY servings, got ${receiverCounts.SELF} SELF and ${receiverCounts.PROXY} PROXY`,
+    );
+  }
+  for (const delegation of plan.delegations) {
+    if (
+      delegation.status === 'COMPLETED' &&
+      completedDelegationUseCounts.get(delegation.id) !== 1
+    ) {
+      throw new LocalSeedPlanError(
+        'delegations',
+        delegation.id,
+        'every completed delegation must be consumed by exactly one proxy serving',
+      );
+    }
+  }
+}
+
 function assertServingGraph(
   plan: LocalSeedPlan,
   usersById: ReadonlyMap<string, SeedUserRow>,
@@ -1264,6 +1307,7 @@ function assertServingGraph(
   registrationsById: ReadonlyMap<string, SeedRegistrationRow>,
   delegationsById: ReadonlyMap<string, SeedDelegationRow>,
 ): void {
+  assertServingAggregateInvariants(plan);
   const servingsByRegistration = indexRows(plan.mealServings, 'mealServings', (row) => row.registrationId);
   const servingsById = indexRows(plan.mealServings, 'mealServings', (row) => row.id);
   const verificationsById = indexRows(
@@ -1280,8 +1324,6 @@ function assertServingGraph(
   const eventsByServing = new Map<string, SeedMealEventRow[]>();
   const qrHashes = new Set<string>();
   const requestCallerKeys = new Set<string>();
-  const receiverCounts = { SELF: 0, PROXY: 0 };
-  const completedDelegationUseCounts = new Map<string, number>();
   for (const event of plan.mealEvents) {
     if (!servingsById.has(event.mealServingId) || event.eventType !== 'PICKUP_CONFIRMED') {
       throw new LocalSeedPlanError('mealEvents', event.id, 'meal event reference or type is invalid');
@@ -1356,12 +1398,10 @@ function assertServingGraph(
       throw new LocalSeedPlanError('mealServings', serving.id, 'menu revision does not match meal date');
     }
     if (serving.receiverType === 'SELF') {
-      receiverCounts.SELF += 1;
       if (serving.presenterUserId !== serving.ownerUserId || serving.delegationId !== null) {
         throw new LocalSeedPlanError('mealServings', serving.id, 'self serving relationship is invalid');
       }
     } else if (serving.receiverType === 'PROXY') {
-      receiverCounts.PROXY += 1;
       const delegation = serving.delegationId ? delegationsById.get(serving.delegationId) : undefined;
       if (
         !delegation ||
@@ -1372,10 +1412,6 @@ function assertServingGraph(
       ) {
         throw new LocalSeedPlanError('mealServings', serving.id, 'proxy serving relationship is invalid');
       }
-      completedDelegationUseCounts.set(
-        delegation.id,
-        (completedDelegationUseCounts.get(delegation.id) ?? 0) + 1,
-      );
     } else {
       throw new LocalSeedPlanError('mealServings', serving.id, `invalid receiver type ${String(serving.receiverType)}`);
     }
@@ -1432,25 +1468,6 @@ function assertServingGraph(
     const events = eventsByServing.get(serving.id) ?? [];
     if (events.length !== 1) {
       throw new LocalSeedPlanError('mealEvents', serving.id, 'serving must have exactly one event');
-    }
-  }
-  if (receiverCounts.SELF !== 32 || receiverCounts.PROXY !== 8) {
-    throw new LocalSeedPlanError(
-      'mealServings',
-      'receiverType',
-      `expected 32 SELF and 8 PROXY servings, got ${receiverCounts.SELF} SELF and ${receiverCounts.PROXY} PROXY`,
-    );
-  }
-  for (const delegation of plan.delegations) {
-    if (
-      delegation.status === 'COMPLETED' &&
-      completedDelegationUseCounts.get(delegation.id) !== 1
-    ) {
-      throw new LocalSeedPlanError(
-        'delegations',
-        delegation.id,
-        'every completed delegation must be consumed by exactly one proxy serving',
-      );
     }
   }
 }

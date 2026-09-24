@@ -244,6 +244,9 @@ describe('local seed plan', () => {
       ['maxFixAgeSeconds', Number.NEGATIVE_INFINITY],
       ['maxFixAgeSeconds', -1],
       ['maxFixAgeSeconds', 1.5],
+      ['maxAccuracyMeters', Number.NaN],
+      ['maxAccuracyMeters', Number.POSITIVE_INFINITY],
+      ['maxAccuracyMeters', -1],
     ];
     for (const [field, value] of invalidThresholds) {
       const invalidPlan = {
@@ -254,6 +257,15 @@ describe('local seed plan', () => {
       };
       expect(() => assertLocalSeedPlan(invalidPlan)).toThrow(/locationPolicies/i);
     }
+    const validBoundary = {
+      ...plan,
+      locationPolicies: plan.locationPolicies.map((row, index) =>
+        index === 0
+          ? { ...row, geofenceRadiusMeters: 1, maxFixAgeSeconds: 0, maxAccuracyMeters: 0 }
+          : row,
+      ),
+    };
+    expect(() => assertLocalSeedPlan(validBoundary)).not.toThrow();
   });
 
   it('rejects pickup location mismatches and unsupported optional foreign keys', () => {
@@ -323,7 +335,7 @@ describe('local seed plan', () => {
     expect(() => assertLocalSeedPlan(duplicateMealEventId)).toThrow(/mealEvents/i);
   });
 
-  it('rejects serving split and completed-delegation consumption mismatches', () => {
+  it('isolates the exact self/proxy serving split assertion', () => {
     const plan = buildLocalSeedPlan(CONFIG);
     const selfIndex = plan.mealServings.findIndex((row) => row.receiverType === 'SELF');
     const invalidSplit = {
@@ -332,15 +344,30 @@ describe('local seed plan', () => {
         index === selfIndex ? { ...row, receiverType: 'PROXY' as const } : row,
       ),
     };
-    const proxyIndex = plan.mealServings.findIndex((row) => row.receiverType === 'PROXY');
-    const unconsumedCompletedDelegation = {
+
+    expect(() => assertLocalSeedPlan(invalidSplit)).toThrow(
+      'expected 32 SELF and 8 PROXY servings',
+    );
+  });
+
+  it('isolates exactly-once completed-delegation consumption', () => {
+    const plan = buildLocalSeedPlan(CONFIG);
+    const proxyIndexes = plan.mealServings
+      .map((row, index) => (row.receiverType === 'PROXY' ? index : -1))
+      .filter((index) => index >= 0);
+    const firstProxyIndex = proxyIndexes[0];
+    const secondProxyIndex = proxyIndexes[1];
+    const firstDelegationId = plan.mealServings[firstProxyIndex].delegationId!;
+    const invalidConsumption = {
       ...plan,
       mealServings: plan.mealServings.map((row, index) =>
-        index === proxyIndex ? { ...row, delegationId: null } : row,
+        index === secondProxyIndex ? { ...row, delegationId: firstDelegationId } : row,
       ),
     };
-    expect(() => assertLocalSeedPlan(invalidSplit)).toThrow(/mealServings/i);
-    expect(() => assertLocalSeedPlan(unconsumedCompletedDelegation)).toThrow(/mealServings/i);
+
+    expect(() => assertLocalSeedPlan(invalidConsumption)).toThrow(
+      'every completed delegation must be consumed by exactly one proxy serving',
+    );
   });
 
   it('requires exact pickup intent history and consumed timestamps', () => {
