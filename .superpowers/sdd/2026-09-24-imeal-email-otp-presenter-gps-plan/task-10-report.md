@@ -24,6 +24,7 @@ DONE_WITH_RUNTIME_LIMITATION — Task 10 implementation and review-fix round are
 - The initial Task 10 e2e/projection suite was authored before `admin-operations.ts`; the default API Vitest config does not discover the required `.e2e-spec.ts` filename.
 - Review regression tests then failed as expected for missing effective-policy selection, sensitive free-form audit redaction, API coordinate response redaction, and coordinate-free policy update. The focused run showed 4 failing/5 passing before those fixes.
 - The residual-value regression then failed 1/8 focused tests because allowlisted `result` copied `session-token-secret`; this isolated the value-validation gap.
+- The expanded token/ID regression then failed because the first strict-ID attempt rejected legitimate `batch-2026-09-24` and `location-1234` values; this isolated the need for approved opaque ID formats.
 - The repository's configured e2e runner stops before discovery because `packages/domain/test/setup.ts` requires unavailable `DATABASE_URL`/PostgreSQL.
 
 ### GREEN / static verification
@@ -58,7 +59,7 @@ DONE_WITH_RUNTIME_LIMITATION — Task 10 implementation and review-fix round are
 ## Review fixes
 
 - P1: removed raw policy coordinates from Admin Web parse/state/request/render; the API response now redacts them and existing policy coordinates are preserved by the API transaction.
-- P1: removed free-form `reason` from the safe audit detail allowlist and added value-level validation for result/status/source/code/ID/count fields; suspicious secrets, OTPs, coordinates, and sensitive substrings are redacted.
+- P1: removed free-form `reason` from the safe audit detail allowlist; code/status/source values now use exact safe enums plus continuation-aware sensitive-token rejection, while IDs use approved UUID or `assignment|batch|location-*` opaque formats with sensitive-prefix rejection.
 - P2: policy selection now filters active effective windows at the current instant before choosing the newest effective policy.
 
 ## Commit and review package

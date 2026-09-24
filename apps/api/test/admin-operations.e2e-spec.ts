@@ -335,7 +335,7 @@ describe('Admin operations (e2e)', () => {
     }
   });
 
-  it('retains constrained audit values but redacts sensitive-looking values', () => {
+  it('retains safe enums and opaque IDs but redacts sensitive token continuations', () => {
     const safe = toSafeAuditEntry({
       id: 'audit-1',
       action: 'roster.preview',
@@ -343,27 +343,77 @@ describe('Admin operations (e2e)', () => {
       createdAt: '2026-09-24T00:00:00.000Z',
       details: {
         acceptedCount: 2,
+        result: 'ACCEPTED',
+        source: 'admin-web',
         state: 'ACTIVE',
-        batchId: 'batch-1',
-        locationId: 'location-1',
-        result: 'session-token-secret',
-        source: 'gps://lat=10.77, lon=106.69',
-        status: 'OTP 654321',
+        status: 'ACTIVE',
+        batchId: 'batch-2026-09-24',
+        assignmentId: '550e8400-e29b-41d4-a716-446655440000',
+        locationId: 'location-1234',
       },
     });
 
     expect(safe.details).toMatchObject({
       acceptedCount: 2,
+      result: 'ACCEPTED',
+      source: 'admin-web',
       state: 'ACTIVE',
-      batchId: 'batch-1',
-      locationId: 'location-1',
+      status: 'ACTIVE',
+      batchId: 'batch-2026-09-24',
+      assignmentId: '550e8400-e29b-41d4-a716-446655440000',
+      locationId: 'location-1234',
     });
-    expect(safe.details).not.toHaveProperty('result');
-    expect(safe.details).not.toHaveProperty('source');
-    expect(safe.details).not.toHaveProperty('status');
-    expect(safe.result).toBeNull();
-    expect(safe.redactedFields).toEqual(
-      expect.arrayContaining(['result', 'source', 'status']),
-    );
+    expect(safe.result).toBe('ACCEPTED');
+
+    const sensitiveValues = [
+      'OTP123456',
+      'SECRET_VALUE',
+      'SECRET123',
+      'CODE123456',
+      'GPS_DATA',
+      'LAT_VALUE',
+      'RAW_DATA',
+      'OTP_',
+      'SECRET_',
+      'CODE',
+      'GPS',
+      'LAT',
+      'RAW',
+      'session_ABC',
+      'otp123456',
+      'token_ABC',
+      'secretABC',
+      'gps_data',
+      'coordinate_10_20',
+    ];
+
+    for (const key of ['result', 'status', 'source'] as const) {
+      for (const value of sensitiveValues) {
+        const probes = toSafeAuditEntry({
+          action: 'roster.preview',
+          details: { [key]: value },
+        });
+
+        expect(probes.details).not.toHaveProperty(key);
+        expect(probes.redactedFields).toContain(key);
+      }
+    }
+
+    for (const [key, value] of [
+      ['batchId', 'session_ABC'],
+      ['assignmentId', 'otp123456'],
+      ['locationId', 'token_ABC'],
+      ['batchId', 'secretABC'],
+      ['assignmentId', 'gps_data'],
+      ['locationId', 'coordinate_10_20'],
+    ] as const) {
+      const probes = toSafeAuditEntry({
+        action: 'roster.preview',
+        details: { [key]: value },
+      });
+
+      expect(probes.details).not.toHaveProperty(key);
+      expect(probes.redactedFields).toContain(key);
+    }
   });
 });

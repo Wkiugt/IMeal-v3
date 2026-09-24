@@ -55,6 +55,7 @@ export interface SafeAuditEntry {
 }
 
 type SafeDetailKind = 'boolean' | 'code' | 'count' | 'id' | 'source';
+type SafeCodeKey = 'result' | 'state' | 'status';
 
 const SAFE_DETAIL_KINDS: Record<string, SafeDetailKind> = {
   acceptedCount: 'count',
@@ -70,8 +71,38 @@ const SAFE_DETAIL_KINDS: Record<string, SafeDetailKind> = {
   status: 'code',
 };
 
-const SAFE_CODE_VALUE = /^[A-Z][A-Z0-9_:-]{0,31}$/;
-const SAFE_ID_VALUE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/;
+const SAFE_CODE_VALUES: Record<SafeCodeKey, ReadonlySet<string>> = {
+  result: new Set([
+    'ACCEPTED',
+    'COMMITTED',
+    'FAILED',
+    'INVALID_OR_EXPIRED',
+    'NOT_ELIGIBLE',
+    'PREVIEWED',
+    'RATE_LIMITED',
+    'REJECTED',
+    'RESEND_THROTTLED',
+    'SKIPPED',
+    'VALID',
+  ]),
+  state: new Set(['ACTIVE', 'DISABLED', 'INACTIVE', 'PENDING']),
+  status: new Set([
+    'ACCEPTED',
+    'ACTIVE',
+    'DECLINED',
+    'DISABLED',
+    'FAILED',
+    'INACTIVE',
+    'PAID',
+    'PENDING',
+    'PROCESSING',
+    'PROCESSED',
+    'REJECTED',
+    'REVOKED',
+    'WAIVED',
+  ]),
+};
+
 const SAFE_SOURCE_VALUES = new Set([
   'admin-api',
   'admin-web',
@@ -79,10 +110,16 @@ const SAFE_SOURCE_VALUES = new Set([
   'scanner',
   'system',
 ]);
+const SAFE_UUID_VALUE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SAFE_PREFIXED_ID_VALUE =
+  /^(?:assignment|batch|location)-[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/;
+const SENSITIVE_ID_PREFIX =
+  /^(?:accuracy|code|coordinate|gps|latitude|longitude|otp|qr|raw|secret|session|token)(?:$|[_-]|\d)/i;
 const SENSITIVE_DETAIL_KEY =
   /(?:otp|code|token|secret|password|session|qr|gps|latitude|longitude|accuracy|coordinate|locationclaim|raw)/i;
 const SENSITIVE_DETAIL_VALUE =
-  /(?:\b(?:otp|one[-\s]?time(?:[-\s]?pass(?:word)?)?|token|secret|password|session|csrf|bearer|authorization|cookie|qr|gps|latitude|longitude|accuracy|coordinate|locationclaim|raw)\b|(?:\b(?:lat(?:itude)?|lon(?:gitude)?)\s*[:=])|(?:[-+]?\d{1,3}\.\d+\s*[,;]\s*[-+]?\d{1,3}\.\d+)|(?:\b\d{4,8}\b))/i;
+  /(?:^|[^A-Za-z0-9])(?:otp|one[-\s]?time(?:[-\s]?pass(?:word)?)?|token|secret|password|session|csrf|bearer|authorization|cookie|qr|gps|lat(?:itude)?|lon(?:gitude)?|accuracy|coordinate|locationclaim|raw|code)(?:[A-Za-z0-9_:-]*)(?=$|[^A-Za-z0-9])/i;
 
 function cleanText(value: string): string {
   return value.normalize('NFKC').trim();
@@ -137,20 +174,22 @@ function safeDetailValue(
 
   if (typeof value !== 'string') return undefined;
   const normalized = cleanText(value);
-  if (
-    normalized.length === 0 ||
-    SENSITIVE_DETAIL_VALUE.test(normalized)
-  ) {
-    return undefined;
+  if (normalized.length === 0) return undefined;
+
+  if (kind === 'id') {
+    if (SENSITIVE_ID_PREFIX.test(normalized)) return undefined;
+    return SAFE_UUID_VALUE.test(normalized) ||
+      SAFE_PREFIXED_ID_VALUE.test(normalized)
+      ? normalized
+      : undefined;
   }
 
+  if (SENSITIVE_DETAIL_VALUE.test(normalized)) return undefined;
   if (kind === 'source') {
     return SAFE_SOURCE_VALUES.has(normalized) ? normalized : undefined;
   }
-  if (kind === 'code') {
-    return SAFE_CODE_VALUE.test(normalized) ? normalized : undefined;
-  }
-  return SAFE_ID_VALUE.test(normalized) ? normalized : undefined;
+  const allowedValues = SAFE_CODE_VALUES[key as SafeCodeKey];
+  return allowedValues?.has(normalized) ? normalized : undefined;
 }
 
 export interface EffectiveLocationPolicy {
