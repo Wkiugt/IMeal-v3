@@ -506,12 +506,12 @@ export class OtpDeliveryWorker {
     @Optional() prisma?: PrismaClient,
     @Optional() @Inject(WORKER_OTP_PROVIDER) provider?: OtpProvider,
     @Optional() outbox?: OtpDeliveryOutboxPort,
-    clock: () => Date = () => new Date(),
+    @Optional() clock?: () => Date,
   ) {
     this.prisma = prisma ?? new PrismaClient();
     this.provider = provider ?? new WorkerConfiguredOtpProvider();
     this.outbox = outbox ?? new WorkerOtpOutboxService(this.prisma);
-    this.clock = clock;
+    this.clock = clock ?? (() => new Date());
   }
 
   @Cron('*/15 * * * * *')
