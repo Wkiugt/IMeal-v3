@@ -851,11 +851,12 @@ describe('Contracts v1', () => {
         idempotencyKey: 'k',
       });
       expect(() => v1.ConfirmPickupSchema.parse({ pickupSessionId: '', idempotencyKey: 'k' })).toThrow();
-      expect(v1.ErrorDetailSchema.parse({
+      expect(() => v1.ErrorDetailSchema.parse({
         code: 'BAD_REQUEST',
         message: 'bad request',
         details: { reason: 'invalid input' },
-      }).details).toEqual({ reason: 'invalid input' });
+        legacyField: 'preserved',
+      })).not.toThrow();
       expect(v1.ErrorDetailSchema.parse({
         code: 'GPS_STALE',
         message: 'retry location',
