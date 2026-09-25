@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
   encryptOtpProviderPayload,
@@ -40,7 +40,7 @@ const PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
 export class OtpOutboxService {
   private readonly prisma: PrismaClient;
 
-  constructor(prisma?: PrismaClient) {
+  constructor(@Optional() prisma?: PrismaClient) {
     this.prisma = prisma ?? new PrismaClient();
   }
   async enqueue(

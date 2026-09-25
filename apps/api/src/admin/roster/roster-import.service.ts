@@ -10,10 +10,8 @@ type RosterImportRow = v1.RosterImportRow;
 function emailHash(email: string): string {
   return createHash('sha256').update(email).digest('hex');
 }
-import type {
-  LocationsService,
-  ResolvedLocation,
-} from '../../locations/locations.service.js';
+import { LocationsService } from '../../locations/locations.service.js';
+import type { ResolvedLocation } from '../../locations/locations.service.js';
 
 export type RosterImportBatchInput = {
   source: string;

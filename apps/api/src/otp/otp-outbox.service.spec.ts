@@ -20,7 +20,9 @@ describe('OtpOutboxService', () => {
         },
       ]),
     };
-    prisma.$transaction.mockImplementation((callback: (tx: typeof prisma) => unknown) => callback(prisma));
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => unknown) => callback(prisma),
+    );
     const service = new OtpOutboxService(prisma as never);
 
     const rows = await service.claimBatch(NOW, 10);
@@ -37,14 +39,20 @@ describe('OtpOutboxService', () => {
         expiresAt: new Date(NOW.getTime() + 60_000),
       },
     ]);
-    expect(JSON.stringify(prisma.$queryRaw.mock.calls)).toContain('SKIP LOCKED');
-    expect(JSON.stringify(prisma.$queryRaw.mock.calls)).toContain('otp_delivery_outboxes');
+    expect(JSON.stringify(prisma.$queryRaw.mock.calls)).toContain(
+      'SKIP LOCKED',
+    );
+    expect(JSON.stringify(prisma.$queryRaw.mock.calls)).toContain(
+      'otp_delivery_outboxes',
+    );
   });
 
   it('marks successful and failed transitions only from PROCESSING', async () => {
     const prisma = {
       $transaction: vi.fn(),
-      otpDeliveryOutbox: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      otpDeliveryOutbox: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
     };
     const service = new OtpOutboxService(prisma as never);
     await service.markProcessed('outbox-1', 'claim-token-1', NOW);
@@ -54,11 +62,19 @@ describe('OtpOutboxService', () => {
     });
 
     expect(prisma.otpDeliveryOutbox.updateMany).toHaveBeenNthCalledWith(1, {
-      where: { id: 'outbox-1', status: 'PROCESSING', claimToken: 'claim-token-1' },
+      where: {
+        id: 'outbox-1',
+        status: 'PROCESSING',
+        claimToken: 'claim-token-1',
+      },
       data: { status: 'PROCESSED', processedAt: NOW, lastError: null },
     });
     expect(prisma.otpDeliveryOutbox.updateMany).toHaveBeenNthCalledWith(2, {
-      where: { id: 'outbox-1', status: 'PROCESSING', claimToken: 'claim-token-1' },
+      where: {
+        id: 'outbox-1',
+        status: 'PROCESSING',
+        claimToken: 'claim-token-1',
+      },
       data: {
         status: 'PENDING',
         processedAt: null,
