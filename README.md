@@ -68,6 +68,50 @@ docker compose ps --all
 
 `migrate` phải có trạng thái `Exited (0)`.
 
+### Seed synthetic local/dev/test/UAT
+
+Workflow này **chỉ dành cho local/dev/test/UAT**, tuyệt đối không dùng cho production. Không có dữ liệu employee, location hoặc coordinate thực nào trong source control; seed chỉ tạo fixture tổng hợp và credentials phải ở `.env` đã ignore hoặc shell hiện tại, không bao giờ được in ra.
+
+Khởi động một database/schema disposable cho local rồi chạy migration (không dùng database dùng chung):
+
+```powershell
+docker compose up -d db pgbouncer minio minio-create-bucket migrate
+docker compose wait migrate
+```
+
+Trong **cùng shell hiện tại**, đặt các biến bắt buộc sau. `DATABASE_URL` chỉ là placeholder local tổng hợp; thay bằng connection string disposable local của bạn, không dùng credential/secret thật trong README:
+
+```powershell
+$env:NODE_ENV='test' # hoặc 'development'
+$env:IMEAL_LOCAL_SEED='1'
+$env:IMEAL_LOCAL_SEED_CONFIRM='I_UNDERSTAND_LOCAL_ONLY'
+$env:IMEAL_LOCAL_SEED_BASE_EMAIL='imeal.seed@example.test'
+$env:DATABASE_URL='postgresql://LOCAL_USER:LOCAL_PASSWORD@localhost:5432/imeal_local?schema=public'
+```
+
+Chạy đúng các lệnh CLI:
+
+```powershell
+corepack yarn workspace @imeal/core seed:local --help
+corepack yarn workspace @imeal/core seed:local --dry-run
+corepack yarn workspace @imeal/core seed:local
+```
+
+Seed tạo 50 email tổng hợp (email base và `-1`..`-49`), các cohort/role: 36 `staff` only, 6 `kitchen` only, 5 `staff` + `kitchen`, 2 `admin` only và 1 `admin` + `staff`; bốn location tổng hợp `LOCAL-A`..`LOCAL-D`, assignment, menu, 126 registration cùng lịch sử serving, delegation và penalty. Với cùng base email, tuần và database, lần chạy đầu tiên đã quan sát trong local smoke summary `created=589 updated=0 unchanged=0`; chạy lại y hệt cho `created=0 updated=0 unchanged=589`. Đây chỉ là hành vi smoke local đã quan sát, không phải bảo đảm production.
+
+`--dry-run` kiểm tra safety và toàn bộ plan nhưng không ghi database. Thiếu/sai biến safety, `NODE_ENV` khác `test`/`development`, database host không local, production marker, database/schema không disposable hoặc xung đột unique đều phải fail closed. Không có chế độ reset/purge/delete. Base email hoặc tuần khác cần database/schema disposable riêng; cùng database sẽ xung đột và fail closed.
+
+Kiểm tra sau seed:
+
+```powershell
+corepack yarn workspace @imeal/core test:unit
+$env:DATABASE_URL='postgresql://LOCAL_USER:LOCAL_PASSWORD@localhost:5432/imeal_local?schema=public'
+corepack yarn test:db
+corepack yarn workspace @imeal/core exec tsc --noEmit -p tsconfig.json
+```
+
+Xem thêm [hướng dẫn local role testing](./docs/local-role-testing.md) và [thiết kế local synthetic seed](./docs/superpowers/specs/2026-09-24-imeal-local-seed-design.md).
+
 ### 3. Chạy API
 
 Mở terminal mới:
