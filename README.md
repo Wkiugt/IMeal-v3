@@ -12,6 +12,17 @@ IMeal là monorepo Yarn Workspaces + Turborepo cho hệ thống đăng ký, qu�
 
 Mọi lệnh chạy từ thư mục gốc repository.
 
+## Mục lục
+
+- [Yêu cầu](#yêu-cầu)
+- [Setup nhanh](#setup-nhanh)
+  - [Seed synthetic local/dev/test/UAT](#seed-synthetic-localdevtestuat)
+- [Deploy production](#deploy-production)
+- [Các lệnh run](#các-lệnh-run)
+- [Dùng ngrok](#dùng-ngrok)
+- [Docker và kiểm tra](#docker-và-kiểm-tra)
+- [Tài liệu](#tài-liệu)
+
 ## Setup nhanh
 
 ### 1. Cài dependency và tạo `.env`
@@ -312,6 +323,166 @@ corepack yarn workspace @imeal/admin-web dev
 
 Không commit `.env`, token ngrok, password hoặc secret.
 
+## Deploy production
+
+Phần này dành cho môi trường production thật, **không phải** cách chạy local ở
+[Setup nhanh](#setup-nhanh). Compose và Caddy hiện tại chưa được harden cho
+public exposure; phải có production override/configuration đã được review trước
+khi mở Internet. Repository không có một deploy script chuyên dụng.
+
+### Phạm vi và topology
+
+```text
+Mobile / Admin Web / Kitchen
+          │ HTTPS
+          ▼
+Reverse proxy (TLS, rate limit) ──► API
+                                      │
+                    ┌─────────────────┼─────────────────┐
+                    ▼                 ▼                 ▼
+              PostgreSQL          OTP provider       Object storage
+              / PgBouncer
+
+Worker ──► PostgreSQL / PgBouncer, OTP provider, object storage
+       └─► scheduled jobs (OTP delivery, serving/no-show và các job định kỳ)
+```
+
+Chỉ reverse proxy nhận traffic public. API và worker dùng PostgreSQL/PgBouncer,
+OTP provider và object storage qua network private hoặc egress policy đã duyệt;
+worker chạy các scheduled jobs và không được public trực tiếp.
+
+### Điều kiện trước khi deploy
+
+- Linux LTS và Docker Compose v2; nếu build trên host thì cài Node.js `>=18`,
+  Corepack và Yarn `4.18.0`.
+- Khuyến nghị tối thiểu **4 vCPU, 8 GB RAM, 100 GB disk**, tăng theo tải,
+  retention và dung lượng object storage.
+- Domain/DNS do tổ chức sở hữu, certificate/TLS hợp lệ và nơi lưu backup riêng.
+- Outbound HTTPS tới OTP, push và image providers; xác nhận allowlist/network
+  policy không chặn các endpoint này.
+- Centralized logging, monitoring và alerting đã có owner/on-call; phân công
+  owner cho allowlist-A, roles/permissions, roster và locations.
+- Chốt trước owner, RPO và RTO; không go-live nếu chưa có kế hoạch khôi phục
+  được diễn tập.
+
+### Secrets và cấu hình
+
+`.env.example` chỉ được dùng như **checklist tên biến**. Có thể copy nó để rà
+soát biến còn thiếu, nhưng phải provision giá trị production out-of-band (secret
+manager hoặc cơ chế triển khai được kiểm soát), không commit file runtime và
+không bao giờ dùng lại `CHANGE_ME_LOCAL`.
+
+Các cài đặt bắt buộc cần rà soát/provision gồm:
+
+- `NODE_ENV=production`, `AUTH_MODE=otp`, `REQUIRE_AUTH=true`.
+- PostgreSQL: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`,
+  `DATABASE_URL`; PgBouncer phải dùng credential production.
+- Object storage: `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`,
+  `MINIO_BUCKET_NAME` và access policy private/least-privilege.
+- `QR_SIGNING_SECRET`, `OTP_HASH_SECRET`, `OTP_DELIVERY_ENCRYPTION_KEY`,
+  `SESSION_HASH_SECRET` (secret ngẫu nhiên đủ mạnh, không ghi vào README).
+- `OTP_PROVIDER_URL`, `OTP_PROVIDER_API_KEY`, `OTP_PROVIDER_FROM` cùng các
+  expiry/rate-limit/retry/batch/claim-timeout settings của API và worker.
+- `GPS_DEFAULT_GEOFENCE_RADIUS_METERS`,
+  `GPS_DEFAULT_MAX_FIX_AGE_SECONDS`, `GPS_DEFAULT_MAX_ACCURACY_METERS` theo
+  policy đã duyệt; tọa độ thật chỉ được import qua operation được ủy quyền.
+- Các giá trị business cố định phải đúng và sẽ được startup/config validation
+  kiểm tra: `SERVING_TIME_ZONE=Asia/Ho_Chi_Minh`,
+  `SERVING_WINDOW_START=10:30`, `SERVING_WINDOW_END=13:30`,
+  `NO_SHOW_PROCESSING_TIME=13:45`, `QR_TTL_SECONDS=5`,
+  `QR_CLOCK_SKEW_SECONDS=2`, `PICKUP_SESSION_TTL_SECONDS=30`.
+
+Không đặt secret, PII, email thật hoặc tọa độ thật trong README. Mobile và
+Admin client chỉ nhận public API URL; tuyệt đối không đưa database, OTP,
+object-storage, session hoặc provider secret vào client.
+
+### Quy trình triển khai
+
+Chạy trên server Linux, sau khi đã chọn production override/configuration đã
+được review (các lệnh dưới đây phản ánh service name hiện có trong repository):
+
+```bash
+corepack yarn install --immutable
+corepack yarn build
+
+# Provision .env production out-of-band, kiểm tra đủ biến ở mục trên.
+# Hoàn tất và xác minh backup PostgreSQL + object storage trước deploy.
+
+docker compose build
+
+docker compose up -d db pgbouncer minio minio-create-bucket migrate
+docker compose wait migrate
+docker compose ps --all
+```
+
+`migrate` **bắt buộc** phải hiển thị `Exited (0)`. Nếu migration lỗi hoặc
+không ở trạng thái này thì dừng release, không khởi động API/worker và không
+tiếp tục với dữ liệu production.
+
+Sau khi migration đạt gate:
+
+```bash
+docker compose up -d api worker admin-web caddy
+docker compose ps --all
+
+# Health route hiện có trong API; kiểm tra từ bên trong container vì
+# Caddyfile hiện tại không public hóa /health.
+docker compose exec api wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health
+```
+
+Không suy diễn rằng `docker compose build` hiện tại là production-hardened:
+production override phải pin image/version, network, ports, TLS và secrets
+trước khi chạy public. Compose hiện khai báo `admin-web` với `build: context: .`
+nhưng Dockerfile của app nằm ở `apps/admin-web/Dockerfile`; mismatch này phải
+được sửa rõ ràng trong override/configuration đã review, không sửa tạm bằng
+README.
+
+### Provision dữ liệu và vận hành
+
+- Qua operation server-side được ủy quyền, provision **đúng bốn approved
+  locations và policies**, allowlist-A users, roles/permissions và roster.
+  Không chạy seed local/sample accounts và không import dữ liệu từ `.env.example`.
+- First Admin là một operation server-side riêng, có audit trail và người phê
+  duyệt; không tạo bằng local credentials hay client-supplied role.
+- Theo dõi logs, health checks và alerting cho API, worker, PostgreSQL và OTP
+  delivery. Không log OTP, session/bearer token hoặc provider secret.
+- Backup PostgreSQL và object storage **riêng biệt**, mã hóa và giới hạn
+  access; định kỳ test restore. Meal/audit history giữ theo retention **1 năm**.
+- Mọi schema migration phải được review và backward-compatible trong rollback
+  window. Rollback chỉ hỗ trợ stack v2/PostgreSQL; **không có Firebase path**.
+- Ghi nhận owner, RPO/RTO, retention, lịch backup và quy trình rotate secret
+  trước go-live.
+
+### Checklist bảo mật trước public exposure
+
+- [ ] Port `5432`, `6432`, `9000`, `9001` đang được Compose publish; phải
+  chuyển thành private/firewalled, không mở trực tiếp ra Internet.
+- [ ] Compose hiện dùng PostgreSQL MD5 và PgBouncer `AUTH_TYPE=plain`; đây
+  **không phải** cấu hình hardened, phải thay/bao bọc bằng policy production.
+- [ ] Setup MinIO hiện đặt bucket public; production phải private và
+  least-privilege, không dùng cấu hình này nguyên trạng.
+- [ ] Caddyfile hiện có `auto_https off` và chỉ listener `:80`; production
+  phải cấu hình domain thật do operator sở hữu, certificate/TLS, redirect
+  HTTPS và security headers (không invent domain trong tài liệu).
+- [ ] Pin version hoặc digest cho mọi image, không dùng `latest`.
+- [ ] Không expose worker, database, PgBouncer, MinIO console hoặc admin
+  internals; bearer session và OTP chỉ truyền qua HTTPS.
+- [ ] Bật edge rate limits, xác minh proxy client-IP handling, đồng thời review
+  CORS và trusted-proxy settings trước khi nhận traffic thật.
+- [ ] DB backup được mã hóa và access-controlled; rotate ngay mọi secret có
+  dấu hiệu compromise.
+
+### Release gate
+
+- [ ] Staging được dựng từ clean migrations và đã kiểm tra migration exit code.
+- [ ] Đã thử OTP request/verify/logout, RBAC, QR/serving và worker scheduled
+  jobs với dữ liệu được ủy quyền.
+- [ ] Đã test restore backup và quan sát alert cho API/worker/PostgreSQL/OTP.
+- [ ] Không còn P0 defect và có owner/on-call xác nhận go-live.
+
+Không dùng `REQUIRE_AUTH=false`, local auth, `seed:local`, local credentials,
+`docker compose down -v` hoặc `corepack yarn test:db` với production database.
+
 ## Docker và kiểm tra
 
 ```powershell
@@ -327,6 +498,53 @@ docker compose down
 # Xóa toàn bộ dữ liệu local
 docker compose down -v
 ```
+
+### Kiểm tra database PostgreSQL
+
+Khởi động PostgreSQL và PgBouncer nếu chưa chạy:
+
+```powershell
+docker compose up -d db pgbouncer
+```
+
+Mở `psql` trực tiếp trong container PostgreSQL. Lệnh tự dùng
+`POSTGRES_USER` và `POSTGRES_DB` từ environment của container:
+
+```powershell
+docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+Các lệnh thường dùng trong `psql`:
+
+```sql
+\conninfo
+\dt
+\dt public.*
+\d "TênBảng"
+SELECT * FROM "TênBảng" LIMIT 10;
+\q
+```
+
+Chạy query mà không mở shell tương tác:
+
+```powershell
+docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"'
+```
+
+Kết nối từ DBeaver, TablePlus hoặc pgAdmin:
+
+- PostgreSQL trực tiếp: host `localhost`, port `5432`
+- Qua PgBouncer, giống connection của API: host `localhost`, port `6432`
+- Database, username và password: lấy từ `.env`
+
+Kiểm tra trạng thái migration:
+
+```powershell
+docker compose run --rm migrate yarn workspace @imeal/core prisma migrate status
+```
+
+Không chạy `docker compose down -v` nếu chưa muốn xóa volume
+`db_data` và toàn bộ dữ liệu PostgreSQL local.
 
 Các port mặc định:
 
