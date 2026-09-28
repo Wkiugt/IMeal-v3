@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { prisma } from '../src/db.js';
@@ -10,25 +11,33 @@ const BACKFILL_SQL = readFileSync(
   ),
   'utf8',
 );
-async function runBackfill() {
+
+async function connectTestClient() {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
-  try {
   const schema = new URL(process.env.DATABASE_URL ?? '').searchParams.get(
     'schema',
   );
   if (!schema) {
+    await client.end();
     throw new Error('test database URL must include schema');
   }
   await client.query('SELECT set_config($1, $2, false)', [
     'search_path',
     `"${schema}"`,
   ]);
+  return client;
+}
+
+async function runBackfill() {
+  const client = await connectTestClient();
+  try {
     await client.query(BACKFILL_SQL);
   } finally {
     await client.end();
   }
 }
+
 
 const TEST_DATE = new Date('2026-09-24T00:00:00.000Z');
 
@@ -360,6 +369,59 @@ describe('Task 2 persistence boundaries', () => {
       }),
     ).rejects.toThrow(/state is inconsistent/);
   });
+  it('serializes_concurrent_serving_and_registration_transition', async () => {
+    const user = await createUser('serving-concurrency@example.test');
+    const registration = await prisma.registration.create({
+      data: {
+        userId: user.id,
+        mealDate: TEST_DATE,
+        status: 'ACTIVE',
+      },
+    });
+    const servingClient = await connectTestClient();
+    const transitionClient = await connectTestClient();
+    try {
+      await servingClient.query('BEGIN');
+      await servingClient.query(
+        `INSERT INTO meal_servings (id, registration_id)
+         VALUES ($1, $2)`,
+        [randomUUID(), registration.id],
+      );
+
+      await transitionClient.query('BEGIN');
+      const transition = transitionClient.query(
+        `UPDATE registrations
+         SET status = 'NO_SHOW'::"RegistrationStatus"
+         WHERE id = $1`,
+        [registration.id],
+      );
+
+      // The serving transaction holds the registration row lock. The
+      // transition is issued before the serving commit and must serialize
+      // behind it rather than commit an invalid NO_SHOW + serving state.
+      await servingClient.query('COMMIT');
+      await expect(transition).rejects.toThrow(
+        /registration_serving_consistency/,
+      );
+      await transitionClient.query('ROLLBACK');
+
+      await expect(
+        prisma.registration.findUniqueOrThrow({
+          where: { id: registration.id },
+          select: { status: true, mealServing: { select: { id: true } } },
+        }),
+      ).resolves.toMatchObject({
+        status: 'ACTIVE',
+        mealServing: { id: expect.any(String) },
+      });
+    } finally {
+      await servingClient.query('ROLLBACK').catch(() => undefined);
+      await transitionClient.query('ROLLBACK').catch(() => undefined);
+      await servingClient.end();
+      await transitionClient.end();
+    }
+  });
+
 
   it('backfills_only_verified_evidence_and_is_idempotent', async () => {
     const validDate = new Date('2026-10-01T00:00:00.000Z');

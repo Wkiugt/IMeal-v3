@@ -124,7 +124,8 @@ BEGIN
   SELECT r.*
   INTO registration_row
   FROM "registrations" AS r
-  WHERE r."id" = _registration_id;
+  WHERE r."id" = _registration_id
+  FOR UPDATE;
 
   IF registration_row."id" IS NULL THEN
     RETURN;
@@ -143,11 +144,7 @@ RETURNS TRIGGER
 LANGUAGE PLPGSQL
 AS $function$
 BEGIN
-  IF NOT "registration_serving_consistent"(NEW) THEN
-    RAISE EXCEPTION 'registration and meal serving state is inconsistent'
-      USING ERRCODE = '23514',
-            CONSTRAINT = 'registration_serving_consistency';
-  END IF;
+  PERFORM "assert_registration_serving_consistency"(NEW."id");
   RETURN NEW;
 END;
 $function$;
@@ -157,11 +154,17 @@ RETURNS TRIGGER
 LANGUAGE PLPGSQL
 AS $function$
 BEGIN
-  IF TG_OP <> 'INSERT' THEN
+  IF TG_OP = 'UPDATE' AND OLD."registration_id" <> NEW."registration_id" THEN
+    IF OLD."registration_id" < NEW."registration_id" THEN
+      PERFORM "assert_registration_serving_consistency"(OLD."registration_id");
+      PERFORM "assert_registration_serving_consistency"(NEW."registration_id");
+    ELSE
+      PERFORM "assert_registration_serving_consistency"(NEW."registration_id");
+      PERFORM "assert_registration_serving_consistency"(OLD."registration_id");
+    END IF;
+  ELSIF TG_OP <> 'INSERT' THEN
     PERFORM "assert_registration_serving_consistency"(OLD."registration_id");
-  END IF;
-
-  IF TG_OP <> 'DELETE' THEN
+  ELSE
     PERFORM "assert_registration_serving_consistency"(NEW."registration_id");
   END IF;
 
