@@ -14,6 +14,10 @@ DONE_WITH_CONCERNS
   - Added permanent behavior coverage for served retention, no-show membership, cancelled/disabled exclusion, state/`isServed` consistency, invariant failures, serving snapshot logs, one-query shape, and counter boundaries.
 - `apps/api/test/kitchen-dashboard.e2e-spec.ts`
   - Updated route fixture and assertions for required dashboard state fields.
+- `apps/api/src/app.module.ts`, `apps/api/src/common/api-exception.filter.ts`
+  - Registered the canonical HTTP error mapper globally and preserved request ID header/body behavior.
+- `packages/contracts/src/v1/kitchen.ts`, `packages/contracts/test/contracts.test.ts`
+  - Added nullable legacy-aware serving-log location/menu snapshot response fields and contract coverage.
 - `.superpowers/sdd/2026-09-28-imeal-phase0-domain-correctness-plan/task-5-brief.md`
   - Task requirements and acceptance criteria.
 
