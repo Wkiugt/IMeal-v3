@@ -34,5 +34,28 @@ DONE_WITH_CONCERNS
 - Full route/e2e verification needs a configured disposable PostgreSQL `DATABASE_URL`.
 - API-wide typecheck remains red from pre-existing Task 2 penalty contract mapping and is outside Task 5 scope.
 
-## Exact source commit
-`a29b726111b8155691c05cf390787bb820bf5b70` (`feat(api): project canonical kitchen dashboard states`)
+## Review fix round 1
+
+- F1: Added the canonical `ApiExceptionFilter` as the app-level Nest `APP_FILTER`. It maps `InternalServerErrorException` to `{ error: { code: 'INTERNAL_SERVER_ERROR', message }, requestId }` and returns `X-Request-Id`, preserving valid UUID request IDs.
+- F2: Extended the serving-log response contract with nullable legacy-aware location/menu snapshot fields and mapped them from `MealServing` first, falling back only to immutable registration snapshots. Unit and route fixtures assert canonical snapshot values win over registration/current values.
+- F3: Strengthened the registration query assertion to cover the complete operational-status and `CANCELLED + mealServing` predicates, includes, and ordering. Added consumer-visible dashboard mismatch-envelope and authentication/permission-guard route tests.
+
+## Review-fix verification evidence
+- `yarn workspace @imeal/api exec vitest run src/kitchen/kitchen-dashboard.service.spec.ts`
+  - PASS: 1 test file, 12 tests.
+- `yarn workspace @imeal/contracts build`
+  - PASS; refreshed ignored local contract dist used by API tests.
+- `yarn workspace @imeal/contracts exec vitest run test/contracts.test.ts`
+  - PASS: 1 test file, 37 tests, including canonical serving-log snapshot fields.
+- `yarn workspace @imeal/api exec vitest run --config ./vitest.dashboard.config.ts test/kitchen-dashboard.e2e-spec.ts`
+  - PASS: 1 test file, 7 tests. This temporary no-DB config exercised the actual Nest app module, global exception mapper, request ID header/body, route mismatch response, aliases, and auth guard; the temporary config was removed.
+- `yarn workspace @imeal/api exec vitest run --config ./vitest.config.e2e.ts test/kitchen-dashboard.e2e-spec.ts`
+  - BLOCKED before tests by the repository setup because `DATABASE_URL` is not set in the environment or `packages/domain/.env.test`; no disposable PostgreSQL was available.
+- `yarn workspace @imeal/api exec tsc --noEmit`
+  - Existing unrelated Task 2 failures remain only in `apps/api/src/admin/penalties/penalties.service.ts` for missing `registrationId` and `mealDate`; no Task 5 mapper/dashboard errors were reported.
+- `git diff --check`
+  - PASS for the Task 5 changes; the director-owned `progress.md` has an unrelated concurrent ledger update and was not modified by this task.
+
+## Exact commits
+- Base implementation: `a29b726111b8155691c05cf390787bb820bf5b70` (`feat(api): project canonical kitchen dashboard states`)
+- Review fixes: `0941f30f9bc4404711c74656fea4cf562e41d6d3` (`fix(api): close Task 5 dashboard review findings`)
