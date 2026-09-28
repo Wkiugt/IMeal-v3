@@ -1,6 +1,6 @@
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { Logger } from '@nestjs/common';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaService } from './common/prisma.service.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   OtpDeliveryWorker,
@@ -311,7 +311,7 @@ describe('OtpDeliveryWorker', () => {
     const outbox = fakeOutbox([delivery()]);
 
     const result = await new OtpDeliveryWorker(
-      undefined,
+      {} as PrismaService,
       provider,
       outbox,
       () => NOW,
@@ -339,7 +339,7 @@ describe('OtpDeliveryWorker', () => {
     };
 
     await new WorkerOtpOutboxService(
-      prisma as unknown as PrismaClient,
+      prisma as unknown as PrismaService,
     ).claimBatch(NOW, 10);
 
     const cleanupSql = JSON.stringify(tx.$executeRaw.mock.calls[0]?.[0]);
@@ -358,7 +358,7 @@ describe('OtpDeliveryWorker', () => {
     const error = vi.spyOn(Logger.prototype, 'error');
 
     const result = await new OtpDeliveryWorker(
-      undefined,
+      {} as PrismaService,
       provider,
       outbox,
       () => NOW,
@@ -399,7 +399,7 @@ describe('OtpDeliveryWorker', () => {
     const outbox = fakeOutbox([delivery({ attemptCount: 1 })]);
 
     const result = await new OtpDeliveryWorker(
-      undefined,
+      {} as PrismaService,
       provider,
       outbox,
       () => NOW,
@@ -430,7 +430,7 @@ describe('OtpDeliveryWorker', () => {
     const outbox = fakeOutbox([delivery({ attemptCount: 3 })]);
 
     const result = await new OtpDeliveryWorker(
-      undefined,
+      {} as PrismaService,
       provider,
       outbox,
       () => NOW,
@@ -465,7 +465,7 @@ describe('OtpDeliveryWorker', () => {
     );
 
     const result = await new OtpDeliveryWorker(
-      undefined,
+      {} as PrismaService,
       provider,
       outbox,
       () => delayedNow,
@@ -497,7 +497,7 @@ describe('OtpDeliveryWorker', () => {
     }));
 
     const result = await new OtpDeliveryWorker(
-      undefined,
+      {} as PrismaService,
       provider,
       outbox,
       () => NOW,
@@ -536,7 +536,7 @@ describe('OtpDeliveryWorker', () => {
     });
 
     const result = await new OtpDeliveryWorker(
-      undefined,
+      {} as PrismaService,
       provider,
       outbox,
       () => NOW,
@@ -561,7 +561,7 @@ describe('OtpDeliveryWorker', () => {
     ]);
 
     const result = await new OtpDeliveryWorker(
-      undefined,
+      {} as PrismaService,
       provider,
       outbox,
       () => NOW,

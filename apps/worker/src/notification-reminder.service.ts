@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from './common/prisma.service.js';
 import { WorkerNotificationPublisher } from './worker-notification-publisher.js';
 
 const TIME_ZONE = 'Asia/Ho_Chi_Minh';
@@ -47,14 +48,12 @@ function nextMondayStart(now: Date): string {
 @Injectable()
 export class NotificationReminderService {
   private readonly logger = new Logger(NotificationReminderService.name);
-  private readonly prisma: PrismaClient;
   private readonly publisher: WorkerNotificationPublisher;
 
   constructor(
-    @Optional() prisma?: PrismaClient,
+    private readonly prisma: PrismaService,
     @Optional() publisher?: WorkerNotificationPublisher,
   ) {
-    this.prisma = prisma ?? new PrismaClient();
     this.publisher = publisher ?? new WorkerNotificationPublisher();
   }
 

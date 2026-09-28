@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { PrismaService } from './common/prisma.service.js';
 import { PickupWorkerService } from './pickup-worker.service.js';
 import { vi } from 'vitest';
 
@@ -8,22 +9,16 @@ const mockPrisma = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@prisma/client', () => {
-  return {
-    PrismaClient: class {
-      constructor() {
-        return mockPrisma;
-      }
-    },
-  };
-});
 
 describe('PickupWorkerService', () => {
   let service: PickupWorkerService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [PickupWorkerService],
+      providers: [
+        PickupWorkerService,
+        { provide: PrismaService, useValue: mockPrisma },
+      ],
     }).compile();
 
     service = module.get<PickupWorkerService>(PickupWorkerService);

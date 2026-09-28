@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { PrismaService } from './common/prisma.service.js';
 import { CutoffWorkerService } from './cutoff-worker.service.js';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -18,24 +19,17 @@ const mockPrisma = {
   }),
 };
 
-vi.mock('@prisma/client', () => {
-  return {
-    PrismaClient: class {
-      constructor() {
-        return mockPrisma;
-      }
-    },
-  };
-});
 
 describe('CutoffWorkerService', () => {
   let service: CutoffWorkerService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [CutoffWorkerService],
+      providers: [
+        CutoffWorkerService,
+        { provide: PrismaService, useValue: mockPrisma },
+      ],
     }).compile();
-
     service = module.get<CutoffWorkerService>(CutoffWorkerService);
     vi.clearAllMocks();
   });

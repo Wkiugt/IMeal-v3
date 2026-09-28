@@ -1,8 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PrismaService } from './common/prisma.service.js';
 import { NoShowWorkerService } from './no-show-worker.service.js';
-
 const mockTx = {
   $queryRaw: vi.fn(),
   registration: {
@@ -129,7 +129,10 @@ describe('NoShowWorkerService', () => {
       async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
     const module: TestingModule = await Test.createTestingModule({
-      providers: [NoShowWorkerService],
+      providers: [
+        NoShowWorkerService,
+        { provide: PrismaService, useValue: mockPrisma },
+      ],
     }).compile();
     service = module.get<NoShowWorkerService>(NoShowWorkerService);
   });

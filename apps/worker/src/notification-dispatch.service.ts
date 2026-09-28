@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Expo, type ExpoPushMessage } from 'expo-server-sdk';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from './common/prisma.service.js';
 
 const CLAIM_BATCH_SIZE = 100;
 const PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
@@ -110,14 +111,12 @@ function isPermanentFailure(failure: Failure): boolean {
 @Injectable()
 export class NotificationDispatchService {
   private readonly logger = new Logger(NotificationDispatchService.name);
-  private readonly prisma: PrismaClient;
   private readonly expo: Expo;
 
   constructor(
-    @Optional() prisma?: PrismaClient,
+    private readonly prisma: PrismaService,
     @Optional() expo?: Expo,
   ) {
-    this.prisma = prisma ?? new PrismaClient();
     this.expo = expo ?? new Expo();
   }
 

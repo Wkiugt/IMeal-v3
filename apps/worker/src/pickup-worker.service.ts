@@ -1,15 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from './common/prisma.service.js';
 
 @Injectable()
 export class PickupWorkerService {
   private readonly logger = new Logger(PickupWorkerService.name);
-  private prisma: PrismaClient;
 
-  constructor() {
-    this.prisma = new PrismaClient();
-  }
+  constructor(private readonly prisma: PrismaService) {}
 
   // Frequent cron job to clean up expired pickup_sessions (every 10 seconds)
   @Cron('*/10 * * * * *')

@@ -14,11 +14,13 @@ import {
   WorkerConfiguredOtpProvider,
   WorkerOtpOutboxService,
 } from './otp-delivery-worker.service.js';
+import { PrismaService } from './common/prisma.service.js';
 
 @Module({
   imports: [ScheduleModule.forRoot()],
   controllers: [AppController],
   providers: [
+    PrismaService,
     AppService,
     CutoffWorkerService,
     PickupWorkerService,

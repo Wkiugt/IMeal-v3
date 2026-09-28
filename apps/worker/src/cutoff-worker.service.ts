@@ -1,15 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from './common/prisma.service.js';
 
 @Injectable()
 export class CutoffWorkerService {
   private readonly logger = new Logger(CutoffWorkerService.name);
-  private prisma: PrismaClient;
 
-  constructor() {
-    this.prisma = new PrismaClient();
-  }
+  constructor(private readonly prisma: PrismaService) {}
 
   // 14:00 VN time every day
   @Cron('0 14 * * *', {

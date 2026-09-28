@@ -2,7 +2,8 @@ import { createDecipheriv, createHash, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from './common/prisma.service.js';
 
 export type OtpPurpose = 'SESSION_LOGIN';
 
@@ -491,11 +492,7 @@ type CurrentClaimRow = {
 
 @Injectable()
 export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
-  private readonly prisma: PrismaClient;
-
-  constructor(@Optional() prisma?: PrismaClient) {
-    this.prisma = prisma ?? new PrismaClient();
-  }
+  constructor(private readonly prisma: PrismaService) {}
 
   async claimBatch(now: Date, limit: number): Promise<ClaimedOtpDelivery[]> {
     const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
@@ -708,19 +705,17 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
 @Injectable()
 export class OtpDeliveryWorker {
   private readonly logger = new Logger(OtpDeliveryWorker.name);
-  private readonly prisma: PrismaClient;
   private readonly provider: OtpProvider;
   private readonly outbox: OtpDeliveryOutboxPort;
 
   private readonly clock: () => Date;
 
   constructor(
-    @Optional() prisma?: PrismaClient,
+    private readonly prisma: PrismaService,
     @Optional() @Inject(WORKER_OTP_PROVIDER) provider?: OtpProvider,
     @Optional() outbox?: OtpDeliveryOutboxPort,
     @Optional() clock?: () => Date,
   ) {
-    this.prisma = prisma ?? new PrismaClient();
     this.provider = provider ?? new WorkerConfiguredOtpProvider();
     this.outbox = outbox ?? new WorkerOtpOutboxService(this.prisma);
     this.clock = clock ?? (() => new Date());

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable, Logger, Optional } from '@nestjs/common';
-import { PrismaClient, Prisma, type JobRunStatus } from '@prisma/client';
+import { Prisma, type JobRunStatus } from '@prisma/client';
+import { PrismaService } from './common/prisma.service.js';
 import { Cron } from '@nestjs/schedule';
 import { WorkerNotificationPublisher } from './worker-notification-publisher.js';
 
@@ -14,13 +15,12 @@ type NoShowResult = 'PROCESSED' | 'SKIPPED';
 @Injectable()
 export class NoShowWorkerService {
   private readonly logger = new Logger(NoShowWorkerService.name);
-  private readonly prisma: PrismaClient;
   private readonly notificationPublisher: WorkerNotificationPublisher;
 
   constructor(
+    private readonly prisma: PrismaService,
     @Optional() notificationPublisher?: WorkerNotificationPublisher,
   ) {
-    this.prisma = new PrismaClient();
     this.notificationPublisher =
       notificationPublisher ?? new WorkerNotificationPublisher();
   }

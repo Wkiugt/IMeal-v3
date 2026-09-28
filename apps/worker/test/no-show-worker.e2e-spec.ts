@@ -19,9 +19,9 @@ type WorkerService = {
 };
 
 type WorkerServiceConstructor = new (
+  prisma: PrismaClient,
   notificationPublisher?: unknown,
 ) => WorkerService;
-
 type TestPublisher = {
   publish: (
     tx: Prisma.TransactionClient,
@@ -88,7 +88,7 @@ databaseDescribe('PostgreSQL no-show worker', () => {
   });
 
   function makeWorker(notificationPublisher?: unknown): WorkerService {
-    const worker = new WorkerService(notificationPublisher);
+    const worker = new WorkerService(prisma, notificationPublisher);
     const workerWithPrisma = worker as unknown as { prisma: PrismaClient };
     workerPrismaClients.push(workerWithPrisma.prisma);
     return worker;

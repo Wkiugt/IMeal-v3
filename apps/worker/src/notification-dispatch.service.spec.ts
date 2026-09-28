@@ -1,9 +1,8 @@
 import type { Expo } from 'expo-server-sdk';
-import type { PrismaClient } from '@prisma/client';
+import { PrismaService } from './common/prisma.service.js';
 import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NotificationDispatchService } from './notification-dispatch.service.js';
-
 type TestDelivery = {
   id: string;
   notificationId: string;
@@ -80,7 +79,7 @@ describe('NotificationDispatchService ticket mapping', () => {
       sendPushNotificationsAsync: vi.fn(),
     };
     service = new NotificationDispatchService(
-      prisma as unknown as PrismaClient,
+      prisma as unknown as PrismaService,
       expo as unknown as Expo,
     );
   });
