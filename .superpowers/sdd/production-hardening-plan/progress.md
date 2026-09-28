@@ -70,12 +70,12 @@ The production-hardening plan is being executed one task at a time. Completed wo
 
 ## Task 7 completion
 
-- Task 7: complete (commit `578e7f6`, report `.superpowers/sdd/production-hardening-plan/task-7-report.md`).
-- Added API/worker shutdown coordinators with idempotent drain state, in-flight tracking, bounded timeout waits, and terminal structured shutdown events.
-- Wired SIGTERM/SIGINT bootstrap hooks, API bounded HTTP/SSE admission, worker cron/provider admission, immediate health drain readiness, and post-listen scheduler readiness.
-- API focused shutdown/health/interceptor tests: 14/14; worker focused shutdown/health tests: 10/10; worker cron/provider regressions: 75/75; API/worker builds passed.
-- Prisma remains lifecycle-managed; no early process exit, claim/stale-recovery changes, Compose/Caddy work, or migration-gate work was introduced.
-- Review status: spec compliance PASS; quality PASS; safe to stop before Task 8.
+- Task 7: complete (initial commit `578e7f6`; review fix `ef745fe`; report `.superpowers/sdd/production-hardening-plan/task-7-report.md`).
+- Added explicit idempotent SIGTERM/SIGINT signal boundaries that begin drain, wait bounded in-flight work, and invoke `app.close()` only afterward; Prisma remains lifecycle-managed after the wait.
+- Added signal order/idempotence integration tests proving health-visible draining before app close/Prisma teardown for duplicate SIGTERM/SIGINT events.
+- API focused shutdown/health tests: 12/12; worker focused shutdown/health tests: 11/11; full API suite: 269/269; full worker suite: 92/92; API/worker builds and typechecks passed; scoped Prettier and `git diff --check` passed.
+- API bounded HTTP/SSE and worker cron/provider admission, immediate health drain readiness, and post-listen scheduler readiness remain covered.
+- Review status: fix round 1 complete; spec compliance PASS; quality PASS; safe to stop before Task 8.
 
 ## Remaining tasks
 
