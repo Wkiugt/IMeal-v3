@@ -597,6 +597,13 @@ describe('Contracts v1', () => {
           mealChoice: 'VEGETARIAN',
           servedAt: '2026-09-25T04:00:00.000Z',
           isProxy: false,
+          locationShortCode: 'HQ',
+          locationNameSnapshot: 'Headquarters',
+          locationAddressSnapshot: 'Approved address',
+          menuRevisionId: 'revision-1',
+          menuNameSnapshot: 'Lunch',
+          menuDescriptionSnapshot: 'Lunch menu',
+          menuImageSnapshot: 'https://example.test/lunch.jpg',
         }).success,
       ).toBe(true);
     });

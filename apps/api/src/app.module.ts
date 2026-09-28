@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -10,6 +11,7 @@ import { NotificationsModule } from './notifications/notifications.module.js';
 import { PickupModule } from './pickup/pickup.module.js';
 import { KitchenModule } from './kitchen/kitchen.module.js';
 import { LocationsModule } from './locations/locations.module.js';
+import { ApiExceptionFilter } from './common/api-exception.filter.js';
 @Module({
   imports: [
     AuthModule,
@@ -23,6 +25,12 @@ import { LocationsModule } from './locations/locations.module.js';
     LocationsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_FILTER,
+      useClass: ApiExceptionFilter,
+    },
+  ],
 })
 export class AppModule {}

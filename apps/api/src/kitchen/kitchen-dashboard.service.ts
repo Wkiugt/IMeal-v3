@@ -191,6 +191,25 @@ export class KitchenDashboardService {
         mealChoice: registration.mealChoice,
         servedAt: serving.servedAt.toISOString(),
         isProxy,
+        locationShortCode:
+          serving.locationShortCode ?? registration.serviceLocationCode ?? null,
+        locationNameSnapshot:
+          serving.locationNameSnapshot ??
+          registration.serviceLocationName ??
+          null,
+        locationAddressSnapshot:
+          serving.locationAddressSnapshot ??
+          registration.serviceLocationAddress ??
+          null,
+        menuRevisionId: serving.menuRevisionId ?? registration.menuRevisionId ?? null,
+        menuNameSnapshot:
+          serving.menuNameSnapshot ?? registration.menuNameSnapshot ?? null,
+        menuDescriptionSnapshot:
+          serving.menuDescriptionSnapshot ??
+          registration.menuDescriptionSnapshot ??
+          null,
+        menuImageSnapshot:
+          serving.menuImageSnapshot ?? registration.menuImageSnapshot ?? null,
       };
     });
 

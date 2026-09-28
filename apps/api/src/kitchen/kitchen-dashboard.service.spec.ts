@@ -51,8 +51,10 @@ describe('KitchenDashboardService', () => {
       ownerEmailSnapshot: ownerNameSnapshot
         ? `${ownerNameSnapshot.toLowerCase().replaceAll(' ', '.')}@example.com`
         : null,
+      locationShortCode: 'SERVING',
       locationNameSnapshot: 'Approved Kitchen',
       locationAddressSnapshot: 'Approved address',
+      menuRevisionId: 'serving-revision',
       menuNameSnapshot: 'Lunch',
       menuDescriptionSnapshot: 'Lunch menu',
       menuImageSnapshot: 'https://example.test/lunch.jpg',
@@ -114,6 +116,11 @@ describe('KitchenDashboardService', () => {
     it('uses serving snapshots for recent serving logs', async () => {
       const row = registration({
         id: 'reg-serving-log',
+        serviceLocationCode: 'REGISTRATION',
+        serviceLocationName: 'Mutable current location',
+        serviceLocationAddress: 'Mutable current address',
+        menuRevisionId: 'registration-revision',
+        menuNameSnapshot: 'Mutable current menu',
         mealServing: serving('srv-serving-log', 'Serving Snapshot Owner'),
       });
       configure(
@@ -124,7 +131,11 @@ describe('KitchenDashboardService', () => {
             registration: {
               userId: 'user-current',
               mealChoice: 'REGULAR',
-              ownerNameSnapshot: 'Registration Snapshot Owner',
+              serviceLocationCode: 'REGISTRATION',
+              serviceLocationName: 'Mutable current location',
+              serviceLocationAddress: 'Mutable current address',
+              menuRevisionId: 'registration-revision',
+              menuNameSnapshot: 'Mutable current menu',
               user: {
                 name: 'Current User Name',
                 email: 'current@example.com',
@@ -140,6 +151,13 @@ describe('KitchenDashboardService', () => {
       expect(snapshot.recentLogs[0]).toMatchObject({
         userName: 'Serving Snapshot Owner',
         userEmail: 'serving.snapshot.owner@example.com',
+        locationShortCode: 'SERVING',
+        locationNameSnapshot: 'Approved Kitchen',
+        locationAddressSnapshot: 'Approved address',
+        menuRevisionId: 'serving-revision',
+        menuNameSnapshot: 'Lunch',
+        menuDescriptionSnapshot: 'Lunch menu',
+        menuImageSnapshot: 'https://example.test/lunch.jpg',
       });
     });
 
@@ -284,19 +302,23 @@ describe('KitchenDashboardService', () => {
       await service.getDashboardSnapshot(targetDate);
 
       expect(mockPrisma.registration.findMany).toHaveBeenCalledTimes(1);
-      expect(mockPrisma.registration.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            mealDate: new Date('2026-09-03T00:00:00Z'),
-            OR: expect.arrayContaining([
-              expect.objectContaining({
-                status: { in: ['ACTIVE', 'SERVED', 'NO_SHOW'] },
-              }),
-            ]),
-          }),
-          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        }),
-      );
+      const query = mockPrisma.registration.findMany.mock.calls[0][0];
+      expect(query.where).toEqual({
+        mealDate: new Date('2026-09-03T00:00:00Z'),
+        OR: [
+          { status: { in: ['ACTIVE', 'SERVED', 'NO_SHOW'] } },
+          { status: 'CANCELLED', mealServing: { isNot: null } },
+        ],
+      });
+      expect(query.include).toEqual({
+        user: true,
+        mealServing: true,
+        delegations: true,
+      });
+      expect(query.orderBy).toEqual([
+        { createdAt: 'asc' },
+        { id: 'asc' },
+      ]);
     });
   });
 

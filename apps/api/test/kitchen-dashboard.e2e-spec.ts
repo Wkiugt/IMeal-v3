@@ -1,5 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+import {
+  INestApplication,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import request from 'supertest';
 import type { Server } from 'node:http';
 import { AppModule } from './../src/app.module.js';
@@ -14,9 +17,17 @@ import {
 } from 'vitest';
 import { KitchenDashboardService } from './../src/kitchen/kitchen-dashboard.service.js';
 
+type DashboardServiceMock = {
+  getDashboardSnapshot: (...args: unknown[]) => Promise<unknown>;
+  toggleServingSignal: (
+    date?: string,
+    isReady?: boolean,
+  ) => Promise<unknown>;
+};
+
 describe('KitchenDashboardController (e2e)', () => {
   let app: INestApplication<Server>;
-
+  let dashboardService: DashboardServiceMock;
   const mockSnapshot = {
     date: '2026-09-03',
     isServingReady: true,
@@ -38,6 +49,13 @@ describe('KitchenDashboardController (e2e)', () => {
         mealChoice: 'VEGETARIAN',
         servedAt: '2026-09-03T11:45:00.000Z',
         isProxy: false,
+        locationShortCode: 'HQ',
+        locationNameSnapshot: 'Headquarters',
+        locationAddressSnapshot: 'Approved address',
+        menuRevisionId: 'revision-1',
+        menuNameSnapshot: 'Lunch',
+        menuDescriptionSnapshot: 'Lunch menu',
+        menuImageSnapshot: 'https://example.test/lunch.jpg',
       },
     ],
     lists: {
@@ -75,20 +93,21 @@ describe('KitchenDashboardController (e2e)', () => {
   });
 
   beforeEach(async () => {
+    dashboardService = {
+      getDashboardSnapshot: vi.fn().mockResolvedValue(mockSnapshot),
+      toggleServingSignal: vi.fn().mockImplementation((date, isReady) =>
+        Promise.resolve({
+          success: true,
+          isServingReady: isReady,
+          date: date || '2026-09-03',
+        }),
+      ),
+    };
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
       .overrideProvider(KitchenDashboardService)
-      .useValue({
-        getDashboardSnapshot: vi.fn().mockResolvedValue(mockSnapshot),
-        toggleServingSignal: vi.fn().mockImplementation((date, isReady) =>
-          Promise.resolve({
-            success: true,
-            isServingReady: isReady,
-            date: date || '2026-09-03',
-          }),
-        ),
-      })
+      .useValue(dashboardService)
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -115,6 +134,12 @@ describe('KitchenDashboardController (e2e)', () => {
       res.body.counters.regularTotal + res.body.counters.vegetarianTotal,
     ).toBe(res.body.counters.totalRegistered);
     expect(res.body.recentLogs[0].mealChoice).toBe('VEGETARIAN');
+    expect(res.body.recentLogs[0]).toMatchObject({
+      locationNameSnapshot: 'Headquarters',
+      locationAddressSnapshot: 'Approved address',
+      menuRevisionId: 'revision-1',
+      menuNameSnapshot: 'Lunch',
+    });
     expect(res.body.lists.served[0].mealChoice).toBe('VEGETARIAN');
     expect(res.body.lists.served[0].state).toBe('SERVED');
     expect(res.body.lists.served[0].isServed).toBe(true);
@@ -125,6 +150,50 @@ describe('KitchenDashboardController (e2e)', () => {
     expect(res.body.lists.pending).toHaveLength(1);
     expect(res.body.lists.noShow).toEqual([]);
   });
+  it('maps dashboard state mismatches to the canonical error envelope', async () => {
+    const requestId = '11111111-1111-4111-8111-111111111111';
+    dashboardService.getDashboardSnapshot = vi
+      .fn()
+      .mockRejectedValue(
+        new InternalServerErrorException(
+          'Kitchen dashboard state invariant violated',
+        ),
+      );
+
+    const res = await request(app.getHttpServer())
+      .get('/v1/kitchen/days/2026-09-03/dashboard')
+      .set('X-Request-Id', requestId);
+
+    expect(res.status).toBe(500);
+    expect(res.headers['x-request-id']).toBe(requestId);
+    expect(res.body).toEqual({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Kitchen dashboard state invariant violated',
+      },
+      requestId,
+    });
+  });
+
+  it('preserves dashboard authentication and permission guards', async () => {
+    const previousRequireAuth = process.env.REQUIRE_AUTH;
+    process.env.REQUIRE_AUTH = 'true';
+    try {
+      const res = await request(app.getHttpServer())
+        .get('/v1/kitchen/days/2026-09-03/dashboard')
+        .set('X-Request-Id', '22222222-2222-4222-8222-222222222222');
+
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('SESSION_INVALID');
+      expect(res.body.requestId).toBe(
+        '22222222-2222-4222-8222-222222222222',
+      );
+      expect(dashboardService.getDashboardSnapshot).not.toHaveBeenCalled();
+    } finally {
+      process.env.REQUIRE_AUTH = previousRequireAuth;
+    }
+  });
+
 
   it('/v1/kitchen/days/:date/events (GET SSE) - serves text/event-stream headers', async () => {
     const res = await request(app.getHttpServer())
