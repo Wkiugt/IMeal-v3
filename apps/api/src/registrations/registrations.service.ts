@@ -688,6 +688,7 @@ export class RegistrationsService {
                 console.warn('Failed to publish registration lifecycle event', error);
               }
             }
+            break;
           } catch (error: unknown) {
             if (transactionAttempt === 0 && isUniqueConstraintError(error)) {
               transactionAttempt += 1;
