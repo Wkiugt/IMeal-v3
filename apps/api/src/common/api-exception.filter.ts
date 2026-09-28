@@ -62,9 +62,10 @@ export class ApiExceptionFilter implements ExceptionFilter {
       response && typeof response === 'object' && !Array.isArray(response)
         ? response
         : {};
-    const id =
+    const id = resolveRequestId(
       requestIdFromRequest(request) ??
-      resolveRequestId(firstHeader(request.headers, REQUEST_ID_HEADER));
+        firstHeader(request.headers, REQUEST_ID_HEADER),
+    );
     request.requestId = id;
     const code =
       typeof body.code === 'string' ? body.code : defaultErrorCode(status);

@@ -7,18 +7,17 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { REQUEST_ID_HEADER, resolveRequestId } from '@imeal/observability';
 import { v1 } from '@imeal/contracts';
 import { CurrentUser } from './current-user.decorator.js';
 import type { AuthenticatedUser } from './authenticated-user.js';
-import {
-  OtpService,
-  type OtpRequestContext,
-} from './otp.service.js';
+import { OtpService, type OtpRequestContext } from './otp.service.js';
 import { SessionGuard } from './session.guard.js';
 import { SessionService } from './session.service.js';
 
 interface AuthRequest {
   id?: string;
+  requestId?: string;
   ip?: string;
   headers?: Record<string, string | string[] | undefined>;
 }
@@ -31,11 +30,17 @@ function firstHeader(
   return Array.isArray(value) ? value[0] : value;
 }
 
+function requestCorrelationId(request: AuthRequest): string {
+  return resolveRequestId(
+    request.requestId ??
+      request.id ??
+      firstHeader(request.headers, REQUEST_ID_HEADER),
+  );
+}
+
 function otpContext(request: AuthRequest): OtpRequestContext {
   return {
-    requestId:
-      firstHeader(request.headers, 'x-request-id') ??
-      request.id,
+    requestId: requestCorrelationId(request),
     clientIp: request.ip,
     clientFingerprint: firstHeader(request.headers, 'user-agent'),
   };
@@ -118,7 +123,7 @@ export class AuthController {
     await this.sessionService.revoke(
       user.sessionId,
       'LOGOUT',
-      firstHeader(request.headers, 'x-request-id') ?? request.id ?? 'unknown',
+      requestCorrelationId(request),
     );
     return { revoked: true };
   }

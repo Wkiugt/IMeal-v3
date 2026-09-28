@@ -3,6 +3,7 @@ import { AuthController } from './auth.controller.js';
 import type { OtpService } from './otp.service.js';
 import type { SessionService } from './session.service.js';
 
+const REQUEST_ID = '550e8400-e29b-41d4-a716-446655440000';
 function createController() {
   const otpService = {
     request: vi.fn(),
@@ -13,7 +14,10 @@ function createController() {
     resolve: vi.fn(),
     revoke: vi.fn(),
   } satisfies Pick<SessionService, 'create' | 'resolve' | 'revoke'>;
-  const controller = new AuthController(otpService as never, sessionService as never);
+  const controller = new AuthController(
+    otpService as never,
+    sessionService as never,
+  );
   return { controller, otpService, sessionService };
 }
 
@@ -26,9 +30,13 @@ describe('AuthController OTP and session endpoints', () => {
       controller.requestOtp(
         { email: 'employee@example.test', purpose: 'SESSION_LOGIN' },
         {
+          requestId: REQUEST_ID,
           id: 'request-1',
           ip: '198.51.100.10',
-          headers: { 'x-request-id': 'header-request-id', 'user-agent': 'test' },
+          headers: {
+            'x-request-id': 'client-supplied-arbitrary',
+            'user-agent': 'test',
+          },
         },
       ),
     ).resolves.toEqual({ accepted: true });
@@ -36,7 +44,7 @@ describe('AuthController OTP and session endpoints', () => {
     expect(otpService.request).toHaveBeenCalledWith(
       { email: 'employee@example.test', purpose: 'SESSION_LOGIN' },
       expect.objectContaining({
-        requestId: 'header-request-id',
+        requestId: REQUEST_ID,
         clientIp: '198.51.100.10',
       }),
     );
@@ -63,11 +71,19 @@ describe('AuthController OTP and session endpoints', () => {
     });
 
     const response = await controller.verifyOtp(
-      { email: 'employee@example.test', purpose: 'SESSION_LOGIN', code: '123456' },
       {
+        email: 'employee@example.test',
+        purpose: 'SESSION_LOGIN',
+        code: '123456',
+      },
+      {
+        requestId: REQUEST_ID,
         id: 'request-1',
         ip: '198.51.100.10',
-        headers: { 'x-request-id': 'header-request-id', 'user-agent': 'test-agent' },
+        headers: {
+          'x-request-id': 'client-supplied-arbitrary',
+          'user-agent': 'test-agent',
+        },
       },
     );
 
@@ -84,13 +100,59 @@ describe('AuthController OTP and session endpoints', () => {
     expect(sessionService.create).toHaveBeenCalledWith({
       userId: 'user-1',
       purpose: 'SESSION_LOGIN',
-      requestId: 'header-request-id',
+      requestId: REQUEST_ID,
       metadata: {
         clientIp: '198.51.100.10',
         userAgent: 'test-agent',
       },
     });
     expect(JSON.stringify(response)).not.toContain('123456');
+  });
+
+  it('replaces malformed incoming IDs before OTP correlation', async () => {
+    const { controller, otpService } = createController();
+    otpService.request.mockResolvedValue({ accepted: true });
+
+    await controller.requestOtp(
+      { email: 'employee@example.test', purpose: 'SESSION_LOGIN' },
+      {
+        requestId: 'malformed-client-id',
+        id: 'also-malformed',
+        headers: { 'x-request-id': 'malformed-header' },
+      },
+    );
+    const forwarded = otpService.request.mock.calls[0]?.[1]?.requestId;
+    expect(forwarded).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(forwarded).not.toBe('malformed-client-id');
+  });
+
+  it('replaces malformed incoming IDs before logout correlation', async () => {
+    const { controller, sessionService } = createController();
+    sessionService.revoke.mockResolvedValue(undefined);
+
+    await controller.logout(
+      {
+        requestId: 'malformed-client-id',
+        id: 'also-malformed',
+        headers: { 'x-request-id': 'malformed-header' },
+      },
+      {
+        id: 'user-1',
+        userId: 'user-1',
+        email: 'employee@example.test',
+        roles: [],
+        permissions: [],
+        sessionId: 'session-1',
+      },
+    );
+
+    const forwarded = sessionService.revoke.mock.calls[0]?.[2];
+    expect(forwarded).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(forwarded).not.toBe('malformed-client-id');
   });
 
   it('revokes the current session on logout and preserves the request id', async () => {
@@ -100,8 +162,9 @@ describe('AuthController OTP and session endpoints', () => {
     await expect(
       controller.logout(
         {
+          requestId: REQUEST_ID,
           id: 'request-3',
-          headers: { 'x-request-id': 'header-request-id' },
+          headers: { 'x-request-id': 'client-supplied-arbitrary' },
         },
         {
           id: 'user-1',
@@ -117,7 +180,7 @@ describe('AuthController OTP and session endpoints', () => {
     expect(sessionService.revoke).toHaveBeenCalledWith(
       'session-1',
       'LOGOUT',
-      'header-request-id',
+      REQUEST_ID,
     );
   });
 });

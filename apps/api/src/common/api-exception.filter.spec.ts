@@ -65,17 +65,26 @@ describe('ApiExceptionFilter', () => {
 
   it('does not log raw exception details', () => {
     const logger = { error: vi.fn() } as unknown as StructuredLogger;
+    const send = vi.fn();
     const reply = {
       header: vi.fn().mockReturnThis(),
       status: vi.fn().mockReturnThis(),
-      send: vi.fn(),
+      send,
     };
-    const request = { headers: { 'x-request-id': 'malformed' } };
+    const request = {
+      requestId: 'malformed-client-id',
+      id: 'also-malformed',
+      headers: { 'x-request-id': 'malformed-header' },
+    };
     const exception = new Error('postgresql://user:secret@db/internal');
-
     new ApiExceptionFilter(logger).catch(exception, host(request, reply));
 
     expect(reply.status).toHaveBeenCalledWith(500);
+    const response = send.mock.calls[0]?.[0] as { requestId?: string };
+    expect(response.requestId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(response.requestId).not.toBe('malformed-client-id');
     expect(
       JSON.stringify((logger.error as ReturnType<typeof vi.fn>).mock.calls),
     ).not.toContain('postgresql://user:secret@db/internal');

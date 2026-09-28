@@ -25,6 +25,22 @@ const PERMANENT_PROVIDER_CODES = new Set([
   'MismatchSenderId',
   'InvalidCredentials',
 ]);
+const KNOWN_PROVIDER_CODES = new Set([
+  ...TRANSIENT_PROVIDER_CODES,
+  ...PERMANENT_PROVIDER_CODES,
+  'HTTP_408',
+  'NETWORK',
+  'TIMEOUT',
+  'ECONNRESET',
+  'SOCKET',
+  'FETCH_FAILED',
+  'REQUEST_FAILED',
+  'TEMPORARY',
+  'SERVICE_UNAVAILABLE',
+  'BAD_GATEWAY',
+  'GATEWAY_TIMEOUT',
+  'TOO_MANY_REQUESTS',
+]);
 
 type DeliveryWithRelations = {
   id: string;
@@ -58,13 +74,47 @@ type Failure = {
 };
 
 function sanitizeError(value: unknown): string {
-  const raw = value instanceof Error ? value.message : String(value ?? 'Unknown provider error');
+  const raw =
+    value instanceof Error
+      ? value.message
+      : String(value ?? 'Unknown provider error');
   return raw
-    .replace(/(?:ExpoPushToken|ExponentPushToken)\[[^\]\r\n]*\]/g, '[redacted-token]')
-    .replace(/("?(?:body|title|data|to)"?\s*:\s*)"[^"\r\n]*"/gi, '$1"[redacted]"')
+    .replace(
+      /(?:ExpoPushToken|ExponentPushToken)\[[^\]\r\n]*\]/g,
+      '[redacted-token]',
+    )
+    .replace(
+      /("?(?:body|title|data|to)"?\s*:\s*)"[^"\r\n]*"/gi,
+      '$1"[redacted]"',
+    )
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+function safeProviderCode(value: unknown): string {
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return 'UNKNOWN';
+  }
+  const normalized = String(value).trim();
+  if (KNOWN_PROVIDER_CODES.has(normalized)) return normalized;
+  if (/^(?:HTTP_)?[45]\d\d$/.test(normalized)) {
+    return `HTTP_${normalized.replace(/^HTTP_/, '')}`;
+  }
+  if (/messagerateexceeded/i.test(normalized)) return 'MessageRateExceeded';
+  if (/devicenotregistered/i.test(normalized)) return 'DeviceNotRegistered';
+  if (/messagetoobig/i.test(normalized)) return 'MessageTooBig';
+  if (/mismatchsenderid/i.test(normalized)) return 'MismatchSenderId';
+  if (/invalidcredentials/i.test(normalized)) return 'InvalidCredentials';
+  if (
+    /network|timeout|timed out|econn|socket|fetch failed|request failed|temporar|service unavailable|bad gateway|gateway timeout|too many requests/i.test(
+      normalized,
+    )
+  ) {
+    return 'NETWORK';
+  }
+  return 'UNKNOWN';
+}
+
 function providerCode(value: unknown): string {
   if (typeof value !== 'object' || value === null) return 'UNKNOWN';
 
@@ -72,30 +122,19 @@ function providerCode(value: unknown): string {
   const details = record.details;
   if (typeof details === 'object' && details !== null) {
     const error = (details as Record<string, unknown>).error;
-    if (typeof error === 'string' && error.length > 0) return error;
+    const code = safeProviderCode(error);
+    if (code !== 'UNKNOWN') return code;
   }
 
-  if (typeof record.code === 'string' || typeof record.code === 'number') {
-    return String(record.code);
-  }
+  const code = safeProviderCode(record.code);
+  if (code !== 'UNKNOWN') return code;
 
-  const message = record.message;
-  if (typeof message === 'string') {
-    if (/MessageRateExceeded/i.test(message)) return 'MessageRateExceeded';
-    if (/DeviceNotRegistered/i.test(message)) return 'DeviceNotRegistered';
-    if (/MessageTooBig/i.test(message)) return 'MessageTooBig';
-    if (/MismatchSenderId/i.test(message)) return 'MismatchSenderId';
-    if (/InvalidCredentials/i.test(message)) return 'InvalidCredentials';
-    if (/\b429\b/.test(message)) return '429';
-    const httpStatus = message.match(/\b(5\d\d)\b/);
-    if (httpStatus) return httpStatus[1];
-  }
+  const messageCode = safeProviderCode(record.message);
+  if (messageCode !== 'UNKNOWN') return messageCode;
 
   for (const key of ['status', 'statusCode', 'httpStatus']) {
-    const status = record[key];
-    if (typeof status === 'string' || typeof status === 'number') {
-      return String(status);
-    }
+    const status = safeProviderCode(record[key]);
+    if (status !== 'UNKNOWN') return status;
   }
   return 'UNKNOWN';
 }
@@ -320,10 +359,7 @@ export class NotificationDispatchService {
     });
     let offset = 0;
     for (const chunk of this.expo.chunkPushNotifications(messages)) {
-      const chunkDeliveries = deliverable.slice(
-        offset,
-        offset + chunk.length,
-      );
+      const chunkDeliveries = deliverable.slice(offset, offset + chunk.length);
       offset += chunk.length;
       await this.processChunkWithLocks(chunkDeliveries, chunk, now);
     }
@@ -356,7 +392,10 @@ export class NotificationDispatchService {
         );
       }
 
-      const eligible: Array<{ delivery: DeliveryWithRelations; index: number }> = [];
+      const eligible: Array<{
+        delivery: DeliveryWithRelations;
+        index: number;
+      }> = [];
       for (const [index, delivery] of deliveries.entries()) {
         const currentDelivery = await tx.notificationDelivery.findUnique({
           where: { id: delivery.id },
@@ -466,7 +505,8 @@ export class NotificationDispatchService {
     now: Date,
   ) {
     const attempt = delivery.attemptCount + 1;
-    const retryable = isTransientFailure(failure) && !isPermanentFailure(failure);
+    const retryable =
+      isTransientFailure(failure) && !isPermanentFailure(failure);
     const shouldRetry = retryable && attempt < 4;
     const status = shouldRetry ? 'PENDING' : 'FAILED';
     const nextAttemptAt = shouldRetry

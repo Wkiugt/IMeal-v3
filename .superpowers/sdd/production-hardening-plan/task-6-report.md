@@ -16,15 +16,29 @@ Complete. Task 7 was not started.
 
 ## Verification
 
-- `yarn workspace @imeal/api test --run src/common/request-context.spec.ts src/common/request-id.interceptor.spec.ts src/common/http-logging.interceptor.spec.ts src/common/api-exception.filter.spec.ts` — 11/11 passed.
-- `yarn workspace @imeal/worker test --run src/notification-dispatch.service.spec.ts src/no-show-worker.service.spec.ts` — 17/17 passed.
-- `yarn workspace @imeal/api exec tsc --noEmit -p tsconfig.json` — passed.
-- `yarn workspace @imeal/worker exec tsc --noEmit -p tsconfig.json` — passed.
-- Full API suite — 262/262 passed.
-- Full worker suite — 86/86 passed.
-- `git diff --check` — passed.
+- Initial Task 6 focused API tests — 11/11 passed.
+- Initial Task 6 focused worker tests — 17/17 passed.
+- Initial API and worker typechecks passed.
+- Initial full API suite — 262/262 passed.
+- Initial full worker suite — 86/86 passed.
+- `git diff --check` passed for the initial implementation.
 
 The previously recorded API database-backed e2e setup caveat remains nonblocking; Task 6 verification was unit/type focused and did not start any database-dependent migration or deployment work.
+
+## Review fix round 1
+
+- Review verdict: FAIL; fixed malformed request-ID trust and provider-code leakage findings.
+- API auth OTP/logout correlation now prefers the interceptor-established `request.requestId` and validates every fallback with `resolveRequestId`; malformed client IDs are never persisted.
+- `ApiExceptionFilter` validates `request.requestId`/`request.id` candidates through `resolveRequestId` before response envelopes, headers, and exception logs.
+- Notification and OTP provider-code extraction now maps only bounded known provider/network/HTTP codes and returns `UNKNOWN` for arbitrary payload-like values.
+- Replaced vacuous `Logger.prototype` spies with injected/captured `StructuredLogger` assertions proving OTP/provider secrets and payload-like provider values are absent from logs.
+- Added malformed auth/filter correlation regressions and provider-code redaction regressions.
+- Focused API review-fix tests — 16/16 passed.
+- Focused worker review-fix tests — 70/70 passed (notification dispatch, no-show, and OTP delivery).
+- Full API suite — 264/264 passed.
+- Full worker suite — 88/88 passed.
+- API/worker typechecks passed after the fix round.
+- Scoped Prettier check passed; `git diff --check` passed.
 
 ## Boundaries
 

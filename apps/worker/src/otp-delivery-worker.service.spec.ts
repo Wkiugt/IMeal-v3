@@ -1,5 +1,5 @@
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
-import { Logger } from '@nestjs/common';
+import type { StructuredLogger } from '@imeal/observability';
 import type { PrismaService } from './common/prisma.service.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -353,15 +353,19 @@ describe('OtpDeliveryWorker', () => {
       send: vi.fn().mockResolvedValue(undefined),
     };
     const outbox = fakeOutbox([delivery()]);
-    const log = vi.spyOn(Logger.prototype, 'log');
-    const warn = vi.spyOn(Logger.prototype, 'warn');
-    const error = vi.spyOn(Logger.prototype, 'error');
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
 
     const result = await new OtpDeliveryWorker(
       {} as PrismaService,
       provider,
       outbox,
       () => NOW,
+      logger as unknown as StructuredLogger,
     ).processOnce(NOW);
 
     expect(result).toMatchObject({
@@ -378,12 +382,52 @@ describe('OtpDeliveryWorker', () => {
     });
     expect(outbox.processed).toEqual([{ id: 'outbox-1', now: NOW }]);
     const logs = JSON.stringify([
-      ...log.mock.calls,
-      ...warn.mock.calls,
-      ...error.mock.calls,
+      ...logger.debug.mock.calls,
+      ...logger.info.mock.calls,
+      ...logger.warn.mock.calls,
+      ...logger.error.mock.calls,
     ]);
     expect(logs).not.toContain(CODE);
     expect(logs).not.toContain(MESSAGE);
+  });
+
+  it('captures structured OTP provider logs without provider secrets or payloads', async () => {
+    process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
+    const providerError = Object.assign(
+      new Error('provider payload {"code":"otp-secret"}'),
+      {
+        providerCode:
+          'provider-secret=super-secret;payload={"code":"otp-secret"}',
+      },
+    );
+    const provider: OtpProvider = {
+      send: vi.fn().mockRejectedValue(providerError),
+    };
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const outbox = fakeOutbox([delivery()]);
+
+    await new OtpDeliveryWorker(
+      {} as PrismaService,
+      provider,
+      outbox,
+      () => NOW,
+      logger as unknown as StructuredLogger,
+    ).processOnce(NOW);
+
+    const logs = JSON.stringify([
+      ...logger.debug.mock.calls,
+      ...logger.info.mock.calls,
+      ...logger.warn.mock.calls,
+      ...logger.error.mock.calls,
+    ]);
+    expect(logs).not.toContain('provider-secret=super-secret');
+    expect(logs).not.toContain('otp-secret');
+    expect(logs).toContain('"providerCode":"UNKNOWN"');
   });
 
   it('uses bounded exponential retry and permanently fails at the configured attempt limit', async () => {

@@ -1,8 +1,9 @@
 import type { Expo } from 'expo-server-sdk';
+import type { StructuredLogger } from '@imeal/observability';
 import { PrismaService } from './common/prisma.service.js';
+import { NotificationDispatchService } from './notification-dispatch.service.js';
 import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { NotificationDispatchService } from './notification-dispatch.service.js';
 type TestDelivery = {
   id: string;
   notificationId: string;
@@ -138,6 +139,43 @@ describe('NotificationDispatchService ticket mapping', () => {
       where: { id: 'device-1', revokedAt: null },
       data: { revokedAt: now },
     });
+  });
+
+  it('redacts arbitrary provider details from structured providerCode logs', async () => {
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const secret = 'provider-secret=super-secret;payload={"token":"secret"}';
+    const safeService = new NotificationDispatchService(
+      prisma as unknown as PrismaService,
+      expo as unknown as Expo,
+      logger as unknown as StructuredLogger,
+    );
+    expo.sendPushNotificationsAsync.mockResolvedValueOnce([
+      {
+        status: 'error',
+        details: { error: secret },
+      },
+    ]);
+    vi.spyOn(safeService, 'claimNotificationDeliveries').mockResolvedValueOnce([
+      makeDelivery() as never,
+    ]);
+
+    await safeService.processNotificationDeliveries(
+      new Date('2026-09-18T03:00:00.000Z'),
+    );
+
+    const logs = JSON.stringify([
+      ...logger.debug.mock.calls,
+      ...logger.info.mock.calls,
+      ...logger.warn.mock.calls,
+      ...logger.error.mock.calls,
+    ]);
+    expect(logs).not.toContain(secret);
+    expect(logs).toContain('"providerCode":"UNKNOWN"');
   });
 
   it('does not send already-revoked deliveries and leaves them non-retryable', async () => {

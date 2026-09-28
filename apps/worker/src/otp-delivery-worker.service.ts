@@ -85,6 +85,12 @@ const DEFAULT_RETRY_MAX_SECONDS = 15 * 60;
 const DEFAULT_CLAIM_TIMEOUT_SECONDS = 5 * 60;
 const MESSAGE_RETRY_PATTERN =
   /network|timeout|timed out|econn|socket|fetch failed|request failed|temporar|service unavailable|bad gateway|gateway timeout|too many requests/i;
+const KNOWN_PROVIDER_CODES = new Set([
+  'CONFIGURATION',
+  'NETWORK',
+  'HTTP_408',
+  'HTTP_429',
+]);
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 const PLACEHOLDER_MARKERS = [
   'change_me_local',
@@ -225,28 +231,44 @@ function requireProductionProviderUrl(env: NodeJS.ProcessEnv): void {
   }
 }
 
+function safeProviderCode(value: unknown): string {
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return 'UNKNOWN';
+  }
+  const normalized = String(value).trim();
+  if (KNOWN_PROVIDER_CODES.has(normalized)) return normalized;
+  if (/^(?:HTTP_)?[45]\d\d$/.test(normalized)) {
+    return `HTTP_${normalized.replace(/^HTTP_/, '')}`;
+  }
+  if (
+    /network|timeout|timed out|econn|socket|fetch failed|request failed|temporar|service unavailable|bad gateway|gateway timeout|too many requests/i.test(
+      normalized,
+    )
+  ) {
+    return 'NETWORK';
+  }
+  const status = normalized.match(/\b([45]\d\d)\b/);
+  if (status) return `HTTP_${status[1]}`;
+  return 'UNKNOWN';
+}
+
 function providerCode(error: unknown): string {
   if (typeof error === 'object' && error !== null) {
     if ('providerCode' in error) {
-      const value = error.providerCode;
-      if (typeof value === 'string' && value.length > 0) return value;
+      const code = safeProviderCode(Reflect.get(error, 'providerCode'));
+      if (code !== 'UNKNOWN') return code;
     }
     for (const key of ['code', 'status', 'statusCode']) {
-      const value = Reflect.get(error, key);
-      if (typeof value === 'number' && Number.isInteger(value)) {
-        return `HTTP_${value}`;
-      }
-      if (typeof value === 'string' && value.length > 0) {
-        return /^\d{3}$/.test(value) ? `HTTP_${value}` : value;
-      }
+      const code = safeProviderCode(Reflect.get(error, key));
+      if (code !== 'UNKNOWN') return code;
     }
   }
   if (error instanceof Error && MESSAGE_RETRY_PATTERN.test(error.message)) {
     return 'NETWORK';
   }
   if (error instanceof Error) {
-    const status = error.message.match(/\b([45]\d\d)\b/);
-    if (status) return `HTTP_${status[1]}`;
+    const code = safeProviderCode(error.message);
+    if (code !== 'UNKNOWN') return code;
   }
   return 'UNKNOWN';
 }
