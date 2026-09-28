@@ -33,6 +33,7 @@ The previously recorded API database-backed e2e setup caveat remains nonblocking
 - Notification and OTP provider-code extraction now maps only bounded known provider/network/HTTP codes and returns `UNKNOWN` for arbitrary payload-like values.
 - Replaced vacuous `Logger.prototype` spies with injected/captured `StructuredLogger` assertions proving OTP/provider secrets and payload-like provider values are absent from logs.
 - Added malformed auth/filter correlation regressions and provider-code redaction regressions.
+- No exception class/message field was added; the approved Task 6 contract requires safe event/errorCode metadata rather than raw exception serialization, so this omission is intentional and nonblocking.
 - Focused API review-fix tests — 16/16 passed.
 - Focused worker review-fix tests — 70/70 passed (notification dispatch, no-show, and OTP delivery).
 - Full API suite — 264/264 passed.
