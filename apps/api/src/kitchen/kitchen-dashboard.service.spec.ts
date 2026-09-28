@@ -265,7 +265,7 @@ describe('KitchenDashboardService', () => {
         {
           response: {
             statusCode: 500,
-            message: 'Kitchen dashboard state invariant violated',
+            message: 'Internal server error',
           },
           status: 500,
         },
@@ -285,7 +285,7 @@ describe('KitchenDashboardService', () => {
         ]);
 
         await expect(service.getDashboardSnapshot(targetDate)).rejects.toThrow(
-          'Kitchen dashboard state invariant violated',
+          'Internal server error',
         );
       }
     });

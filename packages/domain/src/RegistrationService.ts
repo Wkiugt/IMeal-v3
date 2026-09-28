@@ -349,10 +349,6 @@ export class RegistrationService {
         }
         throw error;
       }
-      await tx.registration.update({
-        where: { id: registrationId },
-        data: { status: 'SERVED' },
-      });
 
       if (idempotencyKey) {
         await tx.servingConfirmRequest.update({
@@ -426,10 +422,6 @@ export class RegistrationService {
           throw error;
         }
 
-        await tx.registration.update({
-          where: { id: registrationId },
-          data: { status: 'SERVED' },
-        });
       }
 
       if (idempotencyKey) {

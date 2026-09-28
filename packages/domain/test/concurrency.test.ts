@@ -3,12 +3,14 @@ import { PrismaClient } from '@prisma/client';
 import { RegistrationService } from '../src/RegistrationService';
 import { prisma } from '../src/db';
 import { randomUUID } from 'node:crypto';
+import { registerTestPrismaClient } from './setup';
 
 const disposableClients: PrismaClient[] = [];
 
 function createDisposableClient() {
   const client = new PrismaClient();
   disposableClients.push(client);
+  registerTestPrismaClient(client);
   return client;
 }
 
@@ -104,9 +106,19 @@ describe('Domain Tests: Concurrency', () => {
 
   afterEach(async () => {
     vi.useRealTimers();
-    await Promise.all(
-      disposableClients.splice(0).map((client) => client.$disconnect()),
+    const clients = disposableClients.splice(0);
+    const results = await Promise.allSettled(
+      clients.map((client) => client.$disconnect()),
     );
+    const failures = results.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures.map((failure) => failure.reason),
+        'Failed to disconnect concurrency test clients',
+      );
+    }
   });
 
   it('register same user/date: should only create one registration and gracefully upsert', async () => {
@@ -182,15 +194,14 @@ describe('Domain Tests: Concurrency', () => {
       where: { registrationId: reg.id },
     });
     expect(servingCount).toBe(1);
-
     const dbReg = await prisma.registration.findUnique({
       where: { id: reg.id },
       include: { mealServing: true },
     });
+
+    expect(dbReg?.status).toBe('ACTIVE');
     expect(dbReg?.mealServing).toBeTruthy();
-    expect(dbReg?.status).not.toBe('CANCELLED');
-    expect(dbReg?.status).not.toBe('NO_SHOW');
-    expect(dbReg?.mealServing ? 'SERVED' : dbReg?.status).toBe('SERVED');
+    expect(dbReg?.mealServing?.registrationId).toBe(reg.id);
   });
 
   it('owner vs delegate simultaneous serving: only one succeeds', async () => {
@@ -409,10 +420,7 @@ describe('Domain Tests: Concurrency', () => {
           delegationId: delegation.id,
         },
       });
-      await tx.registration.update({
-        where: { id: registration.id },
-        data: { status: 'SERVED' },
-      });
+      // Serving state is derived from mealServing; registration stays ACTIVE.
       return 'SERVED';
     });
 
@@ -491,10 +499,7 @@ describe('Domain Tests: Concurrency', () => {
         await tx.mealServing.create({
           data: { registrationId: first.id, ownerUserId: owner.id },
         });
-        await tx.registration.update({
-          where: { id: first.id },
-          data: { status: 'SERVED' },
-        });
+        // Serving state is derived from mealServing; registration stays ACTIVE.
       }),
     ).rejects.toThrow('stale registration');
 

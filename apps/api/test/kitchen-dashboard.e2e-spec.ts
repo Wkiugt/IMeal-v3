@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { PrismaClient } from '@prisma/client';
 import {
   INestApplication,
   InternalServerErrorException,
@@ -18,7 +19,41 @@ import {
 import { KitchenDashboardService } from './../src/kitchen/kitchen-dashboard.service.js';
 import { KitchenEventsService } from './../src/kitchen/kitchen-events.service.js';
 import { SessionService } from './../src/auth/session.service.js';
+type TestPrismaRegistry = {
+  __imealRegisterTestPrismaClient?: (client: PrismaClient) => void;
+};
 
+function registerTestPrismaClient(client: PrismaClient): void {
+  (globalThis as typeof globalThis & TestPrismaRegistry)
+    .__imealRegisterTestPrismaClient?.(client);
+}
+async function withServingInvariantDisabled<T>(
+  client: PrismaClient,
+  callback: () => Promise<T>,
+): Promise<T> {
+  await client.$executeRawUnsafe(
+    'ALTER TABLE "registrations" DROP CONSTRAINT IF EXISTS "registration_serving_consistency"',
+  );
+  await client.$executeRawUnsafe(
+    'ALTER TABLE "registrations" DISABLE TRIGGER "registrations_serving_consistency_trigger"',
+  );
+  await client.$executeRawUnsafe(
+    'ALTER TABLE "meal_servings" DISABLE TRIGGER "meal_servings_registration_consistency_trigger"',
+  );
+  try {
+    return await callback();
+  } finally {
+    await client.$executeRawUnsafe(
+      'ALTER TABLE "registrations" ENABLE TRIGGER "registrations_serving_consistency_trigger"',
+    );
+    await client.$executeRawUnsafe(
+      'ALTER TABLE "meal_servings" ENABLE TRIGGER "meal_servings_registration_consistency_trigger"',
+    );
+    await client.$executeRawUnsafe(
+      'ALTER TABLE "registrations" ADD CONSTRAINT "registration_serving_consistency" CHECK ("registration_serving_consistent"("registrations")) NOT VALID',
+    );
+  }
+}
 type DashboardServiceMock = {
   getDashboardSnapshot: (...args: unknown[]) => Promise<unknown>;
   toggleServingSignal: (
@@ -144,9 +179,7 @@ describe('KitchenDashboardController (e2e)', () => {
     dashboardService.getDashboardSnapshot = vi
       .fn()
       .mockRejectedValue(
-        new InternalServerErrorException(
-          'Kitchen dashboard state invariant violated',
-        ),
+        new InternalServerErrorException('Internal server error'),
       );
 
     const res = await request(app.getHttpServer())
@@ -157,7 +190,7 @@ describe('KitchenDashboardController (e2e)', () => {
     expect(res.body).toEqual({
       error: {
         code: 'INTERNAL_SERVER_ERROR',
-        message: 'Kitchen dashboard state invariant violated',
+        message: 'Internal server error',
       },
       requestId,
     });
@@ -167,9 +200,7 @@ describe('KitchenDashboardController (e2e)', () => {
     dashboardService.getDashboardSnapshot = vi
       .fn()
       .mockRejectedValue(
-        new InternalServerErrorException(
-          'Kitchen dashboard state invariant violated',
-        ),
+        new InternalServerErrorException('Internal server error'),
       );
 
     const res = await request(app.getHttpServer())
@@ -181,7 +212,7 @@ describe('KitchenDashboardController (e2e)', () => {
     expect(res.body).toEqual({
       error: {
         code: 'INTERNAL_SERVER_ERROR',
-        message: 'Kitchen dashboard state invariant violated',
+        message: 'Internal server error',
       },
       requestId,
     });
@@ -292,6 +323,70 @@ describe('KitchenDashboardController (e2e)', () => {
       await actualApp.close();
     }
   });
+  it.each(['SERVED', 'NO_SHOW', 'CANCELLED'] as const)(
+    'rejects migrated %s dashboard invariant mismatch without partial counters',
+    async (status) => {
+      const client = new PrismaClient();
+      registerTestPrismaClient(client);
+      const actualService = new KitchenDashboardService();
+      const actualServiceWithPrisma = actualService as unknown as {
+        prisma: PrismaClient;
+      };
+      const ownedClient = actualServiceWithPrisma.prisma;
+      await ownedClient.$disconnect();
+      actualServiceWithPrisma.prisma = client;
+
+      await withServingInvariantDisabled(client, async () => {
+      const user = await client.user.create({
+        data: {
+          email: `dashboard-${status.toLowerCase()}-${Date.now()}@example.test`,
+          name: `Dashboard ${status}`,
+        },
+      });
+      const registration = await client.registration.create({
+        data: {
+          userId: user.id,
+          mealDate: new Date('2026-09-03T00:00:00.000Z'),
+          status,
+          mealChoice: 'REGULAR',
+        },
+      });
+      if (status !== 'SERVED') {
+        await client.mealServing.create({
+          data: { registrationId: registration.id },
+        });
+      }
+
+      const moduleFixture = await Test.createTestingModule({
+        imports: [AppModule],
+      })
+        .overrideProvider(KitchenDashboardService)
+        .useValue(actualService)
+        .compile();
+      const actualApp = moduleFixture.createNestApplication();
+      await actualApp.init();
+
+      try {
+        const requestId = `44444444-4444-4444-8444-${status === 'SERVED' ? '444444444444' : status === 'NO_SHOW' ? '555555555555' : '666666666666'}`;
+        const res = await request(actualApp.getHttpServer())
+          .get('/api/kitchen/days/2026-09-03/dashboard')
+          .set('X-Request-Id', requestId);
+
+        expect(res.status).toBe(500);
+        expect(res.body).toEqual({
+          error: {
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Internal server error',
+          },
+          requestId,
+        });
+        expect(res.body.counters).toBeUndefined();
+      } finally {
+        await actualApp.close();
+      }
+      });
+    },
+  );
 
   it('preserves dashboard authentication and permission guards', async () => {
     const previousRequireAuth = process.env.REQUIRE_AUTH;

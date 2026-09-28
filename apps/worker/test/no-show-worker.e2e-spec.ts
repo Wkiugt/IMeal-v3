@@ -200,6 +200,56 @@ databaseDescribe('PostgreSQL no-show worker', () => {
       }),
     ).rejects.toThrow();
   });
+  it.each(['PAID', 'WAIVED'] as const)(
+    'does not duplicate committed no-show side effects when the penalty is %s',
+    async (status) => {
+      const { user, registration } = await createRegistration(
+        randomUUID(),
+        `no_show_${status.toLowerCase()}_${randomUUID()}@example.com`,
+      );
+      const worker = makeWorker(new WorkerNotificationPublisher());
+      await worker.processNoShows(TARGET_DATE_TEXT, {
+        currentTime: PROCESSING_TIME,
+      });
+      const penalty = await prisma.penalty.findFirstOrThrow({
+        where: { registrationId: registration.id },
+      });
+      await prisma.penalty.update({
+        where: { id: penalty.id },
+        data: { status },
+      });
+
+      const retry = await worker.processNoShows(TARGET_DATE_TEXT, {
+        currentTime: PROCESSING_TIME,
+      });
+
+      expect(retry.processedCount).toBe(0);
+      expect(
+        await prisma.penalty.findFirst({
+          where: { registrationId: registration.id },
+        }),
+      ).toMatchObject({ status });
+      expect(
+        await prisma.auditLog.count({
+          where: {
+            action: 'NO_SHOW_PROCESSED',
+            details: { contains: registration.id },
+          },
+        }),
+      ).toBe(1);
+      expect(
+        await prisma.notification.count({
+          where: { userId: user.id, kind: 'NO_SHOW_PENALTY_CREATED' },
+        }),
+      ).toBe(1);
+      expect(
+        await prisma.outboxEvent.count({
+          where: { dedupeKey: `kitchen:no-show:${registration.id}` },
+        }),
+      ).toBe(1);
+    },
+  );
+
 
   it('serializes concurrent worker runs to one committed no-show', async () => {
     const { registration } = await createRegistration(

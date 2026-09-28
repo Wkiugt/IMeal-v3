@@ -68,9 +68,7 @@ export class KitchenDashboardService {
         this.logger.error(
           `Kitchen dashboard state invariant violated for registration ${registration.id}`,
         );
-        throw new InternalServerErrorException(
-          'Kitchen dashboard state invariant violated',
-        );
+        throw new InternalServerErrorException('Internal server error');
       }
     }
 
@@ -145,9 +143,7 @@ export class KitchenDashboardService {
       regularTotal + vegetarianTotal !== totalRegistered ||
       totalRegistered !== servedTotal + remaining + noShowTotal
     ) {
-      throw new InternalServerErrorException(
-        'Kitchen dashboard state invariant violated',
-      );
+      throw new InternalServerErrorException('Internal server error');
     }
 
     const recentServings = await this.prisma.mealServing.findMany({
