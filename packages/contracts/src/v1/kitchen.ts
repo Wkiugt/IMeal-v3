@@ -34,13 +34,6 @@ export const ServingLogItemSchema = z
     mealChoice: MealChoiceSchema,
     servedAt: z.string(),
     isProxy: z.boolean().default(false),
-    locationShortCode: z.string().nullable().optional(),
-    locationNameSnapshot: z.string().nullable().optional(),
-    locationAddressSnapshot: z.string().nullable().optional(),
-    menuRevisionId: z.string().nullable().optional(),
-    menuNameSnapshot: z.string().nullable().optional(),
-    menuDescriptionSnapshot: z.string().nullable().optional(),
-    menuImageSnapshot: z.string().nullable().optional(),
   })
   .strict();
 

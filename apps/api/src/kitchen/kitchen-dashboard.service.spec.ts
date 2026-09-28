@@ -113,7 +113,7 @@ describe('KitchenDashboardService', () => {
       expect(snapshot.lists.served[0].userName).toBe('Serving Snapshot Owner');
       expect(snapshot.lists.served[0].state).toBe('SERVED');
     });
-    it('uses serving snapshots for recent serving logs', async () => {
+    it('uses serving owner snapshots for recent serving logs', async () => {
       const row = registration({
         id: 'reg-serving-log',
         serviceLocationCode: 'REGISTRATION',
@@ -151,13 +151,6 @@ describe('KitchenDashboardService', () => {
       expect(snapshot.recentLogs[0]).toMatchObject({
         userName: 'Serving Snapshot Owner',
         userEmail: 'serving.snapshot.owner@example.com',
-        locationShortCode: 'SERVING',
-        locationNameSnapshot: 'Approved Kitchen',
-        locationAddressSnapshot: 'Approved address',
-        menuRevisionId: 'serving-revision',
-        menuNameSnapshot: 'Lunch',
-        menuDescriptionSnapshot: 'Lunch menu',
-        menuImageSnapshot: 'https://example.test/lunch.jpg',
       });
     });
 

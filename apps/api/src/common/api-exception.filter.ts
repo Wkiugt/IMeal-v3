@@ -24,6 +24,7 @@ type ExceptionBody = {
   details?: unknown;
 };
 
+
 const REQUEST_ID_HEADER = 'x-request-id';
 const REQUEST_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -66,7 +67,11 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const response =
       exception instanceof HttpException ? exception.getResponse() : undefined;
     const body: ExceptionBody =
-      response && typeof response === 'object' ? response : {};
+      response &&
+      typeof response === 'object' &&
+      !Array.isArray(response)
+        ? response
+        : {};
     const id = requestId(request);
     const code =
       typeof body.code === 'string'
@@ -81,13 +86,26 @@ export class ApiExceptionFilter implements ExceptionFilter {
             ? 'Internal server error'
             : 'Request failed';
 
-    const error: { code: string; message: string; details?: Record<string, unknown> } = {
+    const structuredDetails = Array.isArray(response)
+      ? { issues: response }
+      : Array.isArray(body.message)
+        ? { issues: body.message }
+        : Array.isArray(body.details)
+          ? { issues: body.details }
+          : body.details &&
+              typeof body.details === 'object' &&
+              !Array.isArray(body.details)
+            ? (body.details as Record<string, unknown>)
+            : undefined;
+    const error: {
+      code: string;
+      message: string;
+      details?: Record<string, unknown>;
+    } = {
       code,
       message,
+      ...(structuredDetails ? { details: structuredDetails } : {}),
     };
-    if (body.details && typeof body.details === 'object') {
-      error.details = body.details as Record<string, unknown>;
-    }
 
     reply.header('X-Request-Id', id).status(status).send({
       error,

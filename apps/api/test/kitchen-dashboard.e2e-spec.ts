@@ -49,13 +49,6 @@ describe('KitchenDashboardController (e2e)', () => {
         mealChoice: 'VEGETARIAN',
         servedAt: '2026-09-03T11:45:00.000Z',
         isProxy: false,
-        locationShortCode: 'HQ',
-        locationNameSnapshot: 'Headquarters',
-        locationAddressSnapshot: 'Approved address',
-        menuRevisionId: 'revision-1',
-        menuNameSnapshot: 'Lunch',
-        menuDescriptionSnapshot: 'Lunch menu',
-        menuImageSnapshot: 'https://example.test/lunch.jpg',
       },
     ],
     lists: {
@@ -134,12 +127,6 @@ describe('KitchenDashboardController (e2e)', () => {
       res.body.counters.regularTotal + res.body.counters.vegetarianTotal,
     ).toBe(res.body.counters.totalRegistered);
     expect(res.body.recentLogs[0].mealChoice).toBe('VEGETARIAN');
-    expect(res.body.recentLogs[0]).toMatchObject({
-      locationNameSnapshot: 'Headquarters',
-      locationAddressSnapshot: 'Approved address',
-      menuRevisionId: 'revision-1',
-      menuNameSnapshot: 'Lunch',
-    });
     expect(res.body.lists.served[0].mealChoice).toBe('VEGETARIAN');
     expect(res.body.lists.served[0].state).toBe('SERVED');
     expect(res.body.lists.served[0].isServed).toBe(true);
@@ -163,7 +150,6 @@ describe('KitchenDashboardController (e2e)', () => {
     const res = await request(app.getHttpServer())
       .get('/v1/kitchen/days/2026-09-03/dashboard')
       .set('X-Request-Id', requestId);
-
     expect(res.status).toBe(500);
     expect(res.headers['x-request-id']).toBe(requestId);
     expect(res.body).toEqual({
@@ -173,6 +159,112 @@ describe('KitchenDashboardController (e2e)', () => {
       },
       requestId,
     });
+  });
+  it('serves the real dashboard projection through the HTTP route', async () => {
+    const fakePrisma = {
+      registration: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'reg-http-pending',
+            userId: 'user-http-pending',
+            status: 'ACTIVE',
+            mealChoice: 'REGULAR',
+            user: {
+              name: 'HTTP Pending',
+              email: 'http-pending@example.com',
+              isActive: true,
+            },
+            mealServing: null,
+            delegations: [],
+          },
+          {
+            id: 'reg-http-served',
+            userId: 'user-http-served',
+            status: 'ACTIVE',
+            mealChoice: 'VEGETARIAN',
+            user: {
+              name: 'Current Served Name',
+              email: 'current-served@example.com',
+              isActive: true,
+            },
+            mealServing: {
+              id: 'srv-http-served',
+              servedAt: new Date('2026-09-03T11:30:00Z'),
+              ownerNameSnapshot: 'Historical Served Name',
+              ownerEmailSnapshot: 'historical-served@example.com',
+            },
+            delegations: [],
+          },
+          {
+            id: 'reg-http-no-show',
+            userId: 'user-http-no-show',
+            status: 'NO_SHOW',
+            mealChoice: 'REGULAR',
+            user: {
+              name: 'HTTP No Show',
+              email: 'http-no-show@example.com',
+              isActive: true,
+            },
+            mealServing: null,
+            delegations: [],
+          },
+        ]),
+      },
+      appSetting: {
+        findUnique: vi.fn().mockResolvedValue({ value: 'true' }),
+      },
+      mealServing: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+    };
+    const actualService = new KitchenDashboardService();
+    // Replace only the persistence boundary; the HTTP path uses the real projection code.
+    const serviceWithFakePrisma = actualService as unknown as {
+      prisma: typeof fakePrisma;
+    };
+    serviceWithFakePrisma.prisma = fakePrisma;
+    const moduleFixture = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideProvider(KitchenDashboardService)
+      .useValue(actualService)
+      .compile();
+    const actualApp = moduleFixture.createNestApplication();
+    await actualApp.init();
+
+    try {
+      const res = await request(actualApp.getHttpServer()).get(
+        '/v1/kitchen/days/2026-09-03/dashboard',
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.counters).toMatchObject({
+        totalRegistered: 3,
+        servedTotal: 1,
+        remaining: 1,
+        noShowTotal: 1,
+      });
+      expect(res.body.lists.pending[0]).toMatchObject({
+        registrationId: 'reg-http-pending',
+        state: 'PENDING',
+        isServed: false,
+      });
+      expect(res.body.lists.served[0]).toMatchObject({
+        registrationId: 'reg-http-served',
+        userName: 'Historical Served Name',
+        state: 'SERVED',
+        isServed: true,
+      });
+      expect(res.body.lists.noShow[0]).toMatchObject({
+        registrationId: 'reg-http-no-show',
+        state: 'NO_SHOW',
+        isServed: false,
+      });
+      expect(fakePrisma.registration.findMany).toHaveBeenCalledTimes(1);
+      expect(fakePrisma.mealServing.findMany).toHaveBeenCalledTimes(1);
+    } finally {
+      await actualApp.close();
+    }
   });
 
   it('preserves dashboard authentication and permission guards', async () => {
@@ -193,6 +285,26 @@ describe('KitchenDashboardController (e2e)', () => {
       process.env.REQUIRE_AUTH = previousRequireAuth;
     }
   });
+  it('preserves array-valued validation details through the canonical mapper', async () => {
+    const requestId = '33333333-3333-4333-8333-333333333333';
+    const res = await request(app.getHttpServer())
+      .post('/admin/weekly-menus/draft')
+      .set('X-Request-Id', requestId)
+      .send({ startDate: 'not-a-date' });
+
+    expect(res.status).toBe(400);
+    expect(res.headers['x-request-id']).toBe(requestId);
+    expect(res.body.error.code).toBe('BAD_REQUEST');
+    expect(res.body.error.message).toBe('Request failed');
+    expect(res.body.error.details.issues).toEqual([
+      expect.objectContaining({
+        path: ['startDate'],
+        message: 'Start date must be a Monday',
+      }),
+    ]);
+    expect(res.body.requestId).toBe(requestId);
+  });
+
 
 
   it('/v1/kitchen/days/:date/events (GET SSE) - serves text/event-stream headers', async () => {
