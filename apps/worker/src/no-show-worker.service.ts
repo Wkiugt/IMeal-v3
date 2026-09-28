@@ -162,9 +162,8 @@ export class NoShowWorkerService {
         Prisma.sql`
           SELECT r.id
           FROM registrations AS r
-          INNER JOIN users AS u ON u.id = r.user_id
           WHERE r.id = ${registrationId}
-          FOR UPDATE OF r, u
+          FOR UPDATE
         `,
       );
 

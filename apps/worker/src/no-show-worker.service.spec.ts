@@ -240,6 +240,8 @@ describe('NoShowWorkerService', () => {
       expect(mockTx.$queryRaw).toHaveBeenCalledWith(
         expect.objectContaining({ values: [registration.id] }),
       );
+      const registrationLockQuery = mockTx.$queryRaw.mock.calls[0][0];
+      expect(registrationLockQuery.strings.join('')).not.toContain('users');
       expect(mockTx.registration.findUnique).toHaveBeenCalledWith({
         where: { id: registration.id },
         include: {
