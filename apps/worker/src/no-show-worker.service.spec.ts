@@ -289,7 +289,7 @@ describe('NoShowWorkerService', () => {
       });
     });
 
-    it('uses stable notification and dashboard outbox dedupe keys', async () => {
+    it('no_show_outbox_has_stable_dedupe_key_and_registration_payload', async () => {
       const registration = activeRegistration();
       prepareCandidate(registration);
       mockTx.jobRun.findFirst.mockResolvedValue(null);
@@ -301,13 +301,25 @@ describe('NoShowWorkerService', () => {
           where: { dedupeKey: `no-show-penalty:${registration.userId}:${registration.id}` },
         }),
       );
-      expect(mockTx.outboxEvent.upsert).toHaveBeenCalledWith({
+      const outboxWrite = mockTx.outboxEvent.upsert.mock.calls
+        .map(([input]) => input)
+        .find(
+          (input) =>
+            input.where.dedupeKey === `kitchen:no-show:${registration.id}`,
+        );
+      expect(outboxWrite).toEqual({
         where: { dedupeKey: `kitchen:no-show:${registration.id}` },
         update: {},
         create: expect.objectContaining({
+          id: expect.any(String),
           aggregateType: 'REGISTRATION',
           aggregateId: registration.id,
           eventType: 'NO_SHOW_RECONCILED',
+          payload: JSON.stringify({
+            registrationId: registration.id,
+            mealDate: '2026-09-03',
+            penaltyId: `penalty-${registration.id}`,
+          }),
           dedupeKey: `kitchen:no-show:${registration.id}`,
         }),
       });
@@ -431,6 +443,12 @@ describe('NoShowWorkerService', () => {
       expect(mockTx.penalty.create).toHaveBeenCalledTimes(1);
       expect(mockTx.notification.upsert).toHaveBeenCalledTimes(1);
       expect(mockTx.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(
+        mockTx.outboxEvent.upsert.mock.calls.filter(
+          ([input]) =>
+            input.where.dedupeKey === `kitchen:no-show:${registration.id}`,
+        ),
+      ).toHaveLength(1);
       expect(mockTx.registration.update).toHaveBeenCalledTimes(1);
     });
 

@@ -345,7 +345,7 @@ describe('KitchenDashboardService', () => {
   });
 
   describe('events stream and deduplication', () => {
-    it('deduplicates events by eventId and suppresses duplicate broadcast', () => {
+    it('duplicate_event_id_is_dropped_by_KitchenEventsService', () => {
       const receivedEvents: any[] = [];
       const sub = eventsService.getEvents$('2026-09-03').subscribe((e) => {
         if (e.type !== 'HEARTBEAT') receivedEvents.push(e);

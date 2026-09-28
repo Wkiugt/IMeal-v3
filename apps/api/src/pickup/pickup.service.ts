@@ -1814,13 +1814,17 @@ export class PickupService {
     );
 
     if (transactionResult.isNewRequest && this.kitchenEventsService) {
+      const sortedServingIds = transactionResult.response.servings
+        .map((serving) => serving.id)
+        .sort((left, right) => left.localeCompare(right));
       this.kitchenEventsService.emitEvent({
+        eventId: `serving:${sortedServingIds.join(',')}`,
         eventType: 'SERVING_CONFIRMED',
         mealDate: transactionResult.mealDate,
         requestId: transactionResult.requestId,
         payload: {
           servedCount: transactionResult.response.servedCount,
-          servings: transactionResult.response.servings,
+          servingIds: sortedServingIds,
         },
       });
     }

@@ -988,7 +988,7 @@ describe('PickupService', () => {
       expect(mockPrisma.$transaction).toHaveBeenCalled();
     });
 
-    it('emits realtime SERVING_CONFIRMED event via KitchenEventsService after transaction commits', async () => {
+    it('serving_confirmed_event_contains_projection_payload_after_commit', async () => {
       const eventsService = new KitchenEventsService();
       const emitSpy = vi.spyOn(eventsService, 'emitEvent');
       const serviceWithEvents = new PickupService(eventsService);
@@ -1030,10 +1030,31 @@ describe('PickupService', () => {
       expect(emitSpy).toHaveBeenCalledTimes(1);
       expect(emitSpy).toHaveBeenCalledWith(
         expect.objectContaining({
+          eventId: 'serving:serving-reg-1',
           eventType: 'SERVING_CONFIRMED',
           mealDate: '2026-09-24',
+          requestId: expect.any(String),
+          payload: {
+            servedCount: 1,
+            servingIds: ['serving-reg-1'],
+          },
         }),
       );
+    });
+    it('does not emit SERVING_CONFIRMED when the serving transaction rolls back', async () => {
+      const eventsService = new KitchenEventsService();
+      const emitSpy = vi.spyOn(eventsService, 'emitEvent');
+      const serviceWithEvents = new PickupService(eventsService);
+      const transactionError = new Error('serving transaction rolled back');
+      mockPrisma.$transaction.mockRejectedValueOnce(transactionError);
+
+      await expect(
+        serviceWithEvents.confirmPickup(
+          { pickupSessionId: 'session-1', idempotencyKey: 'key-rollback' },
+          kitchenActor,
+        ),
+      ).rejects.toThrow(transactionError);
+      expect(emitSpy).not.toHaveBeenCalled();
     });
 
     it('throws if pickup session is expired', async () => {

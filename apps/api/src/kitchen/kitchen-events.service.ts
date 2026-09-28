@@ -3,17 +3,21 @@ import { Subject, Observable, merge, interval } from 'rxjs';
 import { filter, map } from 'rxjs/operators';
 import * as crypto from 'crypto';
 
+export type KitchenRealtimeEventType =
+  | 'SERVING_CONFIRMED'
+  | 'KITCHEN_SIGNAL_CHANGED'
+  | 'DASHBOARD_SNAPSHOT'
+  | 'NO_SHOW_RECONCILED'
+  | 'REGISTRATION_CHANGED'
+  | 'HEARTBEAT';
+
 export interface KitchenRealtimeEvent {
   eventId: string;
-  eventType:
-    | 'SERVING_CONFIRMED'
-    | 'KITCHEN_SIGNAL_CHANGED'
-    | 'DASHBOARD_SNAPSHOT'
-    | 'HEARTBEAT';
+  eventType: KitchenRealtimeEventType;
   mealDate: string;
   occurredAt: string;
   requestId?: string;
-  payload: any;
+  payload: unknown;
 }
 
 export interface SseMessageEvent {

@@ -8,6 +8,7 @@ import {
 import { PrismaClient } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 import { v1 } from '@imeal/contracts';
 import type { VietnameseLunarDate } from '../common/vietnamese-lunar.js';
 import {
@@ -85,6 +86,14 @@ function isUniqueConstraintError(error: unknown): boolean {
     error.code === 'P2002'
   );
 }
+type RegistrationLifecycleEvent = {
+  auditId: string;
+  eventType: 'REGISTRATION_CHANGED';
+  mealDate: string;
+  registrationId: string;
+  status: 'ACTIVE' | 'CANCELLED';
+};
+
 type WeeklyMenuData = {
   id: string;
   startDate: Date;
@@ -113,12 +122,15 @@ export class RegistrationsService {
   private prisma = new PrismaClient();
   private menuCache = new Map<string, { data: WeeklyMenuData; expiry: number }>();
   private readonly notificationsService: NotificationsService;
+  private readonly kitchenEventsService?: KitchenEventsService;
 
   constructor(
     @Optional() notificationsService?: NotificationsService,
+    @Optional() kitchenEventsService?: KitchenEventsService,
   ) {
     this.notificationsService =
       notificationsService ?? new NotificationsService();
+    this.kitchenEventsService = kitchenEventsService;
   }
 
   async getWeekData(userId: string, weekStart: string) {
@@ -467,7 +479,8 @@ export class RegistrationsService {
         let transactionAttempt = 0;
         while (true) {
           try {
-            await this.prisma.$transaction(async (tx) => {
+            const transactionResult = await this.prisma.$transaction(async (tx) => {
+              let lifecycleEvent: RegistrationLifecycleEvent | null = null;
               let registration = await tx.registration.findUnique({
                 where: {
                   userId_mealDate: {
@@ -562,13 +575,22 @@ export class RegistrationsService {
                     },
                   });
                   if (registration.status === 'CANCELLED') {
-                    await tx.auditLog.create({
+                    const audit = await tx.auditLog.create({
                       data: {
                         userId,
                         action: 'registration_reactivated',
                         details: `Registration ${registration.id} reactivated; previous cancellation reason=${registration.cancelReason ?? 'UNKNOWN'}`,
                       },
                     });
+                    if (typeof audit.id === 'string') {
+                      lifecycleEvent = {
+                        auditId: audit.id,
+                        eventType: 'REGISTRATION_CHANGED',
+                        mealDate: mealDateStr,
+                        registrationId: registration.id,
+                        status: 'ACTIVE',
+                      };
+                    }
                   }
                 } else {
                   await tx.registration.create({
@@ -604,13 +626,22 @@ export class RegistrationsService {
                     orderBy: { id: 'asc' },
                   })) ?? []
                 ).sort((left, right) => left.id.localeCompare(right.id));
-                await tx.auditLog.create({
+                const audit = await tx.auditLog.create({
                   data: {
                     userId,
                     action: 'registration_cancelled',
                     details: `Registration ${registration.id} cancelled with reason REGISTRATION_CANCELLED`,
                   },
                 });
+                if (typeof audit.id === 'string') {
+                  lifecycleEvent = {
+                    auditId: audit.id,
+                    eventType: 'REGISTRATION_CHANGED',
+                    mealDate: mealDateStr,
+                    registrationId: registration.id,
+                    status: 'CANCELLED',
+                  };
+                }
                 for (const delegation of activeDelegations) {
                   await tx.pickupDelegation.update({
                     where: { id: delegation.id },
@@ -640,8 +671,23 @@ export class RegistrationsService {
                   });
                 }
               }
+              return lifecycleEvent;
             });
-            break;
+            if (transactionResult && this.kitchenEventsService) {
+              try {
+                this.kitchenEventsService.emitEvent({
+                  eventId: `registration:${transactionResult.auditId}`,
+                  eventType: transactionResult.eventType,
+                  mealDate: transactionResult.mealDate,
+                  payload: {
+                    registrationId: transactionResult.registrationId,
+                    status: transactionResult.status,
+                  },
+                });
+              } catch (error) {
+                console.warn('Failed to publish registration lifecycle event', error);
+              }
+            }
           } catch (error: unknown) {
             if (transactionAttempt === 0 && isUniqueConstraintError(error)) {
               transactionAttempt += 1;

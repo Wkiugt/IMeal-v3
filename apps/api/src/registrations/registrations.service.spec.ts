@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { v1 } from '@imeal/contracts';
 import { RegistrationsService } from './registrations.service.js';
+import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 
 const txMock = {
   $queryRaw: vi.fn(),
@@ -622,6 +623,113 @@ describe('RegistrationsService', () => {
     });
     expect(txMock.notification.upsert).toHaveBeenCalled();
     expect(txMock.outboxEvent.create).not.toHaveBeenCalled();
+  });
+  it('emits cancellation lifecycle events only after the transaction commits', async () => {
+    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    txMock.registration.findUnique.mockResolvedValue({
+      id: 'registration-1',
+      status: 'ACTIVE',
+      mealChoice: 'REGULAR',
+      delegations: [],
+    });
+    txMock.auditLog.create.mockResolvedValueOnce({ id: 'audit-cancel' });
+    const eventsService = new KitchenEventsService();
+    const emitEvent = vi.spyOn(eventsService, 'emitEvent');
+    let committed = false;
+    prismaMock.$transaction.mockImplementationOnce(async (callback) => {
+      const result = await callback(txMock);
+      expect(emitEvent).not.toHaveBeenCalled();
+      committed = true;
+      return result;
+    });
+
+    const result = await new RegistrationsService(
+      undefined,
+      eventsService,
+    ).batchRegister('user-1', [
+      { mealDate: '2026-09-24', status: 'CANCELLED' },
+    ]);
+
+    expect(result).toEqual([{ date: '2026-09-24', success: true }]);
+    expect(committed).toBe(true);
+    expect(emitEvent).toHaveBeenCalledWith({
+      eventId: 'registration:audit-cancel',
+      eventType: 'REGISTRATION_CHANGED',
+      mealDate: '2026-09-24',
+      payload: { registrationId: 'registration-1', status: 'CANCELLED' },
+    });
+  });
+
+  it('emits reactivation lifecycle events with the committed audit identity', async () => {
+    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    txMock.registration.findUnique.mockResolvedValue({
+      id: 'registration-1',
+      status: 'CANCELLED',
+      mealChoice: 'REGULAR',
+      delegations: [],
+    });
+    txMock.auditLog.create.mockResolvedValueOnce({ id: 'audit-reactivate' });
+    const eventsService = new KitchenEventsService();
+    const emitEvent = vi.spyOn(eventsService, 'emitEvent');
+
+    await new RegistrationsService(
+      undefined,
+      eventsService,
+    ).batchRegister('user-1', [
+      {
+        mealDate: '2026-09-25',
+        status: 'ACTIVE',
+        mealChoice: 'VEGETARIAN',
+      },
+    ]);
+
+    expect(txMock.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'registration_reactivated' }),
+      }),
+    );
+    expect(emitEvent).toHaveBeenCalledWith({
+      eventId: 'registration:audit-reactivate',
+      eventType: 'REGISTRATION_CHANGED',
+      mealDate: '2026-09-25',
+      payload: { registrationId: 'registration-1', status: 'ACTIVE' },
+    });
+  });
+
+  it('registration_changed_event_is_not_visible_when_registration_transaction_rolls_back', async () => {
+    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    txMock.registration.findUnique.mockResolvedValue({
+      id: 'registration-1',
+      status: 'ACTIVE',
+      mealChoice: 'REGULAR',
+      user: { name: 'Owner', email: 'owner@example.com' },
+      delegations: [{ id: 'delegation-1', delegateUserId: 'delegate-1' }],
+    });
+    txMock.pickupDelegation.findMany.mockResolvedValueOnce([
+      { id: 'delegation-1', delegateUserId: 'delegate-1', status: 'PENDING' },
+    ]);
+    txMock.auditLog.create.mockResolvedValueOnce({ id: 'audit-rollback' });
+    const publishError = new Error('notification write failed');
+    const notifications = {
+      publish: vi.fn().mockRejectedValueOnce(publishError),
+    };
+    const eventsService = new KitchenEventsService();
+    const emitEvent = vi.spyOn(eventsService, 'emitEvent');
+
+    await expect(
+      new RegistrationsService(notifications as never, eventsService).batchRegister(
+        'user-1',
+        [{ mealDate: '2026-09-24', status: 'CANCELLED' }],
+      ),
+    ).resolves.toEqual([
+      {
+        date: '2026-09-24',
+        success: false,
+        code: 'REGISTRATION_FAILED',
+        reason: 'notification write failed',
+      },
+    ]);
+    expect(emitEvent).not.toHaveBeenCalled();
   });
 
   it('makes cancellation of missing or already cancelled registrations idempotent', async () => {
