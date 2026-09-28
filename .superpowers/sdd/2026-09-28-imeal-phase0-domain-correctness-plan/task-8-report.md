@@ -4,7 +4,7 @@
 
 DONE_WITH_CONCERNS
 
-The six review findings are addressed in the Task 8 source and evidence changes. Local PostgreSQL was available through the disposable database URL below. Targeted core/API/worker typechecks pass. The repository-wide typecheck remains blocked by pre-existing mobile workspace errors unrelated to this Task 8 change.
+The six review findings and final rereview findings F-7/F-8 are addressed in the Task 8 source and evidence changes. Local PostgreSQL was available through the disposable database URL below. Targeted core/API/worker typechecks pass. The repository-wide typecheck remains blocked by pre-existing mobile workspace errors unrelated to this Task 8 change.
 
 ## Changed files
 
@@ -15,11 +15,12 @@ The six review findings are addressed in the Task 8 source and evidence changes.
   - Truncation now fails the hook instead of logging and continuing.
   - Registered disposable Prisma clients are disconnected in `afterEach` and in fail-safe `afterAll`; disconnect failures are surfaced.
 - `packages/domain/test/concurrency.test.ts`
-  - Added the migrated persistence assertion for `ACTIVE + mealServing` and retained low-level row-lock/constraint checks.
+  - Retained low-level PostgreSQL row-lock/constraint checks and the migrated `ACTIVE + mealServing` persistence assertion.
+  - Removed the vacuous helper-only cancel/reactivate lifecycle test; the remaining legacy registration race now asserts the persisted one-row unique-key invariant without claiming every caller succeeds.
   - Client cleanup now observes all disconnect failures.
 - `apps/api/test/production-concurrency.e2e-spec.ts`
-  - Added migration-backed production-path tests using separate real Prisma clients and actual `PickupService`, `RegistrationsService`, and dynamically loaded `NoShowWorkerService` entry points.
-  - Covers serving-vs-no-show, serving-vs-cancel with an overlapped locked production cancellation transaction, production registration create/cancel/reactivate side effects, immutable served snapshots versus new reactivation resolution, concurrent duplicate confirmation, same-key replay, changed-body conflict, stale all-or-nothing rollback, and injected post-serving notification failure rollback.
+  - Uses deterministic fixture identities and separate real Prisma clients for production-path races.
+  - Covers serving-vs-no-show, serving-vs-cancel with a barrier held after an actual `FOR UPDATE` registration lock, a barrier-synchronized production registration create race, production cancellation/reactivation with menu/location changes while cancellation holds the lock, immutable served snapshots versus new reactivation resolution, concurrent duplicate confirmation, same-key replay, changed-body conflict, stale all-or-nothing rollback, and injected post-serving notification failure rollback.
 - `apps/api/src/kitchen/kitchen-dashboard.service.ts`
   - Keeps invariant diagnostics in operator logs while returning the stable generic `Internal server error` message.
 - `apps/api/src/kitchen/kitchen-dashboard.service.spec.ts`
@@ -38,9 +39,9 @@ All PostgreSQL commands below used the local disposable URL supplied only in the
 `postgresql://postgres:postgres@localhost:5432/imeal?schema=public`
 
 - `DATABASE_URL=... yarn workspace @imeal/core exec vitest run test/concurrency.test.ts test/emailOtpLocationServing.test.ts`
-  - **PASS** — 2 files, 30 tests passed.
+  - **PASS** — 2 files, 29 tests passed.
 - `DATABASE_URL=... yarn workspace @imeal/api exec vitest run --config vitest.config.e2e.ts test/registrations.e2e-spec.ts test/pickup.e2e-spec.ts test/kitchen-dashboard.e2e-spec.ts test/production-concurrency.e2e-spec.ts`
-  - **PASS** — 4 files, 51 tests passed, including the production-path suite.
+  - **PASS** — 4 files, 53 tests passed, including the deterministic production-path race suite.
 - `DATABASE_URL=... yarn workspace @imeal/worker exec vitest run --config vitest.config.e2e.ts test/no-show-worker.e2e-spec.ts`
   - **PASS** — 1 file, 5 migration-backed tests passed, including PAID/WAIVED retry coverage, concurrent serialization, and rollback/independent commit.
 - `yarn test:unit`
@@ -54,13 +55,13 @@ All PostgreSQL commands below used the local disposable URL supplied only in the
 - `git diff --check`
   - **PASS** — no whitespace errors.
 - `env -u DATABASE_URL yarn workspace @imeal/core exec vitest run test/concurrency.test.ts test/emailOtpLocationServing.test.ts`
-  - **PASS** — 2 files, 30 tests skipped with the explicit missing-`DATABASE_URL` reason.
+  - **PASS** — 2 files, 29 tests skipped with the explicit missing-`DATABASE_URL` reason.
 - `env -u DATABASE_URL yarn workspace @imeal/api exec vitest run --config vitest.config.e2e.ts test/registrations.e2e-spec.ts test/pickup.e2e-spec.ts test/kitchen-dashboard.e2e-spec.ts test/production-concurrency.e2e-spec.ts`
-  - **PASS** — 4 files, 51 tests skipped with the explicit missing-`DATABASE_URL` reason.
+  - **PASS** — 4 files, 53 tests skipped with the explicit missing-`DATABASE_URL` reason.
 - `yarn typecheck`
   - **BLOCKED** — existing mobile workspace errors: missing `expo-location`, an implicit-any `nextLocation` callback, and stale `calendarRegistrationState.test.ts` fixtures missing required `menuRevisionId`. No mobile/unrelated files were changed.
 
 ## Commits
 
-  - Source/tests/brief commit: `73978caeadc57f18d69af4dc0d6f058a8fa9cc2e` (`test: close Task 8 production path evidence gaps`)
+  - Source/tests/final rereview commit: `70c91cbea46d0ed18c45e3dec969ccc0fe119d28` (`test: prove deterministic Task 8 lifecycle races`)
   - Final report commit: returned in the completion response because the report commit hash cannot be embedded into its own Git object without changing that hash.
