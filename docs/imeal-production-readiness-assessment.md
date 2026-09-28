@@ -223,11 +223,16 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
 
 ### Workstream A Task 9 rollout evidence and blockers — NOT COMPLETE / NO-GO
 
-- Disposable expand/preflight/backfill/post-backfill validation passed as local
-  implementation evidence. The migration was row-preserving on an empty
-  disposable schema; all seven preflight checks and four status counts were
-  zero before and after the idempotent backfill, and both named constraints
-  validated. This is not Workstream A closure or an approval record.
+- Fresh Step 2 disposable sequence at HEAD
+  `75a9d719deb511503dfc55a11b52a81ab6d049a6` is GREEN locally:
+  `phase0_step2_20260928131738` applied all eight migrations, passed generate/
+  validate, returned zero rows after expand, passed clean seven-check/four-
+  status preflight, ran the current backfill twice idempotently, passed
+  post-backfill preflight and validated both named constraints.
+- This local sequence is implementation evidence only, not Workstream A closure
+  or an approval record. Release status remains **CONDITIONAL / NO-GO** because
+  no approved staging/representative target, independent approval,
+  backup/restore rehearsal or production evidence exists.
 - The rollout scope is `status <> 'CANCELLED' OR meal_date >= current business
   date in Asia/Ho_Chi_Minh`; only earlier cancelled rows are legacy history
   allowed nullable snapshots. Serving mismatches are checked for every status.
@@ -238,10 +243,13 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
   roster assignments, 132 incomplete menu revisions and 40 incomplete future
   ACTIVE rows (status counts ACTIVE 66, CANCELLED 16, SERVED 40, NO_SHOW 10).
   No backfill or validation was run against it.
-- A representative disposable invalid-location fixture classified
+- A representative disposable classification schema
+  `phase0_step2_classification_20260928131738` returned
   `roster_assignment_ambiguous=1` for
-  `registration-invalid-location`; the nonzero check aborted the gate and no
-  backfill was run on that fixture.
+  `registration-step2-invalid-location` and
+  `future_active_snapshot_incomplete=1` for
+  `registration-step2-stale-menu`; the other five checks were zero. Because
+  named checks were nonzero, no backfill or validation was run there.
 - `DATABASE_URL` was missing from the ambient shell and no staging target was
   available; the observed PostgreSQL runs used an explicitly supplied local
   disposable URL and target-safe containerized `psql` because host `psql` was

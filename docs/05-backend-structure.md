@@ -1067,47 +1067,42 @@ Canonical history retention is **1 year** for meal lifecycle/business audit data
 
 ### Observed Phase 0 rollout gate — 2026-09-28
 
-The following evidence is local/disposable only and is not staging or
-production approval:
+The following Step 2 evidence was executed at HEAD
+`75a9d719deb511503dfc55a11b52a81ab6d049a6` and is local/disposable only; it
+is not staging or production approval:
 
-- `DATABASE_URL` was absent from the ambient shell. A disposable PostgreSQL
-  schema was created locally; the existing public local schema was not used for
-  backfill because its preflight is dirty.
-- `DATABASE_URL=<disposable-local-url> yarn workspace @imeal/core exec prisma migrate deploy`
+- Fresh target schema: `phase0_step2_20260928131738`. The public schema was
+  not used for any write, backfill or validation.
+- `DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal?schema=phase0_step2_20260928131738' yarn workspace @imeal/core exec prisma migrate deploy`
   applied all eight checked-in migrations, including
-  `20260928000000_phase0_domain_correctness`. Row counts for registrations,
-  daily menu revisions, meal days, meal servings and penalties were all zero
-  after expansion.
-- `DATABASE_URL=<disposable-local-url> yarn workspace @imeal/core exec prisma generate`
-  and `... prisma validate` passed. The observed expanded fields, indexes,
-  restrictive foreign keys and named `NOT VALID` checks match this document.
-- Target-safe preflight used the same containerized session shape as the
-  disposable run, with explicit schema assertion and `ON_ERROR_STOP=1`:
-  `docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_task9_20260928153435; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_task9_20260928153435' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-preflight-task9-fix.sql`.
-  It returned all seven named checks and all four status counts at zero on the
-  disposable schema. The same wrapper was used for the exact backfill and
-  validation; host `psql` was unavailable, so no staging command was claimed.
-- The clean local preflight was not an approval record. The containerized exact
-  `backfill.sql` returned `UPDATE 0`, `DO`, `UPDATE 0`, `UPDATE 0`, `COMMIT`;
-  an immediate second run returned the same result. No operational row was
-  inserted or merged.
-- Post-backfill preflight again returned seven zero checks and four zero status
-  counts. `ALTER TABLE registrations VALIDATE CONSTRAINT
-  registration_lifecycle_snapshot_complete` and
-  `registration_serving_consistency` both passed; `pg_constraint.convalidated`
-  was `true` for both.
-- The existing local public schema remains a NO-GO data set: under the
-  conservative scope (`status <> 'CANCELLED' OR meal_date >= current
-  Asia/Ho_Chi_Minh business date`), preflight observed 132 incomplete
-  snapshots, 6 ambiguous/effectively invalid roster assignments, 132
-  incomplete menu revisions and 40 incomplete future ACTIVE rows; status
-  counts were ACTIVE 66, CANCELLED 16, SERVED 40, NO_SHOW 10. The
-  `registration_serving_mismatch` check evaluates all statuses. No backfill or
-  validation was run there.
-- A representative disposable fixture with an inactive/future-effective
-  location assignment produced `roster_assignment_ambiguous = 1` for
-  `registration-invalid-location`; the abort gate therefore prevented
-  backfill on that fixture.
+  `20260928000000_phase0_domain_correctness`. `prisma generate` and
+  `prisma validate` passed. Post-expand counts for registrations, daily menu
+  revisions, meal days, meal servings and penalties were all zero.
+- Target-safe preflight used explicit `search_path`, a `current_schema()`
+  assertion and `ON_ERROR_STOP=1`:
+  `docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_step2_20260928131738; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_step2_20260928131738' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-step2-preflight.sql`.
+  All seven named checks and all four status counts returned zero.
+- The same target-safe `backfill.sql` wrapper ran twice. Both runs returned
+  `UPDATE 0`, `DO`, `UPDATE 0`, `UPDATE 0`, `COMMIT`; no operational row was
+  inserted or merged. Post-backfill preflight again returned seven zero checks
+  and four zero status counts.
+- Target-safe validation passed both
+  `registration_lifecycle_snapshot_complete` and
+  `registration_serving_consistency`; both returned `convalidated=t`.
+- Classification schema
+  `phase0_step2_classification_20260928131738` contained synthetic rows only.
+  Its target-safe preflight classified
+  `roster_assignment_ambiguous=1` for
+  `registration-step2-invalid-location` and
+  `future_active_snapshot_incomplete=1` for
+  `registration-step2-stale-menu`; the other five checks were zero. Because
+  named checks were nonzero, no backfill or validation was run there.
+- Previously observed local public schema evidence (not rerun or modified
+  during fresh Step 2) remains a NO-GO data set under the conservative
+  operational scope: 132 incomplete snapshots, 6 ambiguous/effectively
+  invalid roster assignments, 132 incomplete menu revisions and 40 incomplete
+  future ACTIVE rows; status counts ACTIVE 66, CANCELLED 16, SERVED 40,
+  NO_SHOW 10. No backfill or validation was run there.
 - Focused migration/concurrency evidence passed (contracts 37 tests; domain
   migration/concurrency 29 tests; API units 219; worker units 56; API
   PostgreSQL e2e 76; worker PostgreSQL e2e 6). The complete domain run still

@@ -101,23 +101,37 @@ This gate is explicitly **NOT COMPLETE / NO-GO**. It records local/disposable
 evidence only and does not close the staging, production, mobile-release,
 security, backup/restore or realtime client gates.
 
-- [x] Expand: `DATABASE_URL=<disposable-local-url> yarn workspace @imeal/core exec prisma migrate deploy` applied all eight checked-in migrations, including `20260928000000_phase0_domain_correctness`; `prisma generate` and `prisma validate` passed. Counts for registrations, daily menu revisions, meal days, meal servings and penalties were zero after expansion.
-- [x] Read-only preflight (clean result; approval not evidenced): the observed
-  target-safe disposable invocation was
-  `docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_task9_20260928153435; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_task9_20260928153435' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-preflight-task9-fix.sql`.
-  It returned seven named checks at zero and `ACTIVE`, `CANCELLED`, `SERVED`,
-  `NO_SHOW` counts at zero on the disposable schema. The same wrapper must be
-  used for backfill and validation with the intended target schema substituted;
-  never use dirty `public`.
+- [x] Fresh Step 2 expand at HEAD `75a9d719deb511503dfc55a11b52a81ab6d049a6`:
+  `DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal?schema=phase0_step2_20260928131738' yarn workspace @imeal/core exec prisma migrate deploy`
+  applied all eight checked-in migrations. `prisma generate` and
+  `prisma validate` passed; post-expand registrations, daily menu revisions,
+  meal days, meal servings and penalties were all zero.
+- [x] Read-only preflight (clean result; approval not evidenced): the
+  target-safe wrapper asserted `current_schema()` for
+  `phase0_step2_20260928131738`, passed `-v ON_ERROR_STOP=1`, and ran current
+  `preflight.sql`. All seven named checks and all four status counts were zero.
 - [x] Exact backfill after the clean local preflight (no independent approval
-  evidence): `backfill.sql` ran twice and returned `UPDATE 0`, `DO`, `UPDATE 0`,
-  `UPDATE 0`, `COMMIT` on both runs; no operational rows were inserted, merged
-  or fabricated.
-- [x] Post-backfill validation: preflight remained all-zero; both `registration_lifecycle_snapshot_complete` and `registration_serving_consistency` validated with `convalidated=true`.
-- [x] Focused evidence: contracts 37 tests, domain migration/concurrency 29 tests, API units 219 tests, worker units 56 tests, API PostgreSQL e2e 76 tests and worker PostgreSQL e2e 6 tests passed.
+  evidence): the target-safe current `backfill.sql` wrapper ran twice; both
+  runs returned `UPDATE 0`, `DO`, `UPDATE 0`, `UPDATE 0`, `COMMIT`.
+- [x] Post-backfill validation: target-safe preflight remained all-zero; both
+  `registration_lifecycle_snapshot_complete` and
+  `registration_serving_consistency` returned `convalidated=true`.
+- [x] Classification evidence: disposable schema
+  `phase0_step2_classification_20260928131738` returned
+  `roster_assignment_ambiguous=1` for
+  `registration-step2-invalid-location` and
+  `future_active_snapshot_incomplete=1` for
+  `registration-step2-stale-menu`; the other five checks were zero. No
+  backfill or validation was run because named checks were nonzero.
+- [x] Fresh disposable sequence is GREEN; release status remains
+  **CONDITIONAL / NO-GO** because no approved staging/representative target,
+  independent approval, backup/restore rehearsal or production evidence exists.
+- [x] Focused evidence previously recorded: contracts 37 tests, domain
+  migration/concurrency 29 tests, API units 219 tests, worker units 56 tests,
+  API PostgreSQL e2e 76 tests and worker PostgreSQL e2e 6 tests passed.
 - [ ] Full domain suite: `yarn workspace @imeal/core exec vitest run` had five failures in local-seed/concurrency expectations; this is not a rollout approval.
 - [ ] Workspace typecheck: `yarn typecheck` is blocked by mobile `expo-location`, an implicit-any `nextLocation` callback and stale `menuRevisionId` test fixtures.
-- [ ] Staging approval: no staging target or ambient `DATABASE_URL` was available. The existing local public schema is dirty (132 incomplete snapshots under the conservative operational scope, 6 ambiguous/effectively invalid roster assignments, 132 incomplete menu revisions, 40 incomplete future ACTIVE rows); no backfill or validation was run there.
+- [ ] Staging approval: no staging target or ambient `DATABASE_URL` was available. Previously observed local public evidence (not rerun or modified during fresh Step 2) remains dirty (132 incomplete snapshots under the conservative operational scope, 6 ambiguous/effectively invalid roster assignments, 132 incomplete menu revisions, 40 incomplete future ACTIVE rows); no backfill or validation was run there.
 
 **Cutover order:** expand additive schema → target-safe read-only preflight →
 independent approval record → exact deterministic backfill → target-safe

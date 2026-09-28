@@ -9,6 +9,11 @@ sequence passed on a disposable local PostgreSQL schema, but no independent
 approval or audit record was evidenced. This is implementation evidence only,
 not Workstream A closure or a staging/production approval. The existing local
 public schema remains dirty and was not backfilled or constraint-validated.
+Fresh Step 2 execution at HEAD `75a9d719deb511503dfc55a11b52a81ab6d049a6`
+is **GREEN on disposable local targets** for expand, clean preflight, twice-run
+backfill, post-backfill preflight and constraint validation. The release gate is
+**CONDITIONAL / NO-GO** because no approved staging/representative target,
+independent approval, backup/restore rehearsal or production evidence exists.
 
 ## Changed files
 
@@ -35,13 +40,13 @@ behavior files were modified.
 - Host `psql` was unavailable. The SQL files were copied into the local
   PostgreSQL container and run with `docker exec ... psql`; this is recorded in
   the docs rather than presented as staging evidence.
-- A disposable schema named `phase0_task9_20260928153435` was created in the
-  local database. The existing public schema was left untouched by backfill and
-  validation.
-- A second disposable schema `phase0_task9_invalidloc_20260928160138` held
-  synthetic rows only for a representative inactive/future-effective location
-  assignment. It was used for preflight classification; backfill was not run
-  because the nonzero roster check is an abort condition.
+- Fresh Step 2 disposable schema `phase0_step2_20260928131738` was created
+  in the local Docker PostgreSQL database. The public schema was not used for
+  any write, backfill or validation.
+- Fresh classification schema
+  `phase0_step2_classification_20260928131738` contained only synthetic
+  invalid-location and stale-menu rows for preflight classification; no
+  backfill or validation was run there.
 - No independent approval/audit reference, controlled external artifact or
   checksum was observed for this local run; none is claimed.
 
@@ -50,30 +55,30 @@ behavior files were modified.
 ### 1. Expand-only migration
 
 ```text
-DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal?schema=phase0_task9_20260928153435' yarn workspace @imeal/core exec prisma migrate deploy
+DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal?schema=phase0_step2_20260928131738' yarn workspace @imeal/core exec prisma migrate deploy
 ```
 
 **PASS.** All eight checked-in migrations applied, including
 `20260928000000_phase0_domain_correctness`.
 
 ```text
-DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal?schema=phase0_task9_20260928153435' yarn workspace @imeal/core exec prisma generate
-DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal?schema=phase0_task9_20260928153435' yarn workspace @imeal/core exec prisma validate
+DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal?schema=phase0_step2_20260928131738' yarn workspace @imeal/core exec prisma generate
+DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal?schema=phase0_step2_20260928131738' yarn workspace @imeal/core exec prisma validate
 ```
 
 **PASS.** Prisma Client v5.22.0 generated and schema validation passed.
 
-Post-expand inspection found the expected 27 lifecycle/menu/serving/penalty
-columns, four named indexes and four named foreign-key/check constraints. Row
-counts were zero for `registrations`, `daily_menu_revisions`, `meal_days`,
-`meal_servings` and `penalties`; no operational row was inserted by expansion.
+Post-expand inspection on the asserted target schema returned zero rows for
+`registrations`, `daily_menu_revisions`, `meal_days`, `meal_servings` and
+`penalties`; no operational row was inserted by expansion.
+
 
 ### 2. Read-only preflight (approval not evidenced)
 
 Disposable command (containerized equivalent because host `psql` is absent):
 
 ```text
-docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_task9_20260928153435; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_task9_20260928153435' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-preflight-task9-fix.sql
+docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_step2_20260928131738; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_step2_20260928131738' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-step2-preflight.sql
 ```
 
 **PRECHECK CLEAN; INDEPENDENT APPROVAL NOT EVIDENCED.** The first result set
@@ -100,7 +105,8 @@ is evaluated for every status and always blocks. The roster check requires
 exactly one active, date-effective assignment and exactly one active,
 date-effective location.
 
-The same preflight against the existing local `public` schema was **NO-GO**:
+Previously observed local `public` evidence (not rerun or modified during fresh
+Step 2) remains **NO-GO**:
 `registration_snapshot_incomplete=132`,
 `roster_assignment_ambiguous=6`,
 `menu_revision_incomplete=132`,
@@ -111,26 +117,30 @@ The same preflight against the existing local `public` schema was **NO-GO**:
 `ACTIVE=66`, `CANCELLED=16`, `SERVED=40`, `NO_SHOW=10`. No backfill or
 constraint validation was run against that dirty schema.
 
-Representative invalid-location abort fixture:
+Representative invalid-location and stale-menu classification fixture:
 
 ```text
-docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_task9_invalidloc_20260928160138; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_task9_invalidloc_20260928160138' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-preflight-task9-fix.sql
+docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_step2_classification_20260928131738; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_step2_classification_20260928131738' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-step2-preflight.sql
 ```
 
-The fixture returned `roster_assignment_ambiguous=1` with sample
-`{registration-invalid-location}`; the other six named checks were zero and
-status counts were `ACTIVE=1` with the other statuses zero. The assignment
-pointed at an inactive/future-effective location. Because the named check was
-nonzero, the abort gate prevented backfill on this fixture.
+The classification run returned
+`roster_assignment_ambiguous=1` with sample
+`{registration-step2-invalid-location}` and
+`future_active_snapshot_incomplete=1` with sample
+`{registration-step2-stale-menu}`. The other five named checks were zero;
+`menu_revision_incomplete=0` confirms the stale-menu mismatch was classified
+by the future ACTIVE snapshot check rather than as an invalid revision. Status
+counts were `ACTIVE=2` and all other statuses zero. Because named checks were
+nonzero, no backfill or validation was run on this fixture.
 
 ### 3. Exact backfill following clean local preflight (approval not evidenced)
 
 ```text
-docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_task9_20260928153435; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_task9_20260928153435' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-backfill-task9-fix.sql
+docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_step2_20260928131738; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_step2_20260928131738' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-step2-backfill.sql
 ```
 
 **LOCAL IDEMPOTENCE OBSERVED; NOT AN APPROVAL.** The first run returned
-`UPDATE 0`, `DO`, `UPDATE 0`, `UPDATE 0`, `COMMIT`. An immediate second run
+`UPDATE 0`, `DO`, `UPDATE 0`, `UPDATE 0`, `COMMIT`; the immediate second run
 returned the same result. No operational row was inserted, merged, deleted or
 fabricated. This local write sequence must not be promoted to staging without
 the independent approval record and target backup gate.
@@ -141,7 +151,7 @@ The disposable preflight was rerun and returned all seven checks and all four
 status counts at zero.
 
 ```text
-docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_task9_20260928153435; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_task9_20260928153435' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$; ALTER TABLE registrations VALIDATE CONSTRAINT registration_lifecycle_snapshot_complete; ALTER TABLE registrations VALIDATE CONSTRAINT registration_serving_consistency; SELECT conname, convalidated FROM pg_constraint WHERE connamespace='phase0_task9_20260928153435'::regnamespace AND conname IN ('registration_lifecycle_snapshot_complete','registration_serving_consistency') ORDER BY conname;"
+docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_step2_20260928131738; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_step2_20260928131738' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$; ALTER TABLE registrations VALIDATE CONSTRAINT registration_lifecycle_snapshot_complete; ALTER TABLE registrations VALIDATE CONSTRAINT registration_serving_consistency; SELECT conname, convalidated FROM pg_constraint WHERE connamespace='phase0_step2_20260928131738'::regnamespace AND conname IN ('registration_lifecycle_snapshot_complete','registration_serving_consistency') ORDER BY conname;"
 ```
 
 **PASS.** Both `ALTER TABLE ... VALIDATE CONSTRAINT` statements passed and
