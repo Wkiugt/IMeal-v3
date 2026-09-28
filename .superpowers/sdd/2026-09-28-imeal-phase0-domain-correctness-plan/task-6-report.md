@@ -36,4 +36,4 @@
 
 ## Commits
 - Original implementation commit reviewed: `b2fdea475ad5d181596493c2a2cc7be5625637d4`.
-- Review-fix source/test/report commit: pending at report authoring time; record its full hash in the final delivery.
+- Review-fix source/test commit: `20425b24a570f4eb6d87f194f8b061452eca1ab5`.
