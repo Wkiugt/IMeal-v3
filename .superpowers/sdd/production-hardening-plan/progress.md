@@ -91,8 +91,8 @@ The production-hardening plan is being executed one task at a time. Completed wo
 
 - Task 9: complete (direct PostgreSQL migration gate, image, command-level tests, README, and production Compose target-schema integration).
 - Report: `.superpowers/sdd/production-hardening-plan/task-9-report.md`.
-- The gate validates a direct primary URL and schema, asserts `current_schema()` in each `psql` session with explicit `search_path` and `ON_ERROR_STOP`, deploys Prisma migrations, runs the unchanged phase-0 preflight/backfill SQL, validates named constraints, and atomically publishes a mode `0444` marker only after all checks pass.
-- Verification passed: 6/6 command-level tests, shell syntax, production boundary verifier, synthetic production Compose rendering, migration image build, disposable PostgreSQL migration/backfill/post-validation smoke twice, negative missing-schema smoke, and scoped diff checks.
+- The gate validates a direct primary URL and schema, suppresses assertion-only rows, asserts `current_schema()` in each `psql` session with explicit `search_path` and `ON_ERROR_STOP`, deploys Prisma migrations, runs the unchanged phase-0 preflight, requires approval, runs idempotent backfill, reruns the exact preflight, validates named constraints, and atomically publishes a mode `0444` marker only after all checks pass.
+- Verification passed: 7/7 command-level tests including postflight failure/no-marker and observable phase ordering, shell syntax, production boundary verifier, synthetic production Compose rendering, migration image build, disposable PostgreSQL migration/backfill/postflight/post-validation smoke twice, negative missing-schema smoke, and scoped diff checks.
 - DB limitation: the disposable database was empty, so mechanics and marker/rerun behavior were exercised but production data-specific backfill outcomes were not. No production services or credentials were used.
 
 ## Remaining tasks

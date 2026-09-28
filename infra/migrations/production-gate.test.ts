@@ -52,9 +52,10 @@ case "$url" in
   *schema=*) exit 18 ;;
 esac
 printf 'psql:%s\\n' "$phase" >> "$GATE_TEST_LOG"
-cat >/dev/null
+sql=$(cat)
+if ! printf '%s' "$sql" | grep -Fq '\\g /dev/null'; then exit 19; fi
 if [ "\${FAIL_PHASE:-}" = "$phase" ]; then exit 17; fi
-if [ "$phase" = "preflight" ]; then
+if [ "$phase" = "preflight" ] || [ "$phase" = "postflight" ]; then
   printf 'registration_snapshot_incomplete|0|{}\\n'
   printf 'registration_serving_mismatch|0|{}\\n'
   printf 'roster_assignment_ambiguous|0|{}\\n'
@@ -162,6 +163,33 @@ describe('production migration gate command contract', () => {
       });
       expect(statSync(harness.markerPath).mode & 0o777).toBe(0o444);
       expect(readFileSync(harness.logPath, 'utf8').match(/yarn:migrate/g)).toHaveLength(2);
+      expect(readFileSync(harness.logPath, 'utf8').trim().split(/\r?\n/)).toEqual([
+        'psql:target-assert',
+        'yarn:migrate',
+        'psql:preflight',
+        'psql:backfill',
+        'psql:postflight',
+        'psql:post-validation',
+        'psql:target-assert',
+        'yarn:migrate',
+        'psql:preflight',
+        'psql:backfill',
+        'psql:postflight',
+        'psql:post-validation',
+      ]);
+    } finally {
+      rmSync(harness.directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not write evidence when postflight preflight fails', () => {
+    const harness = createHarness({ FAIL_PHASE: 'postflight' });
+    try {
+      const result = runGate(harness.environment);
+      expect(result.status).not.toBe(0);
+      expect(existsSync(harness.markerPath)).toBe(false);
+      expect(readFileSync(harness.logPath, 'utf8')).toContain('psql:postflight');
+      expect(readFileSync(harness.logPath, 'utf8')).not.toContain('psql:post-validation');
     } finally {
       rmSync(harness.directory, { recursive: true, force: true });
     }

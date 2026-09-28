@@ -22,7 +22,9 @@ The gate requires all of the following environment variables:
 
 The gate validates the target schema in the same direct database session used for
 its SQL checks. Every `psql` invocation uses `ON_ERROR_STOP=1`, an explicit
-`search_path`, and a `current_schema()` assertion.
+`search_path`, and a `current_schema()` assertion. The successful assertion result
+is redirected to `/dev/null`, so preflight and postflight logs contain only the
+named report rows parsed by the gate.
 
 ## Execution order
 
@@ -33,8 +35,10 @@ its SQL checks. Every `psql` invocation uses `ON_ERROR_STOP=1`, an explicit
    report zero affected rows.
 5. Require the explicit approval identifier (before any backfill).
 6. Run the idempotent phase-0 backfill SQL unchanged.
-7. Repeat preflight and validate the two phase-0 `NOT VALID` constraints.
-8. Write the five-field evidence marker to a temporary file, set mode `0444`, and
+7. Repeat the exact read-only preflight and require all seven named checks to
+   remain zero.
+8. Validate the two phase-0 `NOT VALID` constraints.
+9. Write the five-field evidence marker to a temporary file, set mode `0444`, and
    atomically rename it into place.
 
 There is no down migration or destructive fallback. A failure exits non-zero and

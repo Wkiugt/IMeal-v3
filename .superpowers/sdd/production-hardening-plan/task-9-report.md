@@ -13,14 +13,20 @@ COMPLETE — direct-primary migration gate implementation and production Compose
 - Added `infra/migrations/README.md` describing required inputs, exact gate order, marker contract, redaction behavior, build, and verification commands.
 - Updated production Compose so `migration-gate` constructs its direct URL with the required `MIGRATION_TARGET_SCHEMA`; API/worker continue to consume the shared marker read-only after successful gate completion.
 
+## Task 9 fix round
+
+- Suppressed the successful same-session target assertion result with `psql` output redirection; preflight and postflight logs now contain only their named report rows.
+- Added the reusable seven-check zero parser and reran the exact read-only preflight after idempotent backfill before constraint validation or marker publication.
+- Updated the fake `psql` harness to require the assertion-output redirection and emit valid postflight report rows, added postflight-failure/no-marker coverage, and asserted the observable target/assert → migrate → preflight → backfill → postflight → validation command sequence. Approval remains a required gate between the first preflight and backfill.
+
 ## Verification
 
 - `sh -n infra/migrations/production-gate.sh` — passed.
-- `yarn workspace @imeal/core exec vitest --root ../.. run infra/migrations/production-gate.test.ts` — 6/6 passed.
+- `yarn workspace @imeal/core exec vitest --root ../.. run infra/migrations/production-gate.test.ts` — 7/7 passed.
 - `node --test scripts/verify-production-boundary.test.mjs` — 1/1 passed after Compose integration.
 - `docker compose` merged production config with synthetic required values — passed; the migration gate URL rendered with the target schema and all production images remained prebuilt-only.
 - `docker build -f infra/migrations/Dockerfile -t imeal-migration-gate:local .` — passed.
-- Disposable PostgreSQL 16 smoke — passed twice against an empty database: Prisma migration deployment, preflight, backfill, post-validation, atomic marker publication, and rerun all completed successfully. Marker mode was `0444` and contained the phase-0 migration identity. No production credentials or production services were used.
+- Disposable PostgreSQL 16 smoke — passed twice against an empty database: Prisma migration deployment, preflight, idempotent backfill, exact postflight preflight, post-validation, atomic marker publication, and rerun all completed successfully. Marker mode was `0444` and contained the phase-0 migration identity. No production credentials or production services were used.
 - Disposable negative smoke with a missing target schema — failed closed before marker publication; gate output did not expose the database password.
 - `git diff --check -- infra/migrations docker-compose.production.yml .superpowers/sdd/production-hardening-plan` — passed (only the existing Compose LF/CRLF warning was reported).
 

@@ -80,7 +80,8 @@ run_psql_stream() {
   local log_file="$work_dir/${phase}.log"
   if ! {
     printf 'SET search_path TO :"target_schema", public;\n'
-    printf "SELECT 1 / CASE WHEN current_schema() = :'target_schema' THEN 1 ELSE 0 END;\n"
+    printf "SELECT 1 / CASE WHEN current_schema() = :'target_schema' THEN 1 ELSE 0 END\n"
+    printf '\\g /dev/null\n'
     cat
   } | psql "$psql_database_url" \
     -v ON_ERROR_STOP=1 \
@@ -97,6 +98,30 @@ run_psql_file() {
   [[ -f "$sql_file" ]] || fail "missing_${phase}_sql"
   run_psql_stream "$phase" < "$sql_file"
 }
+parse_preflight_report() {
+  local phase="$1"
+  local log_file="$work_dir/${phase}.log"
+  if ! awk -F'|' '
+    BEGIN {
+      expected[1] = "registration_snapshot_incomplete"
+      expected[2] = "registration_serving_mismatch"
+      expected[3] = "roster_assignment_ambiguous"
+      expected[4] = "menu_revision_incomplete"
+      expected[5] = "penalty_registration_mapping_ambiguous"
+      expected[6] = "penalty_registration_duplicate_candidate"
+      expected[7] = "future_active_snapshot_incomplete"
+    }
+    NF >= 3 {
+      rows++
+      if (rows > 7 || $1 != expected[rows] || $2 !~ /^[0-9]+$/ || $2 != "0") bad=1
+    }
+    END {
+      if (rows != 7 || bad) exit 1
+    }
+  ' "$log_file"; then
+    fail "${phase}_checks"
+  fi
+}
 
 printf 'SELECT 1;\n' | run_psql_stream target-assert
 if ! (
@@ -109,31 +134,14 @@ fi
 
 run_psql_file preflight "$MIGRATION_SQL_DIR/preflight.sql"
 
-if ! awk -F'|' '
-  BEGIN {
-    expected[1] = "registration_snapshot_incomplete"
-    expected[2] = "registration_serving_mismatch"
-    expected[3] = "roster_assignment_ambiguous"
-    expected[4] = "menu_revision_incomplete"
-    expected[5] = "penalty_registration_mapping_ambiguous"
-    expected[6] = "penalty_registration_duplicate_candidate"
-    expected[7] = "future_active_snapshot_incomplete"
-  }
-  NF >= 3 {
-    rows++
-    if (rows > 7 || $1 != expected[rows] || $2 !~ /^[0-9]+$/ || $2 != "0") bad=1
-  }
-  END {
-    if (rows != 7 || bad) exit 1
-  }
-' "$work_dir/preflight.log"; then
-  fail preflight_checks
-fi
+parse_preflight_report preflight
 if [[ -z "$MIGRATION_APPROVAL_ID" ]]; then
   fail approval
 fi
 
 run_psql_file backfill "$MIGRATION_SQL_DIR/backfill.sql"
+run_psql_file postflight "$MIGRATION_SQL_DIR/preflight.sql"
+parse_preflight_report postflight
 
 run_psql_stream post-validation <<'SQL'
 ALTER TABLE registrations
