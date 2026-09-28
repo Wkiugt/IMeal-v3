@@ -11,9 +11,9 @@
 
 ## Task ledger
 
-- [ ] Task 1: Additive Prisma schema, read-only preflight, and safe migration
-- [ ] Task 2: Update shared response contracts without adding authority inputs
-- [ ] Task 3: Make registration writes resolve and persist immutable snapshots
+- [x] Task 1: Additive Prisma schema, read-only preflight, and safe migration
+- [x] Task 2: Update shared response contracts without adding authority inputs
+- [x] Task 3: Make registration writes resolve and persist immutable snapshots
 - [x] Task 4: Enforce pickup snapshot reads and serving snapshot writes
 - [x] Task 5: Replace ACTIVE-only Kitchen dashboard with a canonical projection
 - [x] Task 6: Make no-show and penalty processing per-registration, lock-safe, and retryable
@@ -96,3 +96,5 @@ Task 7: complete with environmental evidence gate (commits 1bb23c6fac30f7d69ec04
 Task 8: fix round 1/5 (all findings addressed; commits 5d30e44..73978ca)
 Task 8: fix round 2/5 (all findings addressed; commits 73978ca..70c91cb)
 Task 8: complete (commits 5d30e44ad14325f99482dfe817ec5215e2c85f39..70c91cbea46d0ed18c45e3dec969ccc0fe119d28, review GO with evidence caveat)
+Task 9: fix round 1/5 (F1/F3-F8 addressed; F2 remains external staging/approval gate; commits 9953f4a..e5982e3)
+Task 9: local rollout package complete but blocked (commit e5982e3202c476646ee89bda979e637f55dfbc65; review NO-GO until approved staging/representative evidence and independent approval/audit reference)

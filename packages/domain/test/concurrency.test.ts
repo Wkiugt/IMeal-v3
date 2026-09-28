@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { RegistrationService } from '../src/RegistrationService';
+import { LegacyRegistrationFixtureService } from './legacyRegistrationFixture';
 import { prisma } from '../src/db';
 import { randomUUID } from 'node:crypto';
 import { registerTestPrismaClient } from './setup';
@@ -143,9 +144,9 @@ describe('Domain Tests: Concurrency', () => {
     });
 
     const results = await Promise.allSettled([
-      RegistrationService.registerMeal(user.id, menuDate, currentTime),
-      RegistrationService.registerMeal(user.id, menuDate, currentTime),
-      RegistrationService.registerMeal(user.id, menuDate, currentTime),
+      LegacyRegistrationFixtureService.registerMeal(user.id, menuDate, currentTime),
+      LegacyRegistrationFixtureService.registerMeal(user.id, menuDate, currentTime),
+      LegacyRegistrationFixtureService.registerMeal(user.id, menuDate, currentTime),
     ]);
     // Concurrent legacy domain writes can lose one request to the unique key;
     // the persisted registration is the invariant this test proves.
@@ -189,8 +190,8 @@ describe('Domain Tests: Concurrency', () => {
 
     // Simulate two scanners sending serveMeal at the exact same time
     const results = await Promise.allSettled([
-      RegistrationService.serveMeal(reg.id, user.id),
-      RegistrationService.serveMeal(reg.id, user.id),
+      LegacyRegistrationFixtureService.serveMeal(reg.id, user.id),
+      LegacyRegistrationFixtureService.serveMeal(reg.id, user.id),
     ]);
 
     const successes = results.filter((r) => r.status === 'fulfilled');
@@ -242,8 +243,8 @@ describe('Domain Tests: Concurrency', () => {
     });
 
     const results = await Promise.allSettled([
-      RegistrationService.serveMeal(reg.id, owner.id),
-      RegistrationService.serveMeal(reg.id, delegate.id),
+      LegacyRegistrationFixtureService.serveMeal(reg.id, owner.id),
+      LegacyRegistrationFixtureService.serveMeal(reg.id, delegate.id),
     ]);
 
     const successes = results.filter((r) => r.status === 'fulfilled');
@@ -274,7 +275,7 @@ describe('Domain Tests: Concurrency', () => {
     });
 
     const results = await Promise.allSettled([
-      RegistrationService.serveMeal(reg.id, user.id),
+      LegacyRegistrationFixtureService.serveMeal(reg.id, user.id),
       RegistrationService.cancelRegistration(reg.id, currentTime),
     ]);
 
@@ -316,9 +317,9 @@ describe('Domain Tests: Concurrency', () => {
 
     // Calling serveMeal multiple times with the same idempotencyKey
     const results = await Promise.allSettled([
-      RegistrationService.serveMeal(reg.id, user.id, idempotencyKey),
-      RegistrationService.serveMeal(reg.id, user.id, idempotencyKey),
-      RegistrationService.serveMeal(reg.id, user.id, idempotencyKey),
+      LegacyRegistrationFixtureService.serveMeal(reg.id, user.id, idempotencyKey),
+      LegacyRegistrationFixtureService.serveMeal(reg.id, user.id, idempotencyKey),
+      LegacyRegistrationFixtureService.serveMeal(reg.id, user.id, idempotencyKey),
     ]);
 
     const successes = results.filter((r) => r.status === 'fulfilled');
@@ -330,7 +331,7 @@ describe('Domain Tests: Concurrency', () => {
     expect(failures.length).toBeLessThanOrEqual(2);
 
     // Call sequentially again with the same idempotency key - it should return the existing serving without error
-    const retryResult = await RegistrationService.serveMeal(
+    const retryResult = await LegacyRegistrationFixtureService.serveMeal(
       reg.id,
       user.id,
       idempotencyKey,
@@ -362,10 +363,10 @@ describe('Domain Tests: Concurrency', () => {
     });
 
     // Make reg2 stale by serving it beforehand
-    await RegistrationService.serveMeal(reg2.id, user.id);
+    await LegacyRegistrationFixtureService.serveMeal(reg2.id, user.id);
 
     // Now attempt a batch serve for all 3
-    const batchPromise = RegistrationService.batchServeMeals(
+    const batchPromise = LegacyRegistrationFixtureService.batchServeMeals(
       [reg1.id, reg2.id, reg3.id],
       user.id,
       'batch_123',

@@ -143,17 +143,18 @@ $menu_backfill$;
 
 -- Map each registration only to a verified immutable revision for the same
 -- meal date. A date with multiple verified revisions is ambiguous and remains
--- null. Existing non-null registration snapshot values are never overwritten.
+-- null. When an existing revision is verified, canonical menu snapshots are
+-- repaired from that immutable row, including stale non-null mismatches.
 WITH verified_revisions AS (
   SELECT dmr.id AS revision_id,
          dm.date AS meal_date,
-         dmr.meal_name,
+         btrim(dmr.meal_name) AS meal_name,
          dmr.description,
          dmr.image_url
   FROM daily_menu_revisions AS dmr
   JOIN daily_menus AS dm ON dm.id = dmr.daily_menu_id
   WHERE dmr.revision IS NOT NULL
-    AND dmr.meal_name IS NOT NULL
+    AND btrim(COALESCE(dmr.meal_name, '')) <> ''
 ),
 unique_revisions_by_date AS (
   SELECT meal_date,
@@ -194,19 +195,16 @@ registration_revision_candidates AS (
 )
 UPDATE registrations AS r
 SET menu_revision_id = COALESCE(r.menu_revision_id, c.revision_id),
-    menu_name_snapshot = COALESCE(r.menu_name_snapshot, c.meal_name),
-    menu_description_snapshot = COALESCE(
-      r.menu_description_snapshot,
-      c.description
-    ),
-    menu_image_snapshot = COALESCE(r.menu_image_snapshot, c.image_url)
+    menu_name_snapshot = c.meal_name,
+    menu_description_snapshot = c.description,
+    menu_image_snapshot = c.image_url
 FROM registration_revision_candidates AS c
 WHERE r.id = c.registration_id
   AND (
     r.menu_revision_id IS NULL
-    OR r.menu_name_snapshot IS NULL
-    OR r.menu_description_snapshot IS NULL
-    OR r.menu_image_snapshot IS NULL
+    OR r.menu_name_snapshot IS DISTINCT FROM c.meal_name
+    OR r.menu_description_snapshot IS DISTINCT FROM c.description
+    OR r.menu_image_snapshot IS DISTINCT FROM c.image_url
   );
 
 -- Map a legacy no-show penalty only when its reason has the exact documented

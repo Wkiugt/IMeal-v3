@@ -187,21 +187,56 @@ penalty_registration_duplicate_candidate_summary AS (
 future_active_snapshot_incomplete_affected AS (
   SELECT r.id
   FROM registrations AS r
+  LEFT JOIN daily_menu_revisions AS dmr
+    ON dmr.id = r.menu_revision_id
+  LEFT JOIN daily_menus AS dm
+    ON dm.id = dmr.daily_menu_id
+  LEFT JOIN employee_location_assignments AS ela
+    ON ela.id = r.service_location_assignment_id
+   AND ela.user_id = r.user_id
+  LEFT JOIN locations AS loc
+    ON loc.id = r.service_location_id
   WHERE r.status = 'ACTIVE'
     AND r.meal_date > (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
     AND (
       r.registered_at IS NULL
       OR r.menu_revision_id IS NULL
-      OR r.menu_name_snapshot IS NULL
+      OR btrim(COALESCE(r.menu_name_snapshot, '')) = ''
       OR r.owner_name_snapshot IS NULL
+      OR btrim(COALESCE(r.owner_name_snapshot, '')) = ''
       OR r.employee_code_snapshot IS NULL
+      OR btrim(COALESCE(r.employee_code_snapshot, '')) = ''
       OR r.service_location_id IS NULL
       OR r.service_location_assignment_id IS NULL
-      OR r.service_location_code IS NULL
-      OR r.service_location_name IS NULL
-      OR r.service_location_address IS NULL
+      OR btrim(COALESCE(r.service_location_code, '')) = ''
+      OR btrim(COALESCE(r.service_location_name, '')) = ''
+      OR btrim(COALESCE(r.service_location_address, '')) = ''
       OR r.service_location_effective_from IS NULL
+      OR NOT isfinite(r.service_location_effective_from)
       OR r.service_location_snapshot_at IS NULL
+      OR NOT isfinite(r.service_location_snapshot_at)
+      OR dmr.id IS NULL
+      OR dmr.revision IS NULL
+      OR btrim(COALESCE(dmr.meal_name, '')) = ''
+      OR dm.id IS NULL
+      OR dm.date <> r.meal_date
+      OR r.menu_name_snapshot <> btrim(dmr.meal_name)
+      OR r.menu_description_snapshot IS DISTINCT FROM dmr.description
+      OR r.menu_image_snapshot IS DISTINCT FROM dmr.image_url
+      OR ela.id IS NULL
+      OR NOT ela.is_active
+      OR ela.user_id <> r.user_id
+      OR ela.location_id <> r.service_location_id
+      OR ela.effective_from > r.meal_date
+      OR (ela.effective_to IS NOT NULL AND ela.effective_to <= r.meal_date)
+      OR r.service_location_effective_from <> ela.effective_from
+      OR btrim(COALESCE(ela.service_location_code, '')) <>
+         btrim(COALESCE(r.service_location_code, ''))
+      OR loc.id IS NULL
+      OR NOT loc.is_active
+      OR loc.effective_from > r.meal_date
+      OR (loc.effective_to IS NOT NULL AND loc.effective_to <= r.meal_date)
+      OR loc.short_code <> r.service_location_code
     )
 ),
 future_active_snapshot_incomplete_summary AS (

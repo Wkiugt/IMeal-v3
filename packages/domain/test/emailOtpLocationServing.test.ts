@@ -11,6 +11,13 @@ const BACKFILL_SQL = readFileSync(
   ),
   'utf8',
 );
+const PREFLIGHT_SQL = readFileSync(
+  new URL(
+    '../prisma/migrations/20260928000000_phase0_domain_correctness/preflight.sql',
+    import.meta.url,
+  ),
+  'utf8',
+);
 
 async function connectTestClient() {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
@@ -38,6 +45,25 @@ async function runBackfill() {
   }
 }
 
+async function runPreflight() {
+  const client = await connectTestClient();
+  try {
+    const response = await client.query(PREFLIGHT_SQL);
+    const results = Array.isArray(response) ? response : [response];
+    const report = results.find((result) =>
+      result.fields.some((field: { name: string }) => field.name === 'check_name'),
+    );
+    if (!report) throw new Error('preflight report result was not returned');
+    return report.rows as Array<{
+      check_name: string;
+      affected_count: number;
+      sample_ids: string[];
+    }>;
+  } finally {
+    await client.end();
+  }
+}
+
 
 const TEST_DATE = new Date('2026-09-24T00:00:00.000Z');
 
@@ -57,6 +83,7 @@ async function createLocation(shortCode: string) {
       roomOrCounter: `Counter ${shortCode}`,
       localContact: 'Test contact',
       timeZone: 'Asia/Ho_Chi_Minh',
+      isActive: true,
       effectiveFrom: TEST_DATE,
     },
   });
@@ -496,6 +523,42 @@ describe('Task 2 persistence boundaries', () => {
         effectiveFrom: TEST_DATE,
       },
     });
+    const mismatchUser = await createUser('backfill-mismatch@example.test');
+    const mismatchAssignment =
+      await prisma.employeeLocationAssignment.create({
+        data: {
+          userId: mismatchUser.id,
+          normalizedEmail: mismatchUser.email,
+          employeeName: 'Mismatch Owner',
+          employeeCode: 'BACKFILL-002',
+          isActive: true,
+          role: 'staff',
+          serviceLocationCode: validLocation.shortCode,
+          locationId: validLocation.id,
+          effectiveFrom: TEST_DATE,
+        },
+      });
+    const completeMismatchRegistration = await prisma.registration.create({
+      data: {
+        userId: mismatchUser.id,
+        mealDate: validDate,
+        status: 'ACTIVE',
+        menuRevisionId: validRevision.id,
+        menuNameSnapshot: 'Stale verified menu',
+        menuDescriptionSnapshot: 'Verified historical description',
+        menuImageSnapshot: null,
+        registeredAt: TEST_DATE,
+        ownerNameSnapshot: mismatchAssignment.employeeName,
+        employeeCodeSnapshot: mismatchAssignment.employeeCode,
+        serviceLocationId: validLocation.id,
+        serviceLocationAssignmentId: mismatchAssignment.id,
+        serviceLocationCode: validLocation.shortCode,
+        serviceLocationName: validLocation.displayName,
+        serviceLocationAddress: validLocation.address,
+        serviceLocationEffectiveFrom: mismatchAssignment.effectiveFrom,
+        serviceLocationSnapshotAt: TEST_DATE,
+      },
+    });
     const validRegistration = await prisma.registration.create({
       data: {
         userId: validUser.id,
@@ -571,6 +634,7 @@ describe('Task 2 persistence boundaries', () => {
           id: {
             in: [
               validRegistration.id,
+              completeMismatchRegistration.id,
               ambiguousRegistration.id,
               invalidRegistration.id,
               absentRegistration.id,
@@ -612,6 +676,16 @@ describe('Task 2 persistence boundaries', () => {
       }),
     });
 
+    const preflightReport = await runPreflight();
+    const futureActiveCheck = preflightReport.find(
+      (check) => check.check_name === 'future_active_snapshot_incomplete',
+    );
+    expect(futureActiveCheck?.affected_count).toBeGreaterThan(0);
+    expect(futureActiveCheck?.sample_ids).toContain(validRegistration.id);
+    expect(futureActiveCheck?.sample_ids).toContain(
+      completeMismatchRegistration.id,
+    );
+
     await runBackfill();
     const firstStates = await readStates();
     await runBackfill();
@@ -623,7 +697,7 @@ describe('Task 2 persistence boundaries', () => {
     );
     expect(validState).toMatchObject({
       menuRevisionId: validRevision.id,
-      menuNameSnapshot: 'Existing verified name',
+      menuNameSnapshot: 'Verified historical menu',
       menuDescriptionSnapshot: 'Verified historical description',
       menuImageSnapshot: null,
       ownerNameSnapshot: validAssignment.employeeName,
@@ -636,6 +710,26 @@ describe('Task 2 persistence boundaries', () => {
       serviceLocationEffectiveFrom: validLocation.effectiveFrom,
       serviceLocationSnapshotAt: null,
       registeredAt: null,
+    });
+
+    const completeMismatchState = firstStates.registrations.find(
+      (row) => row.id === completeMismatchRegistration.id,
+    );
+    expect(completeMismatchState).toMatchObject({
+      menuRevisionId: validRevision.id,
+      menuNameSnapshot: 'Verified historical menu',
+      menuDescriptionSnapshot: 'Verified historical description',
+      menuImageSnapshot: null,
+      ownerNameSnapshot: mismatchAssignment.employeeName,
+      employeeCodeSnapshot: mismatchAssignment.employeeCode,
+      serviceLocationId: validLocation.id,
+      serviceLocationAssignmentId: mismatchAssignment.id,
+      serviceLocationCode: validLocation.shortCode,
+      serviceLocationName: validLocation.displayName,
+      serviceLocationAddress: validLocation.address,
+      serviceLocationEffectiveFrom: mismatchAssignment.effectiveFrom,
+      serviceLocationSnapshotAt: TEST_DATE,
+      registeredAt: TEST_DATE,
     });
 
     for (const registrationId of [

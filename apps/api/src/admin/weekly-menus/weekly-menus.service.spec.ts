@@ -302,30 +302,32 @@ describe('WeeklyMenusService', () => {
   it('publishes registration-opened once per active staff user', async () => {
     const startDate = new Date('2026-09-01T00:00:00.000Z');
     const endDate = new Date('2026-09-07T00:00:00.000Z');
-    mockTx.weeklyMenu.findFirst.mockResolvedValueOnce({
-      id: 'wm1',
-      startDate,
-      endDate,
-      publishedAt: null,
-      dailyMenus: [
-        {
-          id: 'dm1',
-          date: startDate,
-          revisions: [
-            {
-              id: 'revision-1',
-              revision: 1,
-              mealName: 'Lunch',
-              description: 'Verified lunch',
-              imageUrl: null,
-              content: 'Lunch',
-            },
-          ],
-          mealDays: [],
-        },
-      ],
-    });
-    mockTx.weeklyMenu.findUnique.mockResolvedValue({ publishedAt: null });
+    mockTx.weeklyMenu.findFirst.mockResolvedValueOnce({ id: 'wm1' });
+    mockTx.weeklyMenu.findUnique
+      .mockResolvedValueOnce({
+        id: 'wm1',
+        startDate,
+        endDate,
+        publishedAt: null,
+        dailyMenus: [
+          {
+            id: 'dm1',
+            date: startDate,
+            revisions: [
+              {
+                id: 'revision-1',
+                revision: 1,
+                mealName: 'Lunch',
+                description: 'Verified lunch',
+                imageUrl: null,
+                content: 'Lunch',
+              },
+            ],
+            mealDays: [],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ publishedAt: null });
     mockTx.dailyMenuRevision.findFirst.mockResolvedValueOnce(null);
     mockTx.weeklyMenu.update.mockResolvedValue({
       id: 'wm1',
@@ -363,30 +365,32 @@ describe('WeeklyMenusService', () => {
 
   it('fails closed when publishing a legacy revision lacks verified menu evidence', async () => {
     const startDate = new Date('2026-09-01T00:00:00.000Z');
-    mockTx.weeklyMenu.findFirst.mockResolvedValueOnce({
-      id: 'wm1',
-      startDate,
-      endDate: new Date('2026-09-07T00:00:00.000Z'),
-      publishedAt: null,
-      dailyMenus: [
-        {
-          id: 'dm1',
-          date: startDate,
-          revisions: [
-            {
-              id: 'legacy-revision',
-              revision: null,
-              mealName: null,
-              description: null,
-              imageUrl: null,
-              content: 'Unverified legacy text',
-            },
-          ],
-          mealDays: [],
-        },
-      ],
-    });
-    mockTx.weeklyMenu.findUnique.mockResolvedValue({ publishedAt: null });
+    mockTx.weeklyMenu.findFirst.mockResolvedValueOnce({ id: 'wm1' });
+    mockTx.weeklyMenu.findUnique
+      .mockResolvedValueOnce({
+        id: 'wm1',
+        startDate,
+        endDate: new Date('2026-09-07T00:00:00.000Z'),
+        publishedAt: null,
+        dailyMenus: [
+          {
+            id: 'dm1',
+            date: startDate,
+            revisions: [
+              {
+                id: 'legacy-revision',
+                revision: null,
+                mealName: null,
+                description: null,
+                imageUrl: null,
+                content: 'Unverified legacy text',
+              },
+            ],
+            mealDays: [],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ publishedAt: null });
 
     await expect(
       service.publishWeeklyMenu('2026-09-01', 'admin-1'),

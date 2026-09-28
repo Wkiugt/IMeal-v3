@@ -218,8 +218,8 @@ Exact path spelling may change only with the shared API contract. Mobile, Admin 
 - JSON success envelope: `{ data, meta?: { requestId, pagination? } }`.
 - JSON error envelope: `{ error: { code, message, details? }, requestId }`; clients branch on stable `code`, never localized `message`.
 - Every request receives/returns `X-Request-Id`; server replaces malformed/untrusted values.
-- Mutations requiring retry safety use `Idempotency-Key`; the same caller/key/body returns the original result, while key reuse with a different body returns `IDEMPOTENCY_CONFLICT`. Multi-item confirm persists one request-level record; successful servings and success result commit atomically, while deterministic rejection commits zero servings plus its result.
-- Canonical conflict codes include `CUTOFF_PASSED`, `ACCOUNT_DISABLED`, `REGISTRATION_CONFLICT`, `DELEGATION_CONFLICT`, `PICKUP_SESSION_EXPIRED`, `PICKUP_STATE_CHANGED`, `ALREADY_SERVED`, `REQUEST_IN_PROGRESS` and `OUTSIDE_SERVING_WINDOW`.
+- Mutations requiring retry safety use `Idempotency-Key`; the same caller/key/body returns the original successful result, while key reuse with a different body returns `IDEMPOTENCY_CONFLICT`. Multi-item confirm persists a request-level claim only within the main transaction; deterministic `PICKUP_INTENT_CONFLICT` rolls back the claim and every serving/delegation write, so the client must resolve again. Only a committed success is replayable.
+- Canonical conflict codes include `CUTOFF_PASSED`, `ACCOUNT_DISABLED`, `REGISTRATION_CONFLICT`, `DELEGATION_CONFLICT`, `PICKUP_SESSION_EXPIRED`, `PICKUP_INTENT_CONFLICT`, `ALREADY_SERVED`, `REQUEST_IN_PROGRESS` and `OUTSIDE_SERVING_WINDOW`.
 - List APIs use cursor pagination with a bounded server maximum; no unbounded Admin export endpoint.
 - Realtime events carry `{ eventId, eventType, mealDate, occurredAt, requestId, payload }`; clients deduplicate by `eventId` and re-fetch snapshot after reconnect.
 
@@ -457,7 +457,7 @@ Required protections:
 - Duplicate scan returns existing serving metadata instead of second serving.
 - If owner and delegate appear at two counters concurrently, only one serving can commit.
 - If revoke races with proxy serving, transaction order determines exactly one valid outcome.
-- Multi-item confirm is all-or-nothing: any invalid selected registration rolls back the entire batch and returns `PICKUP_STATE_CHANGED` with safe per-item conflict details.
+- Multi-item confirm is all-or-nothing: any invalid selected registration rolls back the entire batch, delegation transitions, and request claim, then returns `PICKUP_INTENT_CONFLICT`; the client must resolve again and retry.
 - Successful serving confirmation is final. Kitchen confirms only after checking the Staff-selected set and sufficient trays; any immediate tray shortage is completed physically without rewriting serving history.
 
 ## 12. Realtime Kitchen dashboard

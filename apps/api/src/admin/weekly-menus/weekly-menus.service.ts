@@ -227,8 +227,20 @@ export class WeeklyMenusService {
     const startDate = new Date(weekStartStr);
 
     return this.prisma.$transaction(async (tx) => {
-      const weeklyMenu = await tx.weeklyMenu.findFirst({
+      // Resolve and lock the parent first. The complete graph must be read
+      // only after this lock so a concurrent daily-menu update cannot publish
+      // an obsolete revision snapshot.
+      const weeklyMenuRef = await tx.weeklyMenu.findFirst({
         where: { startDate },
+        select: { id: true },
+      });
+      if (!weeklyMenuRef) {
+        throw new HttpException('Weekly menu not found', HttpStatus.NOT_FOUND);
+      }
+
+      await tx.$queryRaw`SELECT id FROM weekly_menus WHERE id = ${weeklyMenuRef.id} FOR UPDATE`;
+      const weeklyMenu = await tx.weeklyMenu.findUnique({
+        where: { id: weeklyMenuRef.id },
         include: {
           dailyMenus: {
             include: {
@@ -246,9 +258,8 @@ export class WeeklyMenusService {
         throw new HttpException('Weekly menu not found', HttpStatus.NOT_FOUND);
       }
 
-      await tx.$queryRaw`SELECT id FROM weekly_menus WHERE id = ${weeklyMenu.id} FOR UPDATE`;
       const lockedWeeklyMenu = await tx.weeklyMenu.findUnique({
-        where: { id: weeklyMenu.id },
+        where: { id: weeklyMenuRef.id },
         select: { publishedAt: true },
       });
       if (lockedWeeklyMenu?.publishedAt) {

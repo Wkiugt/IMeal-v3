@@ -84,184 +84,198 @@ export class RegistrationService {
     };
   }
 
-  static async registerMeal(
+  static async cancelRegistration(registrationId: string, currentTime: Date) {
+    const result = await prisma.$transaction(async (tx) =>
+      this.transitionRegistrationToCancelled(tx, registrationId, currentTime, {
+        actorUserId: undefined,
+        cancelReason: 'REGISTRATION_CANCELLED',
+        enforceCutoff: true,
+        skipFinalized: false,
+      }),
+    );
+    if (!result) {
+      throw new Error('Cannot cancel this registration');
+    }
+    return result;
+  }
+
+  static async disableUserAccount(
     userId: string,
-    targetDate: Date,
     currentTime: Date,
+    actorUserId = userId,
   ) {
-    if (!this.isAllowed(targetDate, currentTime)) {
-      throw new Error('Cutoff time has passed for this meal date.');
-    }
-
-    const dailyMenu = await prisma.dailyMenu.findFirst({
-      where: { date: targetDate },
-    });
-
-    if (!dailyMenu || dailyMenu.isHoliday || !dailyMenu.isEnabled) {
-      throw new Error('Menu is not available for this date.');
-    }
+    const vnCurrent = toZonedTime(currentTime, VN_TIMEZONE);
+    const businessDate = new Date(
+      Date.UTC(
+        vnCurrent.getFullYear(),
+        vnCurrent.getMonth(),
+        vnCurrent.getDate(),
+      ),
+    );
 
     return prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({
         where: { id: userId },
-        select: { email: true },
+        select: { id: true },
       });
-      const normalizedEmail = user?.email
-        .normalize('NFKC')
-        .trim()
-        .toLowerCase();
-      const assignment = await tx.employeeLocationAssignment.findFirst({
-        where: this.buildEffectiveAssignmentWhere(
-          userId,
-          normalizedEmail,
-          targetDate,
-        ),
-        include: { location: true },
-        orderBy: { effectiveFrom: 'desc' },
+      if (!user) throw new Error('Not found');
+
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+      await tx.user.update({
+        where: { id: userId },
+        data: { isActive: false },
       });
-      const existing = await tx.registration.findUnique({
+
+      const registrations = await tx.registration.findMany({
         where: {
-          userId_mealDate: { userId, mealDate: targetDate },
-        },
-      });
-      const locationSnapshot = assignment
-        ? this.buildLocationSnapshot(assignment, currentTime)
-        : undefined;
-
-      if (existing) {
-        const updateData: {
-          status: 'ACTIVE';
-          serviceLocationId?: string;
-          serviceLocationAssignmentId?: string;
-          serviceLocationCode?: string;
-          serviceLocationName?: string;
-          serviceLocationAddress?: string;
-          serviceLocationEffectiveFrom?: Date;
-          serviceLocationSnapshotAt?: Date;
-        } = { status: 'ACTIVE' };
-        if (!existing.serviceLocationSnapshotAt && locationSnapshot) {
-          Object.assign(updateData, locationSnapshot);
-        }
-        return tx.registration.update({
-          where: { id: existing.id },
-          data: updateData,
-        });
-      }
-
-      return tx.registration.create({
-        data: {
           userId,
-          mealDate: targetDate,
+          mealDate: { gte: businessDate },
           status: 'ACTIVE',
-          ...locationSnapshot,
         },
+        select: { id: true },
+        orderBy: [{ mealDate: 'asc' }, { id: 'asc' }],
       });
-    });
-  }
-
-  static async cancelRegistration(registrationId: string, currentTime: Date) {
-    const reg = await prisma.registration.findUnique({
-      where: { id: registrationId },
-    });
-    if (!reg) throw new Error('Not found');
-
-    if (!this.isAllowed(reg.mealDate, currentTime)) {
-      throw new Error('Cutoff time has passed for this meal date.');
-    }
-
-    return await prisma.$transaction(async (tx) => {
-      const currentReg = await tx.registration.findUnique({
-        where: { id: registrationId },
-      });
-      if (!currentReg || currentReg.status !== 'ACTIVE') {
-        throw new Error('Cannot cancel this registration');
+      const cancelledRegistrationIds: string[] = [];
+      for (const registration of registrations) {
+        const cancelled = await this.transitionRegistrationToCancelled(
+          tx,
+          registration.id,
+          currentTime,
+          {
+            actorUserId,
+            cancelReason: 'ACCOUNT_DISABLED',
+            enforceCutoff: false,
+            skipFinalized: true,
+          },
+        );
+        if (cancelled) cancelledRegistrationIds.push(cancelled.id);
       }
-
-      const updatedReg = await tx.registration.update({
-        where: { id: registrationId },
-        data: { status: 'CANCELLED' },
-      });
-
-      await tx.pickupDelegation.updateMany({
-        where: { registrationId, status: { in: ['PENDING', 'ACCEPTED'] } },
-        data: { status: 'REVOKED' },
-      });
-
-      return updatedReg;
+      return cancelledRegistrationIds;
     });
   }
 
-  static async delegatePickup(
+  private static async transitionRegistrationToCancelled(
+    tx: Prisma.TransactionClient,
     registrationId: string,
-    delegateUserId: string,
     currentTime: Date,
+    options: {
+      actorUserId: string | undefined;
+      cancelReason: 'REGISTRATION_CANCELLED' | 'ACCOUNT_DISABLED';
+      enforceCutoff: boolean;
+      skipFinalized: boolean;
+    },
   ) {
-    const reg = await prisma.registration.findUnique({
+    await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registrationId} FOR UPDATE`;
+    const currentReg = await tx.registration.findUnique({
       where: { id: registrationId },
+      include: {
+        user: { select: { name: true, email: true } },
+        mealServing: { select: { id: true } },
+        penalties: { select: { id: true } },
+      },
     });
-    if (!reg) throw new Error('Not found');
-    if (reg.status !== 'ACTIVE')
-      throw new Error('Can only delegate registered meals');
-
-    if (!this.isAllowed(reg.mealDate, currentTime)) {
+    if (!currentReg) {
+      if (options.skipFinalized) return null;
+      throw new Error('Not found');
+    }
+    if (
+      currentReg.status !== 'ACTIVE' ||
+      currentReg.mealServing ||
+      currentReg.penalties.length > 0
+    ) {
+      if (options.skipFinalized) return null;
+      throw new Error('Cannot cancel this registration');
+    }
+    if (options.enforceCutoff && !this.isAllowed(currentReg.mealDate, currentTime)) {
       throw new Error('Cutoff time has passed for this meal date.');
     }
 
-    return await prisma.$transaction(async (tx) => {
-      await tx.pickupDelegation.updateMany({
-        where: { registrationId, status: { in: ['PENDING', 'ACCEPTED'] } },
+    const actorUserId = options.actorUserId ?? currentReg.userId;
+    const updatedReg = await tx.registration.update({
+      where: { id: registrationId },
+      data: {
+        status: 'CANCELLED',
+        version: { increment: 1 },
+        cancelledAt: currentTime,
+        cancelReason: options.cancelReason,
+        cancelledByUserId: actorUserId,
+      },
+    });
+
+    const activeDelegations = await tx.pickupDelegation.findMany({
+      where: {
+        registrationId,
+        status: { in: ['PENDING', 'ACCEPTED'] },
+      },
+      orderBy: { id: 'asc' },
+      select: { id: true, delegateUserId: true },
+    });
+    const counterpartName =
+      currentReg.user.name?.trim() ||
+      currentReg.user.email?.trim() ||
+      'nhân viên';
+    for (const delegation of activeDelegations) {
+      await tx.pickupDelegation.update({
+        where: { id: delegation.id },
         data: { status: 'REVOKED' },
       });
-      return await tx.pickupDelegation.create({
+      await tx.auditLog.create({
         data: {
-          registrationId,
-          delegateUserId,
-          status: 'PENDING',
+          userId: actorUserId,
+          action: 'delegation_revoked',
+          details: `Delegation ${delegation.id} revoked because registration ${registrationId} was cancelled with reason ${options.cancelReason}`,
         },
       });
-    });
-  }
 
-  static async disableUserAccount(userId: string, currentTime: Date) {
-    const futureRegistrations = await prisma.registration.findMany({
-      where: {
-        userId,
-        mealDate: { gt: currentTime },
-        status: 'ACTIVE',
-      },
-    });
-
-    for (const reg of futureRegistrations) {
-      if (this.isAllowed(reg.mealDate, currentTime)) {
-        await this.cancelRegistration(reg.id, currentTime);
-      }
+      const mealDate = currentReg.mealDate.toISOString().slice(0, 10);
+      const notification = await tx.notification.upsert({
+        where: {
+          dedupeKey: `delegation-revoked:${delegation.delegateUserId}:${delegation.id}`,
+        },
+        update: {},
+        create: {
+          userId: delegation.delegateUserId,
+          kind: 'DELEGATION_REVOKED',
+          payload: {
+            delegationId: delegation.id,
+            registrationId,
+            mealDate,
+            counterpartName,
+            reason: options.cancelReason,
+          },
+          titleVi: 'Ủy quyền đã thu hồi',
+          bodyVi: `Yêu cầu nhận hộ từ ${counterpartName} cho ngày ${mealDate} đã được thu hồi.`,
+          titleEn: 'Pickup delegation revoked',
+          bodyEn: `The pickup request from ${counterpartName} for ${mealDate} was revoked.`,
+          dedupeKey: `delegation-revoked:${delegation.delegateUserId}:${delegation.id}`,
+        },
+      });
+      await tx.outboxEvent.upsert({
+        where: { dedupeKey: `notification-delivery:${notification.id}` },
+        update: {},
+        create: {
+          aggregateType: 'NOTIFICATION',
+          aggregateId: notification.id,
+          eventType: 'NOTIFICATION_CREATED',
+          payload: JSON.stringify({ notificationId: notification.id }),
+          dedupeKey: `notification-delivery:${notification.id}`,
+        },
+      });
     }
-  }
 
-  static async applyNoShowPenalty(
-    userId: string,
-    idempotencyKey: string,
-    currentTime: Date,
-    amount: number = 50000,
-    tx: Prisma.TransactionClient | typeof prisma = prisma,
-  ) {
-    const existing = await tx.penalty.findFirst({
-      where: { userId, reason: idempotencyKey },
-    });
-
-    if (existing) {
-      return existing;
-    }
-
-    return await tx.penalty.create({
+    await tx.auditLog.create({
       data: {
-        userId,
-        amount,
-        reason: idempotencyKey,
-        createdAt: currentTime,
+        userId: actorUserId,
+        action:
+          options.cancelReason === 'ACCOUNT_DISABLED'
+            ? 'registration_account_disabled'
+            : 'registration_cancelled',
+        details: `Registration ${registrationId} cancelled with reason ${options.cancelReason}`,
       },
     });
+    return updatedReg;
   }
+
 
   static async canServe(
     registrationId: string,
@@ -289,155 +303,6 @@ export class RegistrationService {
     return false;
   }
 
-  static async serveMeal(
-    registrationId: string,
-    pickerUserId: string,
-    idempotencyKey?: string,
-  ) {
-    return await prisma.$transaction(async (tx) => {
-      if (idempotencyKey) {
-        const existingReq = await tx.servingConfirmRequest.findUnique({
-          where: {
-            callerUserId_idempotencyKey: {
-              callerUserId: pickerUserId,
-              idempotencyKey,
-            },
-          },
-        });
-        if (existingReq) {
-          if (existingReq.status === 'SUCCESS') {
-            const serving = await tx.mealServing.findUnique({
-              where: { registrationId },
-            });
-            if (serving) return serving;
-          }
-          throw new Error('Previous request failed or is still processing');
-        }
-        await tx.servingConfirmRequest.create({
-          data: {
-            callerUserId: pickerUserId,
-            idempotencyKey,
-            status: 'PROCESSING',
-          },
-        });
-      }
-
-      const currentReg = await tx.registration.findUnique({
-        where: { id: registrationId },
-        select: { status: true, mealServing: { select: { id: true } } },
-      });
-      if (currentReg?.status === 'SERVED' || currentReg?.mealServing) {
-        throw new Error('Already served');
-      }
-
-      const can = await this.canServe(registrationId, pickerUserId, tx);
-      if (!can) {
-        throw new Error('Not eligible to serve');
-      }
-
-      let serving;
-      try {
-        serving = await tx.mealServing.create({
-          data: { registrationId },
-        });
-      } catch (error: unknown) {
-        if (
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          error.code === 'P2002'
-        ) {
-          throw new Error('Already served');
-        }
-        throw error;
-      }
-
-      if (idempotencyKey) {
-        await tx.servingConfirmRequest.update({
-          where: {
-            callerUserId_idempotencyKey: {
-              callerUserId: pickerUserId,
-              idempotencyKey,
-            },
-          },
-          data: { status: 'SUCCESS' },
-        });
-      }
-
-      return serving;
-    });
-  }
-
-  static async batchServeMeals(
-    registrationIds: string[],
-    pickerUserId: string,
-    idempotencyKey?: string,
-  ) {
-    return await prisma.$transaction(async (tx) => {
-      if (idempotencyKey) {
-        const existingReq = await tx.servingConfirmRequest.findUnique({
-          where: {
-            callerUserId_idempotencyKey: {
-              callerUserId: pickerUserId,
-              idempotencyKey,
-            },
-          },
-        });
-        if (existingReq) {
-          if (existingReq.status === 'SUCCESS') {
-            return true;
-          }
-          throw new Error('Previous request failed or is still processing');
-        }
-        await tx.servingConfirmRequest.create({
-          data: {
-            callerUserId: pickerUserId,
-            idempotencyKey,
-            status: 'PROCESSING',
-          },
-        });
-      }
-
-      for (const registrationId of registrationIds) {
-        const currentReg = await tx.registration.findUnique({
-          where: { id: registrationId },
-          select: { status: true, mealServing: { select: { id: true } } },
-        });
-        if (currentReg?.status === 'SERVED' || currentReg?.mealServing) {
-          throw new Error(`Already served ${registrationId}`);
-        }
-
-        const can = await this.canServe(registrationId, pickerUserId, tx);
-        if (!can) {
-          throw new Error(`Not eligible to serve ${registrationId}`);
-        }
-
-        try {
-          await tx.mealServing.create({ data: { registrationId } });
-        } catch (error: unknown) {
-          if (
-            error instanceof Prisma.PrismaClientKnownRequestError &&
-            error.code === 'P2002'
-          ) {
-            throw new Error(`Already served ${registrationId}`);
-          }
-          throw error;
-        }
-
-      }
-
-      if (idempotencyKey) {
-        await tx.servingConfirmRequest.update({
-          where: {
-            callerUserId_idempotencyKey: {
-              callerUserId: pickerUserId,
-              idempotencyKey,
-            },
-          },
-          data: { status: 'SUCCESS' },
-        });
-      }
-      return true;
-    });
-  }
 
   static async getMenuRevision(registrationId: string) {
     const reg = await prisma.registration.findUnique({

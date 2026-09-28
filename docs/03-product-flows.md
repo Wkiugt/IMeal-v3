@@ -546,9 +546,10 @@ delegation acceptance, registration/location snapshot, presenter verification,
 30-second session and 10:30–13:30 `Asia/Ho_Chi_Minh` window.
 
 Confirmation is all-or-nothing and idempotent. If any item is stale/ineligible,
-the entire batch commits zero servings and returns a safe conflict; Kitchen must
-resolve again. The same caller/key/body returns the original result, while key
-reuse with another body/intent returns `IDEMPOTENCY_CONFLICT`.
+the transaction rolls back every serving, delegation, and request-claim write
+and returns `PICKUP_INTENT_CONFLICT`; Kitchen must resolve again. The same
+caller/key/body returns the original successful result, while key reuse with
+another body/intent returns `IDEMPOTENCY_CONFLICT`.
 
 ### Outcomes
 
@@ -559,7 +560,7 @@ reuse with another body/intent returns `IDEMPOTENCY_CONFLICT`.
 | Already served/delegation revoked | Conflict; do not serve; resolve again |
 | QR expired at resolve | Ask presenter to show refreshed QR |
 | Pickup session expired before confirm | Re-scan/re-resolve |
-| Any selected item changed | `PICKUP_STATE_CHANGED`; no item committed |
+| Any selected item changed | `PICKUP_INTENT_CONFLICT`; no item or request claim committed; resolve again |
 | GPS verification invalid | Safe Retry/Refresh status; Kitchen cannot bypass |
 | Outside 10:30–13:30 | Disable serving and show canonical service window |
 | Account disabled after resolve | No serving; refresh authoritative state |
@@ -582,12 +583,11 @@ depending on a duplicate `SERVED` registration status.
 ### Đã nhận (SERVED projection)
 
 Show every registration with a valid `meal_servings` row, including an
-`ACTIVE + meal_serving` row and a legacy `SERVED + meal_serving` row:
-
-- Owner and immutable owner/menu/location display snapshots.
-- Receiver and `SELF` / `PROXY`.
-- Serving time.
-- Kitchen actor/counter/device when available.
+`ACTIVE + meal_serving` row and a legacy `SERVED + meal_serving` row. The
+client projection exposes the owner identity (`userId`, `userName`,
+`userEmail`), `mealChoice`, `servedAt`, and `isProxy` in recent serving logs;
+immutable menu/location snapshots remain server-side history and are not
+dashboard response fields.
 
 ### Vắng mặt (NO_SHOW)
 

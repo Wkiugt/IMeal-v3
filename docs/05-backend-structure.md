@@ -393,6 +393,15 @@ employee snapshots, and all seven location snapshot values.
 `UNIQUE(daily_menu_id, revision)` and a restrictive registration foreign key.
 `daily_menu_revisions.content` is legacy evidence only; it is parsed by the
 approved backfill only when it is a complete verified JSON object.
+For future `ACTIVE` rows, rollout eligibility is the same complete snapshot
+predicate used by pickup: required text is non-null and non-blank after
+trimming; `registered_at`, location effective/snapshot timestamps and all
+location/assignment references are valid; the immutable revision belongs to
+the same menu date; `menu_name_snapshot` equals the trimmed revision name;
+and nullable description/image snapshots use `IS NOT DISTINCT FROM` equality
+with the immutable revision. Any mismatch remains a reported remediation or
+quarantine row and does not weaken pickup's fail-closed behavior.
+
 
 `meal_days` stores nullable `menu_name_snapshot`, `menu_description_snapshot`,
 `menu_image_snapshot`, `locked_at`, `service_start_at` and `service_end_at`
@@ -605,10 +614,8 @@ BEGIN
   verify current actor/account permissions and 10:30–13:30 serving window
   verify every registration remains eligible and has no serving
   if any deterministic conflict:
-      insert no serving
-      update request = rejected + safe authoritative result
-      COMMIT
-      return rejected result
+      roll back request claim and every serving/delegation write
+      return PICKUP_INTENT_CONFLICT; client must resolve again
   insert every meal_serving with owner/receiver/Kitchen/location snapshots
   insert immutable SERVED meal_events
   mark accepted proxy delegations consumed
@@ -616,10 +623,11 @@ BEGIN
 COMMIT
 ```
 
-The batch is all-or-nothing. A stale/ineligible item commits zero servings and
-returns `PICKUP_STATE_CHANGED`; Kitchen must resolve again. Successful serving
-is final, and the same idempotency key/body returns the stored result without a
-duplicate serving. Realtime events are published only after commit.
+The batch is all-or-nothing. A stale/ineligible item rolls back the request
+claim, all serving/delegation writes, and returns `PICKUP_INTENT_CONFLICT`;
+Kitchen must resolve again. Successful serving is final, and only the same
+idempotency key/body for a committed success returns the stored result without
+a duplicate serving. Realtime events are published only after commit.
 
 
 ## 13. Concurrency cases
@@ -1031,7 +1039,8 @@ Canonical history retention is **1 year** for meal lifecycle/business audit data
    schema explicitly in the same `psql` session, assert `current_schema()` is
    that schema, pass `-v ON_ERROR_STOP=1`, then `-f backfill.sql`; never run
    against dirty `public`. It updates only exact one-to-one roster/location,
-   verified immutable menu JSON and documented penalty identities; it never
+   verified immutable menu JSON and canonical menu snapshot mismatches tied to
+   that immutable revision, plus documented penalty identities; it never
    invents migration timestamps, current values, rows or penalty merges.
 5. Re-run the target-safe preflight, require operational checks to be zero,
    then validate `registration_lifecycle_snapshot_complete` and

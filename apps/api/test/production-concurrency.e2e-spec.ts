@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { PickupService } from '../src/pickup/pickup.service.js';
 import { RegistrationsService } from '../src/registrations/registrations.service.js';
 import { NotificationsService } from '../src/notifications/notifications.service.js';
-
+import { WeeklyMenusService } from '../src/admin/weekly-menus/weekly-menus.service.js';
 const MEAL_DATE = new Date('2026-09-28T00:00:00.000Z');
 const MEAL_DATE_KEY = '2026-09-28';
 const SERVING_TIME = new Date('2026-09-28T04:00:00.000Z');
@@ -262,6 +262,17 @@ async function createRegistrationService(client: PrismaClient) {
   return { service, ownedClient, ownedNotificationsClient };
 }
 
+async function createWeeklyMenusService(client: PrismaClient) {
+  const notifications = new NotificationsService();
+  await disconnectOwnedPrisma(notifications as unknown as RealPrismaOwner);
+  const service = new WeeklyMenusService(notifications);
+  const ownedClient = patchPrisma(
+    service as unknown as RealPrismaOwner,
+    client,
+  );
+  return { service, ownedClient };
+}
+
 describe('Production PostgreSQL concurrency paths', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -498,6 +509,235 @@ describe('Production PostgreSQL concurrency paths', () => {
         where: { userId: world.owner.id, mealDate: MEAL_DATE },
       }),
     ).toBe(1);
+  });
+
+  it('publishes the latest committed revision across concurrent update and publish clients', async () => {
+    const client = trackClient(new PrismaClient());
+    const publishClient = trackClient(new PrismaClient());
+    const updateClient = trackClient(new PrismaClient());
+    const startDate = new Date('2026-10-05T00:00:00.000Z');
+    const owner = await client.user.create({
+      data: { email: 'weekly-race-owner@example.test', name: 'Weekly Race Owner' },
+    });
+    const admin = await client.user.create({
+      data: { email: 'weekly-race-admin@example.test', name: 'Weekly Race Admin' },
+    });
+    const location = await client.location.create({
+      data: {
+        shortCode: 'WEEKLY-RACE',
+        displayName: 'Weekly Race Kitchen',
+        servingPointName: 'Weekly Race counter',
+        address: '1 Weekly Race Street',
+        building: 'A',
+        floor: '1',
+        roomOrCounter: '1',
+        localContact: 'weekly-race@example.test',
+        isActive: true,
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    });
+    const assignment = await client.employeeLocationAssignment.create({
+      data: {
+        userId: owner.id,
+        normalizedEmail: owner.email,
+        employeeName: owner.name!,
+        employeeCode: 'WEEKLY-RACE-001',
+        isActive: true,
+        role: 'STAFF',
+        serviceLocationCode: location.shortCode,
+        locationId: location.id,
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    });
+    const weeklyMenu = await client.weeklyMenu.create({
+      data: { startDate, endDate: startDate, publishedAt: null },
+    });
+    const dailyMenu = await client.dailyMenu.create({
+      data: { weeklyMenuId: weeklyMenu.id, date: startDate, isEnabled: true },
+    });
+    const revisionOne = await client.dailyMenuRevision.create({
+      data: {
+        dailyMenuId: dailyMenu.id,
+        revision: 1,
+        mealName: 'Initial lunch',
+        description: 'Initial description',
+        imageUrl: 'https://example.test/initial.jpg',
+        content: 'Initial lunch',
+      },
+    });
+    await client.mealDay.create({
+      data: { dailyMenuId: dailyMenu.id, mealType: 'LUNCH' },
+    });
+    const registration = await client.registration.create({
+      data: {
+        userId: owner.id,
+        mealDate: startDate,
+        status: 'ACTIVE',
+        mealChoice: 'REGULAR',
+        menuRevisionId: revisionOne.id,
+        ownerNameSnapshot: owner.name,
+        employeeCodeSnapshot: assignment.employeeCode,
+        menuNameSnapshot: revisionOne.mealName,
+        menuDescriptionSnapshot: revisionOne.description,
+        menuImageSnapshot: revisionOne.imageUrl,
+        registeredAt: new Date('2026-09-28T00:00:00.000Z'),
+        serviceLocationId: location.id,
+        serviceLocationAssignmentId: assignment.id,
+        serviceLocationCode: location.shortCode,
+        serviceLocationName: location.displayName,
+        serviceLocationAddress: location.address,
+        serviceLocationEffectiveFrom: assignment.effectiveFrom,
+        serviceLocationSnapshotAt: new Date('2026-09-28T00:00:00.000Z'),
+      },
+    });
+    const publisher = await createWeeklyMenusService(publishClient);
+    const updater = await createWeeklyMenusService(updateClient);
+    await publisher.ownedClient.$disconnect();
+    await updater.ownedClient.$disconnect();
+
+    type TransactionOwner = {
+      $transaction: (
+        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
+        options?: unknown,
+      ) => Promise<unknown>;
+    };
+    let releasePublicationRead!: () => void;
+    const publicationRead = new Promise<void>((resolve) => {
+      releasePublicationRead = resolve;
+    });
+    let publicationReadSeen!: () => void;
+    const publicationReadStarted = new Promise<void>((resolve) => {
+      publicationReadSeen = resolve;
+    });
+    const publisherTransaction = publishClient as unknown as TransactionOwner;
+    const originalPublisherTransaction = publisherTransaction.$transaction.bind(
+      publishClient,
+    );
+    publisherTransaction.$transaction = (callback, options) =>
+      originalPublisherTransaction(
+        async (tx) => {
+          let firstRead = true;
+          const guardedTx = new Proxy(tx, {
+            get(target, property, receiver) {
+              if (property !== 'weeklyMenu') {
+                const value = Reflect.get(target, property, receiver);
+                return typeof value === 'function'
+                  ? value.bind(target)
+                  : value;
+              }
+              const delegate = Reflect.get(target, property, receiver);
+              return new Proxy(delegate, {
+                get(delegateTarget, method, delegateReceiver) {
+                  const value = Reflect.get(
+                    delegateTarget,
+                    method,
+                    delegateReceiver,
+                  );
+                  if (method === 'findFirst') {
+                    return async (...args: unknown[]) => {
+                      const result = await value.apply(delegateTarget, args);
+                      if (firstRead) {
+                        firstRead = false;
+                        publicationReadSeen();
+                        await publicationRead;
+                      }
+                      return result;
+                    };
+                  }
+                  return typeof value === 'function'
+                    ? value.bind(delegateTarget)
+                    : value;
+                },
+              });
+            },
+          });
+          return callback(guardedTx);
+        },
+        options,
+      );
+
+    let updateLockSeen!: () => void;
+    const updateLockStarted = new Promise<void>((resolve) => {
+      updateLockSeen = resolve;
+    });
+    const updaterTransaction = updateClient as unknown as TransactionOwner;
+    const originalUpdaterTransaction = updaterTransaction.$transaction.bind(
+      updateClient,
+    );
+    updaterTransaction.$transaction = (callback, options) =>
+      originalUpdaterTransaction(
+        async (tx) => {
+          const guardedTx = new Proxy(tx, {
+            get(target, property, receiver) {
+              const value = Reflect.get(target, property, receiver);
+              if (property === '$queryRaw') {
+                return async (...args: unknown[]) => {
+                  const result = await value.apply(target, args);
+                  updateLockSeen();
+                  return result;
+                };
+              }
+              return typeof value === 'function' ? value.bind(target) : value;
+            },
+          });
+          return callback(guardedTx);
+        },
+        options,
+      );
+
+    const publishPromise = publisher.service.publishWeeklyMenu(
+      '2026-10-05',
+      admin.id,
+    );
+    await publicationReadStarted;
+    const updatePromise = updater.service.updateDailyMenu(
+      '2026-10-05',
+      {
+        mealName: 'Latest lunch',
+        description: 'Latest description',
+        imageUrl: 'https://example.test/latest.jpg',
+      },
+      admin.id,
+    );
+    await updateLockStarted;
+    releasePublicationRead();
+    const [publishResult, updateResult] = await Promise.allSettled([
+      publishPromise,
+      updatePromise,
+    ]);
+    expect(publishResult.status).toBe('fulfilled');
+    expect(updateResult.status).toBe('fulfilled');
+
+    const finalMenu = await client.dailyMenu.findUniqueOrThrow({
+      where: { id: dailyMenu.id },
+      include: {
+        revisions: {
+          where: { revision: { not: null } },
+          orderBy: [{ revision: 'desc' }, { id: 'desc' }],
+          take: 1,
+        },
+        mealDays: true,
+      },
+    });
+    const latestRevision = finalMenu.revisions[0];
+    expect(latestRevision).toMatchObject({
+      revision: 2,
+      mealName: 'Latest lunch',
+    });
+    expect(finalMenu.mealDays[0]).toMatchObject({
+      menuNameSnapshot: latestRevision.mealName,
+      menuDescriptionSnapshot: latestRevision.description,
+      menuImageSnapshot: latestRevision.imageUrl,
+    });
+    const finalRegistration = await client.registration.findUniqueOrThrow({
+      where: { id: registration.id },
+    });
+    expect(finalRegistration).toMatchObject({
+      menuRevisionId: latestRevision.id,
+      menuNameSnapshot: latestRevision.mealName,
+      menuDescriptionSnapshot: latestRevision.description,
+      menuImageSnapshot: latestRevision.imageUrl,
+    });
   });
 
   it('serializes real cancellation and reactivation with refreshed snapshots', async () => {

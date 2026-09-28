@@ -441,7 +441,7 @@ Design requirements:
 - Confirm button includes count and is optimized for repeated high-throughput scanning.
 - If pickup session expires, keep names visible but disable confirm and ask re-scan.
 - Pickup session expires after 30 seconds; display remaining validity without relying on animation alone.
-- Multi-item confirm remains all-or-nothing. `PICKUP_STATE_CHANGED` means no intended item was served; disable confirm and require re-resolve.
+- Multi-item confirm remains all-or-nothing. `PICKUP_INTENT_CONFLICT` means no serving or request claim was committed; discard the stale resolve and require a fresh resolve before retrying.
 
 ## 13. Serving feedback
 
