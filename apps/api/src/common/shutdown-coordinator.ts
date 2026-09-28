@@ -21,8 +21,18 @@ type Waiter = {
   resolve: (drained: boolean) => void;
   timer: ReturnType<typeof setTimeout>;
 };
+export type ShutdownApplication = {
+  close(): Promise<void>;
+};
 
-function shutdownTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+export type ShutdownSignalCoordinator = {
+  beginDrain(): void;
+  waitForInFlight(timeoutMs: number): Promise<boolean>;
+};
+
+export function shutdownTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
   const raw = env.SHUTDOWN_TIMEOUT_SECONDS?.trim();
   if (!raw || !/^\d+$/.test(raw)) {
     return DEFAULT_SHUTDOWN_TIMEOUT_SECONDS * 1000;
@@ -33,12 +43,39 @@ function shutdownTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
   }
   return Math.min(Math.max(seconds, 1), MAX_SHUTDOWN_TIMEOUT_SECONDS) * 1000;
 }
+export function installShutdownHandlers(
+  app: ShutdownApplication,
+  coordinator: ShutdownSignalCoordinator,
+  timeoutMs: number,
+  onCloseError: (error: unknown) => void = () => {},
+): () => void {
+  let shutdownPromise: Promise<void> | undefined;
+  const handleSignal = (): Promise<void> => {
+    if (!shutdownPromise) {
+      coordinator.beginDrain();
+      shutdownPromise = coordinator
+        .waitForInFlight(timeoutMs)
+        .then(() => app.close());
+      void shutdownPromise.catch(onCloseError);
+    }
+    return shutdownPromise;
+  };
+
+  process.on('SIGTERM', handleSignal);
+  process.on('SIGINT', handleSignal);
+  return () => {
+    process.removeListener('SIGTERM', handleSignal);
+    process.removeListener('SIGINT', handleSignal);
+  };
+}
 
 @Injectable()
 export class ShutdownCoordinator
-  implements BeforeApplicationShutdown, OnApplicationShutdown {
+  implements BeforeApplicationShutdown, OnApplicationShutdown
+{
   private draining = false;
   private inFlight = 0;
+  private drainWaitPromise: Promise<boolean> | undefined;
   private readonly waiters = new Set<Waiter>();
 
   constructor(
@@ -71,16 +108,21 @@ export class ShutdownCoordinator
 
   waitForInFlight(timeoutMs: number): Promise<boolean> {
     if (this.inFlight === 0) return Promise.resolve(true);
-    return new Promise((resolve) => {
+    if (this.drainWaitPromise) return this.drainWaitPromise;
+    this.drainWaitPromise = new Promise((resolve) => {
       const waiter: Waiter = {
         resolve,
-        timer: setTimeout(() => {
-          this.waiters.delete(waiter);
-          resolve(false);
-        }, Math.max(0, timeoutMs)),
+        timer: setTimeout(
+          () => {
+            this.waiters.delete(waiter);
+            resolve(false);
+          },
+          Math.max(0, timeoutMs),
+        ),
       };
       this.waiters.add(waiter);
     });
+    return this.drainWaitPromise;
   }
 
   async beforeApplicationShutdown(): Promise<void> {

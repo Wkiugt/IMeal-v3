@@ -22,7 +22,6 @@ type ReminderResult = {
   publishedCount: number;
 };
 
-
 function vietnamDateKey(now: Date): string {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: TIME_ZONE,
@@ -110,7 +109,9 @@ export class NotificationReminderService {
     }
   }
 
-  async processRegistrationReminders(now: Date = new Date()): Promise<ReminderResult> {
+  async processRegistrationReminders(
+    now: Date = new Date(),
+  ): Promise<ReminderResult> {
     const weekStart = nextMondayStart(now);
     const jobName = `registration_reminder_${weekStart}`;
     return this.runJob(jobName, async (tx) => {
@@ -176,7 +177,9 @@ export class NotificationReminderService {
     });
   }
 
-  async processPickupReminders(now: Date = new Date()): Promise<ReminderResult> {
+  async processPickupReminders(
+    now: Date = new Date(),
+  ): Promise<ReminderResult> {
     const mealDate = vietnamDateKey(now);
     const jobName = `pickup_reminder_${mealDate}`;
     return this.runJob(jobName, async (tx) => {
@@ -203,7 +206,8 @@ export class NotificationReminderService {
 
       const grouped = new Map<string, string[]>();
       for (const registration of registrations) {
-        const recipient = registration.delegations[0]?.delegateUser ?? registration.user;
+        const recipient =
+          registration.delegations[0]?.delegateUser ?? registration.user;
         if (!recipient.remindersEnabled) continue;
         const ids = grouped.get(recipient.id) ?? [];
         ids.push(registration.id);

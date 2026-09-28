@@ -61,10 +61,8 @@ import { PrismaService } from './common/prisma.service.js';
     },
     {
       provide: APP_INTERCEPTOR,
-      useFactory: (
-        logger: StructuredLogger,
-        shutdown: ShutdownCoordinator,
-      ) => new HttpLoggingInterceptor(logger, shutdown),
+      useFactory: (logger: StructuredLogger, shutdown: ShutdownCoordinator) =>
+        new HttpLoggingInterceptor(logger, shutdown),
       inject: [API_STRUCTURED_LOGGER, HEALTH_SHUTDOWN_COORDINATOR],
     },
     {

@@ -1,7 +1,15 @@
 import { NestFactory } from '@nestjs/core';
 import type { LoggerService } from '@nestjs/common';
 import { AppModule } from './app.module.js';
-import { WORKER_STRUCTURED_LOGGER } from './common/structured-logger.js';
+import {
+  installShutdownHandlers,
+  shutdownTimeoutMs,
+  ShutdownCoordinator,
+} from './shutdown-coordinator.js';
+import {
+  WORKER_STRUCTURED_LOGGER,
+  workerLogFields,
+} from './common/structured-logger.js';
 import type { StructuredLogger } from '@imeal/observability';
 import { HealthService } from './health.service.js';
 import { validateWorkerEnvironment } from './otp-delivery-worker.service.js';
@@ -26,7 +34,15 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const logger = app.get<StructuredLogger>(WORKER_STRUCTURED_LOGGER);
   app.useLogger(nestLoggerAdapter(logger));
-  app.enableShutdownHooks(['SIGTERM', 'SIGINT']);
+  const coordinator = app.get(ShutdownCoordinator);
+  installShutdownHandlers(app, coordinator, shutdownTimeoutMs(), () =>
+    logger.error(
+      'worker.shutdown.close_failed',
+      workerLogFields('worker.shutdown.close_failed', {
+        errorCode: 'SHUTDOWN_CLOSE_FAILED',
+      }),
+    ),
+  );
   // Listen on 0.0.0.0 for Docker compatibility
   const port = process.env.PORT ?? 3001;
   await app.listen(port, '0.0.0.0');

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StructuredLogger } from '@imeal/observability';
-import { ShutdownCoordinator } from './shutdown-coordinator.js';
+import {
+  installShutdownHandlers,
+  ShutdownCoordinator,
+} from './shutdown-coordinator.js';
 
 function logger(): StructuredLogger {
   return {
@@ -49,5 +52,41 @@ describe('ShutdownCoordinator', () => {
     await vi.advanceTimersByTimeAsync(100);
 
     await expect(draining).resolves.toBe(false);
+  });
+
+  it('drains before app close and coalesces SIGTERM/SIGINT shutdown', async () => {
+    const coordinator = new ShutdownCoordinator(logger());
+    const release = coordinator.registerInFlight();
+    const events: string[] = [];
+    let finishClose!: () => void;
+    const closeFinished = new Promise<void>((resolve) => {
+      finishClose = resolve;
+    });
+    const app = {
+      close: vi.fn(async () => {
+        expect(coordinator.isDraining()).toBe(true);
+        events.push('app.close');
+        await coordinator.beforeApplicationShutdown();
+        events.push('prisma.disconnect');
+        finishClose();
+      }),
+    };
+    const dispose = installShutdownHandlers(app, coordinator, 1000);
+
+    try {
+      process.emit('SIGTERM');
+      process.emit('SIGINT');
+      process.emit('SIGTERM');
+      expect(coordinator.isDraining()).toBe(true);
+      expect(app.close).not.toHaveBeenCalled();
+
+      release?.();
+      await closeFinished;
+
+      expect(app.close).toHaveBeenCalledTimes(1);
+      expect(events).toEqual(['app.close', 'prisma.disconnect']);
+    } finally {
+      dispose();
+    }
   });
 });

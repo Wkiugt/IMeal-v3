@@ -65,7 +65,6 @@ export class HealthService {
     this.logger = logger ?? createWorkerStructuredLogger();
   }
 
-
   markSchedulerInitialized(): void {
     this.schedulerInitialized = true;
   }
