@@ -19,6 +19,12 @@ function temporaryFile(contents: string): string {
   return file;
 }
 
+function temporaryMissingFile(): string {
+  const directory = mkdtempSync(join(tmpdir(), 'imeal-observability-missing-'));
+  temporaryDirectories.push(directory);
+  return join(directory, 'migration-gate.json');
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
@@ -83,6 +89,34 @@ describe('JSON structured logging', () => {
     );
   });
 
+  it('redacts sensitive suffix keys and arbitrary attacker-controlled keys', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.info('security.test', {
+      service: 'api',
+      release: 'r1',
+      tokenId: 'opaque-token-id',
+      secretId: 'opaque-secret-id',
+      passwordId: 'opaque-password-id',
+      attackerControlled: 'attacker-value',
+    });
+
+    const output = JSON.parse(lines[0]);
+    expect(output).toMatchObject({
+      tokenId: '[REDACTED]',
+      secretId: '[REDACTED]',
+      passwordId: '[REDACTED]',
+      attackerControlled: '[REDACTED]',
+    });
+    expect(lines[0]).not.toContain('opaque-token-id');
+    expect(lines[0]).not.toContain('opaque-secret-id');
+    expect(lines[0]).not.toContain('opaque-password-id');
+    expect(lines[0]).not.toContain('attacker-value');
+  });
+
   it('writes one line for each log level', () => {
     const lines: string[] = [];
     const logger = new JsonStructuredLogger('worker', 'r1', (line) =>
@@ -139,8 +173,8 @@ describe('migration evidence', () => {
   });
 
   it.each([
-    ['missing marker', undefined],
-    ['malformed JSON', '{not-json'],
+    ['missing marker', undefined, 'marker_unavailable'],
+    ['malformed JSON', '{not-json', 'marker_invalid'],
     [
       'stale release',
       JSON.stringify({
@@ -150,6 +184,7 @@ describe('migration evidence', () => {
         approvalId: 'approval-1',
         completedAt: '2026-09-28T12:00:00.000Z',
       }),
+      'release_mismatch',
     ],
     [
       'wrong target',
@@ -160,6 +195,7 @@ describe('migration evidence', () => {
         approvalId: 'approval-1',
         completedAt: '2026-09-28T12:00:00.000Z',
       }),
+      'target_mismatch',
     ],
     [
       'missing required field',
@@ -169,20 +205,61 @@ describe('migration evidence', () => {
         targetSchema: 'staging-schema',
         completedAt: '2026-09-28T12:00:00.000Z',
       }),
+      'marker_invalid',
     ],
-  ])('rejects %s markers safely', (_reason, contents) => {
+    [
+      'non-canonical timestamp',
+      JSON.stringify({
+        release: 'release-1',
+        migration: 'migration-1',
+        targetSchema: 'staging-schema',
+        approvalId: 'approval-1',
+        completedAt: '2026-09-28T12:00:00Z',
+      }),
+      'marker_invalid',
+    ],
+    [
+      'unexpected marker field',
+      JSON.stringify({
+        release: 'release-1',
+        migration: 'migration-1',
+        targetSchema: 'staging-schema',
+        approvalId: 'approval-1',
+        completedAt: '2026-09-28T12:00:00.000Z',
+        secret: 'must-not-be-accepted',
+      }),
+      'marker_invalid',
+    ],
+  ])('rejects %s markers safely', (_reason, contents, expectedReason) => {
     const file =
-      contents === undefined
-        ? join(tmpdir(), 'missing-imeal-marker.json')
-        : temporaryFile(contents);
+      contents === undefined ? temporaryMissingFile() : temporaryFile(contents);
 
     const result = readMigrationEvidence(file, 'release-1', 'staging-schema');
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.reason).not.toContain('release-0');
-      expect(result.reason).not.toContain('production-schema');
-      expect(result.reason).not.toContain('approval-1');
-    }
+    expect(result).toEqual({ ok: false, reason: expectedReason });
+    expect(JSON.stringify(result)).not.toContain('release-0');
+    expect(JSON.stringify(result)).not.toContain('production-schema');
+    expect(JSON.stringify(result)).not.toContain('must-not-be-accepted');
+  });
+
+  it('rejects missing expected identities safely', () => {
+    const file = temporaryFile(
+      JSON.stringify({
+        release: 'release-1',
+        migration: 'migration-1',
+        targetSchema: 'staging-schema',
+        approvalId: 'approval-1',
+        completedAt: '2026-09-28T12:00:00.000Z',
+      }),
+    );
+
+    expect(readMigrationEvidence(file, '', 'staging-schema')).toEqual({
+      ok: false,
+      reason: 'expected_identity_missing',
+    });
+    expect(readMigrationEvidence(file, 'release-1', '')).toEqual({
+      ok: false,
+      reason: 'expected_identity_missing',
+    });
   });
 });

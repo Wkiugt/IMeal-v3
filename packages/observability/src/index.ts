@@ -52,9 +52,6 @@ const SAFE_FIELD_KEYS: Record<string, true> = {
   attempt: true,
   retry: true,
 };
-const SAFE_ID_OR_COUNT_KEY = /(?:Id|Count|Ms)$/;
-const SENSITIVE_FIELD_KEY =
-  /(?:authorization|bearer|token|secret|password|api[-_]?key|database|connection|string|otp|code|qr|signature|payload|body|coordinate|latitude|longitude|(?:^|_)lat(?:$|_)|(?:^|_)lng(?:$|_)|push|session)/i;
 
 function redactString(value: string): string {
   return value
@@ -68,12 +65,8 @@ function redactString(value: string): string {
     .replace(/\b\d{6}\b/g, REDACTED);
 }
 
-function isSafeFieldKey(key: string): boolean {
-  return SAFE_FIELD_KEYS[key] === true || SAFE_ID_OR_COUNT_KEY.test(key);
-}
-
 function sanitizeField(key: string, value: unknown): string | number | boolean {
-  if (!isSafeFieldKey(key)) return REDACTED;
+  if (SAFE_FIELD_KEYS[key] !== true) return REDACTED;
 
   if (typeof value === 'string') {
     return key === 'route'
@@ -209,11 +202,18 @@ export function readMigrationEvidence(
     return { ok: false, reason: 'expected_identity_missing' };
   }
 
-  let parsed: unknown;
+  let contents: string;
   try {
-    parsed = JSON.parse(readFileSync(filePath, 'utf8')) as unknown;
+    contents = readFileSync(filePath, 'utf8');
   } catch {
     return { ok: false, reason: 'marker_unavailable' };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents) as unknown;
+  } catch {
+    return { ok: false, reason: 'marker_invalid' };
   }
 
   if (!isMigrationEvidence(parsed))

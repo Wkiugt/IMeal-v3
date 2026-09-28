@@ -1959,6 +1959,16 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@imeal/observability@workspace:packages/observability":
+  version: 0.0.0-use.local
+  resolution: "@imeal/observability@workspace:packages/observability"
+  dependencies:
+    "@types/node": "npm:^24.0.0"
+    typescript: "npm:^5.9.3"
+    vitest: "npm:^2.1.9"
+  languageName: unknown
+  linkType: soft
+
 "@imeal/ui@workspace:packages/ui":
   version: 0.0.0-use.local
   resolution: "@imeal/ui@workspace:packages/ui"
