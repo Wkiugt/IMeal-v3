@@ -42,17 +42,36 @@ async function bootstrap() {
   const logger = app.get<JsonStructuredLogger>(API_STRUCTURED_LOGGER);
   app.useLogger(nestLoggerAdapter(logger));
   const coordinator = app.get(ShutdownCoordinator);
-  installShutdownHandlers(app, coordinator, shutdownTimeoutMs(), () =>
-    logger.error(
-      'api.shutdown.close_failed',
-      apiLogFields('api.shutdown.close_failed', {
-        errorCode: 'SHUTDOWN_CLOSE_FAILED',
-      }),
-    ),
+  let resolveListenReady!: () => void;
+  let rejectListenReady!: (error: unknown) => void;
+  const listenReady = new Promise<void>((resolve, reject) => {
+    resolveListenReady = resolve;
+    rejectListenReady = reject;
+  });
+  void listenReady.catch(() => {});
+  const disposeShutdownHandlers = installShutdownHandlers(
+    app,
+    coordinator,
+    shutdownTimeoutMs(),
+    listenReady,
+    () =>
+      logger.error(
+        'api.shutdown.close_failed',
+        apiLogFields('api.shutdown.close_failed', {
+          errorCode: 'SHUTDOWN_CLOSE_FAILED',
+        }),
+      ),
   );
   // Listen on 0.0.0.0 for Docker compatibility
   const port = process.env.PORT ?? 3000;
-  await app.listen(port, '0.0.0.0');
+  try {
+    await app.listen(port, '0.0.0.0');
+    resolveListenReady();
+  } catch (error: unknown) {
+    rejectListenReady(error);
+    disposeShutdownHandlers();
+    throw error;
+  }
   logger.info('api.started', {
     service: 'api',
     release: process.env.RELEASE_VERSION?.trim() || 'unconfigured',

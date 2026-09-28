@@ -47,26 +47,38 @@ export function installShutdownHandlers(
   app: ShutdownApplication,
   coordinator: ShutdownSignalCoordinator,
   timeoutMs: number,
+  readiness: Promise<void> = Promise.resolve(),
   onCloseError: (error: unknown) => void = () => {},
 ): () => void {
   let shutdownPromise: Promise<void> | undefined;
-  const handleSignal = (): Promise<void> => {
-    if (!shutdownPromise) {
+  let dispose = (): void => {};
+  const handleSignal = (): void => {
+    if (shutdownPromise) return;
+    const current = (async () => {
       coordinator.beginDrain();
-      shutdownPromise = coordinator
-        .waitForInFlight(timeoutMs)
-        .then(() => app.close());
-      void shutdownPromise.catch(onCloseError);
-    }
-    return shutdownPromise;
+      await coordinator.waitForInFlight(timeoutMs);
+      await readiness;
+      await app.close();
+      dispose();
+    })();
+    shutdownPromise = current;
+    void current.catch((error: unknown) => {
+      if (shutdownPromise === current) shutdownPromise = undefined;
+      try {
+        onCloseError(error);
+      } catch {
+        // Shutdown reporting must not create another unhandled rejection.
+      }
+    });
   };
 
   process.on('SIGTERM', handleSignal);
   process.on('SIGINT', handleSignal);
-  return () => {
+  dispose = () => {
     process.removeListener('SIGTERM', handleSignal);
     process.removeListener('SIGINT', handleSignal);
   };
+  return () => dispose();
 }
 
 @Injectable()

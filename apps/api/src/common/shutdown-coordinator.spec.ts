@@ -71,7 +71,11 @@ describe('ShutdownCoordinator', () => {
         finishClose();
       }),
     };
+    const initialTermListeners = process.listenerCount('SIGTERM');
+    const initialIntListeners = process.listenerCount('SIGINT');
     const dispose = installShutdownHandlers(app, coordinator, 1000);
+    expect(process.listenerCount('SIGTERM')).toBe(initialTermListeners + 1);
+    expect(process.listenerCount('SIGINT')).toBe(initialIntListeners + 1);
 
     try {
       process.emit('SIGTERM');
@@ -85,6 +89,67 @@ describe('ShutdownCoordinator', () => {
 
       expect(app.close).toHaveBeenCalledTimes(1);
       expect(events).toEqual(['app.close', 'prisma.disconnect']);
+      await Promise.resolve();
+      expect(process.listenerCount('SIGTERM')).toBe(initialTermListeners);
+      expect(process.listenerCount('SIGINT')).toBe(initialIntListeners);
+      process.emit('SIGTERM');
+      process.emit('SIGINT');
+      expect(app.close).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('begins drain immediately but waits for listen readiness before close', async () => {
+    const coordinator = new ShutdownCoordinator(logger());
+    let resolveReady!: () => void;
+    const readiness = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    const app = { close: vi.fn().mockResolvedValue(undefined) };
+    const dispose = installShutdownHandlers(app, coordinator, 1000, readiness);
+
+    try {
+      process.emit('SIGTERM');
+      expect(coordinator.isDraining()).toBe(true);
+      await Promise.resolve();
+      expect(app.close).not.toHaveBeenCalled();
+
+      resolveReady();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(app.close).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('reports close errors and permits a later signal retry', async () => {
+    const coordinator = new ShutdownCoordinator(logger());
+    const closeError = new Error('close failed');
+    const errors: unknown[] = [];
+    const app = {
+      close: vi
+        .fn()
+        .mockRejectedValueOnce(closeError)
+        .mockResolvedValueOnce(undefined),
+    };
+    const dispose = installShutdownHandlers(
+      app,
+      coordinator,
+      1000,
+      Promise.resolve(),
+      (error) => errors.push(error),
+    );
+
+    try {
+      process.emit('SIGTERM');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(app.close).toHaveBeenCalledTimes(1);
+      expect(errors).toEqual([closeError]);
+
+      process.emit('SIGINT');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(app.close).toHaveBeenCalledTimes(2);
     } finally {
       dispose();
     }
