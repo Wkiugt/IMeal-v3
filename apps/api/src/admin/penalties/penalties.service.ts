@@ -6,12 +6,60 @@ import {
 import { PrismaClient, Prisma } from '@prisma/client';
 import { v1 } from '@imeal/contracts';
 
+type PenaltyWithUser = Prisma.PenaltyGetPayload<{
+  include: {
+    user: {
+      select: {
+        id: true;
+        name: true;
+        email: true;
+      };
+    };
+  };
+}>;
+
 @Injectable()
 export class PenaltiesService {
   private prisma: PrismaClient;
 
   constructor() {
     this.prisma = new PrismaClient();
+  }
+
+  private async lockPenalty(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<void> {
+    await tx.$queryRaw(
+      Prisma.sql`
+        SELECT id
+        FROM penalties
+        WHERE id = ${id}
+        FOR UPDATE
+      `,
+    );
+  }
+
+  private formatPenalty(item: PenaltyWithUser): v1.PenaltyItemDto {
+    return {
+      id: item.id,
+      userId: item.userId,
+      userName: item.user?.name ?? null,
+      userEmail: item.user?.email ?? '',
+      amount: item.amount,
+      reason: item.reason,
+      status: item.status as v1.PenaltyStatus,
+      paidAt: item.paidAt ? item.paidAt.toISOString() : null,
+      waivedAt: item.waivedAt ? item.waivedAt.toISOString() : null,
+      waiveReason: item.waiveReason,
+      waivedByUserId: item.waivedByUserId,
+      registrationId: item.registrationId ?? null,
+      mealDate: item.mealDate
+        ? item.mealDate.toISOString().slice(0, 10)
+        : null,
+      createdAt: item.createdAt.toISOString(),
+      updatedAt: item.updatedAt.toISOString(),
+    };
   }
 
   async getPenalties(
@@ -94,21 +142,9 @@ export class PenaltiesService {
         }),
       ]);
 
-    const formattedItems: v1.PenaltyItemDto[] = items.map((item) => ({
-      id: item.id,
-      userId: item.userId,
-      userName: item.user?.name ?? null,
-      userEmail: item.user?.email ?? '',
-      amount: item.amount,
-      reason: item.reason,
-      status: item.status as v1.PenaltyStatus,
-      paidAt: item.paidAt ? item.paidAt.toISOString() : null,
-      waivedAt: item.waivedAt ? item.waivedAt.toISOString() : null,
-      waiveReason: item.waiveReason,
-      waivedByUserId: item.waivedByUserId,
-      createdAt: item.createdAt.toISOString(),
-      updatedAt: item.updatedAt.toISOString(),
-    }));
+    const formattedItems: v1.PenaltyItemDto[] = items.map((item) =>
+      this.formatPenalty(item),
+    );
 
     const metrics: v1.PenaltyMetricsDto = {
       totalInvoiced: totalAgg._sum.amount ?? 0,
@@ -135,6 +171,7 @@ export class PenaltiesService {
     adminUserId?: string,
   ): Promise<v1.PenaltyItemDto> {
     return this.prisma.$transaction(async (tx) => {
+      await this.lockPenalty(tx, id);
       const penalty = await tx.penalty.findUnique({
         where: { id },
         include: {
@@ -181,21 +218,7 @@ export class PenaltiesService {
         },
       });
 
-      return {
-        id: updated.id,
-        userId: updated.userId,
-        userName: updated.user?.name ?? null,
-        userEmail: updated.user?.email ?? '',
-        amount: updated.amount,
-        reason: updated.reason,
-        status: updated.status as v1.PenaltyStatus,
-        paidAt: updated.paidAt ? updated.paidAt.toISOString() : null,
-        waivedAt: updated.waivedAt ? updated.waivedAt.toISOString() : null,
-        waiveReason: updated.waiveReason,
-        waivedByUserId: updated.waivedByUserId,
-        createdAt: updated.createdAt.toISOString(),
-        updatedAt: updated.updatedAt.toISOString(),
-      };
+      return this.formatPenalty(updated);
     });
   }
 
@@ -211,6 +234,7 @@ export class PenaltiesService {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      await this.lockPenalty(tx, id);
       const penalty = await tx.penalty.findUnique({
         where: { id },
         include: {
@@ -263,21 +287,7 @@ export class PenaltiesService {
         },
       });
 
-      return {
-        id: updated.id,
-        userId: updated.userId,
-        userName: updated.user?.name ?? null,
-        userEmail: updated.user?.email ?? '',
-        amount: updated.amount,
-        reason: updated.reason,
-        status: updated.status as v1.PenaltyStatus,
-        paidAt: updated.paidAt ? updated.paidAt.toISOString() : null,
-        waivedAt: updated.waivedAt ? updated.waivedAt.toISOString() : null,
-        waiveReason: updated.waiveReason,
-        waivedByUserId: updated.waivedByUserId,
-        createdAt: updated.createdAt.toISOString(),
-        updatedAt: updated.updatedAt.toISOString(),
-      };
+      return this.formatPenalty(updated);
     });
   }
 }

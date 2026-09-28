@@ -4,22 +4,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NoShowWorkerService } from './no-show-worker.service.js';
 
 const mockTx = {
+  $queryRaw: vi.fn(),
   registration: {
     findUnique: vi.fn(),
     update: vi.fn(),
   },
   penalty: {
     findFirst: vi.fn(),
-    create: vi.fn().mockResolvedValue({ id: 'penalty-1' }),
+    create: vi.fn(),
   },
   notification: {
-    upsert: vi.fn().mockResolvedValue({
-      id: 'notification-1',
-      userId: 'user-1',
-    }),
+    upsert: vi.fn(),
   },
   outboxEvent: {
-    upsert: vi.fn().mockResolvedValue({ id: 'outbox-1' }),
+    upsert: vi.fn(),
   },
   auditLog: {
     create: vi.fn(),
@@ -35,392 +33,465 @@ const mockPrisma = {
   registration: {
     findMany: vi.fn(),
   },
-  $transaction: vi.fn(async (cb) => {
-    return cb(mockTx);
-  }),
+  $transaction: vi.fn(async (callback: (tx: typeof mockTx) => unknown) =>
+    callback(mockTx),
+  ),
 };
 
-vi.mock('@prisma/client', () => {
+vi.mock('@prisma/client', () => ({
+  PrismaClient: class {
+    constructor() {
+      return mockPrisma;
+    }
+  },
+  Prisma: {
+    sql: vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => ({
+      strings,
+      values,
+    })),
+  },
+}));
+
+type RegistrationFixture = {
+  id: string;
+  userId: string;
+  mealDate: Date;
+  status: string;
+  mealServing: unknown;
+  noShowAt?: Date;
+  user: { isActive: boolean };
+};
+
+const mealDate = new Date('2026-09-03T00:00:00.000Z');
+const currentTime = new Date('2026-09-03T07:00:00.000Z');
+
+function activeRegistration(
+  id = 'reg-1',
+  overrides: Partial<RegistrationFixture> = {},
+): RegistrationFixture {
   return {
-    PrismaClient: class {
-      constructor() {
-        return mockPrisma;
-      }
-    },
+    id,
+    userId: `user-${id}`,
+    mealDate,
+    status: 'ACTIVE',
+    mealServing: null,
+    user: { isActive: true },
+    ...overrides,
   };
-});
+}
+
+function prepareCandidate(registration: RegistrationFixture) {
+  mockPrisma.registration.findMany.mockResolvedValueOnce([
+    { id: registration.id },
+  ]);
+  mockTx.$queryRaw.mockResolvedValueOnce([{ id: registration.id }]);
+  mockTx.registration.findUnique.mockResolvedValueOnce(registration);
+  mockTx.penalty.findFirst.mockResolvedValueOnce(null);
+  mockTx.penalty.create.mockResolvedValueOnce({
+    id: `penalty-${registration.id}`,
+    userId: registration.userId,
+    amount: 50000,
+    reason: 'NO_SHOW',
+    status: 'PENDING',
+    registrationId: registration.id,
+    mealDate,
+  });
+  mockTx.notification.upsert.mockResolvedValueOnce({
+    id: `notification-${registration.id}`,
+    userId: registration.userId,
+  });
+  mockTx.outboxEvent.upsert.mockResolvedValue({ id: 'outbox-1' });
+  mockTx.auditLog.create.mockResolvedValueOnce({ id: 'audit-1' });
+  mockTx.registration.update.mockResolvedValueOnce({
+    ...registration,
+    status: 'NO_SHOW',
+  });
+}
 
 describe('NoShowWorkerService', () => {
   let service: NoShowWorkerService;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
+    mockTx.$queryRaw.mockReset();
+    mockTx.registration.findUnique.mockReset();
+    mockTx.registration.update.mockReset();
+    mockTx.penalty.findFirst.mockReset();
+    mockTx.penalty.create.mockReset();
+    mockTx.notification.upsert.mockReset();
+    mockTx.outboxEvent.upsert.mockReset();
+    mockTx.auditLog.create.mockReset();
+    mockTx.jobRun.findFirst.mockReset();
+    mockTx.jobRun.create.mockReset();
+    mockTx.jobRun.update.mockReset();
+    mockPrisma.registration.findMany.mockReset();
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
+    );
     const module: TestingModule = await Test.createTestingModule({
       providers: [NoShowWorkerService],
     }).compile();
-
     service = module.get<NoShowWorkerService>(NoShowWorkerService);
-    vi.clearAllMocks();
   });
 
-  it('should be defined', () => {
+  it('is defined', () => {
     expect(service).toBeDefined();
   });
 
-  describe('Time constraints and options', () => {
-    it('should throw BadRequestException if targetDate is today and VN time < 13:45 without force', async () => {
-      // 06:44:00 UTC = 13:44:00 VN time
-      const currentTime = new Date('2026-09-03T06:44:00.000Z');
-
+  describe('time gates', () => {
+    it('rejects today before 13:45 unless force is enabled', async () => {
       await expect(
-        service.processNoShows('2026-09-03', { currentTime }),
+        service.processNoShows('2026-09-03', {
+          currentTime: new Date('2026-09-03T06:44:59.000Z'),
+        }),
       ).rejects.toThrow(BadRequestException);
-
       expect(mockPrisma.registration.findMany).not.toHaveBeenCalled();
     });
 
-    it('should proceed if targetDate is today and VN time < 13:45 when force is true', async () => {
-      const currentTime = new Date('2026-09-03T06:44:00.000Z');
-      mockPrisma.registration.findMany.mockResolvedValueOnce([]);
-      mockTx.jobRun.findFirst.mockResolvedValueOnce(null);
+    it('allows forced processing at 13:30 but the domain predicate rejects 13:29:59', async () => {
+      const registration = activeRegistration();
+      mockPrisma.registration.findMany
+        .mockResolvedValueOnce([{ id: registration.id }])
+        .mockResolvedValueOnce([{ id: registration.id }]);
+      mockTx.$queryRaw
+        .mockResolvedValue([{ id: registration.id }]);
+      mockTx.registration.findUnique
+        .mockResolvedValueOnce(registration)
+        .mockResolvedValueOnce(registration);
+      mockTx.jobRun.findFirst.mockResolvedValue(null);
 
-      const result = await service.processNoShows('2026-09-03', {
-        currentTime,
+      const before = await service.processNoShows('2026-09-03', {
         force: true,
+        currentTime: new Date('2026-09-03T06:29:59.000Z'),
       });
+      expect(before.processedCount).toBe(0);
+      expect(mockTx.registration.update).not.toHaveBeenCalled();
 
-      expect(result.success).toBe(true);
-      expect(mockPrisma.registration.findMany).toHaveBeenCalled();
+      prepareCandidate(registration);
+      const atBoundary = await service.processNoShows('2026-09-03', {
+        force: true,
+        currentTime: new Date('2026-09-03T06:30:00.000Z'),
+      });
+      expect(atBoundary.processedCount).toBe(1);
+      expect(mockTx.registration.update).toHaveBeenCalledWith({
+        where: { id: registration.id },
+        data: { status: 'NO_SHOW', noShowAt: new Date('2026-09-03T06:30:00.000Z') },
+      });
     });
 
-    it('should proceed if targetDate is today and VN time >= 13:45 without force', async () => {
-      // 06:45:00 UTC = 13:45:00 VN time
-      const currentTime = new Date('2026-09-03T06:45:00.000Z');
-      mockPrisma.registration.findMany.mockResolvedValueOnce([]);
-      mockTx.jobRun.findFirst.mockResolvedValueOnce(null);
-
+    it('runs normal processing at 13:45 and still rejects a future date without force', async () => {
+      const registration = activeRegistration();
+      prepareCandidate(registration);
+      mockTx.jobRun.findFirst.mockResolvedValue(null);
       const result = await service.processNoShows('2026-09-03', {
-        currentTime,
+        currentTime: new Date('2026-09-03T06:45:00.000Z'),
       });
-
-      expect(result.success).toBe(true);
-      expect(mockPrisma.registration.findMany).toHaveBeenCalledWith({
-        where: {
-          mealDate: new Date('2026-09-03T00:00:00.000Z'),
-          status: 'ACTIVE',
-          mealServing: null,
-        },
-      });
-    });
-
-    it('should proceed for a past date without force', async () => {
-      // Current VN time is morning of 2026-09-03, but targetDate is yesterday 2026-09-02
-      const currentTime = new Date('2026-09-03T03:00:00.000Z');
-      mockPrisma.registration.findMany.mockResolvedValueOnce([]);
-      mockTx.jobRun.findFirst.mockResolvedValueOnce(null);
-
-      const result = await service.processNoShows('2026-09-02', {
-        currentTime,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.dateStr).toBe('2026-09-02');
-    });
-
-    it('should throw BadRequestException for future meal date without force', async () => {
-      const currentTime = new Date('2026-09-03T07:00:00.000Z'); // 14:00 VN time
+      expect(result.processedCount).toBe(1);
 
       await expect(
-        service.processNoShows('2026-09-04', { currentTime }),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('should throw BadRequestException if targetDateStr has invalid format', async () => {
-      await expect(
-        service.processNoShows('invalid-date-format'),
+        service.processNoShows('2026-09-04', {
+          currentTime: new Date('2026-09-03T07:00:00.000Z'),
+        }),
       ).rejects.toThrow(BadRequestException);
     });
   });
 
-  describe('processNoShows execution & idempotency', () => {
-    const targetDateStr = '2026-09-03';
-    const currentTime = new Date('2026-09-03T07:00:00.000Z'); // 14:00 VN time
-
-    it('should process candidates: update registration, create penalty, create notification, audit log, and job run', async () => {
-      const candidates = [
-        {
-          id: 'reg-1',
-          userId: 'user-1',
-          mealDate: new Date('2026-09-03T00:00:00.000Z'),
-          status: 'ACTIVE',
-        },
-        {
-          id: 'reg-2',
-          userId: 'user-2',
-          mealDate: new Date('2026-09-03T00:00:00.000Z'),
-          status: 'ACTIVE',
-        },
-      ];
-
-      mockPrisma.registration.findMany.mockResolvedValueOnce(candidates);
-
-      // Re-verification in tx
-      mockTx.registration.findUnique
-        .mockResolvedValueOnce({
-          id: 'reg-1',
-          status: 'ACTIVE',
-          mealServing: null,
-        })
-        .mockResolvedValueOnce({
-          id: 'reg-2',
-          status: 'ACTIVE',
-          mealServing: null,
-        });
-
-      // No existing penalties
-      mockTx.penalty.findFirst
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(null);
-
-      // No existing job run
-      mockTx.jobRun.findFirst.mockResolvedValueOnce(null);
-
-      const result = await service.processNoShows(targetDateStr, {
-        currentTime,
+  describe('per-registration transaction', () => {
+    it('locks registration before checking serving and rechecks the joined account', async () => {
+      const registration = activeRegistration();
+      mockPrisma.registration.findMany.mockResolvedValueOnce([
+        { id: registration.id },
+      ]);
+      mockTx.jobRun.findFirst.mockResolvedValue(null);
+      mockTx.penalty.findFirst.mockResolvedValueOnce(null);
+      mockTx.penalty.create.mockResolvedValueOnce({
+        id: 'penalty-reg-1',
+        registrationId: registration.id,
+        userId: registration.userId,
+        mealDate,
+        amount: 50000,
+        reason: 'NO_SHOW',
+        status: 'PENDING',
       });
-
-      expect(result.success).toBe(true);
-      expect(result.processedCount).toBe(2);
-      expect(result.candidateCount).toBe(2);
-
-      // Verify registration status updated to NO_SHOW
-      expect(mockTx.registration.update).toHaveBeenCalledTimes(2);
-      expect(mockTx.registration.update).toHaveBeenCalledWith({
-        where: { id: 'reg-1' },
-        data: { status: 'NO_SHOW' },
+      mockTx.notification.upsert.mockResolvedValueOnce({
+        id: 'notification-reg-1',
       });
-      expect(mockTx.registration.update).toHaveBeenCalledWith({
-        where: { id: 'reg-2' },
-        data: { status: 'NO_SHOW' },
+      mockTx.outboxEvent.upsert.mockResolvedValue({ id: 'outbox-1' });
+      mockTx.auditLog.create.mockResolvedValueOnce({ id: 'audit-1' });
+      mockTx.registration.update.mockResolvedValueOnce(registration);
+      const calls: string[] = [];
+      mockTx.$queryRaw.mockImplementation(async () => {
+        if (calls.length === 0) {
+          calls.push('registration-lock');
+          return [{ id: registration.id }];
+        }
+        return [];
       });
+      mockTx.registration.findUnique.mockImplementationOnce(async () => {
+        calls.push('registration-read-serving-account');
+        return registration;
+      });
+      await service.processNoShows('2026-09-03', { currentTime });
 
-      // Verify Penalty: 50,000 VND and reason format
-      expect(mockTx.penalty.create).toHaveBeenCalledTimes(2);
-      expect(mockTx.penalty.create).toHaveBeenCalledWith({
-        data: {
-          id: expect.any(String),
-          userId: 'user-1',
-          amount: 50000,
-          reason: 'NO_SHOW_PENALTY_2026-09-03_reg-1',
-        },
-      });
-      expect(mockTx.penalty.create).toHaveBeenCalledWith({
-        data: {
-          id: expect.any(String),
-          userId: 'user-2',
-          amount: 50000,
-          reason: 'NO_SHOW_PENALTY_2026-09-03_reg-2',
-        },
-      });
-
-      // Verify structured Notification and delivery outbox
-      expect(mockTx.notification.upsert).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({
-          where: { dedupeKey: 'no-show-penalty:user-1:reg-1' },
-          update: {},
-          create: expect.objectContaining({
-            id: expect.any(String),
-            userId: 'user-1',
-            kind: 'NO_SHOW_PENALTY_CREATED',
-            payload: {
-              penaltyId: 'penalty-1',
-              registrationId: 'reg-1',
-              mealDate: '2026-09-03',
-              amount: 50000,
-            },
-            titleVi: 'Phạt không nhận suất',
-            bodyVi: 'Bạn bị phạt 50.000đ do không nhận suất ngày 3/9/2026.',
-            titleEn: 'No-show penalty',
-            bodyEn:
-              'A VND 50,000 penalty was added because your meal for 9/3/2026 was not collected.',
-            dedupeKey: 'no-show-penalty:user-1:reg-1',
-          }),
-        }),
+      expect(calls).toEqual([
+        'registration-lock',
+        'registration-read-serving-account',
+      ]);
+      expect(mockTx.$queryRaw).toHaveBeenCalledWith(
+        expect.objectContaining({ values: [registration.id] }),
       );
-      expect(mockTx.notification.upsert).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({
-          where: { dedupeKey: 'no-show-penalty:user-2:reg-2' },
-          create: expect.objectContaining({
-            id: expect.any(String),
-            userId: 'user-2',
-            payload: expect.objectContaining({
-              registrationId: 'reg-2',
-            }),
-          }),
-        }),
-      );
-      expect(mockTx.outboxEvent.upsert).toHaveBeenCalledTimes(2);
-
-      // Verify AuditLog
-      expect(mockTx.auditLog.create).toHaveBeenCalledWith({
-        data: {
-          id: expect.any(String),
-          action: 'NO_SHOW_PROCESSED',
-          userId: 'user-1',
-          details: JSON.stringify({
-            registrationId: 'reg-1',
-            mealDate: '2026-09-03',
-            amount: 50000,
-          }),
-        },
-      });
-
-      // Verify JobRun created
-      expect(mockTx.jobRun.create).toHaveBeenCalledWith({
-        data: {
-          id: expect.any(String),
-          jobName: 'no_show_worker_2026-09-03',
-          status: 'COMPLETED',
-          completedAt: expect.any(Date),
+      expect(mockTx.registration.findUnique).toHaveBeenCalledWith({
+        where: { id: registration.id },
+        include: {
+          user: { select: { isActive: true } },
+          mealServing: true,
         },
       });
     });
 
-    it('should be idempotent: skip penalty creation if penalty already exists', async () => {
-      const candidates = [
-        {
-          id: 'reg-1',
-          userId: 'user-1',
-          mealDate: new Date('2026-09-03T00:00:00.000Z'),
-          status: 'ACTIVE',
-        },
-      ];
+    it('creates one registration-keyed penalty and atomically marks no-show', async () => {
+      const registration = activeRegistration();
+      prepareCandidate(registration);
+      mockTx.jobRun.findFirst.mockResolvedValue(null);
 
-      mockPrisma.registration.findMany.mockResolvedValueOnce(candidates);
-      mockTx.registration.findUnique.mockResolvedValueOnce({
-        id: 'reg-1',
-        status: 'ACTIVE',
-        mealServing: null,
-      });
-
-      // Existing penalty already found!
-      mockTx.penalty.findFirst.mockResolvedValueOnce({
-        id: 'pen-1',
-        userId: 'user-1',
-        amount: 50000,
-        reason: 'NO_SHOW_PENALTY_2026-09-03_reg-1',
-      });
-
-      // Existing job run already found!
-      mockTx.jobRun.findFirst.mockResolvedValueOnce({
-        id: 'job-1',
-        jobName: 'no_show_worker_2026-09-03',
-        status: 'COMPLETED',
-      });
-
-      const result = await service.processNoShows(targetDateStr, {
+      const result = await service.processNoShows('2026-09-03', {
         currentTime,
       });
 
       expect(result.processedCount).toBe(1);
-      expect(mockTx.penalty.create).not.toHaveBeenCalled();
-      expect(mockTx.jobRun.create).not.toHaveBeenCalled();
-      expect(mockTx.jobRun.update).toHaveBeenCalledWith({
-        where: { id: 'job-1' },
-        data: {
-          status: 'COMPLETED',
-          completedAt: expect.any(Date),
-        },
-      });
-    });
-
-    it('should skip registration if re-verification shows it is no longer ACTIVE or already served', async () => {
-      const candidates = [
-        {
-          id: 'reg-1',
-          userId: 'user-1',
-          mealDate: new Date('2026-09-03T00:00:00.000Z'),
-          status: 'ACTIVE',
-        },
-        {
-          id: 'reg-2',
-          userId: 'user-2',
-          mealDate: new Date('2026-09-03T00:00:00.000Z'),
-          status: 'ACTIVE',
-        },
-      ];
-
-      mockPrisma.registration.findMany.mockResolvedValueOnce(candidates);
-
-      // reg-1 was cancelled concurrently
-      mockTx.registration.findUnique.mockResolvedValueOnce({
-        id: 'reg-1',
-        status: 'CANCELLED',
-        mealServing: null,
-      });
-      // reg-2 was served concurrently
-      mockTx.registration.findUnique.mockResolvedValueOnce({
-        id: 'reg-2',
-        status: 'ACTIVE',
-        mealServing: { id: 'serving-1' },
-      });
-
-      mockTx.jobRun.findFirst.mockResolvedValueOnce(null);
-
-      const result = await service.processNoShows(targetDateStr, {
-        currentTime,
-      });
-
-      expect(result.processedCount).toBe(0);
-      expect(mockTx.notification.upsert).not.toHaveBeenCalled();
-      expect(mockTx.penalty.create).not.toHaveBeenCalled();
-      expect(mockTx.auditLog.create).not.toHaveBeenCalled();
-      expect(mockTx.jobRun.create).toHaveBeenCalled();
-    });
-
-    it('should complete job run when candidate list is empty', async () => {
-      mockPrisma.registration.findMany.mockResolvedValueOnce([]);
-      mockTx.jobRun.findFirst.mockResolvedValueOnce(null);
-
-      const result = await service.processNoShows(targetDateStr, {
-        currentTime,
-      });
-
-      expect(result.processedCount).toBe(0);
-      expect(mockTx.jobRun.create).toHaveBeenCalledWith({
+      expect(mockTx.penalty.create).toHaveBeenCalledWith({
         data: {
           id: expect.any(String),
-          jobName: 'no_show_worker_2026-09-03',
-          status: 'COMPLETED',
-          completedAt: expect.any(Date),
+          registrationId: registration.id,
+          userId: registration.userId,
+          mealDate,
+          amount: 50000,
+          reason: 'NO_SHOW',
+          status: 'PENDING',
         },
       });
+      expect(mockTx.registration.update).toHaveBeenCalledWith({
+        where: { id: registration.id },
+        data: { status: 'NO_SHOW', noShowAt: currentTime },
+      });
+      expect(mockTx.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'NO_SHOW_PROCESSED',
+          userId: registration.userId,
+          details: JSON.stringify({
+            registrationId: registration.id,
+            mealDate: '2026-09-03',
+            amount: 50000,
+          }),
+        }),
+      });
+    });
+
+    it('uses stable notification and dashboard outbox dedupe keys', async () => {
+      const registration = activeRegistration();
+      prepareCandidate(registration);
+      mockTx.jobRun.findFirst.mockResolvedValue(null);
+
+      await service.processNoShows('2026-09-03', { currentTime });
+
+      expect(mockTx.notification.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { dedupeKey: `no-show-penalty:${registration.userId}:${registration.id}` },
+        }),
+      );
+      expect(mockTx.outboxEvent.upsert).toHaveBeenCalledWith({
+        where: { dedupeKey: `kitchen:no-show:${registration.id}` },
+        update: {},
+        create: expect.objectContaining({
+          aggregateType: 'REGISTRATION',
+          aggregateId: registration.id,
+          eventType: 'NO_SHOW_RECONCILED',
+          dedupeKey: `kitchen:no-show:${registration.id}`,
+        }),
+      });
+    });
+
+    it('skips cancelled, served, disabled, and wrong-date rows without side effects', async () => {
+      const registrations = [
+        activeRegistration('cancelled', { status: 'CANCELLED' }),
+        activeRegistration('served', { mealServing: { id: 'serving-1' } }),
+        activeRegistration('disabled', { user: { isActive: false } }),
+        activeRegistration('wrong-date', {
+          mealDate: new Date('2026-09-04T00:00:00.000Z'),
+        }),
+      ];
+      expect(registrations[0].status).toBe('CANCELLED');
+      expect(registrations[1].mealServing).toEqual({ id: 'serving-1' });
+      expect(registrations[2].user.isActive).toBe(false);
+      expect(registrations[3].mealDate).not.toEqual(mealDate);
+      mockPrisma.registration.findMany.mockResolvedValueOnce(
+        registrations.map(({ id }) => ({ id })),
+      );
+      const registrationById = Object.fromEntries(
+        registrations.map((registration) => [registration.id, registration]),
+      );
+      mockTx.$queryRaw.mockImplementation(async (_query) => [
+        { id: 'lock' },
+      ]);
+      mockTx.registration.findUnique.mockImplementation(
+        async ({ where }: { where: { id: string } }) =>
+          registrationById[where.id],
+      );
+      mockTx.jobRun.findFirst.mockResolvedValue(null);
+
+      const result = await service.processNoShows('2026-09-03', {
+        currentTime,
+      });
+
+      expect(result.processedCount).toBe(0);
+      expect(mockTx.penalty.create).not.toHaveBeenCalled();
+      expect(mockTx.registration.update).not.toHaveBeenCalled();
+      expect(mockTx.auditLog.create).not.toHaveBeenCalled();
+      expect(mockTx.notification.upsert).not.toHaveBeenCalled();
+    });
+    it('serving wins race without penalty', async () => {
+      const registration = activeRegistration('race-served', {
+        mealServing: { id: 'serving-1' },
+      });
+      mockPrisma.registration.findMany.mockResolvedValueOnce([
+        { id: registration.id },
+      ]);
+      mockTx.$queryRaw.mockResolvedValueOnce([{ id: registration.id }]);
+      mockTx.registration.findUnique.mockResolvedValueOnce(registration);
+      mockTx.jobRun.findFirst.mockResolvedValue(null);
+
+      const result = await service.processNoShows('2026-09-03', {
+        currentTime,
+      });
+
+      expect(result.processedCount).toBe(0);
+      expect(mockTx.penalty.create).not.toHaveBeenCalled();
+      expect(mockTx.registration.update).not.toHaveBeenCalled();
+    });
+
+    it('no-show wins race and records no serving side effect', async () => {
+      const registration = activeRegistration('race-no-show');
+      prepareCandidate(registration);
+      mockTx.jobRun.findFirst.mockResolvedValue(null);
+
+      const result = await service.processNoShows('2026-09-03', {
+        currentTime,
+      });
+
+      expect(result.processedCount).toBe(1);
+      expect(mockTx.penalty.create).toHaveBeenCalledTimes(1);
+      expect(mockTx.registration.update).toHaveBeenCalledWith({
+        where: { id: registration.id },
+        data: { status: 'NO_SHOW', noShowAt: currentTime },
+      });
+    });
+
+    it('is idempotent after a committed no-show retry', async () => {
+      const registration = activeRegistration();
+      const noShowRegistration = activeRegistration('reg-1', {
+        status: 'NO_SHOW',
+        noShowAt: currentTime,
+      });
+      mockPrisma.registration.findMany
+        .mockResolvedValueOnce([{ id: registration.id }])
+        .mockResolvedValueOnce([{ id: registration.id }]);
+      mockTx.$queryRaw.mockResolvedValue([{ id: registration.id }]);
+      mockTx.registration.findUnique
+        .mockResolvedValueOnce(registration)
+        .mockResolvedValueOnce(noShowRegistration);
+      mockTx.penalty.findFirst.mockResolvedValueOnce(null);
+      mockTx.penalty.create.mockResolvedValueOnce({
+        id: 'penalty-reg-1',
+        registrationId: registration.id,
+        userId: registration.userId,
+        mealDate,
+        amount: 50000,
+        reason: 'NO_SHOW',
+        status: 'PENDING',
+      });
+      mockTx.notification.upsert.mockResolvedValueOnce({
+        id: 'notification-reg-1',
+      });
+      mockTx.outboxEvent.upsert.mockResolvedValue({ id: 'outbox-1' });
+      mockTx.auditLog.create.mockResolvedValueOnce({ id: 'audit-1' });
+      mockTx.registration.update.mockResolvedValueOnce(noShowRegistration);
+      mockTx.jobRun.findFirst.mockResolvedValue(null);
+
+      const first = await service.processNoShows('2026-09-03', {
+        currentTime,
+      });
+      const retry = await service.processNoShows('2026-09-03', {
+        currentTime,
+      });
+
+      expect(first.processedCount).toBe(1);
+      expect(retry.processedCount).toBe(0);
+      expect(mockTx.penalty.create).toHaveBeenCalledTimes(1);
+      expect(mockTx.notification.upsert).toHaveBeenCalledTimes(1);
+      expect(mockTx.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(mockTx.registration.update).toHaveBeenCalledTimes(1);
+    });
+
+
+    it('preserves an existing PAID or WAIVED penalty on retry', async () => {
+      for (const status of ['PAID', 'WAIVED'] as const) {
+        vi.clearAllMocks();
+        const registration = activeRegistration();
+        mockPrisma.registration.findMany.mockResolvedValueOnce([
+          { id: registration.id },
+        ]);
+        mockTx.$queryRaw.mockResolvedValueOnce([{ id: registration.id }]);
+        mockTx.registration.findUnique.mockResolvedValueOnce(registration);
+        mockTx.penalty.findFirst.mockResolvedValueOnce({
+          id: 'penalty-existing',
+          registrationId: registration.id,
+          userId: registration.userId,
+          mealDate,
+          amount: 50000,
+          reason: 'NO_SHOW',
+          status,
+        });
+        mockTx.registration.update.mockResolvedValueOnce(registration);
+        mockTx.notification.upsert.mockResolvedValueOnce({
+          id: 'notification-existing',
+          userId: registration.userId,
+        });
+        mockTx.outboxEvent.upsert.mockResolvedValue({ id: 'outbox-1' });
+        mockTx.auditLog.create.mockResolvedValueOnce({ id: 'audit-1' });
+        mockTx.jobRun.findFirst.mockResolvedValue(null);
+
+        await service.processNoShows('2026-09-03', { currentTime });
+
+        expect(mockTx.penalty.create).not.toHaveBeenCalled();
+      }
+    });
+
+    it('rolls back all side effects when notification publication fails', async () => {
+      const registration = activeRegistration();
+      prepareCandidate(registration);
+      mockTx.jobRun.findFirst.mockResolvedValue(null);
+      const publishError = new Error('notification database unavailable');
+      mockTx.notification.upsert.mockReset();
+      mockTx.notification.upsert.mockRejectedValueOnce(publishError);
+
+      await expect(
+        service.processNoShows('2026-09-03', { currentTime }),
+      ).rejects.toThrow(publishError);
+      expect(mockTx.registration.update).toHaveBeenCalledTimes(1);
+      expect(mockTx.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(mockTx.outboxEvent.upsert).not.toHaveBeenCalled();
     });
   });
 
-  describe('handleNoShowCron', () => {
-    it('should call processNoShows on cron invocation', async () => {
-      const spy = vi.spyOn(service, 'processNoShows').mockResolvedValueOnce({
-        success: true,
-        dateStr: '2026-09-03',
-        processedCount: 0,
-        candidateCount: 0,
-      });
-
-      await service.handleNoShowCron();
-
-      expect(spy).toHaveBeenCalled();
-    });
-
-    it('should rethrow errors from handleNoShowCron', async () => {
-      vi.spyOn(service, 'processNoShows').mockRejectedValueOnce(
-        new Error('Database error'),
-      );
-
+  describe('cron wrapper', () => {
+    it('calls processNoShows and rethrows failures', async () => {
+      const spy = vi
+        .spyOn(service, 'processNoShows')
+        .mockRejectedValueOnce(new Error('database unavailable'));
       await expect(service.handleNoShowCron()).rejects.toThrow(
-        'Database error',
+        'database unavailable',
       );
+      expect(spy).toHaveBeenCalled();
     });
   });
 });

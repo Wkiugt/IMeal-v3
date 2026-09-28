@@ -20,6 +20,7 @@ const mockPrisma = {
 };
 
 const mockTx = {
+  $queryRaw: vi.fn(),
   penalty: {
     findUnique: vi.fn(),
     update: vi.fn(),
@@ -29,15 +30,19 @@ const mockTx = {
   },
 };
 
-vi.mock('@prisma/client', () => {
-  return {
-    PrismaClient: class {
-      constructor() {
-        return mockPrisma;
-      }
-    },
-  };
-});
+vi.mock('@prisma/client', () => ({
+  PrismaClient: class {
+    constructor() {
+      return mockPrisma;
+    }
+  },
+  Prisma: {
+    sql: vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => ({
+      strings,
+      values,
+    })),
+  },
+}));
 
 describe('PenaltiesService', () => {
   let service: PenaltiesService;
@@ -58,8 +63,10 @@ describe('PenaltiesService', () => {
         {
           id: 'pen-1',
           userId: 'user-1',
+          registrationId: 'reg-1',
+          mealDate: new Date('2026-09-01T00:00:00.000Z'),
           amount: 50000,
-          reason: 'NO_SHOW_PENALTY_2026-09-01',
+          reason: 'NO_SHOW',
           status: 'PENDING',
           paidAt: null,
           waivedAt: null,
@@ -105,6 +112,8 @@ describe('PenaltiesService', () => {
       expect(result.items).toHaveLength(1);
       expect(result.items[0].userName).toBe('Minh Anh');
       expect(result.items[0].status).toBe('PENDING');
+      expect(result.items[0].registrationId).toBe('reg-1');
+      expect(result.items[0].mealDate).toBe('2026-09-01');
       expect(result.metrics.totalInvoiced).toBe(100000);
       expect(result.metrics.outstandingAmount).toBe(50000);
       expect(result.metrics.pendingCount).toBe(1);
@@ -181,6 +190,9 @@ describe('PenaltiesService', () => {
         }),
         include: expect.any(Object),
       });
+      expect(mockTx.$queryRaw).toHaveBeenCalledWith(
+        expect.objectContaining({ values: ['pen-1'] }),
+      );
       expect(mockTx.auditLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           action: 'PENALTY_PAID',

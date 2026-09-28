@@ -1,13 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable, Logger, Optional } from '@nestjs/common';
+import { PrismaClient, Prisma, type JobRunStatus } from '@prisma/client';
 import { Cron } from '@nestjs/schedule';
-import { PrismaClient } from '@prisma/client';
 import { WorkerNotificationPublisher } from './worker-notification-publisher.js';
 
 export interface ProcessNoShowsOptions {
   force?: boolean;
   currentTime?: Date;
 }
+
+type NoShowResult = 'PROCESSED' | 'SKIPPED';
 
 @Injectable()
 export class NoShowWorkerService {
@@ -84,97 +86,213 @@ export class NoShowWorkerService {
     }
 
     const targetDate = new Date(`${dateStr}T00:00:00.000Z`);
-
-    // 1. Fetch active registrations without meal serving for targetDate
     const candidates = await this.prisma.registration.findMany({
       where: {
         mealDate: targetDate,
         status: 'ACTIVE',
+        user: { isActive: true },
         mealServing: null,
       },
+      select: { id: true },
+      orderBy: { id: 'asc' },
     });
+    const candidateIds = candidates
+      .map((candidate) => candidate.id)
+      .sort((left, right) => left.localeCompare(right));
 
     this.logger.log(
-      `Found ${candidates.length} active registration candidate(s) for no-show processing on ${dateStr}`,
+      `Found ${candidateIds.length} active registration candidate(s) for no-show processing on ${dateStr}`,
     );
 
     let processedCount = 0;
+    const failures: unknown[] = [];
 
-    // 2. Transactional processing and idempotency enforcement
-    await this.prisma.$transaction(async (tx) => {
-      for (const reg of candidates) {
-        // Re-verify status = 'ACTIVE' and mealServing is null
-        const currentReg = await tx.registration.findUnique({
-          where: { id: reg.id },
-          include: { mealServing: true },
-        });
-
-        if (
-          !currentReg ||
-          currentReg.status !== 'ACTIVE' ||
-          currentReg.mealServing !== null
-        ) {
-          this.logger.warn(
-            `Registration ${reg.id} is no longer eligible for no-show (status: ${currentReg?.status}, served: ${!!currentReg?.mealServing})`,
-          );
-          continue;
+    for (const registrationId of candidateIds) {
+      try {
+        const result = await this.processRegistrationNoShow(
+          registrationId,
+          dateStr,
+          now,
+        );
+        if (result === 'PROCESSED') {
+          processedCount += 1;
         }
+      } catch (error) {
+        failures.push(error);
+        this.logger.error(
+          `No-show transaction failed for registration ${registrationId}`,
+          error,
+        );
+      }
+    }
 
-        // Update registration status to NO_SHOW
-        await tx.registration.update({
-          where: { id: reg.id },
-          data: { status: 'NO_SHOW' },
-        });
+    try {
+      await this.recordJobRun(
+        dateStr,
+        failures.length === 0 ? 'COMPLETED' : 'FAILED',
+      );
+    } catch (error) {
+      failures.push(error);
+      this.logger.error(`No-show job bookkeeping failed for ${dateStr}`, error);
+    }
 
-        // Idempotently create Penalty (50,000 VND)
-        const penaltyReason = `NO_SHOW_PENALTY_${dateStr}_${reg.id}`;
-        const existingPenalty = await tx.penalty.findFirst({
-          where: {
-            userId: reg.userId,
-            reason: penaltyReason,
-          },
-        });
+    if (failures.length > 0) {
+      throw failures[0];
+    }
 
-        const penalty =
-          existingPenalty ??
-          (await tx.penalty.create({
-            data: {
-              id: randomUUID(),
-              userId: reg.userId,
-              amount: 50000,
-              reason: penaltyReason,
-            },
-          }));
+    this.logger.log(
+      `Successfully completed no-show processing for ${dateStr}. Processed: ${processedCount}/${candidateIds.length}`,
+    );
 
-        await this.notificationPublisher.publish(tx, {
-          userId: reg.userId,
-          kind: 'NO_SHOW_PENALTY_CREATED',
-          payload: {
-            penaltyId: penalty.id,
-            registrationId: reg.id,
-            mealDate: dateStr,
-            amount: 50000,
-          },
-          dedupeKey: `no-show-penalty:${reg.userId}:${reg.id}`,
-        });
+    return {
+      success: true,
+      dateStr,
+      processedCount,
+      candidateCount: candidateIds.length,
+    };
+  }
 
-        await tx.auditLog.create({
-          data: {
-            id: randomUUID(),
-            action: 'NO_SHOW_PROCESSED',
-            userId: reg.userId,
-            details: JSON.stringify({
-              registrationId: reg.id,
-              mealDate: dateStr,
-              amount: 50000,
-            }),
-          },
-        });
+  private async processRegistrationNoShow(
+    registrationId: string,
+    dateStr: string,
+    now: Date,
+  ): Promise<NoShowResult> {
+    return this.prisma.$transaction(async (tx) => {
+      const lockedRegistration = await tx.$queryRaw<Array<{ id: string }>>(
+        Prisma.sql`
+          SELECT r.id
+          FROM registrations AS r
+          INNER JOIN users AS u ON u.id = r.user_id
+          WHERE r.id = ${registrationId}
+          FOR UPDATE OF r, u
+        `,
+      );
 
-        processedCount++;
+      if (lockedRegistration.length === 0) {
+        return 'SKIPPED';
       }
 
-      // Creates/updates JobRun
+      const registration = await tx.registration.findUnique({
+        where: { id: registrationId },
+        include: {
+          user: { select: { isActive: true } },
+          mealServing: true,
+        },
+      });
+
+      const { currentHour, currentMinute } = this.getVietnamTime(now);
+      const eligibleAt1330 =
+        currentHour > 13 || (currentHour === 13 && currentMinute >= 30);
+      const registrationDate = registration?.mealDate
+        .toISOString()
+        .slice(0, 10);
+
+      if (
+        !registration ||
+        registration.status !== 'ACTIVE' ||
+        registration.mealServing !== null ||
+        registration.user.isActive !== true ||
+        registrationDate !== dateStr ||
+        !eligibleAt1330
+      ) {
+        return 'SKIPPED';
+      }
+
+      await tx.$queryRaw(
+        Prisma.sql`
+          SELECT id
+          FROM penalties
+          WHERE registration_id = ${registrationId}
+          FOR UPDATE
+        `,
+      );
+      const existingPenalty = await tx.penalty.findFirst({
+        where: { registrationId },
+      });
+
+      let penalty = existingPenalty;
+      if (penalty) {
+        const penaltyDate = penalty.mealDate?.toISOString().slice(0, 10);
+        if (
+          penalty.userId !== registration.userId ||
+          penaltyDate !== dateStr ||
+          penalty.amount !== 50000 ||
+          penalty.reason !== 'NO_SHOW'
+        ) {
+          throw new Error(
+            `No-show penalty invariant mismatch for registration ${registrationId}`,
+          );
+        }
+      } else {
+        penalty = await tx.penalty.create({
+          data: {
+            id: randomUUID(),
+            registrationId,
+            userId: registration.userId,
+            mealDate: registration.mealDate,
+            amount: 50000,
+            reason: 'NO_SHOW',
+            status: 'PENDING',
+          },
+        });
+      }
+
+      await tx.registration.update({
+        where: { id: registrationId },
+        data: { status: 'NO_SHOW', noShowAt: now },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          id: randomUUID(),
+          action: 'NO_SHOW_PROCESSED',
+          userId: registration.userId,
+          details: JSON.stringify({
+            registrationId,
+            mealDate: dateStr,
+            amount: 50000,
+          }),
+        },
+      });
+
+      await this.notificationPublisher.publish(tx, {
+        userId: registration.userId,
+        kind: 'NO_SHOW_PENALTY_CREATED',
+        payload: {
+          penaltyId: penalty.id,
+          registrationId,
+          mealDate: dateStr,
+          amount: 50000,
+        },
+        dedupeKey: `no-show-penalty:${registration.userId}:${registrationId}`,
+      });
+
+      await tx.outboxEvent.upsert({
+        where: { dedupeKey: `kitchen:no-show:${registrationId}` },
+        update: {},
+        create: {
+          id: randomUUID(),
+          aggregateType: 'REGISTRATION',
+          aggregateId: registrationId,
+          eventType: 'NO_SHOW_RECONCILED',
+          payload: JSON.stringify({
+            registrationId,
+            mealDate: dateStr,
+            penaltyId: penalty.id,
+          }),
+          dedupeKey: `kitchen:no-show:${registrationId}`,
+        },
+      });
+
+      return 'PROCESSED';
+    });
+  }
+
+  private async recordJobRun(
+    dateStr: string,
+    status: JobRunStatus,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
       const jobName = `no_show_worker_${dateStr}`;
       const existingJob = await tx.jobRun.findFirst({
         where: { jobName },
@@ -184,7 +302,7 @@ export class NoShowWorkerService {
         await tx.jobRun.update({
           where: { id: existingJob.id },
           data: {
-            status: 'COMPLETED',
+            status,
             completedAt: new Date(),
           },
         });
@@ -193,22 +311,11 @@ export class NoShowWorkerService {
           data: {
             id: randomUUID(),
             jobName,
-            status: 'COMPLETED',
+            status,
             completedAt: new Date(),
           },
         });
       }
     });
-
-    this.logger.log(
-      `Successfully completed no-show processing for ${dateStr}. Processed: ${processedCount}/${candidates.length}`,
-    );
-
-    return {
-      success: true,
-      dateStr,
-      processedCount,
-      candidateCount: candidates.length,
-    };
   }
 }
