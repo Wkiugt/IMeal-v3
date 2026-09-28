@@ -67,4 +67,4 @@ DONE_WITH_CONCERNS
 
 ### Review-fix commit
 
-`808f71f8d9cd31a7a5d172811358563642dd71cc` (`fix(api): canonicalize pickup menu revision checks`)
+`808f71f7c791ccc76e6492044b5ffdc7e8c6188a` (`fix(api): canonicalize pickup menu revision checks`)
