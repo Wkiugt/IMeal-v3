@@ -11,7 +11,10 @@ node_modules
 *.log
 .env
 .env.*
-!/.env.example
+/run/imeal/
+**/run/imeal/
+**/migration-gate.json
+**/*.migration-evidence.json
 apps/admin-web/penalties-preview.html
 apps/admin-web/preview.html
 **/*.tsbuildinfo

@@ -1,0 +1,37 @@
+{
+    email {$ACME_EMAIL}
+}
+
+# Caddy's automatic HTTPS handles certificate issuance for the named site. Keep
+# an explicit redirect so cleartext requests cannot reach an upstream directly.
+http://{$PUBLIC_HOSTNAME} {
+    redir https://{$PUBLIC_HOSTNAME}{uri} permanent
+}
+
+{$PUBLIC_HOSTNAME} {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src 'self'; connect-src 'self' https: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    }
+
+    @api path /api/* /auth/* /registrations/* /admin/* /v1/* /internal/*
+    handle @api {
+        # flush_interval -1 keeps server-sent events flowing; WebSocket
+        # upgrades are handled automatically by reverse_proxy.
+        reverse_proxy api:3000 {
+            flush_interval -1
+        }
+    }
+
+    # All non-API paths are the admin SPA. There is deliberately no public
+    # /storage route; object storage stays on the data network.
+    handle {
+        reverse_proxy admin-web:80 {
+            flush_interval -1
+        }
+    }
+}
