@@ -70,12 +70,12 @@ The production-hardening plan is being executed one task at a time. Completed wo
 
 ## Task 7 completion
 
-- Task 7: complete (initial commit `578e7f6`; review fix `ef745fe`; report `.superpowers/sdd/production-hardening-plan/task-7-report.md`).
-- Added explicit idempotent SIGTERM/SIGINT signal boundaries that begin drain, wait bounded in-flight work, and invoke `app.close()` only afterward; Prisma remains lifecycle-managed after the wait.
-- Added signal order/idempotence integration tests proving health-visible draining before app close/Prisma teardown for duplicate SIGTERM/SIGINT events.
-- API focused shutdown/health tests: 12/12; worker focused shutdown/health tests: 11/11; full API suite: 269/269; full worker suite: 92/92; API/worker builds and typechecks passed; scoped Prettier and `git diff --check` passed.
+- Task 7: complete (initial commit `578e7f6`; review fix 1 `ef745fe`; review fix 2 `a17f65d`; report `.superpowers/sdd/production-hardening-plan/task-7-report.md`).
+- Explicit SIGTERM/SIGINT boundaries begin drain, wait bounded in-flight work, wait for listen readiness, and invoke `app.close()` only afterward; successful close disposes listeners, failed close reports safely and permits retry.
+- Added signal order/idempotence integration tests proving pre-listen ordering, health-visible draining before app close/Prisma teardown, listener cleanup, close rejection/retry, and mixed-signal coalescing.
+- API focused shutdown/health tests: 14/14; worker focused shutdown/health tests: 13/13; full API suite: 271/271; full worker suite: 94/94; API/worker builds and typechecks passed; scoped Prettier and `git diff --check` passed.
 - API bounded HTTP/SSE and worker cron/provider admission, immediate health drain readiness, and post-listen scheduler readiness remain covered.
-- Review status: fix round 1 complete; spec compliance PASS; quality PASS; safe to stop before Task 8.
+- Review status: fix rounds 1–2 complete; spec compliance PASS; quality PASS; safe to stop before Task 8.
 
 ## Remaining tasks
 

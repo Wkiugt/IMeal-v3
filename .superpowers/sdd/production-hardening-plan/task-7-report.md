@@ -2,7 +2,7 @@
 
 ## Status
 
-COMPLETE — initial implementation `578e7f6` plus review fix `ef745fe` (`fix: drain before Nest teardown on signals`). Task 8 remains not started.
+COMPLETE — initial implementation `578e7f6`, review fix 1 `ef745fe`, and review fix 2 `a17f65d` (`fix: coordinate shutdown with startup readiness`). Task 8 remains not started.
 
 ## Scope
 
@@ -17,10 +17,10 @@ COMPLETE — initial implementation `578e7f6` plus review fix `ef745fe` (`fix: d
 
 ## Verification
 
-- `yarn workspace @imeal/api test --run src/common/shutdown-coordinator.spec.ts src/health` — 3 files, 12/12 passed.
-- `yarn workspace @imeal/worker test --run src/shutdown-coordinator.spec.ts src/health` — 3 files, 11/11 passed.
-- `yarn workspace @imeal/api test --run` — 28 files, 269/269 passed.
-- `yarn workspace @imeal/worker test --run` — 10 files, 92/92 passed.
+- `yarn workspace @imeal/api test --run src/common/shutdown-coordinator.spec.ts src/health` — 3 files, 14/14 passed.
+- `yarn workspace @imeal/worker test --run src/shutdown-coordinator.spec.ts src/health` — 3 files, 13/13 passed.
+- `yarn workspace @imeal/api test --run` — 28 files, 271/271 passed.
+- `yarn workspace @imeal/worker test --run` — 10 files, 94/94 passed.
 - `yarn workspace @imeal/api build` — passed.
 - `yarn workspace @imeal/worker build` — passed.
 - API and worker `tsc --noEmit -p tsconfig.json` — passed.
@@ -31,6 +31,13 @@ COMPLETE — initial implementation `578e7f6` plus review fix `ef745fe` (`fix: d
 - Blocker fixed: the signal boundary now calls `beginDrain()` before any Nest `app.close()` lifecycle teardown, so in-flight HTTP/SSE or worker job/provider work drains before Prisma disconnect.
 - `SIGTERM` and `SIGINT` use one idempotent shared close promise, and repeated same/different signals cannot invoke `app.close()` more than once.
 - Added API and worker integration/order tests that emit both signals with registered in-flight work, prove health-visible drain state before close, prove app-close/Prisma teardown ordering, and verify handler idempotence.
+
+## Review fix round 2
+
+- Fixed bootstrap handler lifecycle ownership: each bootstrap retains the disposer, successful `app.close()` removes both signal listeners, and listen failure disposes them.
+- Added a listen-readiness barrier. Signals begin drain immediately, wait for bounded in-flight work, then wait for `app.listen()` readiness before calling `app.close()`.
+- Close failures report through the safe structured error callback, clear the cached shutdown promise, and retain listeners for a later retry; mixed and repeated signals remain coalesced while a close attempt is active.
+- Added API and worker tests for pre-listen signal ordering, successful listener cleanup, close rejection/retry, and mixed-signal idempotence.
 
 ## Task 6 re-review
 
