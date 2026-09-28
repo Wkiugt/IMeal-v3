@@ -430,9 +430,12 @@ Centralized logs/metrics/alerts <--- Caddy/API/Worker/DB
    suites against the representative staging dataset.
 2. Remediate or explicitly quarantine every dirty local/staging legacy gap;
    do not infer snapshots, merge penalties or validate unresolved checks.
-3. Resolve the five full-domain local-seed/concurrency failures and the mobile
-   typecheck blockers (`expo-location`, `nextLocation` implicit-any and stale
-   `menuRevisionId` fixtures) before release sign-off.
+3. Retain the historical pre-75 full-domain five-failure and mobile typecheck
+   blocker results as superseded audit evidence. Fresh Step 1 evidence at HEAD
+   `75a9d71` is green: core focused 42/42; core full serial 93/93 with
+   `--maxWorkers 1`; API e2e 45/45 plus production concurrency 12/12; worker
+   e2e 5/5; `yarn typecheck` and mobile tsc pass after `yarn install --immutable`.
+   This does not replace the staging/representative-data or release gates.
 4. Tách Compose local khỏi production: private DB/PgBouncer/MinIO, disable public bucket, bỏ MD5/plain/default auth, pin images, sửa `apps/admin-web/Dockerfile`.
 5. Cấu hình Caddy TLS thật và kiểm thử API/Admin/mobile từ production-like hostname; xác nhận CORS/origin.
 6. Thiết lập backup encrypted offsite + restore rehearsal trước khi nạp dữ liệu thật; record RPO/RTO, rollback authority and decision window.
@@ -445,11 +448,14 @@ Centralized logs/metrics/alerts <--- Caddy/API/Worker/DB
 
 IMeal đã có implementation và local/disposable evidence cho ba finding
 Workstream A: immutable registration snapshots, canonical Kitchen dashboard
-projection và lock-safe no-show/penalty processing. Tuy nhiên đây chưa phải
-production product hoàn chỉnh: dirty local data chưa được approved/remediated,
-staging `DATABASE_URL` và representative staging sign-off chưa có, full domain
-suite còn năm failure, mobile typecheck còn blocker, và hạ tầng
-security/backup/observability/release evidence vẫn thiếu. Vì vậy quyết định
-vẫn là **NO-GO**; chỉ sau khi staging preflight/backfill/validation, full
-verification, backup/restore, security and product gates được phê duyệt mới
+projection và lock-safe no-show/penalty processing. Fresh Step 1 verification
+at HEAD `75a9d71` is green for the listed local suites; the historical pre-75
+failure/blocker results remain explicitly superseded audit evidence. Tuy nhiên
+đây chưa phải production product hoàn chỉnh: dirty local data chưa được
+approved/remediated, staging `DATABASE_URL` và representative staging sign-off
+chưa có, independent approval/audit chưa có, backup/restore rehearsal và named
+rollback authority chưa có, production/UAT/security/observability/release
+evidence vẫn thiếu. Vì vậy quyết định vẫn là **NO-GO**; chỉ sau khi staging
+preflight/backfill/validation, independent approval, backup/restore,
+rollback-authority, full verification and product/UAT gates được phê duyệt mới
 được pilot một canteen rồi mở rộng lần lượt tới đủ bốn canteen.
