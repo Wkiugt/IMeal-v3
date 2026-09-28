@@ -94,7 +94,7 @@ erDiagram
     PICKUP_SESSION ||--o{ SERVING_VERIFICATION : verifies
     SERVING_CONFIRM_REQUEST ||--o{ MEAL_SERVING : creates
     USER ||--o{ PICKUP_DELEGATION : delegate
-    REGISTRATION ||--o{ MEAL_SERVING : serving_attempts
+    REGISTRATION ||--o| MEAL_SERVING : served_by
     USER ||--o{ MEAL_SERVING : receiver
     USER ||--o{ MEAL_SERVING : kitchen_actor
     LOCATION ||--o{ MEAL_SERVING : served_at
@@ -1014,24 +1014,45 @@ Canonical history retention is **1 year** for meal lifecycle/business audit data
    foreign keys and `NOT VALID` checks only; it does not insert operational
    rows or validate unresolved legacy data.
 3. Run the read-only seven-check preflight and obtain an external approval
-   record. Abort before backfill if any future ACTIVE snapshot is incomplete,
-   status/serving mismatch exists, roster assignment is ambiguous, menu
-   revision is unverified, or penalty mapping is ambiguous/duplicate.
-4. Run `backfill.sql` only after approval. It updates only exact one-to-one
-   roster/location, verified immutable menu JSON and documented penalty
-   identities; it never invents migration timestamps, current values, rows or
-   penalty merges.
-5. Re-run preflight, require operational checks to be zero, then validate
-   `registration_lifecycle_snapshot_complete` and
+   record. The roster check must resolve exactly one active, date-effective
+   assignment and exactly one active, date-effective location for each
+   in-scope registration. Abort before backfill if any future ACTIVE snapshot
+   is incomplete, status/serving mismatch exists, roster/location resolution
+   is ambiguous or invalid, menu revision is unverified, or penalty mapping
+   is ambiguous/duplicate.
+   The rollout scope is explicit: a registration is operational when
+   `status <> 'CANCELLED' OR meal_date >= current business date in
+   Asia/Ho_Chi_Minh`; only `CANCELLED` rows before that business date are
+   legacy history permitted to retain nullable snapshots. The
+   `registration_serving_mismatch` check still evaluates every status and
+   always blocks.
+4. Run `backfill.sql` only after the clean preflight and an independent
+   approval record. Use the target-safe container wrapper: set the intended
+   schema explicitly in the same `psql` session, assert `current_schema()` is
+   that schema, pass `-v ON_ERROR_STOP=1`, then `-f backfill.sql`; never run
+   against dirty `public`. It updates only exact one-to-one roster/location,
+   verified immutable menu JSON and documented penalty identities; it never
+   invents migration timestamps, current values, rows or penalty merges.
+5. Re-run the target-safe preflight, require operational checks to be zero,
+   then validate `registration_lifecycle_snapshot_complete` and
    `registration_serving_consistency`. Keep unresolved legacy cancelled/history
-   rows visible in the report and quarantined from pickup.
+   rows visible in the report and quarantined from pickup. If post-backfill
+   preflight is nonzero or validation fails, cutover stays blocked: quarantine
+   and remediate exact rows, or restore the approved backup under the named
+   rollback authority and decision window recorded for the target.
 6. Exercise focused/full contract, domain, API and worker suites before
    application cutover, then smoke the exact registration, pickup, dashboard
    and no-show paths. Emit no production sign-off from local-only evidence.
-7. Rollback/abort means stop before backfill or validation, keep the old
-   application path compatible with the additive schema, and restore the
-   approved database backup only under the documented operator decision.
-  There is no destructive down migration or Firebase rollback path.
+7. On any post-backfill or verification failure, retain the additive schema on
+   staging while remediating (or discard only a disposable schema after
+   evidence capture); do not pretend there is a safe down migration. The old
+   compatible application and approved backup are the only rollback path, under
+   the documented operator decision; there is no Firebase rollback path.
+8. The local run below is **NOT COMPLETE / NO-GO**: it has no independent
+   approval/audit record, staging target, backup rehearsal or controlled
+   external artifact checksum.
+
+   [Task 9 brief](../.superpowers/sdd/2026-09-28-imeal-phase0-domain-correctness-plan/task-9-brief.md) · [Task 9 report](../.superpowers/sdd/2026-09-28-imeal-phase0-domain-correctness-plan/task-9-report.md)
 
 ### Observed Phase 0 rollout gate — 2026-09-28
 
@@ -1049,11 +1070,13 @@ production approval:
 - `DATABASE_URL=<disposable-local-url> yarn workspace @imeal/core exec prisma generate`
   and `... prisma validate` passed. The observed expanded fields, indexes,
   restrictive foreign keys and named `NOT VALID` checks match this document.
-- The containerized equivalent of
-  `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f .../preflight.sql` returned all
-  seven named checks and all four status counts at zero on the disposable
-  schema. Host `psql` was unavailable, so no staging command was claimed.
-- After that clean preflight approval gate, the containerized exact
+- Target-safe preflight used the same containerized session shape as the
+  disposable run, with explicit schema assertion and `ON_ERROR_STOP=1`:
+  `docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_task9_20260928153435; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_task9_20260928153435' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-preflight-task9-fix.sql`.
+  It returned all seven named checks and all four status counts at zero on the
+  disposable schema. The same wrapper was used for the exact backfill and
+  validation; host `psql` was unavailable, so no staging command was claimed.
+- The clean local preflight was not an approval record. The containerized exact
   `backfill.sql` returned `UPDATE 0`, `DO`, `UPDATE 0`, `UPDATE 0`, `COMMIT`;
   an immediate second run returned the same result. No operational row was
   inserted or merged.
@@ -1062,11 +1085,18 @@ production approval:
   registration_lifecycle_snapshot_complete` and
   `registration_serving_consistency` both passed; `pg_constraint.convalidated`
   was `true` for both.
-- The existing local public schema remains a NO-GO data set: preflight
-  observed 116 incomplete snapshots, 6 ambiguous roster assignments, 132
-  incomplete menu revisions, 40 incomplete future ACTIVE rows, and status
-  counts ACTIVE 66, CANCELLED 16, SERVED 40, NO_SHOW 10. No backfill or
+- The existing local public schema remains a NO-GO data set: under the
+  conservative scope (`status <> 'CANCELLED' OR meal_date >= current
+  Asia/Ho_Chi_Minh business date`), preflight observed 132 incomplete
+  snapshots, 6 ambiguous/effectively invalid roster assignments, 132
+  incomplete menu revisions and 40 incomplete future ACTIVE rows; status
+  counts were ACTIVE 66, CANCELLED 16, SERVED 40, NO_SHOW 10. The
+  `registration_serving_mismatch` check evaluates all statuses. No backfill or
   validation was run there.
+- A representative disposable fixture with an inactive/future-effective
+  location assignment produced `roster_assignment_ambiguous = 1` for
+  `registration-invalid-location`; the abort gate therefore prevented
+  backfill on that fixture.
 - Focused migration/concurrency evidence passed (contracts 37 tests; domain
   migration/concurrency 29 tests; API units 219; worker units 56; API
   PostgreSQL e2e 76; worker PostgreSQL e2e 6). The complete domain run still

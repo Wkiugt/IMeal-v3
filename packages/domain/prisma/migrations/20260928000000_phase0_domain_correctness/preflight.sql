@@ -4,12 +4,27 @@ SET LOCAL statement_timeout = '30s';
 
 -- Report label only: no-show eligibility begins at server time 13:30 in
 -- Asia/Ho_Chi_Minh. This preflight never marks rows no-show.
+-- Rollout scope is conservative and explicit: every non-CANCELLED row and
+-- every CANCELLED row on or after the current business date is operational.
+-- Only CANCELLED rows before the business date are legacy history and may
+-- retain nullable snapshots. The status result set below still reports every
+-- row for audit visibility.
 WITH
+rollout_business_date AS (
+  SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS business_date
+),
+rollout_registration_scope AS (
+  SELECT r.id
+  FROM registrations AS r
+  CROSS JOIN rollout_business_date AS d
+  WHERE r.status <> 'CANCELLED'
+     OR r.meal_date >= d.business_date
+),
 registration_snapshot_incomplete_affected AS (
   SELECT r.id
   FROM registrations AS r
-  WHERE r.status <> 'CANCELLED'
-    AND (
+  JOIN rollout_registration_scope AS scope ON scope.id = r.id
+  WHERE (
       r.registered_at IS NULL
       OR r.menu_revision_id IS NULL
       OR r.menu_name_snapshot IS NULL
@@ -55,13 +70,20 @@ registration_serving_mismatch_summary AS (
 roster_assignment_ambiguous_affected AS (
   SELECT r.id
   FROM registrations AS r
+  JOIN rollout_registration_scope AS scope ON scope.id = r.id
   LEFT JOIN employee_location_assignments AS ela
     ON ela.user_id = r.user_id
    AND ela.is_active
    AND ela.effective_from <= r.meal_date
    AND (ela.effective_to IS NULL OR ela.effective_to > r.meal_date)
+  LEFT JOIN locations AS loc
+    ON loc.id = ela.location_id
+   AND loc.is_active
+   AND loc.effective_from <= r.meal_date
+   AND (loc.effective_to IS NULL OR loc.effective_to > r.meal_date)
   GROUP BY r.id
   HAVING count(ela.id) <> 1
+      OR count(loc.id) <> 1
 ),
 roster_assignment_ambiguous_summary AS (
   SELECT count(*)::int AS affected_count,
@@ -76,6 +98,7 @@ roster_assignment_ambiguous_summary AS (
 menu_revision_incomplete_affected AS (
   SELECT r.id
   FROM registrations AS r
+  JOIN rollout_registration_scope AS scope ON scope.id = r.id
   LEFT JOIN daily_menu_revisions AS dmr ON dmr.id = r.menu_revision_id
   LEFT JOIN daily_menus AS dm ON dm.id = dmr.daily_menu_id
   WHERE dmr.id IS NULL

@@ -11,6 +11,10 @@ Execute the Phase 0 rollout evidence sequence on a disposable/local PostgreSQL t
 5. Focused and full contract/domain/API/worker verification, recording blockers without fabrication.
 6. Update only canonical rollout/backend/product-flow/readiness documents from observed evidence. Do not change product behavior, client realtime/infrastructure/P1 scope, or `progress.md`.
 
+Current gate state: **NOT COMPLETE / NO-GO**. Local/disposable evidence is
+implementation evidence only; no independent approval or staging/production
+sign-off is implied.
+
 ## Required evidence
 
 - Actual migration field/index/FK/check behavior and row-preserving/no-seed result.
@@ -23,8 +27,18 @@ Execute the Phase 0 rollout evidence sequence on a disposable/local PostgreSQL t
 
 ## Safety gate
 
-Never run backfill or validation against the existing dirty local public schema. Use a disposable schema/database; treat any nonzero operational preflight as NO-GO until an approved remediation exists. Do not claim staging or production deployment, backup/restore, secrets, or mobile verification without observed evidence.
+Never run backfill or validation against the existing dirty local public schema.
+Use a disposable schema/database and a target-safe `psql` wrapper that sets the
+intended `search_path` in the same session, asserts `current_schema()` matches
+that target, and passes `-v ON_ERROR_STOP=1` before `-f`-ing the SQL file.
+Treat any nonzero operational preflight as NO-GO until an approved remediation
+exists. Do not claim staging or production deployment, backup/restore, secrets,
+or mobile verification without observed evidence.
 
 ## Acceptance
 
-Create `task-9-report.md` with exact commands/results/blockers, update canonical docs with actual schema fields, compatibility/cutover order, invariants, rollback/abort conditions, and evidence links, then commit only this brief/report/docs. Do not modify `progress.md`.
+Create `task-9-report.md` with exact commands/results/blockers, update canonical
+docs with actual schema fields, compatibility/cutover order, invariants,
+rollback/abort conditions, and evidence links, and update the checked-in
+preflight/backfill SQL when review requires a predicate correction. Then commit
+only this brief/report/docs/rollout SQL. Do not modify `progress.md`.

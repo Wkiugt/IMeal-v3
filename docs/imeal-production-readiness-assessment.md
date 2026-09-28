@@ -221,28 +221,43 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
 6. **Backup/restore:** có encrypted offsite backup, restore rehearsal, RPO/RTO và runbook trước pilot.
 7. **Provisioning/identity:** hoàn tất allowlist, roster, role assignment, account disable/session revoke lifecycle; không có public fallback/local account.
 
-### Workstream A Task 9 rollout evidence and blockers
+### Workstream A Task 9 rollout evidence and blockers — NOT COMPLETE / NO-GO
 
-- Disposable expand/preflight/backfill/post-backfill validation passed. The
-  migration was row-preserving on an empty disposable schema; all seven
-  preflight checks and four status counts were zero before and after the
-  idempotent backfill, and both named constraints validated.
+- Disposable expand/preflight/backfill/post-backfill validation passed as local
+  implementation evidence. The migration was row-preserving on an empty
+  disposable schema; all seven preflight checks and four status counts were
+  zero before and after the idempotent backfill, and both named constraints
+  validated. This is not Workstream A closure or an approval record.
+- The rollout scope is `status <> 'CANCELLED' OR meal_date >= current business
+  date in Asia/Ho_Chi_Minh`; only earlier cancelled rows are legacy history
+  allowed nullable snapshots. Serving mismatches are checked for every status.
+  Roster resolution requires one active, date-effective assignment and
+  location.
 - The existing local public schema is intentionally not approval evidence:
-  preflight found 116 incomplete snapshots, 6 ambiguous roster assignments,
-  132 incomplete menu revisions and 40 incomplete future ACTIVE rows (status
-  counts ACTIVE 66, CANCELLED 16, SERVED 40, NO_SHOW 10). No backfill or
-  validation was run against it.
+  preflight found 132 incomplete snapshots, 6 ambiguous/effectively invalid
+  roster assignments, 132 incomplete menu revisions and 40 incomplete future
+  ACTIVE rows (status counts ACTIVE 66, CANCELLED 16, SERVED 40, NO_SHOW 10).
+  No backfill or validation was run against it.
+- A representative disposable invalid-location fixture classified
+  `roster_assignment_ambiguous=1` for
+  `registration-invalid-location`; the nonzero check aborted the gate and no
+  backfill was run on that fixture.
 - `DATABASE_URL` was missing from the ambient shell and no staging target was
   available; the observed PostgreSQL runs used an explicitly supplied local
-  disposable URL and containerized `psql` because host `psql` was unavailable.
+  disposable URL and target-safe containerized `psql` because host `psql` was
+  unavailable.
 - Focused contract/domain/API/worker suites and PostgreSQL race/e2e gates
   passed. The complete domain suite had five local-seed/concurrency failures,
   and `yarn typecheck` is blocked by the documented mobile
   `expo-location`/implicit-any/stale-`menuRevisionId` errors.
-- No backup/restore rehearsal, production secret/provider provisioning,
-  native-device/UAT, or staging approval was observed. Phase 0 remains
-  **NO-GO** until those independent gates and dirty-data remediation are
-  approved.
+- No independent approval/audit record, controlled external artifact/checksum,
+  backup/restore rehearsal, production secret/provider provisioning,
+  native-device/UAT, or staging approval was observed. If post-backfill
+  preflight, validation or verification fails, cutover stays blocked and rows
+  must be quarantined/remediated or the approved backup restored under the
+  target's named rollback authority and decision window; no down migration is
+  claimed.
+- See the [Task 9 brief](../.superpowers/sdd/2026-09-28-imeal-phase0-domain-correctness-plan/task-9-brief.md) and [Task 9 report](../.superpowers/sdd/2026-09-28-imeal-phase0-domain-correctness-plan/task-9-report.md). Phase 0 remains **NO-GO** until the independent gates and dirty-data remediation are approved.
 
 
 ### P1 — phải đóng trong pilot gate

@@ -2,15 +2,18 @@
 
 ## Status
 
-`DONE_WITH_CONCERNS`
+`NOT COMPLETE / NO-GO`
 
-The expand → read-only preflight approval → exact backfill → post-backfill
-validation sequence passed on a disposable local PostgreSQL schema. No staging
-or production rollout was attempted. The existing local public schema remains
-dirty and was not backfilled or constraint-validated.
+The expand → clean local preflight → exact backfill → post-backfill validation
+sequence passed on a disposable local PostgreSQL schema, but no independent
+approval or audit record was evidenced. This is implementation evidence only,
+not Workstream A closure or a staging/production approval. The existing local
+public schema remains dirty and was not backfilled or constraint-validated.
 
 ## Changed files
 
+- `packages/domain/prisma/migrations/20260928000000_phase0_domain_correctness/preflight.sql`
+- `packages/domain/prisma/migrations/20260928000000_phase0_domain_correctness/backfill.sql`
 - `.superpowers/sdd/2026-09-28-imeal-phase0-domain-correctness-plan/task-9-brief.md`
 - `.superpowers/sdd/2026-09-28-imeal-phase0-domain-correctness-plan/task-9-report.md`
 - `docs/05-backend-structure.md`
@@ -35,6 +38,12 @@ behavior files were modified.
 - A disposable schema named `phase0_task9_20260928153435` was created in the
   local database. The existing public schema was left untouched by backfill and
   validation.
+- A second disposable schema `phase0_task9_invalidloc_20260928160138` held
+  synthetic rows only for a representative inactive/future-effective location
+  assignment. It was used for preflight classification; backfill was not run
+  because the nonzero roster check is an abort condition.
+- No independent approval/audit reference, controlled external artifact or
+  checksum was observed for this local run; none is claimed.
 
 ## Rollout gate commands and observed results
 
@@ -59,16 +68,17 @@ columns, four named indexes and four named foreign-key/check constraints. Row
 counts were zero for `registrations`, `daily_menu_revisions`, `meal_days`,
 `meal_servings` and `penalties`; no operational row was inserted by expansion.
 
-### 2. Read-only preflight and approval gate
+### 2. Read-only preflight (approval not evidenced)
 
 Disposable command (containerized equivalent because host `psql` is absent):
 
 ```text
-docker exec develop-db-1 sh -c "psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c 'SET search_path TO phase0_task9_20260928153435' -f /tmp/phase0-preflight-task9.sql"
+docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_task9_20260928153435; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_task9_20260928153435' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-preflight-task9-fix.sql
 ```
 
-**PASS / APPROVED FOR DISPOSABLE BACKFILL.** The first result set contained the
-seven required checks, all with `affected_count=0` and `sample_ids={}`:
+**PRECHECK CLEAN; INDEPENDENT APPROVAL NOT EVIDENCED.** The first result set
+contained the seven required checks, all with `affected_count=0` and
+`sample_ids={}`:
 
 - `registration_snapshot_incomplete`
 - `registration_serving_mismatch`
@@ -79,27 +89,51 @@ seven required checks, all with `affected_count=0` and `sample_ids={}`:
 - `future_active_snapshot_incomplete`
 
 The second result set had `ACTIVE=0`, `CANCELLED=0`, `SERVED=0` and
-`NO_SHOW=0`.
+`NO_SHOW=0`. A clean disposable preflight is a prerequisite, not an approval
+record.
 
-The same read-only preflight against the existing local `public` schema was
-**NOT APPROVED / NO-GO**: `registration_snapshot_incomplete=116`,
-`roster_assignment_ambiguous=6`, `menu_revision_incomplete=132`,
-`future_active_snapshot_incomplete=40`, and `registration_serving_mismatch=0`,
+The checks use one explicit operational scope: a registration is operational
+when `status <> 'CANCELLED' OR meal_date >= current business date in
+Asia/Ho_Chi_Minh`; only `CANCELLED` rows before that business date are legacy
+history permitted to retain nullable snapshots. `registration_serving_mismatch`
+is evaluated for every status and always blocks. The roster check requires
+exactly one active, date-effective assignment and exactly one active,
+date-effective location.
+
+The same preflight against the existing local `public` schema was **NO-GO**:
+`registration_snapshot_incomplete=132`,
+`roster_assignment_ambiguous=6`,
+`menu_revision_incomplete=132`,
+`future_active_snapshot_incomplete=40`, and
+`registration_serving_mismatch=0`,
 `penalty_registration_mapping_ambiguous=0`,
 `penalty_registration_duplicate_candidate=0`. Status counts were
 `ACTIVE=66`, `CANCELLED=16`, `SERVED=40`, `NO_SHOW=10`. No backfill or
 constraint validation was run against that dirty schema.
 
-### 3. Exact backfill after approval
+Representative invalid-location abort fixture:
 
 ```text
-docker exec develop-db-1 sh -c "psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c 'SET search_path TO phase0_task9_20260928153435' -f /tmp/phase0-backfill-task9.sql"
+docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_task9_invalidloc_20260928160138; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_task9_invalidloc_20260928160138' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-preflight-task9-fix.sql
 ```
 
-**PASS.** First run returned `UPDATE 0`, `DO`, `UPDATE 0`, `UPDATE 0`,
-`COMMIT`. An immediate second run returned the same result, proving the script
-was repeatable on the disposable schema. No operational row was inserted,
-merged, deleted or fabricated.
+The fixture returned `roster_assignment_ambiguous=1` with sample
+`{registration-invalid-location}`; the other six named checks were zero and
+status counts were `ACTIVE=1` with the other statuses zero. The assignment
+pointed at an inactive/future-effective location. Because the named check was
+nonzero, the abort gate prevented backfill on this fixture.
+
+### 3. Exact backfill following clean local preflight (approval not evidenced)
+
+```text
+docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_task9_20260928153435; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_task9_20260928153435' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$;" -f /tmp/phase0-backfill-task9-fix.sql
+```
+
+**LOCAL IDEMPOTENCE OBSERVED; NOT AN APPROVAL.** The first run returned
+`UPDATE 0`, `DO`, `UPDATE 0`, `UPDATE 0`, `COMMIT`. An immediate second run
+returned the same result. No operational row was inserted, merged, deleted or
+fabricated. This local write sequence must not be promoted to staging without
+the independent approval record and target backup gate.
 
 ### 4. Post-backfill validation
 
@@ -107,7 +141,7 @@ The disposable preflight was rerun and returned all seven checks and all four
 status counts at zero.
 
 ```text
-docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_task9_20260928153435; ALTER TABLE registrations VALIDATE CONSTRAINT registration_lifecycle_snapshot_complete; ALTER TABLE registrations VALIDATE CONSTRAINT registration_serving_consistency; SELECT conname, convalidated FROM pg_constraint WHERE connamespace='phase0_task9_20260928153435'::regnamespace AND conname IN ('registration_lifecycle_snapshot_complete','registration_serving_consistency') ORDER BY conname;"
+docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=off -c "SET search_path TO phase0_task9_20260928153435; DO \$assert\$ BEGIN IF current_schema() <> 'phase0_task9_20260928153435' THEN RAISE EXCEPTION 'target schema mismatch'; END IF; END \$assert\$; ALTER TABLE registrations VALIDATE CONSTRAINT registration_lifecycle_snapshot_complete; ALTER TABLE registrations VALIDATE CONSTRAINT registration_serving_consistency; SELECT conname, convalidated FROM pg_constraint WHERE connamespace='phase0_task9_20260928153435'::regnamespace AND conname IN ('registration_lifecycle_snapshot_complete','registration_serving_consistency') ORDER BY conname;"
 ```
 
 **PASS.** Both `ALTER TABLE ... VALIDATE CONSTRAINT` statements passed and
@@ -137,9 +171,17 @@ were recorded, not suppressed or reclassified as rollout approval.
   device/UAT, or production deployment was claimed.
 - The ambient shell lacked `DATABASE_URL`; the explicit local disposable URL
   was used only for this evidence run.
-- Dirty local public data has unresolved snapshot, roster and future ACTIVE
-  gaps. It requires approved exact remediation/quarantine before any backfill or
-  constraint validation.
+- Dirty local public data has unresolved snapshot, roster/effective-location
+  and future ACTIVE gaps. It requires approved exact remediation/quarantine
+  before any backfill or constraint validation.
+- No independent approval/audit record, named staging rollback authority,
+  controlled external artifact or checksum was evidenced for this local run.
+  A zero-row preflight is not approval.
+- If post-backfill preflight, constraint validation or verification fails,
+  cutover remains blocked; quarantine/remediate exact rows or restore the
+  approved backup under the target's named rollback authority and decision
+  window. Retain the additive schema for staging diagnosis or discard a
+  disposable schema after evidence capture; do not claim a down migration.
 - Full domain verification and repository mobile typecheck remain open as
   shown above.
 - Existing infrastructure/security, backup/restore, observability, retention,
@@ -156,10 +198,19 @@ were recorded, not suppressed or reclassified as rollout approval.
   canonical served projection.
 - `Penalty.registrationId` is the unique no-show identity; the worker locks the
   registration first and preserves `PAID`/`WAIVED` on retry.
-- Cutover order is expand → preflight approval → exact backfill → post-backfill
-  preflight → constraint validation → focused/full verification → application
-  cutover. Abort on nonzero operational checks, ambiguity, invalid revision,
-  duplicate candidate, migration failure or failed verification.
+- Rollout scope is `status <> 'CANCELLED' OR meal_date >= current business
+  date in Asia/Ho_Chi_Minh`; only earlier cancelled rows are legacy history
+  allowed nullable snapshots. Serving mismatches are checked for every status.
+  Roster resolution requires one active, date-effective assignment and location.
+- Cutover order is expand → target-safe preflight → independent approval record
+  → exact backfill → post-backfill preflight → constraint validation →
+  focused/full verification → application cutover. Abort on nonzero operational
+  checks, ambiguity/effective-location failure, invalid revision, duplicate
+  candidate, migration failure or failed verification. Approval is not inferred
+  from clean local output.
+- Post-backfill failure keeps cutover blocked and requires quarantine/remediation
+  or approved-backup restore under named authority/decision window; no
+  destructive down migration or Firebase rollback is claimed.
 - Required runtime environment and secret names remain references to
   `docs/02-technical-requirements.md §8.2` and `.env.example`; no secret values
   were documented. Backup/restore remains a required release gate, not an

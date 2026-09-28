@@ -26,6 +26,7 @@ WITH assignment_candidates AS (
    AND (ela.effective_to IS NULL OR ela.effective_to > r.meal_date)
   JOIN locations AS loc
     ON loc.id = ela.location_id
+   AND loc.is_active
    AND loc.effective_from <= r.meal_date
    AND (loc.effective_to IS NULL OR loc.effective_to > r.meal_date)
 ),
