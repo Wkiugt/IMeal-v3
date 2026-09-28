@@ -62,5 +62,5 @@ All PostgreSQL commands below used the local disposable URL supplied only in the
 
 ## Commits
 
-- Source/tests/brief commit: `73978ca` (`test: close Task 8 production path evidence gaps`)
-- Final report commit: returned in the completion response because the report commit hash cannot be embedded into its own Git object without changing that hash.
+  - Source/tests/brief commit: `73978caeadc57f18d69af4dc0d6f058a8fa9cc2e` (`test: close Task 8 production path evidence gaps`)
+  - Final report commit: returned in the completion response because the report commit hash cannot be embedded into its own Git object without changing that hash.
