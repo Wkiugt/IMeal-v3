@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -78,11 +78,11 @@ async function createServingWorld(
   });
 
   const owner = await client.user.create({
-    data: { email: `owner-${Date.now()}-${Math.random()}@example.test`, name: 'Owner' },
+    data: { email: 'owner@example.test', name: 'Owner' },
   });
   const location = await client.location.create({
     data: {
-      shortCode: `HQ${Math.floor(Math.random() * 100000)}`,
+      shortCode: 'HQ-TEST',
       displayName: 'Original Kitchen',
       servingPointName: 'Original counter',
       address: '1 Original Street',
@@ -162,7 +162,7 @@ async function createServingWorld(
         ? owner
         : await client.user.create({
             data: {
-              email: `owner-${Date.now()}-${index}-${Math.random()}@example.test`,
+              email: `owner-${index}@example.test`,
               name: `Owner ${index}`,
             },
           });
@@ -207,8 +207,7 @@ async function createServingWorld(
       }),
     );
   }
-
-  const qrHash = `qr-${Date.now()}-${Math.random()}`;
+  const qrHash = 'qr-production-concurrency';
   await client.servingVerification.create({
     data: {
       id: qrHash,
@@ -328,7 +327,7 @@ describe('Production PostgreSQL concurrency paths', () => {
 
     const transactionClient = registrationClient as unknown as {
       $transaction: (
-        callback: (tx: unknown) => Promise<unknown>,
+        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
         options?: unknown,
       ) => Promise<unknown>;
     };
@@ -346,6 +345,7 @@ describe('Production PostgreSQL concurrency paths', () => {
     transactionClient.$transaction = (callback, options) =>
       originalTransaction(
         async (tx) => {
+          await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${world.registrations[0].id} FOR UPDATE`;
           transactionEntered();
           await transactionRelease;
           return callback(tx);
@@ -372,17 +372,327 @@ describe('Production PostgreSQL concurrency paths', () => {
     if (cancelResult.status !== 'fulfilled') {
       throw cancelResult.reason;
     }
+    if (pickupResult.status !== 'rejected') {
+      throw new Error('Pickup unexpectedly won the cancellation race');
+    }
+    expect(pickupResult.reason).toMatchObject({
+      response: { code: 'PICKUP_INTENT_CONFLICT' },
+    });
     const finalRegistration = await client.registration.findUniqueOrThrow({
       where: { id: world.registrations[0].id },
       include: { mealServing: true },
     });
-    expect(pickupResult.status).toBe('rejected');
     expect(finalRegistration.status).toBe('CANCELLED');
     expect(finalRegistration.mealServing).toBeNull();
     expect(cancelResult.value[0]).toMatchObject({ success: true });
     expect(
+      await client.mealServing.count({
+        where: { registrationId: world.registrations[0].id },
+      }),
+    ).toBe(0);
+    expect(
+      await client.servingConfirmRequest.count({
+        where: {
+          callerUserId: kitchenActor.id,
+          idempotencyKey: 'cancel-race-key',
+        },
+      }),
+    ).toBe(0);
+    expect(
+      await client.auditLog.count({
+        where: { action: 'SERVING_CONFIRMED' },
+      }),
+    ).toBe(0);
+    expect(
+      await client.mealEvent.count({
+        where: { mealServing: { registrationId: world.registrations[0].id } },
+      }),
+    ).toBe(0);
+    expect(
+      await client.pickupSession.findUniqueOrThrow({
+        where: { id: world.session.id },
+      }),
+    ).toMatchObject({ consumedAt: null });
+    expect(
       await client.auditLog.count({
         where: { action: 'registration_cancelled' },
+      }),
+    ).toBe(1);
+  });
+  it('serializes real RegistrationsService create calls for one registration', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client, { registrationCount: 0 });
+    const firstClient = trackClient(new PrismaClient());
+    const secondClient = trackClient(new PrismaClient());
+    const first = await createRegistrationService(firstClient);
+    const second = await createRegistrationService(secondClient);
+    await first.ownedClient.$disconnect();
+    await first.ownedNotificationsClient.$disconnect();
+    await second.ownedClient.$disconnect();
+    await second.ownedNotificationsClient.$disconnect();
+
+    type TransactionClientOwner = {
+      $transaction: (
+        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
+        options?: unknown,
+      ) => Promise<unknown>;
+    };
+    const clients = [firstClient, secondClient];
+    let enteredCount = 0;
+    let resolveTransactionBarrier!: () => void;
+    const transactionBarrier = new Promise<void>((resolve) => {
+      resolveTransactionBarrier = resolve;
+    });
+    for (const clientForRace of clients) {
+      const transactionClient = clientForRace as unknown as TransactionClientOwner;
+      const originalTransaction = transactionClient.$transaction.bind(
+        clientForRace,
+      );
+      transactionClient.$transaction = (callback, options) =>
+        originalTransaction(
+          async (tx) => {
+            enteredCount += 1;
+            if (enteredCount === clients.length) {
+              resolveTransactionBarrier();
+            }
+            await transactionBarrier;
+            return callback(tx);
+          },
+          options,
+        );
+    }
+
+    vi.setSystemTime(new Date('2026-09-27T06:00:00.000Z'));
+    const firstPromise = first.service.batchRegister(world.owner.id, [
+      { mealDate: MEAL_DATE_KEY, status: 'ACTIVE', mealChoice: 'REGULAR' },
+    ]);
+    const secondPromise = second.service.batchRegister(world.owner.id, [
+      { mealDate: MEAL_DATE_KEY, status: 'ACTIVE', mealChoice: 'REGULAR' },
+    ]);
+    await transactionBarrier;
+    const [firstResult, secondResult] = await Promise.all([
+      firstPromise,
+      secondPromise,
+    ]);
+
+    expect(firstResult[0]).toMatchObject({ success: true });
+    expect(secondResult[0]).toMatchObject({ success: true });
+    const registration = await client.registration.findUniqueOrThrow({
+      where: {
+        userId_mealDate: {
+          userId: world.owner.id,
+          mealDate: MEAL_DATE,
+        },
+      },
+    });
+    expect(registration).toMatchObject({
+      status: 'ACTIVE',
+      mealChoice: 'REGULAR',
+      menuRevisionId: world.revision.id,
+      ownerNameSnapshot: world.assignment.employeeName,
+      serviceLocationId: world.location.id,
+      serviceLocationAssignmentId: world.assignment.id,
+    });
+    expect(
+      await client.registration.count({
+        where: { userId: world.owner.id, mealDate: MEAL_DATE },
+      }),
+    ).toBe(1);
+  });
+
+  it('serializes real cancellation and reactivation with refreshed snapshots', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client);
+    const cancellationClient = trackClient(new PrismaClient());
+    const reactivationClient = trackClient(new PrismaClient());
+    const cancellation = await createRegistrationService(cancellationClient);
+    const reactivation = await createRegistrationService(reactivationClient);
+    await cancellation.ownedClient.$disconnect();
+    await cancellation.ownedNotificationsClient.$disconnect();
+    await reactivation.ownedClient.$disconnect();
+    await reactivation.ownedNotificationsClient.$disconnect();
+
+    const registrationId = world.registrations[0].id;
+    const oldRegistration = await client.registration.findUniqueOrThrow({
+      where: { id: registrationId },
+    });
+    const oldSnapshot = {
+      menuRevisionId: oldRegistration.menuRevisionId,
+      ownerNameSnapshot: oldRegistration.ownerNameSnapshot,
+      serviceLocationId: oldRegistration.serviceLocationId,
+      serviceLocationAssignmentId: oldRegistration.serviceLocationAssignmentId,
+    };
+    const delegate = await client.user.create({
+      data: {
+        email: 'race-delegate@example.test',
+        name: 'Race Delegate',
+      },
+    });
+    const delegation = await client.pickupDelegation.create({
+      data: {
+        registrationId,
+        delegateUserId: delegate.id,
+        status: 'ACCEPTED',
+      },
+    });
+
+    type TransactionClientOwner = {
+      $transaction: (
+        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
+        options?: unknown,
+      ) => Promise<unknown>;
+    };
+    const transactionClient =
+      cancellationClient as unknown as TransactionClientOwner;
+    const originalTransaction = transactionClient.$transaction.bind(
+      cancellationClient,
+    );
+    let transactionEntered!: () => void;
+    const transactionStarted = new Promise<void>((resolve) => {
+      transactionEntered = resolve;
+    });
+    let releaseTransaction!: () => void;
+    const transactionRelease = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+    transactionClient.$transaction = (callback, options) =>
+      originalTransaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registrationId} FOR UPDATE`;
+          transactionEntered();
+          await transactionRelease;
+          return callback(tx);
+        },
+        options,
+      );
+
+    vi.setSystemTime(new Date('2026-09-27T06:00:00.000Z'));
+    const cancelPromise = cancellation.service.batchRegister(world.owner.id, [
+      { mealDate: MEAL_DATE_KEY, status: 'CANCELLED' },
+    ]);
+    await transactionStarted;
+
+    const newLocation = await client.location.create({
+      data: {
+        shortCode: 'RACE-NEW-HQ',
+        displayName: 'Race New Kitchen',
+        servingPointName: 'Race New Counter',
+        address: '3 Race Street',
+        building: 'C',
+        floor: '3',
+        roomOrCounter: '3',
+        localContact: 'race-new@example.test',
+        isActive: true,
+        effectiveFrom: MEAL_DATE,
+      },
+    });
+    await client.employeeLocationAssignment.update({
+      where: { id: world.assignment.id },
+      data: { effectiveTo: MEAL_DATE },
+    });
+    const newAssignment = await client.employeeLocationAssignment.create({
+      data: {
+        userId: world.owner.id,
+        normalizedEmail: world.owner.email,
+        employeeName: 'Race Reactivated Owner',
+        employeeCode: 'RACE-REACTIVATED-001',
+        isActive: true,
+        role: 'STAFF',
+        serviceLocationCode: newLocation.shortCode,
+        locationId: newLocation.id,
+        effectiveFrom: MEAL_DATE,
+      },
+    });
+    const newRevision = await client.dailyMenuRevision.create({
+      data: {
+        dailyMenuId: world.dailyMenu.id,
+        revision: 2,
+        mealName: 'Race Reactivated Lunch',
+        description: 'Race reactivated description',
+        imageUrl: 'https://example.test/race-reactivated.jpg',
+        content: 'race-reactivated',
+      },
+    });
+    const activeWhileCancellationLocked =
+      await client.registration.findUniqueOrThrow({
+        where: { id: registrationId },
+      });
+    expect(activeWhileCancellationLocked).toMatchObject({
+      status: 'ACTIVE',
+      menuRevisionId: oldSnapshot.menuRevisionId,
+      ownerNameSnapshot: oldSnapshot.ownerNameSnapshot,
+      serviceLocationId: oldSnapshot.serviceLocationId,
+      serviceLocationAssignmentId: oldSnapshot.serviceLocationAssignmentId,
+    });
+
+    const reactivatePromise = reactivation.service.batchRegister(
+      world.owner.id,
+      [{ mealDate: MEAL_DATE_KEY, status: 'ACTIVE', mealChoice: 'REGULAR' }],
+    );
+    releaseTransaction();
+    const [cancelResult, reactivateResult] = await Promise.all([
+      cancelPromise,
+      reactivatePromise,
+    ]);
+    expect(cancelResult[0]).toMatchObject({ success: true });
+    expect(reactivateResult[0]).toMatchObject({ success: true });
+
+    const finalRegistration = await client.registration.findUniqueOrThrow({
+      where: { id: registrationId },
+    });
+    expect(finalRegistration).toMatchObject({
+      status: 'ACTIVE',
+      mealChoice: 'REGULAR',
+      menuRevisionId: newRevision.id,
+      menuNameSnapshot: 'Race Reactivated Lunch',
+      ownerNameSnapshot: newAssignment.employeeName,
+      employeeCodeSnapshot: newAssignment.employeeCode,
+      serviceLocationId: newLocation.id,
+      serviceLocationAssignmentId: newAssignment.id,
+    });
+    expect(finalRegistration.version).toBe(3);
+    expect(
+      await client.auditLog.count({
+        where: {
+          action: {
+            in: ['registration_cancelled', 'registration_reactivated'],
+          },
+          details: { contains: registrationId },
+        },
+      }),
+    ).toBe(2);
+    expect(
+      await client.auditLog.count({
+        where: { action: 'registration_cancelled' },
+      }),
+    ).toBe(1);
+    expect(
+      await client.auditLog.count({
+        where: { action: 'registration_reactivated' },
+      }),
+    ).toBe(1);
+    expect(
+      await client.pickupDelegation.findUniqueOrThrow({
+        where: { id: delegation.id },
+      }),
+    ).toMatchObject({ status: 'REVOKED' });
+    expect(
+      await client.notification.count({
+        where: {
+          kind: 'DELEGATION_REVOKED',
+          userId: delegate.id,
+        },
+      }),
+    ).toBe(1);
+    const revokedNotification = await client.notification.findFirstOrThrow({
+      where: {
+        kind: 'DELEGATION_REVOKED',
+        userId: delegate.id,
+      },
+    });
+    expect(
+      await client.outboxEvent.count({
+        where: { aggregateId: revokedNotification.id },
       }),
     ).toBe(1);
   });
@@ -458,7 +768,7 @@ describe('Production PostgreSQL concurrency paths', () => {
     });
     const delegate = await client.user.create({
       data: {
-        email: `delegate-${Date.now()}@example.test`,
+        email: 'delegate@example.test',
         name: 'Delegate',
       },
     });
@@ -476,7 +786,7 @@ describe('Production PostgreSQL concurrency paths', () => {
 
     const newLocation = await client.location.create({
       data: {
-        shortCode: `NEW${Math.floor(Math.random() * 100000)}`,
+        shortCode: 'NEW-HQ-TEST',
         displayName: 'New Kitchen',
         servingPointName: 'New counter',
         address: '2 New Street',
@@ -569,7 +879,7 @@ describe('Production PostgreSQL concurrency paths', () => {
     const world = await createServingWorld(client);
     const delegate = await client.user.create({
       data: {
-        email: `failing-delegate-${Date.now()}@example.test`,
+        email: 'failing-delegate@example.test',
         name: 'Failing Delegate',
       },
     });
