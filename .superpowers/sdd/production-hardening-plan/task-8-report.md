@@ -2,7 +2,7 @@
 
 ## Status
 
-COMPLETE — implementation commit `0a88169` (`feat: define private production Compose boundary`). This report is a documentation-only follow-up; no production implementation files are changed here. Task 9 remains not started.
+COMPLETE — implementation commit `0a88169` plus review-fix commit `d63326a` (`fix: harden production boundary verification`). This report records the review-fix round; Task 9 remains not started.
 
 ## Scope
 
@@ -15,21 +15,24 @@ COMPLETE — implementation commit `0a88169` (`feat: define private production C
 - Hardened API, worker, and Admin Web Dockerfiles with immutable Node/Nginx bases, built-artifact-only runtime copies, Prisma generation/build preservation, and non-root runtime users. Admin Web retains port 80 compatibility for the development stack; production explicitly enforces the nginx UID and verifies its writable paths.
 - `.dockerignore` excludes `.env*`, `/run/imeal/`, and migration-evidence artifacts. `.env.example` documents the production-only injection contract without adding production secret defaults.
 - Added `scripts/verify-production-boundary.mjs` and the `verify:production-boundary` package script for rendered Compose/static boundary checks.
+- Review fix: production API, worker, and Admin Web services are now explicitly prebuilt-only (`build: !reset null`); deployment requires digest-pinned image variables, while the Dockerfiles remain available for CI image builds.
 
 ## Verification
 
-- `node scripts/verify-production-boundary.mjs` — passed. Checked rendered Compose ports, immutable image refs, private networks, SCRAM/no-MD5/no-plain-auth settings, Admin Web Dockerfile/user, successful migration-gate dependencies, read-only evidence mounts, Caddy routing/security requirements, non-root Dockerfiles, and Docker context exclusions.
+- `node scripts/verify-production-boundary.mjs` — passed with synthetic local values. It now asserts the worker `/health/ready` probe, a 5-second drain margin (`stop_grace_period >= SHUTDOWN_TIMEOUT_SECONDS + 5s`), no production build contexts, digest-pinned rendered images, and `.env.example` coverage for every required `*_IMAGE` variable.
+- `node scripts/verify-production-boundary.mjs --env-file <deployment-env-file>` — passed against digest-pinned deployment test values; a mutable `API_IMAGE=...:mutable` input failed closed as expected.
 - `docker compose -f docker-compose.yml -f docker-compose.production.yml config` without required production variables — failed closed with required-variable errors as expected.
-- Rendered production `docker compose ... config` and `config --images` with non-secret test values — passed; only Caddy published host ports and all rendered image references used digests.
+- Rendered production `docker compose ... config` and `config --images` with non-secret test values — passed; only Caddy published host ports, API/worker/Admin Web had no build contexts, and all rendered image references used digests.
 - Caddy immutable image validation (`caddy validate --config /etc/caddy/Caddyfile`) — `Valid configuration`.
-- API production Docker image build — passed; runtime smoke imported `@imeal/contracts`, `@imeal/observability`, and `@prisma/client` as UID 1000.
-- Worker production Docker image build — passed; runtime smoke imported workspace dependencies as UID 1000.
-- Admin Web production Docker image build — passed; non-root nginx served `/health` successfully on port 80. This also verifies the unchanged development Compose port contract.
-- `git diff --check` — passed before the implementation commit.
+- API production Docker image build — passed before the prebuilt-only overlay fix; runtime smoke imported `@imeal/contracts`, `@imeal/observability`, and `@prisma/client` as UID 1000.
+- Worker production Docker image build — passed before the prebuilt-only overlay fix; runtime smoke imported workspace dependencies as UID 1000.
+- Admin Web production Docker image build — passed before the prebuilt-only overlay fix; non-root nginx served `/health` successfully on port 80. This also verifies the unchanged development Compose port contract.
+- `git diff --check` — passed before the review-fix implementation commit.
 
-## Commit
+## Commits
 
 - `0a88169 feat: define private production Compose boundary`
+- `d63326a fix: harden production boundary verification`
 
 ## Deferred boundaries
 

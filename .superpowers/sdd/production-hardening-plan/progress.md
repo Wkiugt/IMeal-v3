@@ -79,12 +79,12 @@ The production-hardening plan is being executed one task at a time. Completed wo
 
 ## Task 8 completion
 
-- Task 8: complete (commit `0a88169`, `feat: define private production Compose boundary`).
+- Task 8: complete (initial commit `0a88169`; review fix `d63326a`, `fix: harden production boundary verification`).
 - Report: `.superpowers/sdd/production-hardening-plan/task-8-report.md`.
 - Added the fail-closed production Compose/Caddy boundary: only Caddy host ports, private `edge`/`app`/`data` networks, required production values, immutable digest image references, SCRAM PostgreSQL/PgBouncer, private MinIO setup, persistent TLS storage, and no public `/storage/*` route.
 - API/worker depend on successful `migration-gate` completion and mount shared migration evidence read-only; the migration-gate implementation remains explicitly deferred to Task 9.
-- Hardened API/worker/Admin Web images with immutable bases, built-runtime artifact copies, non-root runtimes, Prisma generation preservation, and the Admin Web port-80 compatibility contract. Added focused rendered Compose/static checks and Docker context exclusions.
-- Verification passed: `node scripts/verify-production-boundary.mjs`; fail-closed Compose rendering without production variables; rendered `config`/`config --images`; Caddy `validate`; API/worker/Admin Web image builds and non-root runtime smoke checks; and `git diff --check`.
+- Review fix: worker healthcheck now probes `/health/ready`; the verifier validates every required `*_IMAGE` value as `repository@sha256:<64 hex>`, supports `--env-file` deployment validation, requires image-variable documentation, enforces a 5-second drain margin, and rejects production build contexts. API/worker/Admin Web remain prebuilt-only in production while Dockerfiles stay available for CI image builds.
+- Verification passed: synthetic and deployment-env verifier runs, mutable image rejection, fail-closed Compose rendering, rendered `config`/`config --images`, Caddy `validate`, prebuilt-only rendered config assertions, prior API/worker/Admin Web image builds and non-root smoke checks, and `git diff --check`.
 - Scope note: no production services were started with real credentials. The unstaged `apps/worker/tsconfig.build.tsbuildinfo` generated-metadata change was inspected and left untouched as possible concurrent user work. The pre-existing untracked production/staging plan files remain unstaged and unmodified.
 
 ## Remaining tasks
