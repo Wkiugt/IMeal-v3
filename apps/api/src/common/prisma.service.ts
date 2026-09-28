@@ -8,6 +8,21 @@ import { PrismaClient } from '@prisma/client';
 
 const PRISMA_CONNECT_TIMEOUT_MS = 10_000;
 
+const DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 30;
+const MAX_SHUTDOWN_TIMEOUT_SECONDS = 300;
+
+function shutdownTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.SHUTDOWN_TIMEOUT_SECONDS?.trim();
+  if (!raw || !/^\d+$/.test(raw)) {
+    return DEFAULT_SHUTDOWN_TIMEOUT_SECONDS * 1000;
+  }
+  const seconds = Number(raw);
+  if (!Number.isSafeInteger(seconds)) {
+    return DEFAULT_SHUTDOWN_TIMEOUT_SECONDS * 1000;
+  }
+  return Math.min(Math.max(seconds, 1), MAX_SHUTDOWN_TIMEOUT_SECONDS) * 1000;
+}
+
 @Injectable()
 export class PrismaService
   extends PrismaClient
@@ -40,10 +55,23 @@ export class PrismaService
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.ready = false;
+    let timeout: NodeJS.Timeout | undefined;
     try {
-      await this.$disconnect();
+      await Promise.race([
+        this.$disconnect(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('Prisma disconnection timed out')),
+            shutdownTimeoutMs(),
+          );
+        }),
+      ]);
       this.logger.log('prisma.disconnected');
+    } catch {
+      this.logger.error('prisma.disconnect_failed');
     } finally {
+      clearTimeout(timeout);
       this.ready = false;
     }
   }

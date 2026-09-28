@@ -78,9 +78,6 @@ async function createWorkerService(client: PrismaClient) {
   return { service, ownedClient };
 }
 
-async function disconnectOwnedPrisma(service: RealPrismaOwner) {
-  await service.prisma.$disconnect();
-}
 
 async function createServingWorld(
   client: PrismaClient,
