@@ -51,9 +51,9 @@ IMeal v2 là một re-platforming so với hệ thống web Firebase/Firestore h
 | Daily menu | Một món cố định cho một meal date |
 | Meal choice | Loại suất `REGULAR` hoặc `VEGETARIAN`; ngày bình thường chỉ `REGULAR`, ngày mùng 1/15 âm lịch (kể cả tháng nhuận) cho phép cả hai |
 | Cutoff | 14:00 ngày trước meal date; đúng `14:00:00` là đã khóa |
-| Registration | Quyền giữ một suất của một user trong một meal date, lưu thêm meal choice và location snapshot |
-| Serving / Check-in | Kitchen xác nhận suất đã thực sự được giao tại quầy |
-| Served | Registration đã có serving hợp lệ; là nguồn sự thật cho “đã nhận suất” |
+| Registration | Quyền giữ một suất của một user trong một meal date, lưu menu revision cùng meal choice và immutable owner/location snapshots |
+| Serving / Check-in | Kitchen xác nhận suất đã thực sự được giao tại quầy; ghi một `meal_servings` immutable row |
+| Served | Registration có đúng một serving hợp lệ; `ACTIVE + mealServing` là projection canonical, `SERVED` chỉ giữ cho legacy compatibility |
 | No-show | Đã đăng ký nhưng hết meal day vẫn chưa có serving hợp lệ |
 | Delegation | Ủy quyền một user khác nhận hộ một registration; delegate phải accept |
 | Owner | Người sở hữu registration |
@@ -61,7 +61,7 @@ IMeal v2 là một re-platforming so với hệ thống web Firebase/Firestore h
 | Presenter | Người đang cầm điện thoại và trình bày QR; chỉ presenter thu foreground GPS |
 | Kitchen | Nhân sự canteen quản lý weekly menu và serving/check-in; không tự có quyền Staff |
 | Admin | Quản trị location/allowlist/roster, role `staff`/`kitchen`, penalty và audit; không cấp role `admin` qua Admin Web |
-| Active registration | Registration có `status=registered` và chưa có active serving |
+| Active registration | Registration có `status=ACTIVE` và chưa có serving; nếu đã có serving thì vẫn là row `ACTIVE` nhưng được project thành `SERVED` |
 | Serving window | Khoảng `10:30–13:30` của meal date, theo `Asia/Ho_Chi_Minh` |
 
 ## Nguồn sự thật và thứ tự ưu tiên

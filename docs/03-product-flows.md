@@ -572,30 +572,43 @@ the approved Retry/Refresh recovery. If the exact intent becomes stale, the
 presenter must select/refresh again; Kitchen cannot substitute an item.
 ## 12. Kitchen lists and realtime log
 
-### Chưa nhận
+### Chưa nhận (PENDING)
 
-Registration owner has no active serving.
+`PENDING` contains only `ACTIVE` registrations without a valid
+`meal_servings` row. A registration remains in the authoritative total after
+serving; the UI moves it to `Đã nhận` from the serving projection rather than
+depending on a duplicate `SERVED` registration status.
 
-Search by name/code, paginate/filter as needed.
+### Đã nhận (SERVED projection)
 
-### Đã nhận
+Show every registration with a valid `meal_servings` row, including an
+`ACTIVE + meal_serving` row and a legacy `SERVED + meal_serving` row:
 
-Show:
-
-- Owner.
-- Receiver.
-- `SELF` / `PROXY`.
+- Owner and immutable owner/menu/location display snapshots.
+- Receiver and `SELF` / `PROXY`.
 - Serving time.
 - Kitchen actor/counter/device when available.
 
-After no-show reconciliation, add a distinct `Vắng mặt` tab/count. Do not relabel users as absent while the serving window is still open.
+### Vắng mặt (NO_SHOW)
+
+After no-show reconciliation, show `NO_SHOW` registrations without a serving.
+Do not relabel users as absent while the serving window is still open.
+`CANCELLED` and account-disabled rows are not listed or counted.
+
+### Projection safety
+
+The `pending`, `served`, `noShow` and `all` lists and counters come from one
+consistent server snapshot. `SERVED` without a serving, `NO_SHOW` with a
+serving, or `CANCELLED` with a serving is an internal data invariant failure:
+the server returns the generic `INTERNAL_SERVER_ERROR` envelope with a request
+ID and no partial counters. The UI must show recovery, not a fabricated list.
 
 ### Realtime behavior
 
 1. Initial snapshot from API/DB.
-2. Subscribe to serving events.
-3. After another device commits, append log and update count.
-4. On reconnect, fetch fresh snapshot before continuing stream.
+2. Subscribe to committed serving/registration events.
+3. After another device commits, append the event or refetch the snapshot.
+4. On reconnect, fetch a fresh authoritative snapshot before continuing.
 
 ## 13. Serving finality
 
@@ -606,22 +619,41 @@ After no-show reconciliation, add a distinct `Vắng mặt` tab/count. Do not re
 
 ## 14. End-of-day no-show
 
-At **13:45** after the **13:30** service end:
+The transaction becomes eligible at **13:30** VN, after the serving window
+ends; the normal scheduler first runs at **13:45** VN:
 
 ```text
-active registrations for date
-    - registrations with valid serving
-    = no-show candidates
+ACTIVE registrations for date without valid meal_servings
+    - cancelled/account-disabled rows
+    = locked no-show candidates
 ```
 
-For each candidate transactionally:
+For each candidate, the worker locks the registration first and re-checks
+status, account, date, serving and server-time eligibility. It then creates or
+reuses the unique penalty keyed by `Penalty.registrationId`, marks `NO_SHOW`
+with `no_show_at`, and commits the penalty, audit, notification and dashboard
+outbox event atomically. A failed candidate rolls back without partial side
+effects; a retry is a no-op and never reopens `PAID` or `WAIVED`.
 
-- Re-check no serving exists.
-- Mark no-show.
-- Create exactly one 50,000 VND penalty if none exists.
-- Do not duplicate penalty on retry.
+Delegation status does not replace serving: accepted but unused delegation can
+still result in owner no-show.
 
-Delegation status does not replace serving: accepted but unused delegation can still result in owner no-show.
+### Legacy snapshot cutover behavior
+
+Registration create/reactivation resolves the immutable menu and roster/location
+facts server-side. Legacy rows missing required snapshot fields remain readable
+for historical accounting but are never made pickup-eligible: registration
+update/reactivation returns `REGISTRATION_FAILED`, pickup options/resolve/confirm
+return `PICKUP_INTENT_CONFLICT`, and no current location/menu fallback exists.
+The exact routes and request authority remain unchanged:
+`PUT /api/registrations/batch`;
+`POST /internal/api/v1/pickup/resolve`,
+`POST /v1/internal/pickup/resolve` and `POST /api/serving/resolve` with QR
+only; and `POST /internal/api/v1/pickup/confirm`,
+`POST /v1/internal/pickup/confirm` and `POST /api/serving/confirm` with
+`pickupSessionId` plus `idempotencyKey`.
+Kitchen cannot add or replace an item, and an incomplete/mismatch row never
+causes a partial confirm.
 
 ## 15. Admin flows
 

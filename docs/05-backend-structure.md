@@ -297,11 +297,11 @@ daily_menu_revisions
 ──────────────────────────────
 id                  UUID PK
 daily_menu_id       UUID FK
-revision            integer NOT NULL
-meal_name           text NOT NULL
+revision            integer NULL
+meal_name           text NULL
 description         text NULL
-image_url            text NULL
-created_by_user_id  UUID FK
+image_url           text NULL
+created_by_user_id  UUID NULL
 created_at          timestamptz
 
 UNIQUE(daily_menu_id, revision)
@@ -330,17 +330,17 @@ disabled meal_date → explicit daily menu row with is_service_date=false and no
 Operational/snapshot table:
 
 ```text
-meal_date            date PK
-menu_name_snapshot   text
+id                   UUID PK
+daily_menu_id        UUID FK UNIQUE
+meal_type            text
+is_serving_ready     boolean NOT NULL DEFAULT false
+menu_name_snapshot   text NULL
 menu_description_snapshot text NULL
 menu_image_snapshot  text NULL
-locked               boolean
 locked_at            timestamptz NULL
-service_start_at     timestamptz NOT NULL  # default 10:30 VN
-service_end_at       timestamptz NOT NULL    # default 13:30 VN
-prepared_count       integer NULL
-created_at
-updated_at
+service_start_at     timestamptz NULL
+service_end_at       timestamptz NULL
+created_at           timestamptz
 ```
 
 Purpose:
@@ -352,57 +352,93 @@ Purpose:
 
 ## 8. `registrations`
 
-```text
 id              UUID PK
-user_id         UUID FK users
+user_id         UUID FK
 meal_date       date NOT NULL
 meal_choice     REGULAR | VEGETARIAN NOT NULL DEFAULT REGULAR
-menu_revision_id UUID FK daily_menu_revisions NOT NULL
-service_location_id UUID FK locations NOT NULL
-location_assignment_id UUID FK employee_location_assignments NOT NULL
-owner_name_snapshot text NOT NULL
-employee_code_snapshot text NOT NULL
-location_name_snapshot text NOT NULL
-location_address_snapshot text NOT NULL
-status          registered | canceled | no_show
-registered_at   timestamptz
-canceled_at     timestamptz NULL
-cancel_reason   user_canceled | account_disabled NULL
-canceled_by_user_id UUID FK NULL
+status          ACTIVE | CANCELLED | SERVED | NO_SHOW
+menu_revision_id UUID NULL FK daily_menu_revisions
+owner_name_snapshot text NULL
+employee_code_snapshot text NULL
+menu_name_snapshot text NULL
+menu_description_snapshot text NULL
+menu_image_snapshot text NULL
+service_location_id UUID NULL FK locations
+service_location_assignment_id UUID NULL FK employee_location_assignments
+service_location_code text NULL
+service_location_name text NULL
+service_location_address text NULL
+service_location_effective_from timestamptz NULL
+service_location_snapshot_at timestamptz NULL
+registered_at   timestamptz NULL
+cancelled_at    timestamptz NULL
+cancel_reason   text NULL
+cancelled_by_user_id UUID NULL
 no_show_at      timestamptz NULL
-updated_at      timestamptz
+created_at/updated_at
+version         integer NOT NULL DEFAULT 1
 
 UNIQUE(user_id, meal_date)
-```
+
+The physical lifecycle/menu/owner/location columns are nullable during the
+expand phase so legacy rows remain readable. The
+`registration_lifecycle_snapshot_complete` check is `NOT VALID` until the
+external preflight and approved exact backfill pass; rows with
+`registered_at IS NULL` remain explicitly legacy. Every new or reactivated
+operational row must have `registered_at`, the menu revision/name, owner and
+employee snapshots, and all seven location snapshot values.
+
+`daily_menu_revisions.revision`, `meal_name`, `description`, `image_url` and
+`created_by_user_id` are nullable for legacy compatibility, with
+`UNIQUE(daily_menu_id, revision)` and a restrictive registration foreign key.
+`daily_menu_revisions.content` is legacy evidence only; it is parsed by the
+approved backfill only when it is a complete verified JSON object.
+
+`meal_days` stores nullable `menu_name_snapshot`, `menu_description_snapshot`,
+`menu_image_snapshot`, `locked_at`, `service_start_at` and `service_end_at`
+alongside its existing day fields. `meal_servings` stores nullable legacy-aware
+`menu_name_snapshot`, `menu_description_snapshot` and `menu_image_snapshot`.
+
+`penalties.registration_id` and `penalties.meal_date` are nullable for legacy
+rows, with a restrictive foreign key and a partial unique index on non-null
+`registration_id`.
 
 - Ngày bình thường chỉ được lưu `REGULAR`; mùng 1 hoặc 15 âm lịch (kể cả tháng nhuận) được lưu `REGULAR` hoặc `VEGETARIAN`.
 - `meal_choice` là category chuẩn bị, không phải menu variant; `MealDay.mealType` tiếp tục điều khiển serving window.
 
-Logical business state `SERVED` is derived from a valid `meal_servings` row and is intentionally not duplicated as the registration status.
+Logical business state `SERVED` is derived from a valid `meal_servings` row.
+The retained `RegistrationStatus.SERVED` enum is legacy read/wire
+compatibility only; new serving writes leave the registration `ACTIVE`.
 
-### 8.1 Registration transitions
+### 8.1 Registration transitions and snapshot policy
 
 ```text
-missing → registered
-canceled → registered     before cutoff
-registered → canceled     before cutoff
-registered → no_show      after service end AND no serving
+missing → ACTIVE
+CANCELLED → ACTIVE       before cutoff, only without serving/no-show/penalty
+ACTIVE → CANCELLED       before cutoff
+ACTIVE + meal_serving     logical SERVED projection
+ACTIVE → NO_SHOW          server time >= 13:30 VN, no serving
 ```
 
-If serving exists, registration is considered fulfilled regardless of `status=registered` storage state.
+`SERVED` without a serving, `NO_SHOW` with a serving, and `CANCELLED` with a
+serving violate `registration_serving_consistency` and fail closed. A valid
+`ACTIVE + meal_serving` row remains in the dashboard served projection.
+Final serving/no-show history is never rewritten. An `ACTIVE` meal-choice
+update preserves its existing immutable snapshots; reactivation resolves and
+records a new lifecycle snapshot.
 
+Legacy rows with incomplete snapshots cannot be made pickup-eligible:
+registration reactivation/update fails with `REGISTRATION_FAILED`, pickup
+options/resolve/confirm fail with `PICKUP_INTENT_CONFLICT`, and no current
+location/menu/name/address value is substituted. A state-valid row remains in
+dashboard totals so historical counts are not silently understated.
 
-One API request contains requested dates and, for ACTIVE items, the requested `meal_choice`. Backend:
+One API request captures server time once, resolves the effective roster
+assignment/location and verified menu revision in each transaction, writes all
+snapshots atomically, and returns per-date results. Cancellation locks the
+registration, revokes `PENDING|ACCEPTED` delegations, and writes audit and
+notifications in the same transaction.
 
-1. Capture server `now` once in VN business context.
-2. Validate each date/menu/cutoff/current transition and the lunar meal-choice policy.
-3. Use `INSERT ... ON CONFLICT`/equivalent ORM upsert for register/re-register,
-   resolve the effective employee-location assignment server-side, and store the
-   current immutable `menu_revision_id`, `meal_choice`, location/assignment ID
-   and owner/location snapshots.
-4. Cancel only valid active registration.
-5. When canceling, lock and revoke any `pending|accepted` delegation, append audit/events and create notifications in the same transaction.
-6. Return result per requested date.
 
 ## 9. `pickup_delegations`
 
@@ -518,33 +554,44 @@ Claim workflow:
 ### 11.2 `meal_servings`
 
 ```text
-id                    UUID PK
-registration_id       UUID FK
-owner_user_id         UUID FK
-receiver_user_id      UUID FK
-pickup_type           SELF | PROXY
-served_by_user_id     UUID FK    # Kitchen actor
-location_id           UUID FK
-owner_name_snapshot   text
-receiver_name_snapshot text
-employee_code_snapshot text
-location_name_snapshot text
-location_address_snapshot text
-delegation_id         UUID NULL
-pickup_session_id     UUID FK
-serving_verification_id UUID FK
-served_at             timestamptz
-source                QR
-confirm_request_id    UUID FK serving_confirm_requests
-created_at
+id                       UUID PK
+registration_id          UUID FK UNIQUE
+owner_user_id            UUID NULL FK
+owner_email_snapshot     text NULL
+owner_name_snapshot      text NULL
+presenter_user_id        UUID NULL FK
+receiver_type            SELF | PROXY NULL
+kitchen_user_id          UUID NULL FK
+kitchen_permission_context text NULL
+scanner_device_id        text NULL
+location_id              UUID NULL FK
+location_short_code      text NULL
+location_name_snapshot   text NULL
+location_address_snapshot text NULL
+meal_date                date NULL
+menu_revision_id         UUID NULL FK
+menu_name_snapshot       text NULL
+menu_description_snapshot text NULL
+menu_image_snapshot      text NULL
+request_id               text NULL
+pickup_session_id        UUID NULL FK
+intent_hash              text NULL
+verification_outcome     text NULL
+serving_verification_id  UUID NULL FK
+delegation_id            UUID NULL UNIQUE FK
+served_at                timestamptz NOT NULL DEFAULT now()
 
 UNIQUE(registration_id)
 ```
 
-Serving is immutable evidence of owner, presenter/receiver, Kitchen actor,
-pickup type, delegation, exact intent/session, effective location snapshot,
-verification result and time. Raw coordinates, OTP values, session tokens and QR
-payloads are not included in normal logs or operational dashboards.
+New serving writes copy the registration's immutable owner, employee,
+location and menu snapshots plus serving/session/verification context in the
+same transaction. They leave registration status `ACTIVE`; a valid
+`meal_servings` row is the canonical served projection. Nullable fields above
+retain legacy read compatibility and do not authorize current-value fallback.
+Serving is immutable evidence; raw coordinates, OTP values, session tokens and
+QR payloads are not included in normal logs or operational dashboards.
+
 ## 12. Serving transaction
 
 Pseudo-flow:
@@ -622,16 +669,35 @@ Never update/delete historical events during normal operations. Meal lifecycle/a
 
 ## 15. Kitchen dashboard queries
 
-For date D:
+For meal date `D`, load one consistent registration set with
+`status IN (ACTIVE, SERVED, NO_SHOW)` plus `CANCELLED` rows carrying a serving
+only long enough to detect the forbidden invariant. Then validate
+`registration_serving_consistency` before excluding cancelled and
+`ACCOUNT_DISABLED` rows from the projection.
 
 ```text
-total_registered = registrations for D excluding canceled and ACCOUNT_DISABLED-quarantined rows
-served_total      = registrations with a serving
-remaining         = total_registered - served_total during the serving window
-no_show_total     = registrations transitioned to no_show after reconciliation
+totalRegistered = valid ACTIVE rows (pending or served)
+                  + valid legacy SERVED rows with a serving
+                  + NO_SHOW rows without a serving
+servedTotal     = rows with a meal_serving
+remaining       = pending.length
+noShowTotal     = NO_SHOW rows without a meal_serving
+pending         = ACTIVE and no meal_serving
+served          = any row with a meal_serving
+noShow          = NO_SHOW and no meal_serving
+all             = pending ∪ served ∪ noShow, once each, deterministic order
+regularTotal + vegetarianTotal = totalRegistered
 ```
 
-At 200–300 rows/day, PostgreSQL direct aggregate queries are sufficient. Do not introduce denormalized counters unless profiling proves need.
+`CANCELLED` and account-disabled rows are not counted or listed. A served row
+must not disappear merely because it remains `ACTIVE` in storage. `SERVED`
+without a serving, `NO_SHOW` with a serving, or `CANCELLED` with a serving
+returns the generic `INTERNAL_SERVER_ERROR` envelope with a request ID and no
+partial counters or sensitive row details; the operator diagnostic is
+internal-only.
+
+At 200–300 rows/day, PostgreSQL direct aggregate queries are sufficient. Do not
+introduce denormalized counters unless profiling proves need.
 
 Recommended indexes:
 
@@ -645,37 +711,47 @@ pickup_delegations(registration_id, status)
 
 ## 16. Realtime architecture
 
-- Initial GET returns snapshot and recent log.
-- Kitchen clients subscribe to WebSocket/SSE channel by meal date.
-- API publishes only after successful DB commit.
-- Client reconnect fetches snapshot again.
-- DB state wins over missed/duplicated realtime messages.
+- Initial GET returns the canonical snapshot and recent log.
+- Kitchen clients subscribe to WebSocket/SSE by meal date.
+- `SERVING_CONFIRMED` and `REGISTRATION_CHANGED` are emitted only after the
+  committing transaction succeeds.
+- No-show writes `NO_SHOW_RECONCILED` to the transactional `outbox_events`
+  table with dedupe key `kitchen:no-show:{registrationId}`; a worker does not
+  call the API's in-memory event service.
+- Client reconnect fetches the snapshot again; DB state wins over
+  missed/duplicated realtime messages.
 
-For single NestJS instance at baseline scale, no distributed broker is required.
+For a single NestJS instance at baseline scale, no distributed broker is
+required. Client realtime/reconnect implementation remains a separate scope
+and is not claimed by this backend cutover.
 
 ## 17. `penalties`
 
 ```text
 id                  UUID PK
-registration_id     UUID FK UNIQUE
+registration_id     UUID NULL FK UNIQUE WHERE NOT NULL
 user_id             UUID FK   # registration owner
-meal_date           date
-amount_vnd          integer
-status              open | paid | waived
-reason              no_show
-created_at
-updated_at
-resolved_at         timestamptz NULL
-resolved_by_user_id UUID FK NULL
-resolve_note        text NULL
+meal_date           date NULL
+amount              integer
+status              PENDING | PAID | WAIVED
+reason              text
+paid_at             timestamptz NULL
+waived_at           timestamptz NULL
+waive_reason        text NULL
+waived_by_user_id   UUID NULL FK
+created_at/updated_at
 ```
 
-Canonical amount is 50,000 VND for every no-show; exceptions use audited `waived` resolution.
+`registration_id` is the database idempotency authority for new no-show
+penalties. It is nullable only for retained legacy rows and is backfilled only
+from an exact one-to-one documented identity. `meal_date` accompanies that
+identity. The restrictive foreign key and partial unique index reject a second
+penalty for one registration without rejecting multiple legacy nulls.
 
-No-show retry:
-
-- Never create duplicate penalty due to `UNIQUE(registration_id)`.
-- Never reopen `paid/waived`.
+Canonical amount is 50,000 VND for every no-show; exceptions use an audited
+`WAIVED` resolution. A worker retry locks the registration and
+registration-keyed penalty, preserves `PAID`/`WAIVED`, and never reopens or
+creates a duplicate.
 
 ## 18. Notifications
 
@@ -833,13 +909,20 @@ error_message NULL
 retry_of_id NULL
 ```
 
-No-show job starts at 13:45 VN:
+No-show domain eligibility is `server time >= 13:30` VN; the normal scheduler
+first runs at 13:45 VN:
 
-1. Select active registrations for target date after service end.
-2. Exclude valid servings and registrations canceled with `account_disabled`.
-3. Transactionally re-check each candidate.
-4. Mark no-show + create exactly one 50,000 VND penalty.
-5. Record run summary.
+1. Select `ACTIVE` registrations for the target date in deterministic
+   registration-ID order, excluding valid servings, cancelled rows and
+   `ACCOUNT_DISABLED` rows.
+2. For each candidate, lock the registration row first and re-check status,
+   serving, account activity, meal date and the 13:30 eligibility.
+3. Lock/create the penalty by unique `registration_id`, then atomically write
+   `NO_SHOW`, `no_show_at`, the penalty, immutable audit, notification and
+   `NO_SHOW_RECONCILED` outbox event.
+4. A failure rolls back that candidate's entire transaction; later candidates
+   may continue. A retry is a no-op and never reopens `PAID` or `WAIVED`.
+5. Record sanitized `job_runs` summary; no client endpoint creates no-shows.
 
 ## 20. Generic audit
 
@@ -889,6 +972,13 @@ Canonical history retention is **1 year** for meal lifecycle/business audit data
 
 - Mobile cannot set `served_at`, role, account status, location assignment,
   presenter/receiver, penalty status or audit actor.
+- New registration writes resolve and persist `menu_revision_id`,
+  `owner_name_snapshot`, `employee_code_snapshot`, `menu_name_snapshot`,
+  `menu_description_snapshot`, `menu_image_snapshot`,
+  `service_location_id`, `service_location_assignment_id`,
+  `service_location_code`, `service_location_name`,
+  `service_location_address`, `service_location_effective_from` and
+  `service_location_snapshot_at` atomically.
 - Kitchen can serve only with an active opaque session, `kitchen.serve`
   permission and all server-side pickup validation. Kitchen sends no GPS.
 - Public callers cannot create accepted delegation on behalf of B; B must accept.
@@ -901,26 +991,93 @@ Canonical history retention is **1 year** for meal lifecycle/business audit data
   registration, delegation, window or concurrency checks.
 - GPS failure exposes only safe Retry/Refresh. Raw coordinates and clear OTP,
   session, QR or provider payloads never appear in routine logs.
-- No serving if DB no longer considers owner/receiver/account/location/evidence
-  eligible. Every protected API rechecks current status and permissions.
+- Incomplete legacy snapshots fail closed for registration reactivation/update
+  and pickup/serving; no current location/menu fallback exists. A state-valid
+  incomplete row remains visible to dashboard accounting rather than being
+  silently dropped.
+- `SERVED` without a serving, `NO_SHOW` with a serving, and `CANCELLED` with a
+  serving fail closed under `registration_serving_consistency`; no automatic
+  repair is allowed.
 - Multi-item serving never partially commits; successful confirm is final and no
   reversal endpoint exists. Same idempotency key/body cannot double-serve.
 - Worker has no independent business-write path; scheduled work uses the same
   application invariants and records sanitized `job_runs`.
 ## 24. Clean-slate provisioning
 
-1. Create a fresh PostgreSQL database from checked-in migrations.
-2. Configure production with `AUTH_MODE=otp`, `REQUIRE_AUTH=true`, all
-   API/worker OTP/session/provider/GPS/serving settings, and no harness bypass.
-3. Import/approve exactly four real location records and the employee allowlist/
-   roster through audited Admin operations. Do not fabricate names, addresses,
-   coordinates, employees, scanner assignments or roster rows in source control.
-4. Admin Web manages only approved `staff`/`kitchen` assignments, allowlist,
-   location/policy and roster operations; it never grants `admin`.
-5. Firebase legacy is removed from project dependency at re-development kickoff;
-   import/retain no Firebase business history and never dual-write.
-6. Verify PostgreSQL backup/restore, API/worker startup validation and
-   application/schema rollback before production; rollback never targets Firebase.
+1. Confirm a disposable/staging target and a restorable database backup before
+   any write; production must provide `DATABASE_URL` and the runtime secret
+   contract in Technical Requirements §8.2. Never use the local public schema
+   as a rollout target when preflight is dirty.
+2. Deploy the additive
+   `20260928000000_phase0_domain_correctness` migration and generate the
+   matching Prisma client. It adds nullable fields, indexes, restrictive
+   foreign keys and `NOT VALID` checks only; it does not insert operational
+   rows or validate unresolved legacy data.
+3. Run the read-only seven-check preflight and obtain an external approval
+   record. Abort before backfill if any future ACTIVE snapshot is incomplete,
+   status/serving mismatch exists, roster assignment is ambiguous, menu
+   revision is unverified, or penalty mapping is ambiguous/duplicate.
+4. Run `backfill.sql` only after approval. It updates only exact one-to-one
+   roster/location, verified immutable menu JSON and documented penalty
+   identities; it never invents migration timestamps, current values, rows or
+   penalty merges.
+5. Re-run preflight, require operational checks to be zero, then validate
+   `registration_lifecycle_snapshot_complete` and
+   `registration_serving_consistency`. Keep unresolved legacy cancelled/history
+   rows visible in the report and quarantined from pickup.
+6. Exercise focused/full contract, domain, API and worker suites before
+   application cutover, then smoke the exact registration, pickup, dashboard
+   and no-show paths. Emit no production sign-off from local-only evidence.
+7. Rollback/abort means stop before backfill or validation, keep the old
+   application path compatible with the additive schema, and restore the
+   approved database backup only under the documented operator decision.
+  There is no destructive down migration or Firebase rollback path.
+
+### Observed Phase 0 rollout gate — 2026-09-28
+
+The following evidence is local/disposable only and is not staging or
+production approval:
+
+- `DATABASE_URL` was absent from the ambient shell. A disposable PostgreSQL
+  schema was created locally; the existing public local schema was not used for
+  backfill because its preflight is dirty.
+- `DATABASE_URL=<disposable-local-url> yarn workspace @imeal/core exec prisma migrate deploy`
+  applied all eight checked-in migrations, including
+  `20260928000000_phase0_domain_correctness`. Row counts for registrations,
+  daily menu revisions, meal days, meal servings and penalties were all zero
+  after expansion.
+- `DATABASE_URL=<disposable-local-url> yarn workspace @imeal/core exec prisma generate`
+  and `... prisma validate` passed. The observed expanded fields, indexes,
+  restrictive foreign keys and named `NOT VALID` checks match this document.
+- The containerized equivalent of
+  `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f .../preflight.sql` returned all
+  seven named checks and all four status counts at zero on the disposable
+  schema. Host `psql` was unavailable, so no staging command was claimed.
+- After that clean preflight approval gate, the containerized exact
+  `backfill.sql` returned `UPDATE 0`, `DO`, `UPDATE 0`, `UPDATE 0`, `COMMIT`;
+  an immediate second run returned the same result. No operational row was
+  inserted or merged.
+- Post-backfill preflight again returned seven zero checks and four zero status
+  counts. `ALTER TABLE registrations VALIDATE CONSTRAINT
+  registration_lifecycle_snapshot_complete` and
+  `registration_serving_consistency` both passed; `pg_constraint.convalidated`
+  was `true` for both.
+- The existing local public schema remains a NO-GO data set: preflight
+  observed 116 incomplete snapshots, 6 ambiguous roster assignments, 132
+  incomplete menu revisions, 40 incomplete future ACTIVE rows, and status
+  counts ACTIVE 66, CANCELLED 16, SERVED 40, NO_SHOW 10. No backfill or
+  validation was run there.
+- Focused migration/concurrency evidence passed (contracts 37 tests; domain
+  migration/concurrency 29 tests; API units 219; worker units 56; API
+  PostgreSQL e2e 76; worker PostgreSQL e2e 6). The complete domain run still
+  had 5 failures in current local-seed/concurrency tests, and the
+  repository `yarn typecheck` remains blocked by mobile `expo-location`,
+  `nextLocation` implicit-any and stale `menuRevisionId` test fixtures.
+- No staging target, production backup/restore rehearsal, secret/provider
+  provisioning, or mobile device/UAT evidence was available. These remain
+  release blockers; local migration success does not close the Phase 0 or
+  production gate.
+
 ## 25. Backend acceptance criteria
 
 - Unknown/disabled/non-allowlisted OTP attempts are indistinguishable and never

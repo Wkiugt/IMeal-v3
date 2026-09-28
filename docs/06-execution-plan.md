@@ -95,6 +95,35 @@ request/verify is exercised at the authentication exit.
 
 **Exit:** developers cannot accidentally depend on Firebase for v2 behavior or data.
 
+## Phase 0 Workstream A rollout gate — Task 9 evidence (2026-09-28)
+
+This gate records local/disposable evidence only. It does not close the
+staging, production, mobile-release, security, backup/restore or realtime
+client gates.
+
+- [x] Expand: `DATABASE_URL=<disposable-local-url> yarn workspace @imeal/core exec prisma migrate deploy` applied all eight checked-in migrations, including `20260928000000_phase0_domain_correctness`; `prisma generate` and `prisma validate` passed. Counts for registrations, daily menu revisions, meal days, meal servings and penalties were zero after expansion.
+- [x] Read-only approval gate: the containerized equivalent of `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/domain/prisma/migrations/20260928000000_phase0_domain_correctness/preflight.sql` returned seven named checks at zero and `ACTIVE`, `CANCELLED`, `SERVED`, `NO_SHOW` counts at zero on the disposable schema.
+- [x] Exact backfill: only after the clean disposable report, `backfill.sql` ran twice and returned `UPDATE 0`, `DO`, `UPDATE 0`, `UPDATE 0`, `COMMIT` on both runs; no operational rows were inserted, merged or fabricated.
+- [x] Post-backfill validation: preflight remained all-zero; both `registration_lifecycle_snapshot_complete` and `registration_serving_consistency` validated with `convalidated=true`.
+- [x] Focused evidence: contracts 37 tests, domain migration/concurrency 29 tests, API units 219 tests, worker units 56 tests, API PostgreSQL e2e 76 tests and worker PostgreSQL e2e 6 tests passed.
+- [ ] Full domain suite: `yarn workspace @imeal/core exec vitest run` had five failures in local-seed/concurrency expectations; this is not a rollout approval.
+- [ ] Workspace typecheck: `yarn typecheck` is blocked by mobile `expo-location`, an implicit-any `nextLocation` callback and stale `menuRevisionId` test fixtures.
+- [ ] Staging approval: no staging target or ambient `DATABASE_URL` was available. The existing local public schema is dirty (116 incomplete snapshots, 6 ambiguous roster assignments, 132 incomplete menu revisions, 40 incomplete future ACTIVE rows); no backfill or validation was run there.
+
+**Cutover order:** expand additive schema → read-only preflight and external
+approval → exact deterministic backfill → post-backfill preflight → validate
+named checks → focused/full verification → application cutover. Abort before
+backfill or validation on any nonzero operational check, mismatch, ambiguity,
+invalid revision, duplicate penalty candidate, migration failure or failed
+verification. Rollback uses the approved database backup and old compatible
+application only under the documented operator decision; there is no
+destructive down migration or Firebase rollback path.
+
+The required runtime `DATABASE_URL`, OTP/session/provider/GPS/serving
+configuration and secret provisioning remain governed by
+`docs/02-technical-requirements.md §8.2` and `.env.example`; no secret,
+staging, backup/restore or production result is inferred from this local run.
+
 ---
 
 # Phase 1 — Repository and Linux foundation
