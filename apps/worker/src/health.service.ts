@@ -1,11 +1,11 @@
-import {
-  Inject,
-  Injectable,
-  Logger,
-  OnModuleInit,
-  Optional,
-} from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import type { StructuredLogger } from '@imeal/observability';
 import { readMigrationEvidence } from '@imeal/observability';
+import {
+  createWorkerStructuredLogger,
+  workerLogFields,
+  WORKER_STRUCTURED_LOGGER,
+} from './common/structured-logger.js';
 import { PrismaService } from './common/prisma.service.js';
 
 const DATABASE_CHECK_TIMEOUT_MS = 2_000;
@@ -45,7 +45,7 @@ export const WORKER_HEALTH_ENVIRONMENT_VALIDATED = Symbol(
 
 @Injectable()
 export class HealthService implements OnModuleInit {
-  private readonly logger = new Logger(HealthService.name);
+  private readonly logger: StructuredLogger;
   private schedulerInitialized = false;
   private lastLoop: WorkerHealthCheckState = 'not_configured';
 
@@ -57,7 +57,10 @@ export class HealthService implements OnModuleInit {
     @Optional()
     @Inject(WORKER_HEALTH_ENVIRONMENT_VALIDATED)
     private readonly environmentValidated = true,
-  ) {}
+    @Optional() @Inject(WORKER_STRUCTURED_LOGGER) logger?: StructuredLogger,
+  ) {
+    this.logger = logger ?? createWorkerStructuredLogger();
+  }
 
   onModuleInit(): void {
     this.schedulerInitialized = true;
@@ -195,7 +198,12 @@ export class HealthService implements OnModuleInit {
     for (const [check, state] of Object.entries(checks)) {
       if (state !== 'ok') {
         this.logger.warn(
-          `health.not_ready service=worker check=${check} state=${state} requestId=${requestId}`,
+          'health.not_ready',
+          workerLogFields('health.not_ready', {
+            requestId,
+            statusCode: 503,
+            errorCode: `CHECK_${check.toUpperCase()}_${state.toUpperCase()}`,
+          }),
         );
       }
     }

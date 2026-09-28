@@ -10,13 +10,19 @@ import { NotificationsModule } from './notifications/notifications.module.js';
 import { PickupModule } from './pickup/pickup.module.js';
 import { KitchenModule } from './kitchen/kitchen.module.js';
 import { LocationsModule } from './locations/locations.module.js';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import type { StructuredLogger } from '@imeal/observability';
+import {
+  API_STRUCTURED_LOGGER,
+  createApiStructuredLogger,
+} from './common/structured-logger.js';
 import { ApiExceptionFilter } from './common/api-exception.filter.js';
+import { HttpLoggingInterceptor } from './common/http-logging.interceptor.js';
+import { RequestIdInterceptor } from './common/request-id.interceptor.js';
 import { HealthController } from './health/health.controller.js';
 import { HealthService } from './health/health.service.js';
 import { HEALTH_ENVIRONMENT_VALIDATED } from './health/health.types.js';
 import { PrismaService } from './common/prisma.service.js';
-
 @Global()
 @Module({
   imports: [
@@ -36,6 +42,20 @@ import { PrismaService } from './common/prisma.service.js';
     AppService,
     HealthService,
     { provide: HEALTH_ENVIRONMENT_VALIDATED, useValue: true },
+    {
+      provide: API_STRUCTURED_LOGGER,
+      useFactory: createApiStructuredLogger,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: RequestIdInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useFactory: (logger: StructuredLogger) =>
+        new HttpLoggingInterceptor(logger),
+      inject: [API_STRUCTURED_LOGGER],
+    },
     {
       provide: APP_FILTER,
       useClass: ApiExceptionFilter,

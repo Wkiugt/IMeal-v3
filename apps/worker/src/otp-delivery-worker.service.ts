@@ -1,9 +1,15 @@
 import { createDecipheriv, createHash, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import type { StructuredLogger } from '@imeal/observability';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from './common/prisma.service.js';
+import {
+  createWorkerStructuredLogger,
+  workerLogFields,
+  WORKER_STRUCTURED_LOGGER,
+} from './common/structured-logger.js';
 
 export type OtpPurpose = 'SESSION_LOGIN';
 
@@ -704,7 +710,7 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
 
 @Injectable()
 export class OtpDeliveryWorker {
-  private readonly logger = new Logger(OtpDeliveryWorker.name);
+  private readonly logger: StructuredLogger;
   private readonly provider: OtpProvider;
   private readonly outbox: OtpDeliveryOutboxPort;
 
@@ -715,7 +721,9 @@ export class OtpDeliveryWorker {
     @Optional() @Inject(WORKER_OTP_PROVIDER) provider?: OtpProvider,
     @Optional() outbox?: OtpDeliveryOutboxPort,
     @Optional() clock?: () => Date,
+    @Optional() @Inject(WORKER_STRUCTURED_LOGGER) logger?: StructuredLogger,
   ) {
+    this.logger = logger ?? createWorkerStructuredLogger();
     this.provider = provider ?? new WorkerConfiguredOtpProvider();
     this.outbox = outbox ?? new WorkerOtpOutboxService(this.prisma);
     this.clock = clock ?? (() => new Date());
@@ -768,7 +776,11 @@ export class OtpDeliveryWorker {
         });
         result.failed += 1;
         this.logger.warn(
-          `otp-delivery=${row.id} result=failed reason=max-attempts`,
+          'worker.otp.failed',
+          workerLogFields('worker.otp.failed', {
+            jobRunId: row.id,
+            errorCode: 'MAX_ATTEMPTS',
+          }),
         );
         continue;
       }
@@ -781,7 +793,11 @@ export class OtpDeliveryWorker {
       if (!validation.valid) {
         if (validation.reason === 'CLAIM_LOST') {
           this.logger.warn(
-            `otp-delivery=${row.id} result=skipped reason=claim-lost`,
+            'worker.otp.skipped',
+            workerLogFields('worker.otp.skipped', {
+              jobRunId: row.id,
+              errorCode: 'CLAIM_LOST',
+            }),
           );
           continue;
         }
@@ -793,7 +809,11 @@ export class OtpDeliveryWorker {
         });
         result.suppressed += 1;
         this.logger.warn(
-          `otp-delivery=${row.id} result=suppressed reason=${validation.reason.toLowerCase()}`,
+          'worker.otp.suppressed',
+          workerLogFields('worker.otp.suppressed', {
+            jobRunId: row.id,
+            errorCode: validation.reason,
+          }),
         );
         continue;
       }
@@ -811,7 +831,11 @@ export class OtpDeliveryWorker {
         });
         result.failed += 1;
         this.logger.error(
-          `otp-delivery=${row.id} result=failed reason=payload-invalid`,
+          'worker.otp.failed',
+          workerLogFields('worker.otp.failed', {
+            jobRunId: row.id,
+            errorCode: 'PAYLOAD_INVALID',
+          }),
         );
         continue;
       }
@@ -825,7 +849,11 @@ export class OtpDeliveryWorker {
         });
         result.failed += 1;
         this.logger.error(
-          `otp-delivery=${row.id} result=failed reason=payload-mismatch`,
+          'worker.otp.failed',
+          workerLogFields('worker.otp.failed', {
+            jobRunId: row.id,
+            errorCode: 'PAYLOAD_MISMATCH',
+          }),
         );
         continue;
       }
@@ -839,7 +867,11 @@ export class OtpDeliveryWorker {
       if (!finalValidation.valid) {
         if (finalValidation.reason === 'CLAIM_LOST') {
           this.logger.warn(
-            `otp-delivery=${row.id} result=skipped reason=claim-lost`,
+            'worker.otp.skipped',
+            workerLogFields('worker.otp.skipped', {
+              jobRunId: row.id,
+              errorCode: 'CLAIM_LOST',
+            }),
           );
           continue;
         }
@@ -853,7 +885,11 @@ export class OtpDeliveryWorker {
         });
         result.suppressed += 1;
         this.logger.warn(
-          `otp-delivery=${row.id} result=suppressed reason=${finalValidation.reason.toLowerCase()}`,
+          'worker.otp.suppressed',
+          workerLogFields('worker.otp.suppressed', {
+            jobRunId: row.id,
+            errorCode: finalValidation.reason,
+          }),
         );
         continue;
       }
@@ -867,7 +903,11 @@ export class OtpDeliveryWorker {
         });
         result.failed += 1;
         this.logger.error(
-          `otp-delivery=${row.id} result=failed reason=payload-mismatch`,
+          'worker.otp.failed',
+          workerLogFields('worker.otp.failed', {
+            jobRunId: row.id,
+            errorCode: 'PAYLOAD_MISMATCH',
+          }),
         );
         continue;
       }
@@ -880,7 +920,12 @@ export class OtpDeliveryWorker {
           finalNow,
         );
         if (marked) result.sent += 1;
-        this.logger.log(`otp-delivery=${row.id} result=sent`);
+        this.logger.info(
+          'worker.otp.sent',
+          workerLogFields('worker.otp.sent', {
+            jobRunId: row.id,
+          }),
+        );
       } catch (error) {
         const code = providerCode(error);
         const transient = isTransientProviderFailure(code, error);
@@ -909,7 +954,14 @@ export class OtpDeliveryWorker {
         if (marked && canRetry) result.retried += 1;
         if (marked && !canRetry) result.failed += 1;
         this.logger.warn(
-          `otp-delivery=${row.id} result=${canRetry ? 'retry' : 'failed'} provider=${code} attempt=${row.attemptCount}`,
+          'worker.otp.delivery_failed',
+          workerLogFields('worker.otp.delivery_failed', {
+            jobRunId: row.id,
+            providerCode: code,
+            attempt: row.attemptCount,
+            retry: canRetry,
+            errorCode: failureCode,
+          }),
         );
       }
     }

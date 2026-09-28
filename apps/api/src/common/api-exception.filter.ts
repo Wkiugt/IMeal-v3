@@ -4,13 +4,20 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Inject,
+  Optional,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { REQUEST_ID_HEADER, resolveRequestId } from '@imeal/observability';
+import type { StructuredLogger } from '@imeal/observability';
+import { API_STRUCTURED_LOGGER } from './structured-logger.js';
+import {
+  firstHeader,
+  requestIdFromRequest,
+  setResponseRequestId,
+  type RequestContextRequest,
+} from './request-context.js';
 
-type RequestLike = {
-  id?: string;
-  headers?: Record<string, string | string[] | undefined>;
-};
+type RequestLike = RequestContextRequest;
 
 type ReplyLike = {
   header(name: string, value: string): ReplyLike;
@@ -24,26 +31,6 @@ type ExceptionBody = {
   details?: unknown;
 };
 
-
-const REQUEST_ID_HEADER = 'x-request-id';
-const REQUEST_ID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function firstHeader(
-  headers: RequestLike['headers'],
-  name: string,
-): string | undefined {
-  const value = headers?.[name];
-  return Array.isArray(value) ? value[0] : value;
-}
-
-function requestId(request: RequestLike): string {
-  const supplied = firstHeader(request.headers, REQUEST_ID_HEADER);
-  return supplied && REQUEST_ID_PATTERN.test(supplied)
-    ? supplied
-    : randomUUID();
-}
-
 function defaultErrorCode(status: number): string {
   if (status === HttpStatus.BAD_REQUEST) return 'BAD_REQUEST';
   if (status === HttpStatus.UNAUTHORIZED) return 'UNAUTHORIZED';
@@ -56,6 +43,11 @@ function defaultErrorCode(status: number): string {
 
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
+  constructor(
+    @Optional()
+    @Inject(API_STRUCTURED_LOGGER)
+    private readonly logger?: StructuredLogger,
+  ) {}
   catch(exception: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();
     const request = http.getRequest<RequestLike>();
@@ -67,16 +59,15 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const response =
       exception instanceof HttpException ? exception.getResponse() : undefined;
     const body: ExceptionBody =
-      response &&
-      typeof response === 'object' &&
-      !Array.isArray(response)
+      response && typeof response === 'object' && !Array.isArray(response)
         ? response
         : {};
-    const id = requestId(request);
+    const id =
+      requestIdFromRequest(request) ??
+      resolveRequestId(firstHeader(request.headers, REQUEST_ID_HEADER));
+    request.requestId = id;
     const code =
-      typeof body.code === 'string'
-        ? body.code
-        : defaultErrorCode(status);
+      typeof body.code === 'string' ? body.code : defaultErrorCode(status);
     const message =
       typeof body.message === 'string'
         ? body.message
@@ -107,7 +98,16 @@ export class ApiExceptionFilter implements ExceptionFilter {
       ...(structuredDetails ? { details: structuredDetails } : {}),
     };
 
-    reply.header('X-Request-Id', id).status(status).send({
+    this.logger?.error('http.exception', {
+      service: 'api',
+      release: process.env.RELEASE_VERSION?.trim() || 'unconfigured',
+      event: 'http.exception',
+      requestId: id,
+      statusCode: status,
+      errorCode: code,
+    });
+    setResponseRequestId(reply, id);
+    reply.status(status).send({
       error,
       requestId: id,
     });

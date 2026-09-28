@@ -1,9 +1,20 @@
 import { randomUUID } from 'node:crypto';
-import { BadRequestException, Injectable, Logger, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Optional,
+} from '@nestjs/common';
+import type { StructuredLogger } from '@imeal/observability';
 import { Prisma, type JobRunStatus } from '@prisma/client';
-import { PrismaService } from './common/prisma.service.js';
 import { Cron } from '@nestjs/schedule';
+import { PrismaService } from './common/prisma.service.js';
 import { WorkerNotificationPublisher } from './worker-notification-publisher.js';
+import {
+  createWorkerStructuredLogger,
+  workerLogFields,
+  WORKER_STRUCTURED_LOGGER,
+} from './common/structured-logger.js';
 
 export interface ProcessNoShowsOptions {
   force?: boolean;
@@ -14,13 +25,15 @@ type NoShowResult = 'PROCESSED' | 'SKIPPED';
 
 @Injectable()
 export class NoShowWorkerService {
-  private readonly logger = new Logger(NoShowWorkerService.name);
+  private readonly logger: StructuredLogger;
   private readonly notificationPublisher: WorkerNotificationPublisher;
 
   constructor(
     private readonly prisma: PrismaService,
     @Optional() notificationPublisher?: WorkerNotificationPublisher,
+    @Optional() @Inject(WORKER_STRUCTURED_LOGGER) logger?: StructuredLogger,
   ) {
+    this.logger = logger ?? createWorkerStructuredLogger();
     this.notificationPublisher =
       notificationPublisher ?? new WorkerNotificationPublisher();
   }
@@ -47,11 +60,19 @@ export class NoShowWorkerService {
     timeZone: 'Asia/Ho_Chi_Minh',
   })
   async handleNoShowCron() {
-    this.logger.log('Running daily no-show worker at 13:45 VN time');
+    this.logger.info(
+      'worker.no_show.started',
+      workerLogFields('worker.no_show.started'),
+    );
     try {
       return await this.processNoShows();
-    } catch (error) {
-      this.logger.error('Error in daily no-show cron execution', error);
+    } catch (error: unknown) {
+      this.logger.error(
+        'worker.no_show.failed',
+        workerLogFields('worker.no_show.failed', {
+          errorCode: 'JOB_FAILURE',
+        }),
+      );
       throw error;
     }
   }
@@ -100,8 +121,12 @@ export class NoShowWorkerService {
       .map((candidate) => candidate.id)
       .sort((left, right) => left.localeCompare(right));
 
-    this.logger.log(
-      `Found ${candidateIds.length} active registration candidate(s) for no-show processing on ${dateStr}`,
+    this.logger.info(
+      'worker.no_show.candidates',
+      workerLogFields('worker.no_show.candidates', {
+        jobName: `no_show_${dateStr}`,
+        count: candidateIds.length,
+      }),
     );
 
     let processedCount = 0;
@@ -120,8 +145,11 @@ export class NoShowWorkerService {
       } catch (error) {
         failures.push(error);
         this.logger.error(
-          `No-show transaction failed for registration ${registrationId}`,
-          error,
+          'worker.no_show.registration_failed',
+          workerLogFields('worker.no_show.registration_failed', {
+            jobName: `no_show_${dateStr}`,
+            errorCode: 'REGISTRATION_FAILURE',
+          }),
         );
       }
     }
@@ -133,15 +161,26 @@ export class NoShowWorkerService {
       );
     } catch (error) {
       failures.push(error);
-      this.logger.error(`No-show job bookkeeping failed for ${dateStr}`, error);
+      this.logger.error(
+        'worker.no_show.bookkeeping_failed',
+        workerLogFields('worker.no_show.bookkeeping_failed', {
+          jobName: `no_show_${dateStr}`,
+          errorCode: 'BOOKKEEPING_FAILURE',
+        }),
+      );
     }
 
     if (failures.length > 0) {
       throw failures[0];
     }
 
-    this.logger.log(
-      `Successfully completed no-show processing for ${dateStr}. Processed: ${processedCount}/${candidateIds.length}`,
+    this.logger.info(
+      'worker.no_show.completed',
+      workerLogFields('worker.no_show.completed', {
+        jobName: `no_show_${dateStr}`,
+        count: processedCount,
+        total: candidateIds.length,
+      }),
     );
 
     return {

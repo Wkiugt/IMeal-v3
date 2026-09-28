@@ -1,11 +1,18 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   HttpException,
   HttpStatus,
   Optional,
 } from '@nestjs/common';
+import type { StructuredLogger } from '@imeal/observability';
 import { PrismaService } from '../common/prisma.service.js';
+import {
+  apiLogFields,
+  createApiStructuredLogger,
+  API_STRUCTURED_LOGGER,
+} from '../common/structured-logger.js';
 import type { Prisma } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
@@ -49,7 +56,7 @@ type RegistrationSnapshotResolution = {
 };
 
 function hasCompleteRegistrationSnapshot(registration: {
-    [K in keyof RegistrationSnapshotResolution]?:
+  [K in keyof RegistrationSnapshotResolution]?:
     RegistrationSnapshotResolution[K] | null;
 }): boolean {
   return (
@@ -122,15 +129,18 @@ export class RegistrationsService {
   >();
   private readonly notificationsService: NotificationsService;
   private readonly kitchenEventsService?: KitchenEventsService;
+  private readonly logger: StructuredLogger;
 
   constructor(
     private readonly prisma: PrismaService,
     @Optional() notificationsService?: NotificationsService,
     @Optional() kitchenEventsService?: KitchenEventsService,
+    @Optional() @Inject(API_STRUCTURED_LOGGER) logger?: StructuredLogger,
   ) {
     this.notificationsService =
       notificationsService ?? new NotificationsService(this.prisma);
     this.kitchenEventsService = kitchenEventsService;
+    this.logger = logger ?? createApiStructuredLogger();
   }
 
   async getWeekData(userId: string, weekStart: string) {
@@ -481,200 +491,200 @@ export class RegistrationsService {
           try {
             const transactionResult = await this.prisma.$transaction(
               async (tx) => {
-              let lifecycleEvent: RegistrationLifecycleEvent | null = null;
-              let registration = await tx.registration.findUnique({
-                where: {
-                  userId_mealDate: {
-                    userId,
-                    mealDate,
+                let lifecycleEvent: RegistrationLifecycleEvent | null = null;
+                let registration = await tx.registration.findUnique({
+                  where: {
+                    userId_mealDate: {
+                      userId,
+                      mealDate,
+                    },
                   },
-                },
-                include: {
-                  user: true,
-                  mealServing: true,
-                  penalties: true,
-                },
-              });
-
-              if (registration) {
-                await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registration.id} FOR UPDATE`;
-                registration = await tx.registration.findUnique({
-                  where: { id: registration.id },
                   include: {
                     user: true,
                     mealServing: true,
                     penalties: true,
                   },
                 });
-              }
 
-              if (
-                registration &&
-                (registration.status === 'SERVED' ||
-                  registration.status === 'NO_SHOW' ||
-                  registration.mealServing ||
-                  registration.penalties?.length)
-              ) {
-                throw new RegistrationFinalizedError();
-              }
-
-              if (
-                item.status === 'ACTIVE' &&
-                  !getAvailableMealChoices(mealDateStr).includes(
-                    item.mealChoice,
-                  )
-              ) {
-                throw new MealChoiceUnavailableError();
-              }
-
-              if (item.status === 'ACTIVE') {
-                const needsResolution =
-                  !registration ||
-                  !hasCompleteRegistrationSnapshot(registration) ||
-                  registration.status === 'CANCELLED';
-                const resolution = needsResolution
-                  ? await this.resolveRegistrationSnapshot(
-                      tx,
-                      userId,
-                      mealDate,
-                      serverNow,
-                    )
-                  : null;
+                if (registration) {
+                  await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registration.id} FOR UPDATE`;
+                  registration = await tx.registration.findUnique({
+                    where: { id: registration.id },
+                    include: {
+                      user: true,
+                      mealServing: true,
+                      penalties: true,
+                    },
+                  });
+                }
 
                 if (
                   registration &&
-                  (registration.status === 'ACTIVE' ||
-                    registration.status === 'CANCELLED')
+                  (registration.status === 'SERVED' ||
+                    registration.status === 'NO_SHOW' ||
+                    registration.mealServing ||
+                    registration.penalties?.length)
                 ) {
+                  throw new RegistrationFinalizedError();
+                }
+
+                if (
+                  item.status === 'ACTIVE' &&
+                  !getAvailableMealChoices(mealDateStr).includes(
+                    item.mealChoice,
+                  )
+                ) {
+                  throw new MealChoiceUnavailableError();
+                }
+
+                if (item.status === 'ACTIVE') {
+                  const needsResolution =
+                    !registration ||
+                    !hasCompleteRegistrationSnapshot(registration) ||
+                    registration.status === 'CANCELLED';
+                  const resolution = needsResolution
+                    ? await this.resolveRegistrationSnapshot(
+                        tx,
+                        userId,
+                        mealDate,
+                        serverNow,
+                      )
+                    : null;
+
                   if (
-                    registration.status === 'ACTIVE' &&
-                    registration.mealChoice === item.mealChoice &&
-                    resolution === null
+                    registration &&
+                    (registration.status === 'ACTIVE' ||
+                      registration.status === 'CANCELLED')
                   ) {
-                    return;
+                    if (
+                      registration.status === 'ACTIVE' &&
+                      registration.mealChoice === item.mealChoice &&
+                      resolution === null
+                    ) {
+                      return;
+                    }
+                    const choiceChanged =
+                      registration.mealChoice !== item.mealChoice;
+                    await tx.registration.update({
+                      where: { id: registration.id },
+                      data: {
+                        ...(resolution ?? {}),
+                        ...(registration.status === 'CANCELLED'
+                          ? {
+                              status: 'ACTIVE',
+                              mealChoice: item.mealChoice,
+                              version: { increment: 1 },
+                              registeredAt: serverNow,
+                              cancelledAt: null,
+                              cancelReason: null,
+                              cancelledByUserId: null,
+                            }
+                          : choiceChanged
+                            ? {
+                                mealChoice: item.mealChoice,
+                                version: { increment: 1 },
+                              }
+                            : {}),
+                      },
+                    });
+                    if (registration.status === 'CANCELLED') {
+                      const audit = await tx.auditLog.create({
+                        data: {
+                          userId,
+                          action: 'registration_reactivated',
+                          details: `Registration ${registration.id} reactivated; previous cancellation reason=${registration.cancelReason ?? 'UNKNOWN'}`,
+                        },
+                      });
+                      if (typeof audit.id === 'string') {
+                        lifecycleEvent = {
+                          auditId: audit.id,
+                          eventType: 'REGISTRATION_CHANGED',
+                          mealDate: mealDateStr,
+                          registrationId: registration.id,
+                          status: 'ACTIVE',
+                        };
+                      }
+                    }
+                  } else {
+                    await tx.registration.create({
+                      data: {
+                        userId,
+                        mealDate,
+                        status: 'ACTIVE',
+                        mealChoice: item.mealChoice,
+                        version: 1,
+                        registeredAt: serverNow,
+                        ...(resolution ?? {}),
+                      },
+                    });
                   }
-                  const choiceChanged =
-                    registration.mealChoice !== item.mealChoice;
+                } else if (registration?.status === 'ACTIVE') {
                   await tx.registration.update({
                     where: { id: registration.id },
                     data: {
-                      ...(resolution ?? {}),
-                      ...(registration.status === 'CANCELLED'
-                        ? {
-                            status: 'ACTIVE',
-                            mealChoice: item.mealChoice,
-                            version: { increment: 1 },
-                            registeredAt: serverNow,
-                            cancelledAt: null,
-                            cancelReason: null,
-                            cancelledByUserId: null,
-                          }
-                        : choiceChanged
-                          ? {
-                              mealChoice: item.mealChoice,
-                              version: { increment: 1 },
-                            }
-                          : {}),
+                      status: 'CANCELLED',
+                      version: { increment: 1 },
+                      cancelledAt: serverNow,
+                      cancelReason: 'REGISTRATION_CANCELLED',
+                      cancelledByUserId: userId,
                     },
                   });
-                  if (registration.status === 'CANCELLED') {
-                    const audit = await tx.auditLog.create({
+
+                  const activeDelegations = (
+                    (await tx.pickupDelegation.findMany({
+                      where: {
+                        registrationId: registration.id,
+                        status: { in: ['PENDING', 'ACCEPTED'] },
+                      },
+                      orderBy: { id: 'asc' },
+                    })) ?? []
+                  ).sort((left, right) => left.id.localeCompare(right.id));
+                  const audit = await tx.auditLog.create({
+                    data: {
+                      userId,
+                      action: 'registration_cancelled',
+                      details: `Registration ${registration.id} cancelled with reason REGISTRATION_CANCELLED`,
+                    },
+                  });
+                  if (typeof audit.id === 'string') {
+                    lifecycleEvent = {
+                      auditId: audit.id,
+                      eventType: 'REGISTRATION_CHANGED',
+                      mealDate: mealDateStr,
+                      registrationId: registration.id,
+                      status: 'CANCELLED',
+                    };
+                  }
+                  for (const delegation of activeDelegations) {
+                    await tx.pickupDelegation.update({
+                      where: { id: delegation.id },
+                      data: { status: 'REVOKED' },
+                    });
+                    await tx.auditLog.create({
                       data: {
                         userId,
-                        action: 'registration_reactivated',
-                        details: `Registration ${registration.id} reactivated; previous cancellation reason=${registration.cancelReason ?? 'UNKNOWN'}`,
+                        action: 'delegation_revoked',
+                        details: `Delegation ${delegation.id} revoked because registration ${registration.id} was cancelled`,
                       },
                     });
-                    if (typeof audit.id === 'string') {
-                      lifecycleEvent = {
-                        auditId: audit.id,
-                        eventType: 'REGISTRATION_CHANGED',
-                        mealDate: mealDateStr,
+                    await this.notificationsService.publish(tx, {
+                      userId: delegation.delegateUserId,
+                      kind: 'DELEGATION_REVOKED',
+                      payload: {
+                        delegationId: delegation.id,
                         registrationId: registration.id,
-                        status: 'ACTIVE',
-                      };
-                    }
+                        mealDate: mealDate.toISOString().slice(0, 10),
+                        counterpartName:
+                          registration.user?.name?.trim() ||
+                          registration.user?.email?.trim() ||
+                          'nhân viên',
+                        reason: 'REGISTRATION_CANCELLED',
+                      },
+                      dedupeKey: `delegation-revoked:${delegation.delegateUserId}:${delegation.id}`,
+                    });
                   }
-                } else {
-                  await tx.registration.create({
-                    data: {
-                      userId,
-                      mealDate,
-                      status: 'ACTIVE',
-                      mealChoice: item.mealChoice,
-                      version: 1,
-                      registeredAt: serverNow,
-                      ...(resolution ?? {}),
-                    },
-                  });
                 }
-              } else if (registration?.status === 'ACTIVE') {
-                await tx.registration.update({
-                  where: { id: registration.id },
-                  data: {
-                    status: 'CANCELLED',
-                    version: { increment: 1 },
-                    cancelledAt: serverNow,
-                    cancelReason: 'REGISTRATION_CANCELLED',
-                    cancelledByUserId: userId,
-                  },
-                });
-
-                const activeDelegations = (
-                  (await tx.pickupDelegation.findMany({
-                    where: {
-                      registrationId: registration.id,
-                      status: { in: ['PENDING', 'ACCEPTED'] },
-                    },
-                    orderBy: { id: 'asc' },
-                  })) ?? []
-                ).sort((left, right) => left.id.localeCompare(right.id));
-                const audit = await tx.auditLog.create({
-                  data: {
-                    userId,
-                    action: 'registration_cancelled',
-                    details: `Registration ${registration.id} cancelled with reason REGISTRATION_CANCELLED`,
-                  },
-                });
-                if (typeof audit.id === 'string') {
-                  lifecycleEvent = {
-                    auditId: audit.id,
-                    eventType: 'REGISTRATION_CHANGED',
-                    mealDate: mealDateStr,
-                    registrationId: registration.id,
-                    status: 'CANCELLED',
-                  };
-                }
-                for (const delegation of activeDelegations) {
-                  await tx.pickupDelegation.update({
-                    where: { id: delegation.id },
-                    data: { status: 'REVOKED' },
-                  });
-                  await tx.auditLog.create({
-                    data: {
-                      userId,
-                      action: 'delegation_revoked',
-                      details: `Delegation ${delegation.id} revoked because registration ${registration.id} was cancelled`,
-                    },
-                  });
-                  await this.notificationsService.publish(tx, {
-                    userId: delegation.delegateUserId,
-                    kind: 'DELEGATION_REVOKED',
-                    payload: {
-                      delegationId: delegation.id,
-                      registrationId: registration.id,
-                      mealDate: mealDate.toISOString().slice(0, 10),
-                      counterpartName:
-                        registration.user?.name?.trim() ||
-                        registration.user?.email?.trim() ||
-                        'nhân viên',
-                      reason: 'REGISTRATION_CANCELLED',
-                    },
-                    dedupeKey: `delegation-revoked:${delegation.delegateUserId}:${delegation.id}`,
-                  });
-                }
-              }
-              return lifecycleEvent;
+                return lifecycleEvent;
               },
             );
             if (transactionResult && this.kitchenEventsService) {
@@ -688,10 +698,12 @@ export class RegistrationsService {
                     status: transactionResult.status,
                   },
                 });
-              } catch (error) {
-                console.warn(
-                  'Failed to publish registration lifecycle event',
-                  error,
+              } catch {
+                this.logger.error(
+                  'registrations.event_publish_failed',
+                  apiLogFields('registrations.event_publish_failed', {
+                    errorCode: 'EVENT_PUBLISH_FAILED',
+                  }),
                 );
               }
             }

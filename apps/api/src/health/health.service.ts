@@ -1,5 +1,11 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import type { StructuredLogger } from '@imeal/observability';
 import { readMigrationEvidence } from '@imeal/observability';
+import {
+  apiLogFields,
+  createApiStructuredLogger,
+  API_STRUCTURED_LOGGER,
+} from '../common/structured-logger.js';
 import { PrismaService } from '../common/prisma.service.js';
 import {
   HEALTH_ENVIRONMENT_VALIDATED,
@@ -14,7 +20,7 @@ const DATABASE_CHECK_TIMEOUT_MS = 2_000;
 
 @Injectable()
 export class HealthService {
-  private readonly logger = new Logger(HealthService.name);
+  private readonly logger: StructuredLogger;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -24,7 +30,10 @@ export class HealthService {
     @Optional()
     @Inject(HEALTH_ENVIRONMENT_VALIDATED)
     private readonly environmentValidated = true,
-  ) {}
+    @Optional() @Inject(API_STRUCTURED_LOGGER) logger?: StructuredLogger,
+  ) {
+    this.logger = logger ?? createApiStructuredLogger();
+  }
 
   live(requestId: string): ApiHealthResult {
     const draining = this.isDraining();
@@ -129,7 +138,12 @@ export class HealthService {
     for (const [check, state] of Object.entries(checks)) {
       if (state !== 'ok') {
         this.logger.warn(
-          `health.not_ready service=api check=${check} state=${state} requestId=${requestId}`,
+          'health.not_ready',
+          apiLogFields('health.not_ready', {
+            requestId,
+            statusCode: 503,
+            errorCode: `CHECK_${check.toUpperCase()}_${state.toUpperCase()}`,
+          }),
         );
       }
     }

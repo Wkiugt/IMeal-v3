@@ -1,9 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Expo, type ExpoPushMessage } from 'expo-server-sdk';
 import { Prisma } from '@prisma/client';
+import type { StructuredLogger } from '@imeal/observability';
 import { PrismaService } from './common/prisma.service.js';
+import {
+  createWorkerStructuredLogger,
+  workerLogFields,
+  WORKER_STRUCTURED_LOGGER,
+} from './common/structured-logger.js';
 
 const CLAIM_BATCH_SIZE = 100;
 const PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
@@ -110,13 +116,15 @@ function isPermanentFailure(failure: Failure): boolean {
 
 @Injectable()
 export class NotificationDispatchService {
-  private readonly logger = new Logger(NotificationDispatchService.name);
+  private readonly logger: StructuredLogger;
   private readonly expo: Expo;
 
   constructor(
     private readonly prisma: PrismaService,
     @Optional() expo?: Expo,
+    @Optional() @Inject(WORKER_STRUCTURED_LOGGER) logger?: StructuredLogger,
   ) {
+    this.logger = logger ?? createWorkerStructuredLogger();
     this.expo = expo ?? new Expo();
   }
 
@@ -211,7 +219,13 @@ export class NotificationDispatchService {
             },
           });
           this.logger.error(
-            `notification=${row.aggregate_id} delivery=outbox:${row.id} attempt=${row.attempt_count} provider=${failure.code} error=${failure.error}`,
+            'worker.notification.outbox_failed',
+            workerLogFields('worker.notification.outbox_failed', {
+              jobRunId: row.id,
+              providerCode: failure.code,
+              attempt: row.attempt_count,
+              errorCode: 'PROVIDER_FAILURE',
+            }),
           );
         }
       }
@@ -476,7 +490,14 @@ export class NotificationDispatchService {
     }
 
     this.logger.warn(
-      `notification=${delivery.notificationId} delivery=${delivery.id} attempt=${attempt} provider=${failure.code} error=${failure.error}`,
+      'worker.notification.delivery_failed',
+      workerLogFields('worker.notification.delivery_failed', {
+        jobRunId: delivery.id,
+        providerCode: failure.code,
+        attempt,
+        retry: shouldRetry,
+        errorCode: 'PROVIDER_FAILURE',
+      }),
     );
   }
 }

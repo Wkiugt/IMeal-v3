@@ -1,9 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
+import type { StructuredLogger } from '@imeal/observability';
 import { PrismaService } from './common/prisma.service.js';
 import { WorkerNotificationPublisher } from './worker-notification-publisher.js';
+import {
+  createWorkerStructuredLogger,
+  workerLogFields,
+  WORKER_STRUCTURED_LOGGER,
+} from './common/structured-logger.js';
 
 const TIME_ZONE = 'Asia/Ho_Chi_Minh';
 
@@ -47,13 +53,15 @@ function nextMondayStart(now: Date): string {
 
 @Injectable()
 export class NotificationReminderService {
-  private readonly logger = new Logger(NotificationReminderService.name);
+  private readonly logger: StructuredLogger;
   private readonly publisher: WorkerNotificationPublisher;
 
   constructor(
     private readonly prisma: PrismaService,
     @Optional() publisher?: WorkerNotificationPublisher,
+    @Optional() @Inject(WORKER_STRUCTURED_LOGGER) logger?: StructuredLogger,
   ) {
+    this.logger = logger ?? createWorkerStructuredLogger();
     this.publisher = publisher ?? new WorkerNotificationPublisher();
   }
 
@@ -199,13 +207,28 @@ export class NotificationReminderService {
         where: { id: job.id },
         data: { status: 'COMPLETED', completedAt: new Date() },
       });
+      this.logger.info(
+        'worker.notification_reminder.completed',
+        workerLogFields('worker.notification_reminder.completed', {
+          jobRunId: job.id,
+          jobName: job.jobName,
+          count: result.publishedCount,
+        }),
+      );
       return result;
     } catch (error) {
       await this.prisma.jobRun.update({
         where: { id: job.id },
         data: { status: 'FAILED', completedAt: new Date() },
       });
-      this.logger.error(`job=${job.jobName} status=FAILED`);
+      this.logger.error(
+        'worker.notification_reminder.failed',
+        workerLogFields('worker.notification_reminder.failed', {
+          jobRunId: job.id,
+          jobName: job.jobName,
+          errorCode: 'REMINDER_FAILURE',
+        }),
+      );
       throw error;
     }
   }

@@ -1,21 +1,30 @@
 import {
+  Inject,
   Injectable,
   InternalServerErrorException,
-  Logger,
   Optional,
 } from '@nestjs/common';
+import type { StructuredLogger } from '@imeal/observability';
 import { PrismaService } from '../common/prisma.service.js';
 import { v1 } from '@imeal/contracts';
 import { KitchenEventsService } from './kitchen-events.service.js';
+import {
+  apiLogFields,
+  createApiStructuredLogger,
+  API_STRUCTURED_LOGGER,
+} from '../common/structured-logger.js';
 
 @Injectable()
 export class KitchenDashboardService {
-  private readonly logger = new Logger(KitchenDashboardService.name);
+  private readonly logger: StructuredLogger;
 
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly eventsService?: KitchenEventsService,
-  ) {}
+    @Optional() @Inject(API_STRUCTURED_LOGGER) logger?: StructuredLogger,
+  ) {
+    this.logger = logger ?? createApiStructuredLogger();
+  }
 
   getTodayDateStr(): string {
     const now = new Date();
@@ -64,7 +73,10 @@ export class KitchenDashboardService {
         (registration.status === 'CANCELLED' && hasServing);
       if (invalid) {
         this.logger.error(
-          `Kitchen dashboard state invariant violated for registration ${registration.id}`,
+          'kitchen.state_invariant',
+          apiLogFields('kitchen.state_invariant', {
+            errorCode: 'STATE_INVARIANT',
+          }),
         );
         throw new InternalServerErrorException('Internal server error');
       }
@@ -260,8 +272,13 @@ export class KitchenDashboardService {
           recentLogs: snapshot.recentLogs.slice(0, 10),
         },
       });
-    } catch (err) {
-      console.warn('Failed to publish serving confirmed event:', err);
+    } catch {
+      this.logger.error(
+        'kitchen.event_publish_failed',
+        apiLogFields('kitchen.event_publish_failed', {
+          errorCode: 'EVENT_PUBLISH_FAILED',
+        }),
+      );
     }
   }
 }

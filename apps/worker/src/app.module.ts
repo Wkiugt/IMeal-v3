@@ -20,6 +20,10 @@ import {
   HealthService,
   WORKER_HEALTH_ENVIRONMENT_VALIDATED,
 } from './health.service.js';
+import {
+  createWorkerStructuredLogger,
+  WORKER_STRUCTURED_LOGGER,
+} from './common/structured-logger.js';
 
 @Module({
   imports: [ScheduleModule.forRoot()],
@@ -30,6 +34,10 @@ import {
     {
       provide: WORKER_HEALTH_ENVIRONMENT_VALIDATED,
       useValue: true,
+    },
+    {
+      provide: WORKER_STRUCTURED_LOGGER,
+      useFactory: createWorkerStructuredLogger,
     },
     AppService,
     CutoffWorkerService,

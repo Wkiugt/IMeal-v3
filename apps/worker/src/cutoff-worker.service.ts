@@ -1,25 +1,39 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import type { StructuredLogger } from '@imeal/observability';
 import { PrismaService } from './common/prisma.service.js';
+import {
+  createWorkerStructuredLogger,
+  workerLogFields,
+  WORKER_STRUCTURED_LOGGER,
+} from './common/structured-logger.js';
 
 @Injectable()
 export class CutoffWorkerService {
-  private readonly logger = new Logger(CutoffWorkerService.name);
+  private readonly logger: StructuredLogger;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() @Inject(WORKER_STRUCTURED_LOGGER) logger?: StructuredLogger,
+  ) {
+    this.logger = logger ?? createWorkerStructuredLogger();
+  }
 
   // 14:00 VN time every day
   @Cron('0 14 * * *', {
     timeZone: 'Asia/Ho_Chi_Minh',
   })
   async handleCutoffLock() {
-    this.logger.log('Running daily cutoff lock at 14:00 VN time');
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
 
     // Normalize to midnight UTC for querying (depends on exact timezone implementation)
     const targetDateStr = tomorrow.toISOString().split('T')[0];
     const jobName = `cutoff_lock_${targetDateStr}`;
+    this.logger.info(
+      'worker.cutoff.started',
+      workerLogFields('worker.cutoff.started', { jobName }),
+    );
 
     await this.prisma.$transaction(async (tx) => {
       // Idempotency check
@@ -28,7 +42,10 @@ export class CutoffWorkerService {
       });
 
       if (existingJob) {
-        this.logger.log(`Job ${jobName} already ran`);
+        this.logger.info(
+          'worker.cutoff.skipped',
+          workerLogFields('worker.cutoff.skipped', { jobName }),
+        );
         return;
       }
 
@@ -47,7 +64,10 @@ export class CutoffWorkerService {
         },
       });
 
-      this.logger.log(`Successfully locked menu for ${targetDateStr}`);
+      this.logger.info(
+        'worker.cutoff.completed',
+        workerLogFields('worker.cutoff.completed', { jobName }),
+      );
     });
   }
 }
