@@ -48,6 +48,7 @@ describe('KitchenDashboardController (e2e)', () => {
           userName: 'Nguyen Van A',
           mealChoice: 'VEGETARIAN',
           userEmail: 'a@example.com',
+          state: 'SERVED',
           isServed: true,
           servedAt: '2026-09-03T11:45:00.000Z',
         },
@@ -57,8 +58,9 @@ describe('KitchenDashboardController (e2e)', () => {
           registrationId: 'reg-2',
           userId: 'user-2',
           userName: 'Tran Thi B',
-          userEmail: 'b@example.com',
           mealChoice: 'REGULAR',
+          userEmail: 'b@example.com',
+          state: 'PENDING',
           isServed: false,
           servedAt: null,
         },
@@ -114,7 +116,11 @@ describe('KitchenDashboardController (e2e)', () => {
     ).toBe(res.body.counters.totalRegistered);
     expect(res.body.recentLogs[0].mealChoice).toBe('VEGETARIAN');
     expect(res.body.lists.served[0].mealChoice).toBe('VEGETARIAN');
+    expect(res.body.lists.served[0].state).toBe('SERVED');
+    expect(res.body.lists.served[0].isServed).toBe(true);
     expect(res.body.lists.pending[0].mealChoice).toBe('REGULAR');
+    expect(res.body.lists.pending[0].state).toBe('PENDING');
+    expect(res.body.lists.pending[0].isServed).toBe(false);
     expect(res.body.lists.served).toHaveLength(1);
     expect(res.body.lists.pending).toHaveLength(1);
     expect(res.body.lists.noShow).toEqual([]);

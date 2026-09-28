@@ -40,99 +40,263 @@ describe('KitchenDashboardService', () => {
   });
 
   describe('getDashboardSnapshot', () => {
-    it('computes counters and separates served vs pending lists accurately', async () => {
-      const targetDate = '2026-09-03';
-      const mockRegistrations = [
-        {
-          id: 'reg-1',
-          userId: 'user-1',
-          status: 'ACTIVE',
-          mealChoice: 'VEGETARIAN',
-          user: { name: 'Nguyen Van A', email: 'a@example.com' },
-          mealServing: {
-            id: 'srv-1',
-            servedAt: new Date('2026-09-03T11:30:00Z'),
-          },
-          delegations: [],
-        },
-        {
-          id: 'reg-2',
-          userId: 'user-2',
-          status: 'ACTIVE',
-          mealChoice: 'REGULAR',
-          user: { name: 'Tran Thi B', email: 'b@example.com' },
-          mealServing: null,
-          delegations: [],
-        },
-        {
-          id: 'reg-3',
-          userId: 'user-3',
-          status: 'ACTIVE',
-          mealChoice: 'REGULAR',
-          user: { name: 'Le Van C', email: 'c@example.com' },
-          mealServing: null,
-          delegations: [],
-        },
-      ];
-
-      mockPrisma.registration.findMany
-        .mockResolvedValueOnce(mockRegistrations)
-        .mockResolvedValueOnce([
-          {
-            id: 'reg-noshow',
-            userId: 'user-4',
-            status: 'NO_SHOW',
-            mealChoice: 'VEGETARIAN',
-            user: { name: 'Pham Van D', email: 'd@example.com' },
-          },
-        ]);
+    const targetDate = '2026-09-03';
+    const serving = (
+      id: string,
+      ownerNameSnapshot: string | null = null,
+    ) => ({
+      id,
+      registrationId: id.replace('srv-', 'reg-'),
+      ownerNameSnapshot,
+      ownerEmailSnapshot: ownerNameSnapshot
+        ? `${ownerNameSnapshot.toLowerCase().replaceAll(' ', '.')}@example.com`
+        : null,
+      locationNameSnapshot: 'Approved Kitchen',
+      locationAddressSnapshot: 'Approved address',
+      menuNameSnapshot: 'Lunch',
+      menuDescriptionSnapshot: 'Lunch menu',
+      menuImageSnapshot: 'https://example.test/lunch.jpg',
+      servedAt: new Date('2026-09-03T11:30:00Z'),
+    });
+    const registration = (overrides: Record<string, unknown>) => ({
+      id: 'reg-default',
+      userId: 'user-default',
+      status: 'ACTIVE',
+      mealChoice: 'REGULAR',
+      user: {
+        name: 'Default User',
+        email: 'default@example.com',
+        isActive: true,
+      },
+      mealServing: null,
+      delegations: [],
+      ...overrides,
+    });
+    const configure = (rows: unknown[], recentRows: unknown[] = []) => {
+      mockPrisma.registration.findMany.mockResolvedValueOnce(rows);
       mockPrisma.appSetting.findUnique.mockResolvedValueOnce({ value: 'true' });
-      mockPrisma.mealServing.findMany.mockResolvedValueOnce([
-        {
-          id: 'srv-1',
-          registrationId: 'reg-1',
-          servedAt: new Date('2026-09-03T11:30:00Z'),
-          registration: {
-            userId: 'user-1',
-            mealChoice: 'VEGETARIAN',
-            user: { name: 'Nguyen Van A', email: 'a@example.com' },
-            delegations: [],
-          },
+      mockPrisma.mealServing.findMany.mockResolvedValueOnce(recentRows);
+    };
+
+    it('keeps_served_rows_in_total_and_served_list', async () => {
+      const activeServed = registration({
+        id: 'reg-active-served',
+        userId: 'user-active-served',
+        mealChoice: 'VEGETARIAN',
+        user: {
+          name: 'Active Served',
+          email: 'active-served@example.com',
+          isActive: true,
         },
+        mealServing: serving('srv-active-served', 'Serving Snapshot Owner'),
+      });
+      const legacyServed = registration({
+        id: 'reg-legacy-served',
+        userId: 'user-legacy-served',
+        status: 'SERVED',
+        mealServing: serving('srv-legacy-served'),
+      });
+      configure([activeServed, legacyServed]);
+
+      const snapshot = await service.getDashboardSnapshot(targetDate);
+
+      expect(snapshot.counters.totalRegistered).toBe(2);
+      expect(snapshot.counters.servedTotal).toBe(2);
+      expect(snapshot.counters.remaining).toBe(0);
+      expect(snapshot.lists.served.map((item) => item.registrationId)).toEqual([
+        'reg-active-served',
+        'reg-legacy-served',
+      ]);
+      expect(snapshot.lists.all).toHaveLength(2);
+      expect(snapshot.lists.served[0].userName).toBe('Serving Snapshot Owner');
+      expect(snapshot.lists.served[0].state).toBe('SERVED');
+    });
+    it('uses serving snapshots for recent serving logs', async () => {
+      const row = registration({
+        id: 'reg-serving-log',
+        mealServing: serving('srv-serving-log', 'Serving Snapshot Owner'),
+      });
+      configure(
+        [row],
+        [
+          {
+            ...serving('srv-serving-log', 'Serving Snapshot Owner'),
+            registration: {
+              userId: 'user-current',
+              mealChoice: 'REGULAR',
+              ownerNameSnapshot: 'Registration Snapshot Owner',
+              user: {
+                name: 'Current User Name',
+                email: 'current@example.com',
+              },
+              delegations: [],
+            },
+          },
+        ],
+      );
+
+      const snapshot = await service.getDashboardSnapshot(targetDate);
+
+      expect(snapshot.recentLogs[0]).toMatchObject({
+        userName: 'Serving Snapshot Owner',
+        userEmail: 'serving.snapshot.owner@example.com',
+      });
+    });
+
+    it('counts_no_show_without_pending_membership', async () => {
+      const pending = registration({ id: 'reg-pending' });
+      const noShow = registration({
+        id: 'reg-no-show',
+        userId: 'user-no-show',
+        status: 'NO_SHOW',
+        mealChoice: 'VEGETARIAN',
+        user: {
+          name: 'No Show',
+          email: 'no-show@example.com',
+          isActive: true,
+        },
+      });
+      configure([pending, noShow]);
+
+      const snapshot = await service.getDashboardSnapshot(targetDate);
+
+      expect(snapshot.counters.totalRegistered).toBe(2);
+      expect(snapshot.counters.noShowTotal).toBe(1);
+      expect(snapshot.counters.remaining).toBe(1);
+      expect(snapshot.lists.pending.map((item) => item.registrationId)).toEqual([
+        'reg-pending',
+      ]);
+      expect(snapshot.lists.noShow.map((item) => item.registrationId)).toEqual([
+        'reg-no-show',
+      ]);
+      expect(snapshot.lists.noShow[0]).toMatchObject({
+        state: 'NO_SHOW',
+        isServed: false,
+        servedAt: null,
+      });
+      expect(snapshot.lists.all).toHaveLength(2);
+    });
+
+    it('excludes_cancelled_and_account_disabled_rows', async () => {
+      configure([
+        registration({ id: 'reg-valid' }),
+        registration({
+          id: 'reg-cancelled',
+          status: 'CANCELLED',
+          userId: 'user-cancelled',
+        }),
+        registration({
+          id: 'reg-disabled',
+          userId: 'user-disabled',
+          user: {
+            name: 'Disabled',
+            email: 'disabled@example.com',
+            isActive: false,
+          },
+        }),
       ]);
 
       const snapshot = await service.getDashboardSnapshot(targetDate);
 
-      expect(snapshot.date).toBe(targetDate);
-      expect(snapshot.isServingReady).toBe(true);
-      expect(snapshot.counters.totalRegistered).toBe(3);
-      expect(snapshot.counters.servedTotal).toBe(1);
-      expect(snapshot.counters.remaining).toBe(2);
-      expect(snapshot.counters.noShowTotal).toBe(1);
-      expect(snapshot.counters.regularTotal).toBe(2);
-      expect(snapshot.counters.vegetarianTotal).toBe(1);
+      expect(snapshot.counters.totalRegistered).toBe(1);
+      expect(snapshot.counters.regularTotal).toBe(1);
+      expect(snapshot.lists.all.map((item) => item.registrationId)).toEqual([
+        'reg-valid',
+      ]);
+      expect(snapshot.lists.noShow).toEqual([]);
+    });
+
+    it('sets_state_and_isServed_consistently', async () => {
+      configure([
+        registration({ id: 'reg-pending' }),
+        registration({
+          id: 'reg-served',
+          mealServing: serving('srv-served'),
+        }),
+        registration({
+          id: 'reg-no-show',
+          status: 'NO_SHOW',
+        }),
+      ]);
+
+      const snapshot = await service.getDashboardSnapshot(targetDate);
+
+      for (const item of snapshot.lists.all) {
+        expect(item.isServed).toBe(item.state === 'SERVED');
+      }
+      expect(snapshot.lists.pending[0].state).toBe('PENDING');
+      expect(snapshot.lists.served[0].state).toBe('SERVED');
+      expect(snapshot.lists.noShow[0].state).toBe('NO_SHOW');
+      expect(
+        snapshot.counters.servedTotal +
+          snapshot.lists.pending.length +
+          snapshot.counters.noShowTotal,
+      ).toBe(snapshot.counters.totalRegistered);
       expect(
         snapshot.counters.regularTotal + snapshot.counters.vegetarianTotal,
       ).toBe(snapshot.counters.totalRegistered);
+      expect(snapshot.counters.remaining).toBe(
+        snapshot.lists.pending.length,
+      );
+    });
 
-      expect(snapshot.lists.served).toHaveLength(1);
-      expect(snapshot.lists.served[0].mealChoice).toBe('VEGETARIAN');
-      expect(snapshot.lists.pending[0].mealChoice).toBe('REGULAR');
-      expect(snapshot.lists.all.map((item) => item.mealChoice)).toEqual([
-        'VEGETARIAN',
-        'REGULAR',
-        'REGULAR',
+    it('rejects_state_serving_mismatch_with_internal_error_envelope', async () => {
+      configure([
+        registration({
+          id: 'reg-invalid',
+          status: 'SERVED',
+          mealServing: null,
+        }),
       ]);
-      expect(snapshot.lists.served[0].registrationId).toBe('reg-1');
-      expect(snapshot.lists.pending).toHaveLength(2);
-      expect(snapshot.lists.all).toHaveLength(3);
-      expect(snapshot.lists.noShow).toHaveLength(1);
-      expect(snapshot.lists.noShow[0].mealChoice).toBe('VEGETARIAN');
-      expect(snapshot.recentLogs[0].mealChoice).toBe('VEGETARIAN');
-      expect(snapshot.lists.noShow[0].userName).toBe('Pham Van D');
 
-      expect(snapshot.recentLogs).toHaveLength(1);
-      expect(snapshot.recentLogs[0].userName).toBe('Nguyen Van A');
+      await expect(service.getDashboardSnapshot(targetDate)).rejects.toMatchObject(
+        {
+          response: {
+            statusCode: 500,
+            message: 'Kitchen dashboard state invariant violated',
+          },
+          status: 500,
+        },
+      );
+      expect(mockPrisma.appSetting.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('rejects no-show and cancelled rows with servings', async () => {
+      for (const status of ['NO_SHOW', 'CANCELLED']) {
+        vi.clearAllMocks();
+        configure([
+          registration({
+            id: `reg-invalid-${status.toLowerCase()}`,
+            status,
+            mealServing: serving(`srv-invalid-${status.toLowerCase()}`),
+          }),
+        ]);
+
+        await expect(service.getDashboardSnapshot(targetDate)).rejects.toThrow(
+          'Kitchen dashboard state invariant violated',
+        );
+      }
+    });
+
+    it('uses one registration query for the canonical projection', async () => {
+      configure([registration({ id: 'reg-one-query' })]);
+
+      await service.getDashboardSnapshot(targetDate);
+
+      expect(mockPrisma.registration.findMany).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.registration.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            mealDate: new Date('2026-09-03T00:00:00Z'),
+            OR: expect.arrayContaining([
+              expect.objectContaining({
+                status: { in: ['ACTIVE', 'SERVED', 'NO_SHOW'] },
+              }),
+            ]),
+          }),
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        }),
+      );
     });
   });
 

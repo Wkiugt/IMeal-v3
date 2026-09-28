@@ -1,4 +1,9 @@
-import { Injectable, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  Optional,
+} from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { v1 } from '@imeal/contracts';
 import { KitchenEventsService } from './kitchen-events.service.js';
@@ -6,6 +11,7 @@ import { KitchenEventsService } from './kitchen-events.service.js';
 @Injectable()
 export class KitchenDashboardService {
   private prisma: PrismaClient;
+  private readonly logger = new Logger(KitchenDashboardService.name);
 
   constructor(
     @Optional() private readonly eventsService?: KitchenEventsService,
@@ -31,97 +37,119 @@ export class KitchenDashboardService {
   async getDashboardSnapshot(dateInput?: string) {
     const { dateObj, dateStr } = this.parseDate(dateInput);
 
-    // 1. Fetch active registrations for date
+    // Include cancelled rows with servings only so their invariant can be
+    // detected before valid cancelled rows are excluded from the projection.
     const registrations = await this.prisma.registration.findMany({
       where: {
         mealDate: dateObj,
-        status: 'ACTIVE',
+        OR: [
+          { status: { in: ['ACTIVE', 'SERVED', 'NO_SHOW'] } },
+          {
+            status: 'CANCELLED',
+            mealServing: { isNot: null },
+          },
+        ],
       },
       include: {
         user: true,
         mealServing: true,
         delegations: true,
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
 
-    // 2. Fetch no-show registrations
-    const noShowRegistrations =
-      (await this.prisma.registration.findMany({
-        where: {
-          mealDate: dateObj,
-          status: 'NO_SHOW',
-        },
-        include: {
-          user: true,
-        },
-        orderBy: { createdAt: 'asc' },
-      })) || [];
-    const noShowCount = noShowRegistrations.length;
+    for (const registration of registrations) {
+      const hasServing = registration.mealServing != null;
+      const invalid =
+        (registration.status === 'SERVED' && !hasServing) ||
+        (registration.status === 'NO_SHOW' && hasServing) ||
+        (registration.status === 'CANCELLED' && hasServing);
+      if (invalid) {
+        this.logger.error(
+          `Kitchen dashboard state invariant violated for registration ${registration.id}`,
+        );
+        throw new InternalServerErrorException(
+          'Kitchen dashboard state invariant violated',
+        );
+      }
+    }
 
-    // 3. Check Kitchen Signal state
+    // Account-disabled rows and valid cancelled rows remain out of the public
+    // projection after invariant checks.
+    const projectionRows = registrations.filter(
+      (registration) =>
+        registration.status !== 'CANCELLED' &&
+        registration.user?.isActive !== false,
+    );
+
     const kitchenSignal = await this.prisma.appSetting.findUnique({
       where: { key: `isServingReady:${dateStr}` },
     });
     const isServingReady = kitchenSignal?.value === 'true';
-    // 4. Calculate counters from the same ACTIVE registration set.
-    const totalRegistered = registrations.length;
-    const servedTotal = registrations.filter(
-      (r) => r.mealServing !== null,
+
+    const toState = (registration: (typeof projectionRows)[number]) => {
+      if (registration.mealServing != null) return 'SERVED' as const;
+      if (registration.status === 'NO_SHOW') return 'NO_SHOW' as const;
+      return 'PENDING' as const;
+    };
+    const toItem = (registration: (typeof projectionRows)[number]) => {
+      const serving = registration.mealServing ?? null;
+      const state = toState(registration);
+      return {
+        registrationId: registration.id,
+        userId: registration.userId,
+        userName:
+          serving?.ownerNameSnapshot ??
+          registration.user?.name ??
+          registration.user?.email ??
+          'N/A',
+        mealChoice: registration.mealChoice,
+        userEmail:
+          serving?.ownerEmailSnapshot ?? registration.user?.email ?? '',
+        state,
+        isServed: state === 'SERVED',
+        servedAt: serving?.servedAt?.toISOString() ?? null,
+      };
+    };
+
+    const allList = projectionRows.map(toItem);
+    const servedList = projectionRows
+      .filter((registration) => registration.mealServing != null)
+      .map(toItem);
+    const pendingList = projectionRows
+      .filter(
+        (registration) =>
+          registration.status === 'ACTIVE' &&
+          registration.mealServing == null,
+      )
+      .map(toItem);
+    const noShowList = projectionRows
+      .filter(
+        (registration) =>
+          registration.status === 'NO_SHOW' &&
+          registration.mealServing == null,
+      )
+      .map(toItem);
+
+    const totalRegistered = projectionRows.length;
+    const servedTotal = servedList.length;
+    const noShowTotal = noShowList.length;
+    const remaining = pendingList.length;
+    const regularTotal = projectionRows.filter(
+      (registration) => registration.mealChoice === 'REGULAR',
     ).length;
-    const remaining = Math.max(0, totalRegistered - servedTotal);
-    const regularTotal = registrations.filter(
-      (r) => r.mealChoice === 'REGULAR',
+    const vegetarianTotal = projectionRows.filter(
+      (registration) => registration.mealChoice === 'VEGETARIAN',
     ).length;
-    const vegetarianTotal = registrations.filter(
-      (r) => r.mealChoice === 'VEGETARIAN',
-    ).length;
-    if (regularTotal + vegetarianTotal !== totalRegistered) {
-      throw new Error(
-        'Kitchen dashboard meal-choice counters do not match active registrations',
+    if (
+      regularTotal + vegetarianTotal !== totalRegistered ||
+      totalRegistered !== servedTotal + remaining + noShowTotal
+    ) {
+      throw new InternalServerErrorException(
+        'Kitchen dashboard state invariant violated',
       );
     }
 
-    // 5. Build lists
-    const servedList = registrations
-      .filter((r) => r.mealServing !== null)
-      .map((r) => ({
-        registrationId: r.id,
-        userId: r.userId,
-        userName: r.user?.name || r.user?.email || 'N/A',
-        userEmail: r.user?.email || '',
-        mealChoice: r.mealChoice,
-        isServed: true,
-        servedAt: r.mealServing?.servedAt
-          ? r.mealServing.servedAt.toISOString()
-          : null,
-      }));
-
-    const pendingList = registrations
-      .filter((r) => r.mealServing === null)
-      .map((r) => ({
-        registrationId: r.id,
-        userId: r.userId,
-        userName: r.user?.name || r.user?.email || 'N/A',
-        mealChoice: r.mealChoice,
-        userEmail: r.user?.email || '',
-        isServed: false,
-        servedAt: null,
-      }));
-
-    const allList = registrations.map((r) => ({
-      registrationId: r.id,
-      mealChoice: r.mealChoice,
-      userId: r.userId,
-      userName: r.user?.name || r.user?.email || 'N/A',
-      userEmail: r.user?.email || '',
-      isServed: r.mealServing !== null,
-      servedAt: r.mealServing?.servedAt
-        ? r.mealServing.servedAt.toISOString()
-        : null,
-    }));
-
-    // 6. Recent Serving logs
     const recentServings = await this.prisma.mealServing.findMany({
       where: {
         registration: {
@@ -140,33 +168,31 @@ export class KitchenDashboardService {
       take: 50,
     });
 
-    const recentLogs = recentServings.map((s) => {
+    const recentLogs = recentServings.map((serving) => {
+      const registration = serving.registration;
       const isProxy =
-        s.registration.delegations?.some(
-          (d) => d.status === 'COMPLETED' || d.status === 'ACCEPTED',
+        registration.delegations?.some(
+          (delegation) =>
+            delegation.status === 'COMPLETED' ||
+            delegation.status === 'ACCEPTED',
         ) || false;
       return {
-        id: s.id,
-        registrationId: s.registrationId,
-        userId: s.registration.userId,
+        id: serving.id,
+        registrationId: serving.registrationId,
+        userId: registration.userId,
         userName:
-          s.registration.user?.name || s.registration.user?.email || 'N/A',
-        userEmail: s.registration.user?.email || '',
-        mealChoice: s.registration.mealChoice,
-        servedAt: s.servedAt.toISOString(),
+          serving.ownerNameSnapshot ??
+          registration.ownerNameSnapshot ??
+          registration.user?.name ??
+          registration.user?.email ??
+          'N/A',
+        userEmail:
+          serving.ownerEmailSnapshot ?? registration.user?.email ?? '',
+        mealChoice: registration.mealChoice,
+        servedAt: serving.servedAt.toISOString(),
         isProxy,
       };
     });
-
-    const noShowList = noShowRegistrations.map((r) => ({
-      registrationId: r.id,
-      userId: r.userId,
-      userName: r.user?.name || r.user?.email || 'N/A',
-      userEmail: r.user?.email || '',
-      mealChoice: r.mealChoice,
-      isServed: false,
-      servedAt: null,
-    }));
 
     return v1.KitchenDashboardSnapshotSchema.parse({
       date: dateStr,
@@ -177,7 +203,7 @@ export class KitchenDashboardService {
         vegetarianTotal,
         servedTotal,
         remaining,
-        noShowTotal: noShowCount,
+        noShowTotal,
       },
       recentLogs,
       lists: {
