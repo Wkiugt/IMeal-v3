@@ -1,4 +1,5 @@
 import { createDecipheriv, createHash, randomUUID } from 'node:crypto';
+import { isIP } from 'node:net';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Prisma, PrismaClient } from '@prisma/client';
@@ -100,6 +101,27 @@ function requireWorkerValue(name: string, env: NodeJS.ProcessEnv): string {
   return value;
 }
 
+function requireSupportedNodeEnvironment(
+  env: NodeJS.ProcessEnv,
+): 'production' | 'development' | 'test' {
+  const configured = env.NODE_ENV;
+  const normalized = configured?.trim();
+  if (!normalized) {
+    throw new Error('Missing required worker environment variable: NODE_ENV');
+  }
+  if (configured !== normalized) {
+    throw new Error('NODE_ENV must not contain surrounding whitespace');
+  }
+  if (
+    normalized !== 'production' &&
+    normalized !== 'development' &&
+    normalized !== 'test'
+  ) {
+    throw new Error('NODE_ENV must be production, development, or test');
+  }
+  return normalized;
+}
+
 function setting(
   env: NodeJS.ProcessEnv,
   name: string,
@@ -117,6 +139,7 @@ function setting(
   }
   const value = Number(raw);
   if (
+    !/^\d+$/.test(raw) ||
     !Number.isInteger(value) ||
     value < minimum ||
     (maximum !== undefined && value > maximum)
@@ -171,6 +194,28 @@ function requireProductionRuntimeSettings(env: NodeJS.ProcessEnv): void {
     throw new Error('MIGRATION_EVIDENCE_PATH must be an absolute path');
   }
   requireWorkerValue('MIGRATION_TARGET_IDENTITY', env);
+}
+
+function requireProductionProviderUrl(env: NodeJS.ProcessEnv): void {
+  const value = requireWorkerValue('OTP_PROVIDER_URL', env);
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error('OTP_PROVIDER_URL must be a valid HTTPS URL in production');
+  }
+
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (
+    parsed.protocol !== 'https:' ||
+    hostname.length === 0 ||
+    hostname === 'localhost' ||
+    isIP(hostname) !== 0
+  ) {
+    throw new Error(
+      'OTP_PROVIDER_URL must not target loopback or IP-literal destinations in production',
+    );
+  }
 }
 
 function providerCode(error: unknown): string {
@@ -289,7 +334,7 @@ function providerConfig(env: NodeJS.ProcessEnv): WorkerOtpProviderConfig {
   const from = env.OTP_PROVIDER_FROM?.trim() || null;
   const isProduction = env.NODE_ENV?.trim() === 'production';
   if (isProduction) {
-    requireWorkerValue('OTP_PROVIDER_URL', env);
+    requireProductionProviderUrl(env);
     requireWorkerValue('OTP_PROVIDER_API_KEY', env);
     requireWorkerValue('OTP_PROVIDER_FROM', env);
     let validHttpsUrl = /^https:\/\//i.test(url ?? '');
@@ -324,17 +369,8 @@ function providerConfig(env: NodeJS.ProcessEnv): WorkerOtpProviderConfig {
 export function validateWorkerEnvironment(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
-  const nodeEnv = env.NODE_ENV?.trim();
-  if (!nodeEnv) {
-    throw new Error('Missing required worker environment variable: NODE_ENV');
-  }
-  if (
-    nodeEnv !== 'production' &&
-    nodeEnv !== 'development' &&
-    nodeEnv !== 'test'
-  ) {
-    throw new Error('NODE_ENV must be production, development, or test');
-  }
+  const nodeEnv = requireSupportedNodeEnvironment(env);
+  const isProduction = nodeEnv === 'production';
 
   const secret = requireWorkerValue('OTP_DELIVERY_ENCRYPTION_KEY', env);
   if (secret.length < 32) {
@@ -343,12 +379,13 @@ export function validateWorkerEnvironment(
     );
   }
 
-  const isProduction = nodeEnv === 'production';
   if (isProduction) {
     requireWorkerValue('DATABASE_URL', env);
     requireProductionRuntimeSettings(env);
   }
-  providerConfig(env);
+  const providerEnvironment =
+    env.NODE_ENV === nodeEnv ? env : { ...env, NODE_ENV: nodeEnv };
+  providerConfig(providerEnvironment);
 
   let retryBaseSeconds: number | undefined;
   let retryMaxSeconds: number | undefined;

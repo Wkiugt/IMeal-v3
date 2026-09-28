@@ -62,6 +62,20 @@ describe('API environment validation', () => {
     expect(() => validateApiEnvironment()).not.toThrow();
   });
 
+  it('rejects missing, unsupported, and whitespace-padded NODE_ENV values', () => {
+    setValidProductionEnvironment();
+    delete process.env.NODE_ENV;
+    expect(() => validateApiEnvironment()).toThrow('NODE_ENV');
+
+    setValidProductionEnvironment();
+    process.env.NODE_ENV = 'staging';
+    expect(() => validateApiEnvironment()).toThrow('NODE_ENV');
+
+    setValidProductionEnvironment();
+    process.env.NODE_ENV = ' production ';
+    expect(() => validateApiEnvironment()).toThrow('NODE_ENV');
+  });
+
   it.each(['local', 'entra'])(
     'rejects legacy %s authentication mode',
     (mode) => {
@@ -128,6 +142,10 @@ describe('API environment validation', () => {
   it.each([
     'http://provider.internal/send',
     'https://provider.example.test/send',
+    'https://localhost/send',
+    'https://127.0.0.1/send',
+    'https://192.168.1.10/send',
+    'https://[::1]/send',
     'https://',
     'https:///send',
     'not-a-url',

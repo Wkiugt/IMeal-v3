@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { otpProviderConfiguration } from '../otp/otp-provider.js';
 
 const REQUIRED_API_ENV = ['DATABASE_URL', 'QR_SIGNING_SECRET'] as const;
@@ -108,6 +109,49 @@ function requireProductionRuntimeSettings(env: NodeJS.ProcessEnv): void {
   requireValue('MIGRATION_TARGET_IDENTITY', env);
 }
 
+function requireSupportedNodeEnvironment(
+  env: NodeJS.ProcessEnv,
+): 'production' | 'development' | 'test' {
+  const configured = env.NODE_ENV;
+  const normalized = configured?.trim();
+  if (!normalized) {
+    throw new Error('Missing required API environment variable: NODE_ENV');
+  }
+  if (configured !== normalized) {
+    throw new Error('NODE_ENV must not contain surrounding whitespace');
+  }
+  if (
+    normalized !== 'production' &&
+    normalized !== 'development' &&
+    normalized !== 'test'
+  ) {
+    throw new Error('NODE_ENV must be production, development, or test');
+  }
+  return normalized;
+}
+
+function requireProductionProviderUrl(env: NodeJS.ProcessEnv): void {
+  const value = requireValue('OTP_PROVIDER_URL', env);
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error('OTP_PROVIDER_URL must be a valid HTTPS URL in production');
+  }
+
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (
+    parsed.protocol !== 'https:' ||
+    hostname.length === 0 ||
+    hostname === 'localhost' ||
+    isIP(hostname) !== 0
+  ) {
+    throw new Error(
+      'OTP_PROVIDER_URL must not target loopback or IP-literal destinations in production',
+    );
+  }
+}
+
 export function isTestAuthBypassEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
@@ -117,7 +161,8 @@ export function isTestAuthBypassEnabled(
 export function validateApiEnvironment(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
-  const isProduction = env.NODE_ENV?.trim() === 'production';
+  const nodeEnv = requireSupportedNodeEnvironment(env);
+  const isProduction = nodeEnv === 'production';
 
   if (isTestAuthBypassEnabled(env)) return;
 
@@ -147,15 +192,13 @@ export function validateApiEnvironment(
   requireSecret(OTP_DELIVERY_ENCRYPTION_KEY, env);
   requireSecret(SESSION_HASH_SECRET, env);
   if (isProduction) {
-    requireValue('OTP_PROVIDER_URL', env);
+    requireProductionProviderUrl(env);
     requireValue('OTP_PROVIDER_API_KEY', env);
     requireValue('OTP_PROVIDER_FROM', env);
     requireProductionRuntimeSettings(env);
   }
   const providerEnvironment =
-    isProduction && env.NODE_ENV !== 'production'
-      ? { ...env, NODE_ENV: 'production' }
-      : env;
+    env.NODE_ENV === nodeEnv ? env : { ...env, NODE_ENV: nodeEnv };
   otpProviderConfiguration(providerEnvironment);
 
   for (const [name, minimum] of OTP_NUMERIC_SETTINGS) {

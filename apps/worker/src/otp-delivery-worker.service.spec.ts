@@ -188,6 +188,10 @@ describe('OtpDeliveryWorker', () => {
   it.each([
     'http://provider.internal/send',
     'https://provider.example.test/send',
+    'https://localhost/send',
+    'https://127.0.0.1/send',
+    'https://192.168.1.10/send',
+    'https://[::1]/send',
     'https://',
     'https:///send',
     'not-a-url',
@@ -251,7 +255,19 @@ describe('OtpDeliveryWorker', () => {
     },
   );
 
-  it('rejects a missing or unsupported worker environment', () => {
+  it.each(['1.0', '1e2', '0x10'])(
+    'rejects non-decimal worker numeric settings: %s',
+    (value) => {
+      const env = validWorkerEnvironment();
+      env.OTP_DELIVERY_BATCH_SIZE = value;
+
+      expect(() => validateWorkerEnvironment(env)).toThrow(
+        'OTP_DELIVERY_BATCH_SIZE',
+      );
+    },
+  );
+
+  it('rejects a missing, unsupported, or whitespace-padded worker environment', () => {
     const missingNodeEnv = validWorkerEnvironment();
     delete missingNodeEnv.NODE_ENV;
     expect(() => validateWorkerEnvironment(missingNodeEnv)).toThrow('NODE_ENV');
@@ -259,6 +275,12 @@ describe('OtpDeliveryWorker', () => {
     const unsupportedNodeEnv = validWorkerEnvironment();
     unsupportedNodeEnv.NODE_ENV = 'staging';
     expect(() => validateWorkerEnvironment(unsupportedNodeEnv)).toThrow(
+      'NODE_ENV',
+    );
+
+    const whitespaceNodeEnv = validWorkerEnvironment();
+    whitespaceNodeEnv.NODE_ENV = 'production ';
+    expect(() => validateWorkerEnvironment(whitespaceNodeEnv)).toThrow(
       'NODE_ENV',
     );
   });
