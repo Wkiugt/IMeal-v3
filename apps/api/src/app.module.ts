@@ -12,6 +12,9 @@ import { KitchenModule } from './kitchen/kitchen.module.js';
 import { LocationsModule } from './locations/locations.module.js';
 import { APP_FILTER } from '@nestjs/core';
 import { ApiExceptionFilter } from './common/api-exception.filter.js';
+import { HealthController } from './health/health.controller.js';
+import { HealthService } from './health/health.service.js';
+import { HEALTH_ENVIRONMENT_VALIDATED } from './health/health.types.js';
 import { PrismaService } from './common/prisma.service.js';
 
 @Global()
@@ -27,10 +30,12 @@ import { PrismaService } from './common/prisma.service.js';
     KitchenModule,
     LocationsModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [
     PrismaService,
     AppService,
+    HealthService,
+    { provide: HEALTH_ENVIRONMENT_VALIDATED, useValue: true },
     {
       provide: APP_FILTER,
       useClass: ApiExceptionFilter,

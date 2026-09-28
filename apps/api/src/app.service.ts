@@ -9,20 +9,23 @@ export class AppService {
     return 'Hello World!';
   }
 
-  async getHealth(): Promise<any> {
+  async getHealth(): Promise<{
+    status: 'ok' | 'error';
+    db: 'connected' | 'disconnected';
+    timestamp: string;
+  }> {
     try {
-      // Execute a simple query to verify DB connectivity
       await this.prisma.$executeRaw`SELECT 1`;
       return {
         status: 'ok',
         db: 'connected',
         timestamp: new Date().toISOString(),
       };
-    } catch (error: any) {
+    } catch {
       return {
         status: 'error',
         db: 'disconnected',
-        error: error?.message || String(error),
+        timestamp: new Date().toISOString(),
       };
     }
   }

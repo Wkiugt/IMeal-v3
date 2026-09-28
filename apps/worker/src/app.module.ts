@@ -15,12 +15,22 @@ import {
   WorkerOtpOutboxService,
 } from './otp-delivery-worker.service.js';
 import { PrismaService } from './common/prisma.service.js';
+import { HealthController } from './health.controller.js';
+import {
+  HealthService,
+  WORKER_HEALTH_ENVIRONMENT_VALIDATED,
+} from './health.service.js';
 
 @Module({
   imports: [ScheduleModule.forRoot()],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [
     PrismaService,
+    HealthService,
+    {
+      provide: WORKER_HEALTH_ENVIRONMENT_VALIDATED,
+      useValue: true,
+    },
     AppService,
     CutoffWorkerService,
     PickupWorkerService,
