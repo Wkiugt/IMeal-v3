@@ -79,12 +79,12 @@ The production-hardening plan is being executed one task at a time. Completed wo
 
 ## Task 8 completion
 
-- Task 8: complete (initial commit `0a88169`; review fix `d63326a`, `fix: harden production boundary verification`).
+- Task 8: complete (initial commit `0a88169`; review fixes `d63326a` and `b7869bc`, `fix: validate Compose stop grace units`).
 - Report: `.superpowers/sdd/production-hardening-plan/task-8-report.md`.
 - Added the fail-closed production Compose/Caddy boundary: only Caddy host ports, private `edge`/`app`/`data` networks, required production values, immutable digest image references, SCRAM PostgreSQL/PgBouncer, private MinIO setup, persistent TLS storage, and no public `/storage/*` route.
 - API/worker depend on successful `migration-gate` completion and mount shared migration evidence read-only; the migration-gate implementation remains explicitly deferred to Task 9.
-- Review fix: worker healthcheck now probes `/health/ready`; the verifier validates every required `*_IMAGE` value as `repository@sha256:<64 hex>`, supports `--env-file` deployment validation, requires image-variable documentation, enforces a 5-second drain margin, and rejects production build contexts. API/worker/Admin Web remain prebuilt-only in production while Dockerfiles stay available for CI image builds.
-- Verification passed: synthetic and deployment-env verifier runs, mutable image rejection, fail-closed Compose rendering, rendered `config`/`config --images`, Caddy `validate`, prebuilt-only rendered config assertions, prior API/worker/Admin Web image builds and non-root smoke checks, and `git diff --check`.
+- Review fixes: worker healthcheck probes `/health/ready`; every required `*_IMAGE` value is validated as `repository@sha256:<64 hex>` with deployment `--env-file` support and `.env.example` coverage; a 5-second drain margin is enforced; production rejects build contexts; and `STOP_GRACE_PERIOD` must strictly match `^\d+s$`, rejecting `35ms`. API/worker/Admin Web remain prebuilt-only while Dockerfiles stay available for CI image builds.
+- Verification passed: synthetic and deployment-env verifier runs, mutable image rejection, the 35ms negative test, fail-closed Compose rendering, rendered `config`/`config --images`, Caddy `validate`, prebuilt-only rendered config and no-service-build behavior, prior API/worker/Admin Web image builds and non-root smoke checks, and `git diff --check`.
 - Scope note: no production services were started with real credentials. The unstaged `apps/worker/tsconfig.build.tsbuildinfo` generated-metadata change was inspected and left untouched as possible concurrent user work. The pre-existing untracked production/staging plan files remain unstaged and unmodified.
 
 ## Remaining tasks

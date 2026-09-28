@@ -2,7 +2,7 @@
 
 ## Status
 
-COMPLETE — implementation commit `0a88169` plus review-fix commit `d63326a` (`fix: harden production boundary verification`). This report records the review-fix round; Task 9 remains not started.
+COMPLETE — implementation commit `0a88169` plus review-fix commits `d63326a` and `b7869bc` (`fix: validate Compose stop grace units`). This report records the review-fix rounds; Task 9 remains not started.
 
 ## Scope
 
@@ -17,9 +17,16 @@ COMPLETE — implementation commit `0a88169` plus review-fix commit `d63326a` (`
 - Added `scripts/verify-production-boundary.mjs` and the `verify:production-boundary` package script for rendered Compose/static boundary checks.
 - Review fix: production API, worker, and Admin Web services are now explicitly prebuilt-only (`build: !reset null`); deployment requires digest-pinned image variables, while the Dockerfiles remain available for CI image builds.
 
+## Review fix round 2
+
+- Enforced the documented seconds contract for `STOP_GRACE_PERIOD`: the verifier now requires strict `/^\d+s$/` input before parsing, so Compose values such as `35ms` are rejected instead of being misread as 35 seconds.
+- Added `scripts/verify-production-boundary.test.mjs` and `test:production-boundary`; its negative test supplies `35ms` and proves the verifier fails before the `>= 30s + 5s` drain-margin comparison.
+- `.env.example` continues to document the passing `STOP_GRACE_PERIOD=45s` contract and the deployment-env verifier command.
+
 ## Verification
 
 - `node scripts/verify-production-boundary.mjs` — passed with synthetic local values. It now asserts the worker `/health/ready` probe, a 5-second drain margin (`stop_grace_period >= SHUTDOWN_TIMEOUT_SECONDS + 5s`), no production build contexts, digest-pinned rendered images, and `.env.example` coverage for every required `*_IMAGE` variable.
+- `node --test scripts/verify-production-boundary.test.mjs` — 1/1 passed; the `35ms` negative case is rejected by the strict seconds parser.
 - `node scripts/verify-production-boundary.mjs --env-file <deployment-env-file>` — passed against digest-pinned deployment test values; a mutable `API_IMAGE=...:mutable` input failed closed as expected.
 - `docker compose -f docker-compose.yml -f docker-compose.production.yml config` without required production variables — failed closed with required-variable errors as expected.
 - Rendered production `docker compose ... config` and `config --images` with non-secret test values — passed; only Caddy published host ports, API/worker/Admin Web had no build contexts, and all rendered image references used digests.
@@ -33,6 +40,7 @@ COMPLETE — implementation commit `0a88169` plus review-fix commit `d63326a` (`
 
 - `0a88169 feat: define private production Compose boundary`
 - `d63326a fix: harden production boundary verification`
+- `b7869bc fix: validate Compose stop grace units`
 
 ## Deferred boundaries
 
