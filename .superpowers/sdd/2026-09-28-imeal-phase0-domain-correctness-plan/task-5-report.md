@@ -17,7 +17,7 @@ DONE_WITH_CONCERNS
 - `apps/api/src/app.module.ts`, `apps/api/src/common/api-exception.filter.ts`
   - Registered the canonical HTTP error mapper globally and preserved request ID header/body behavior.
 - `packages/contracts/src/v1/kitchen.ts`, `packages/contracts/test/contracts.test.ts`
-  - Added nullable legacy-aware serving-log location/menu snapshot response fields and contract coverage.
+  - Retained the established strict ServingLogItem transport shape; contract coverage remains green after removing the review-round additive fields.
 - `.superpowers/sdd/2026-09-28-imeal-phase0-domain-correctness-plan/task-5-brief.md`
   - Task requirements and acceptance criteria.
 
@@ -60,6 +60,29 @@ DONE_WITH_CONCERNS
 - `git diff --check`
   - PASS for the Task 5 changes; the director-owned `progress.md` has an unrelated concurrent ledger update and was not modified by this task.
 
+## Review fix round 2
+
+- F4: Updated the global mapper to preserve array-valued HttpException payloads under `error.details.issues`; added weekly-menu Zod validation route regression coverage while retaining the dashboard mismatch envelope/request ID behavior.
+- F5: Removed additive location/menu fields from `ServingLogItem` and the dashboard response. Existing transport shape is unchanged; MealServing owner snapshots continue to populate the existing owner fields, and no current mutable location/menu fallback is exposed.
+- F6: Added a consumer-visible route proof that instantiates the real `KitchenDashboardService`, injects only a database-shaped fake Prisma boundary, and asserts projected pending/served/no-show states, counters, owner snapshot precedence, and query execution over HTTP. Existing mapper/auth tests remain.
+
+## Review-fix-round-2 verification evidence
+- `yarn workspace @imeal/api exec vitest run src/kitchen/kitchen-dashboard.service.spec.ts`
+  - PASS: 1 test file, 12 tests.
+- `yarn workspace @imeal/contracts build`
+  - PASS; refreshed ignored local contract dist after restoring the established ServingLogItem shape.
+- `yarn workspace @imeal/contracts exec vitest run test/contracts.test.ts`
+  - PASS: 1 test file, 37 tests.
+- `yarn workspace @imeal/api exec vitest run --config ./vitest.dashboard.config.ts test/kitchen-dashboard.e2e-spec.ts`
+  - PASS: 1 test file, 9 tests. Temporary no-DB config was removed after running. This covers dashboard mismatch envelope/request ID, weekly-menu array validation details, auth guard, aliases, and the real dashboard service projection over HTTP with fake Prisma.
+- `yarn workspace @imeal/api exec vitest run --config ./vitest.config.e2e.ts test/kitchen-dashboard.e2e-spec.ts`
+  - BLOCKED before tests because `DATABASE_URL` is not set in the environment or `packages/domain/.env.test`; no live PostgreSQL proof was available.
+- `yarn workspace @imeal/api exec tsc --noEmit`
+  - Existing unrelated Task 2 penalty mapping errors remain in `apps/api/src/admin/penalties/penalties.service.ts`; no Task 5 errors were reported.
+- `git diff --check`
+  - PASS for the review-fix changes; `progress.md` remains director-owned and untouched by this task.
+
 ## Exact commits
 - Base implementation: `a29b726111b8155691c05cf390787bb820bf5b70` (`feat(api): project canonical kitchen dashboard states`)
-- Review fixes: `0941f30f9bc4404711c74656fea4cf562e41d6d3` (`fix(api): close Task 5 dashboard review findings`)
+- Review fixes round 1: `0941f30f9bc4404711c74656fea4cf562e41d6d3` (`fix(api): close Task 5 dashboard review findings`)
+- Review fixes round 2: `3cbc1afd173a7b38065f02e0d2fdfa14aca72fdc` (`fix(api): close Task 5 second-review findings`)
