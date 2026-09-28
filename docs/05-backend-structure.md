@@ -1103,12 +1103,11 @@ is not staging or production approval:
   invalid roster assignments, 132 incomplete menu revisions and 40 incomplete
   future ACTIVE rows; status counts ACTIVE 66, CANCELLED 16, SERVED 40,
   NO_SHOW 10. No backfill or validation was run there.
-- Focused migration/concurrency evidence passed (contracts 37 tests; domain
-  migration/concurrency 29 tests; API units 219; worker units 56; API
-  PostgreSQL e2e 76; worker PostgreSQL e2e 6). The complete domain run still
-  had 5 failures in current local-seed/concurrency tests, and the
-  repository `yarn typecheck` remains blocked by mobile `expo-location`,
-  `nextLocation` implicit-any and stale `menuRevisionId` test fixtures.
+- Fresh Step 1 verification at HEAD `75a9d71` supersedes the historical
+  pre-75 local failures: core focused 42/42; core full 93/93 with the
+  intentional serial `--maxWorkers 1` caveat; API e2e 45/45 plus production
+  concurrency 12/12; worker e2e 5/5; `yarn typecheck` and mobile tsc passed
+  after `yarn install --immutable`.
 - No staging target, production backup/restore rehearsal, secret/provider
   provisioning, or mobile device/UAT evidence was available. These remain
   release blockers; local migration success does not close the Phase 0 or

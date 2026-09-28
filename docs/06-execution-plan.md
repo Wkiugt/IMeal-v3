@@ -126,11 +126,13 @@ security, backup/restore or realtime client gates.
 - [x] Fresh disposable sequence is GREEN; release status remains
   **CONDITIONAL / NO-GO** because no approved staging/representative target,
   independent approval, backup/restore rehearsal or production evidence exists.
-- [x] Focused evidence previously recorded: contracts 37 tests, domain
-  migration/concurrency 29 tests, API units 219 tests, worker units 56 tests,
-  API PostgreSQL e2e 76 tests and worker PostgreSQL e2e 6 tests passed.
-- [ ] Full domain suite: `yarn workspace @imeal/core exec vitest run` had five failures in local-seed/concurrency expectations; this is not a rollout approval.
-- [ ] Workspace typecheck: `yarn typecheck` is blocked by mobile `expo-location`, an implicit-any `nextLocation` callback and stale `menuRevisionId` test fixtures.
+- [x] Fresh Step 1 verification at HEAD `75a9d71` supersedes the historical
+  pre-75 failures: core focused 42/42; core full 93/93 with the intentional
+  serial `--maxWorkers 1` caveat; API e2e 45/45 plus production concurrency
+  12/12; worker e2e 5/5; `yarn typecheck` and mobile tsc passed after
+  `yarn install --immutable`.
+- [x] Historical pre-75 failure and blocked-typecheck results remain retained
+  in the Task 9 report for audit history and are not current status.
 - [ ] Staging approval: no staging target or ambient `DATABASE_URL` was available. Previously observed local public evidence (not rerun or modified during fresh Step 2) remains dirty (132 incomplete snapshots under the conservative operational scope, 6 ambiguous/effectively invalid roster assignments, 132 incomplete menu revisions, 40 incomplete future ACTIVE rows); no backfill or validation was run there.
 
 **Cutover order:** expand additive schema → target-safe read-only preflight →

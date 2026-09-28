@@ -254,10 +254,12 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
   available; the observed PostgreSQL runs used an explicitly supplied local
   disposable URL and target-safe containerized `psql` because host `psql` was
   unavailable.
-- Focused contract/domain/API/worker suites and PostgreSQL race/e2e gates
-  passed. The complete domain suite had five local-seed/concurrency failures,
-  and `yarn typecheck` is blocked by the documented mobile
-  `expo-location`/implicit-any/stale-`menuRevisionId` errors.
+- Fresh Step 1 verification at HEAD `75a9d71` supersedes the historical
+  pre-75 failures: core focused 42/42; core full 93/93 with the intentional
+  serial `--maxWorkers 1` caveat; API e2e 45/45 plus production concurrency
+  12/12; worker e2e 5/5; `yarn typecheck` and mobile tsc passed after
+  `yarn install --immutable`. Historical failure/blocker outputs remain in the
+  Task 9 report for audit history.
 - No independent approval/audit record, controlled external artifact/checksum,
   backup/restore rehearsal, production secret/provider provisioning,
   native-device/UAT, or staging approval was observed. If post-backfill

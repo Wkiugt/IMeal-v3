@@ -158,6 +158,9 @@ docker exec develop-db-1 psql -U postgres -d imeal -v ON_ERROR_STOP=1 -P pager=o
 both rows returned `convalidated=t`.
 
 ## Focused and full verification
+The table below retains pre-75a9d71 local results for audit history. Those
+failure and blocked-typecheck claims are superseded by the fresh Step 1 rerun
+recorded after the table; they do not describe the current verification state.
 
 | Command | Observed result |
 | --- | --- |
@@ -173,6 +176,25 @@ both rows returned `convalidated=t`.
 The API invariant tests intentionally emitted internal logger lines while
 asserting generic public errors; the suites passed. The full domain failures
 were recorded, not suppressed or reclassified as rollout approval.
+### Fresh Step 1 green rerun at HEAD `75a9d71`
+
+The following fresh rerun supersedes only the pre-75a9d71 failures and blocked
+typecheck entries above. It does not change the Step 2, staging, approval,
+backup, rollback-authority or production gates:
+
+| Command / verification | Fresh observed result |
+| --- | --- |
+| `DATABASE_URL=<fresh-disposable-url> yarn workspace @imeal/core exec vitest run --config ./vitest.config.ts test/registration.test.ts test/concurrency.test.ts test/emailOtpLocationServing.test.ts` | **PASS — 42/42** |
+| `DATABASE_URL=<fresh-disposable-url> yarn workspace @imeal/core exec vitest run --maxWorkers 1` | **PASS — 93/93**; the full core run is intentionally serial with `--maxWorkers 1`. |
+| `DATABASE_URL=<fresh-disposable-url> yarn workspace @imeal/api exec vitest run --config ./vitest.config.e2e.ts` | **PASS — 45/45** |
+| `DATABASE_URL=<fresh-disposable-url> yarn workspace @imeal/api exec vitest run --config ./vitest.config.e2e.ts test/production-concurrency.e2e-spec.ts` | **PASS — 12/12** |
+| `DATABASE_URL=<fresh-disposable-url> yarn workspace @imeal/worker exec vitest run --config ./vitest.config.e2e.ts` | **PASS — 5/5** |
+| `yarn typecheck` after `yarn install --immutable` | **PASS** |
+| `yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json` after `yarn install --immutable` | **PASS** |
+
+The historical failure/blocker outputs remain above as superseded audit
+evidence. The current result is green for the listed local verification only;
+it is not staging approval or production sign-off.
 
 ## Unavailable gates / blockers
 
@@ -192,8 +214,9 @@ were recorded, not suppressed or reclassified as rollout approval.
   approved backup under the target's named rollback authority and decision
   window. Retain the additive schema for staging diagnosis or discard a
   disposable schema after evidence capture; do not claim a down migration.
-- Full domain verification and repository mobile typecheck remain open as
-  shown above.
+- Historical full-suite/typecheck failures above are superseded by the fresh
+  Step 1 rerun: core full serial 93/93, `yarn typecheck` PASS and mobile tsc
+  PASS after immutable install. The fresh core run's serial caveat is retained.
 - Existing infrastructure/security, backup/restore, observability, retention,
   identity provisioning, client realtime and other P1/P0 gates remain outside
   this task and are not marked complete.
@@ -260,7 +283,8 @@ rollout gate decision above:
   Served dashboard fields are documented as the client projection rather than
   immutable server-side snapshot storage.
 
-Fresh verification for this follow-up:
+Historical pre-75 verification for this follow-up (retained for audit history;
+superseded by the fresh Step 1 rerun at HEAD `75a9d71`):
 
 ```text
 yarn workspace @imeal/api exec vitest run src/registrations/registrations.service.spec.ts src/pickup/pickup.service.spec.ts src/admin/weekly-menus/weekly-menus.service.spec.ts
@@ -276,7 +300,8 @@ yarn workspace @imeal/api exec tsc --noEmit -p tsconfig.json && yarn workspace @
 PASS
 ```
 
-These are disposable local-database and focused verification results only.
-They do not provide the unavailable staging target, independent approval,
+These historical disposable local-database and focused verification results are
+retained for audit history and do not describe the current Step 1 state. They
+do not provide the unavailable staging target, independent approval,
 backup/restore rehearsal, or other Task 9 release gates. Task 9 therefore
 remains `NOT COMPLETE / NO-GO`.
