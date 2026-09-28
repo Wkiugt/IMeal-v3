@@ -45,7 +45,11 @@ export type OtpClaimValidation =
     };
 export interface OtpDeliveryOutboxPort {
   claimBatch(now: Date, limit: number): Promise<ClaimedOtpDelivery[]>;
-  validateClaim(id: string, claimToken: string, now: Date): Promise<OtpClaimValidation>;
+  validateClaim(
+    id: string,
+    claimToken: string,
+    now: Date,
+  ): Promise<OtpClaimValidation>;
   markProcessed(id: string, claimToken: string, now: Date): Promise<boolean>;
   markFailed(
     id: string,
@@ -73,6 +77,28 @@ const DEFAULT_RETRY_MAX_SECONDS = 15 * 60;
 const DEFAULT_CLAIM_TIMEOUT_SECONDS = 5 * 60;
 const MESSAGE_RETRY_PATTERN =
   /network|timeout|timed out|econn|socket|fetch failed|request failed|temporar|service unavailable|bad gateway|gateway timeout|too many requests/i;
+const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+const PLACEHOLDER_MARKERS = [
+  'change_me_local',
+  'replace-with-',
+  'example.test',
+];
+
+function isPlaceholder(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return PLACEHOLDER_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+function requireWorkerValue(name: string, env: NodeJS.ProcessEnv): string {
+  const value = env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing required worker environment variable: ${name}`);
+  }
+  if (isPlaceholder(value)) {
+    throw new Error(`${name} must not use a placeholder value`);
+  }
+  return value;
+}
 
 function setting(
   env: NodeJS.ProcessEnv,
@@ -80,6 +106,7 @@ function setting(
   fallback: number,
   minimum: number,
   required = false,
+  maximum?: number,
 ): number {
   const raw = env[name]?.trim();
   if (!raw) {
@@ -89,8 +116,15 @@ function setting(
     return fallback;
   }
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < minimum) {
-    throw new Error(`${name} must be an integer >= ${minimum}`);
+  if (
+    !Number.isInteger(value) ||
+    value < minimum ||
+    (maximum !== undefined && value > maximum)
+  ) {
+    const maximumMessage = maximum === undefined ? '' : ` and <= ${maximum}`;
+    throw new Error(
+      `${name} must be an integer >= ${minimum}${maximumMessage}`,
+    );
   }
   return value;
 }
@@ -118,13 +152,25 @@ function requireFixedSetting(
   name: string,
   expected: string,
 ): void {
-  const value = env[name]?.trim();
-  if (!value) {
-    throw new Error(`Missing required worker environment variable: ${name}`);
-  }
+  const value = requireWorkerValue(name, env);
   if (value !== expected) {
     throw new Error(`${name} must be ${expected}`);
   }
+}
+
+function requireProductionRuntimeSettings(env: NodeJS.ProcessEnv): void {
+  const logLevel = requireWorkerValue('LOG_LEVEL', env).toLowerCase();
+  if (!LOG_LEVELS.includes(logLevel as (typeof LOG_LEVELS)[number])) {
+    throw new Error('LOG_LEVEL must be debug, info, warn, or error');
+  }
+
+  requireWorkerValue('RELEASE_VERSION', env);
+  setting(env, 'SHUTDOWN_TIMEOUT_SECONDS', 0, 1, true, 300);
+  const evidencePath = requireWorkerValue('MIGRATION_EVIDENCE_PATH', env);
+  if (!evidencePath.startsWith('/')) {
+    throw new Error('MIGRATION_EVIDENCE_PATH must be an absolute path');
+  }
+  requireWorkerValue('MIGRATION_TARGET_IDENTITY', env);
 }
 
 function providerCode(error: unknown): string {
@@ -154,15 +200,19 @@ function providerCode(error: unknown): string {
 }
 
 function isTransientProviderFailure(code: string, error: unknown): boolean {
-  if (code === 'NETWORK' || code === 'HTTP_408' || code === 'HTTP_429') return true;
+  if (code === 'NETWORK' || code === 'HTTP_408' || code === 'HTTP_429')
+    return true;
   if (/^HTTP_5\d\d$/.test(code)) return true;
-  if (error instanceof Error && MESSAGE_RETRY_PATTERN.test(error.message)) return true;
+  if (error instanceof Error && MESSAGE_RETRY_PATTERN.test(error.message))
+    return true;
   return false;
 }
 
 function deriveKey(secret: string): Buffer {
   if (secret.trim().length < 32) {
-    throw new Error('OTP_DELIVERY_ENCRYPTION_KEY must contain at least 32 characters');
+    throw new Error(
+      'OTP_DELIVERY_ENCRYPTION_KEY must contain at least 32 characters',
+    );
   }
   return createHash('sha256').update(secret, 'utf8').digest();
 }
@@ -177,7 +227,8 @@ function decryptProviderPayload(
   secret: string,
 ): OtpProviderInput {
   try {
-    const [version, encodedIv, encodedTag, encodedCiphertext] = reference.split('.');
+    const [version, encodedIv, encodedTag, encodedCiphertext] =
+      reference.split('.');
     if (
       version !== PAYLOAD_VERSION ||
       !encodedIv ||
@@ -221,7 +272,8 @@ function decryptProviderPayload(
 function encryptionSecret(env: NodeJS.ProcessEnv): string {
   const configured = env.OTP_DELIVERY_ENCRYPTION_KEY?.trim();
   if (configured) return configured;
-  if (env.NODE_ENV === 'test') return 'test-only-otp-delivery-encryption-secret';
+  if (env.NODE_ENV === 'test')
+    return 'test-only-otp-delivery-encryption-secret';
   throw new Error('OTP_DELIVERY_ENCRYPTION_KEY is not configured');
 }
 
@@ -235,7 +287,11 @@ function providerConfig(env: NodeJS.ProcessEnv): WorkerOtpProviderConfig {
   const url = env.OTP_PROVIDER_URL?.trim() || null;
   const apiKey = env.OTP_PROVIDER_API_KEY?.trim() || null;
   const from = env.OTP_PROVIDER_FROM?.trim() || null;
-  if (env.NODE_ENV === 'production') {
+  const isProduction = env.NODE_ENV?.trim() === 'production';
+  if (isProduction) {
+    requireWorkerValue('OTP_PROVIDER_URL', env);
+    requireWorkerValue('OTP_PROVIDER_API_KEY', env);
+    requireWorkerValue('OTP_PROVIDER_FROM', env);
     let validHttpsUrl = /^https:\/\//i.test(url ?? '');
     if (validHttpsUrl && url) {
       const authority = url.slice('https://'.length).split(/[/?#]/, 1)[0];
@@ -268,21 +324,29 @@ function providerConfig(env: NodeJS.ProcessEnv): WorkerOtpProviderConfig {
 export function validateWorkerEnvironment(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
-  const secret = env.OTP_DELIVERY_ENCRYPTION_KEY?.trim();
-  if (!secret) {
-    throw new Error(
-      'Missing required worker environment variable: OTP_DELIVERY_ENCRYPTION_KEY',
-    );
+  const nodeEnv = env.NODE_ENV?.trim();
+  if (!nodeEnv) {
+    throw new Error('Missing required worker environment variable: NODE_ENV');
   }
-  if (secret.length < 32) {
-    throw new Error('OTP_DELIVERY_ENCRYPTION_KEY must contain at least 32 characters');
+  if (
+    nodeEnv !== 'production' &&
+    nodeEnv !== 'development' &&
+    nodeEnv !== 'test'
+  ) {
+    throw new Error('NODE_ENV must be production, development, or test');
   }
 
-  const isProduction = env.NODE_ENV === 'production';
-  if (isProduction && !env.DATABASE_URL?.trim()) {
+  const secret = requireWorkerValue('OTP_DELIVERY_ENCRYPTION_KEY', env);
+  if (secret.length < 32) {
     throw new Error(
-      'Missing required worker environment variable: DATABASE_URL',
+      'OTP_DELIVERY_ENCRYPTION_KEY must contain at least 32 characters',
     );
+  }
+
+  const isProduction = nodeEnv === 'production';
+  if (isProduction) {
+    requireWorkerValue('DATABASE_URL', env);
+    requireProductionRuntimeSettings(env);
   }
   providerConfig(env);
 
@@ -324,7 +388,9 @@ export class WorkerConfiguredOtpProvider implements OtpProvider {
   async send(input: OtpProviderInput): Promise<void> {
     const { url, apiKey, from } = this.config;
     if (!url || !apiKey) {
-      const error = new Error('OTP provider configuration is incomplete') as Error & {
+      const error = new Error(
+        'OTP provider configuration is incomplete',
+      ) as Error & {
         providerCode?: string;
       };
       error.providerCode = 'CONFIGURATION';
@@ -347,14 +413,18 @@ export class WorkerConfiguredOtpProvider implements OtpProvider {
         body: JSON.stringify(body),
       });
     } catch {
-      const error = new Error('OTP provider request failed before receiving a response') as Error & {
+      const error = new Error(
+        'OTP provider request failed before receiving a response',
+      ) as Error & {
         providerCode?: string;
       };
       error.providerCode = 'NETWORK';
       throw error;
     }
     if (!response.ok) {
-      const error = new Error(`OTP provider returned HTTP ${response.status}`) as Error & {
+      const error = new Error(
+        `OTP provider returned HTTP ${response.status}`,
+      ) as Error & {
         providerCode?: string;
       };
       error.providerCode = `HTTP_${response.status}`;
@@ -626,7 +696,12 @@ export class OtpDeliveryWorker {
 
   async processOnce(now: Date): Promise<DeliveryRunResult> {
     const env = process.env;
-    const maxAttempts = setting(env, 'OTP_DELIVERY_MAX_ATTEMPTS', DEFAULT_MAX_ATTEMPTS, 1);
+    const maxAttempts = setting(
+      env,
+      'OTP_DELIVERY_MAX_ATTEMPTS',
+      DEFAULT_MAX_ATTEMPTS,
+      1,
+    );
     const retryBaseSeconds = setting(
       env,
       'OTP_DELIVERY_RETRY_BASE_SECONDS',
@@ -660,7 +735,9 @@ export class OtpDeliveryWorker {
           retryAt: null,
         });
         result.failed += 1;
-        this.logger.warn(`otp-delivery=${row.id} result=failed reason=max-attempts`);
+        this.logger.warn(
+          `otp-delivery=${row.id} result=failed reason=max-attempts`,
+        );
         continue;
       }
 
@@ -671,10 +748,13 @@ export class OtpDeliveryWorker {
       );
       if (!validation.valid) {
         if (validation.reason === 'CLAIM_LOST') {
-          this.logger.warn(`otp-delivery=${row.id} result=skipped reason=claim-lost`);
+          this.logger.warn(
+            `otp-delivery=${row.id} result=skipped reason=claim-lost`,
+          );
           continue;
         }
-        const code = validation.reason === 'CONSUMED' ? 'OTP_CONSUMED' : 'OTP_EXPIRED';
+        const code =
+          validation.reason === 'CONSUMED' ? 'OTP_CONSUMED' : 'OTP_EXPIRED';
         await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
           code,
           retryAt: null,
@@ -698,7 +778,9 @@ export class OtpDeliveryWorker {
           retryAt: null,
         });
         result.failed += 1;
-        this.logger.error(`otp-delivery=${row.id} result=failed reason=payload-invalid`);
+        this.logger.error(
+          `otp-delivery=${row.id} result=failed reason=payload-invalid`,
+        );
         continue;
       }
       if (
@@ -710,7 +792,9 @@ export class OtpDeliveryWorker {
           retryAt: null,
         });
         result.failed += 1;
-        this.logger.error(`otp-delivery=${row.id} result=failed reason=payload-mismatch`);
+        this.logger.error(
+          `otp-delivery=${row.id} result=failed reason=payload-mismatch`,
+        );
         continue;
       }
 
@@ -722,11 +806,15 @@ export class OtpDeliveryWorker {
       );
       if (!finalValidation.valid) {
         if (finalValidation.reason === 'CLAIM_LOST') {
-          this.logger.warn(`otp-delivery=${row.id} result=skipped reason=claim-lost`);
+          this.logger.warn(
+            `otp-delivery=${row.id} result=skipped reason=claim-lost`,
+          );
           continue;
         }
         const code =
-          finalValidation.reason === 'CONSUMED' ? 'OTP_CONSUMED' : 'OTP_EXPIRED';
+          finalValidation.reason === 'CONSUMED'
+            ? 'OTP_CONSUMED'
+            : 'OTP_EXPIRED';
         await this.outbox.markFailed(row.id, row.claimToken, finalNow, {
           code,
           retryAt: null,
@@ -746,13 +834,19 @@ export class OtpDeliveryWorker {
           retryAt: null,
         });
         result.failed += 1;
-        this.logger.error(`otp-delivery=${row.id} result=failed reason=payload-mismatch`);
+        this.logger.error(
+          `otp-delivery=${row.id} result=failed reason=payload-mismatch`,
+        );
         continue;
       }
 
       try {
         await this.provider.send(payload);
-        const marked = await this.outbox.markProcessed(row.id, row.claimToken, finalNow);
+        const marked = await this.outbox.markProcessed(
+          row.id,
+          row.claimToken,
+          finalNow,
+        );
         if (marked) result.sent += 1;
         this.logger.log(`otp-delivery=${row.id} result=sent`);
       } catch (error) {
@@ -771,10 +865,15 @@ export class OtpDeliveryWorker {
           : transient
             ? 'PROVIDER_TRANSIENT_MAX_ATTEMPTS'
             : 'PROVIDER_PERMANENT';
-        const marked = await this.outbox.markFailed(row.id, row.claimToken, finalNow, {
-          code: failureCode,
-          retryAt,
-        });
+        const marked = await this.outbox.markFailed(
+          row.id,
+          row.claimToken,
+          finalNow,
+          {
+            code: failureCode,
+            retryAt,
+          },
+        );
         if (marked && canRetry) result.retried += 1;
         if (marked && !canRetry) result.failed += 1;
         this.logger.warn(

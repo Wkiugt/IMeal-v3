@@ -14,9 +14,9 @@ function setValidProductionEnvironment() {
   process.env.QR_SIGNING_SECRET = 'q'.repeat(32);
   process.env.OTP_HASH_SECRET = 'o'.repeat(32);
   process.env.OTP_DELIVERY_ENCRYPTION_KEY = 'e'.repeat(32);
-  process.env.OTP_PROVIDER_URL = 'https://provider.example.test/send';
+  process.env.OTP_PROVIDER_URL = 'https://provider.internal/send';
   process.env.OTP_PROVIDER_API_KEY = 'provider-key';
-  process.env.OTP_PROVIDER_FROM = 'imeal@example.test';
+  process.env.OTP_PROVIDER_FROM = 'imeal@company.invalid';
   process.env.OTP_EXPIRY_SECONDS = '600';
   process.env.OTP_RESEND_SECONDS = '60';
   process.env.OTP_ATTEMPT_LIMIT = '5';
@@ -36,6 +36,11 @@ function setValidProductionEnvironment() {
   process.env.QR_TTL_SECONDS = '5';
   process.env.QR_CLOCK_SKEW_SECONDS = '2';
   process.env.PICKUP_SESSION_TTL_SECONDS = '30';
+  process.env.RELEASE_VERSION = 'release-1';
+  process.env.LOG_LEVEL = 'info';
+  process.env.SHUTDOWN_TIMEOUT_SECONDS = '30';
+  process.env.MIGRATION_EVIDENCE_PATH = '/run/imeal/migration-gate.json';
+  process.env.MIGRATION_TARGET_IDENTITY = 'staging-schema';
 }
 
 afterEach(() => {
@@ -57,12 +62,15 @@ describe('API environment validation', () => {
     expect(() => validateApiEnvironment()).not.toThrow();
   });
 
-  it.each(['local', 'entra'])('rejects legacy %s authentication mode', (mode) => {
-    setValidProductionEnvironment();
-    process.env.AUTH_MODE = mode;
+  it.each(['local', 'entra'])(
+    'rejects legacy %s authentication mode',
+    (mode) => {
+      setValidProductionEnvironment();
+      process.env.AUTH_MODE = mode;
 
-    expect(() => validateApiEnvironment()).toThrow('AUTH_MODE must be otp');
-  });
+      expect(() => validateApiEnvironment()).toThrow('AUTH_MODE must be otp');
+    },
+  );
 
   it('rejects production when the session hash secret is missing', () => {
     setValidProductionEnvironment();
@@ -105,7 +113,9 @@ describe('API environment validation', () => {
     setValidProductionEnvironment();
     delete process.env.OTP_DELIVERY_ENCRYPTION_KEY;
 
-    expect(() => validateApiEnvironment()).toThrow('OTP_DELIVERY_ENCRYPTION_KEY');
+    expect(() => validateApiEnvironment()).toThrow(
+      'OTP_DELIVERY_ENCRYPTION_KEY',
+    );
   });
 
   it('rejects production when the OTP sender identity is missing', () => {
@@ -116,7 +126,8 @@ describe('API environment validation', () => {
   });
 
   it.each([
-    'http://provider.example.test/send',
+    'http://provider.internal/send',
+    'https://provider.example.test/send',
     'https://',
     'https:///send',
     'not-a-url',
@@ -125,6 +136,86 @@ describe('API environment validation', () => {
     process.env.OTP_PROVIDER_URL = url;
 
     expect(() => validateApiEnvironment()).toThrow('OTP_PROVIDER_URL');
+  });
+
+  it('accepts trimmed valid secrets and fixed runtime settings', () => {
+    setValidProductionEnvironment();
+    process.env.DATABASE_URL = '  postgresql://localhost/imeal  ';
+    process.env.QR_SIGNING_SECRET = `  ${'q'.repeat(32)}  `;
+
+    expect(() => validateApiEnvironment()).not.toThrow();
+  });
+
+  it('rejects placeholders without exposing their values', () => {
+    setValidProductionEnvironment();
+    process.env.OTP_PROVIDER_API_KEY = 'CHANGE_ME_LOCAL';
+
+    let error: unknown;
+    try {
+      validateApiEnvironment();
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(String(error)).toContain('OTP_PROVIDER_API_KEY');
+    expect(String(error)).not.toContain('CHANGE_ME_LOCAL');
+  });
+
+  it('rejects a QR secret placeholder without exposing its value', () => {
+    setValidProductionEnvironment();
+    process.env.QR_SIGNING_SECRET =
+      'replace-with-at-least-32-random-characters';
+
+    let error: unknown;
+    try {
+      validateApiEnvironment();
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(String(error)).toContain('QR_SIGNING_SECRET');
+    expect(String(error)).not.toContain(
+      'replace-with-at-least-32-random-characters',
+    );
+  });
+
+  it.each([
+    'RELEASE_VERSION',
+    'LOG_LEVEL',
+    'SHUTDOWN_TIMEOUT_SECONDS',
+    'MIGRATION_EVIDENCE_PATH',
+    'MIGRATION_TARGET_IDENTITY',
+  ])('rejects production when %s is missing', (name) => {
+    setValidProductionEnvironment();
+    delete process.env[name];
+
+    expect(() => validateApiEnvironment()).toThrow(name);
+  });
+
+  it.each(['0', '301', 'not-a-number'])(
+    'rejects an invalid production shutdown timeout: %s',
+    (timeout) => {
+      setValidProductionEnvironment();
+      process.env.SHUTDOWN_TIMEOUT_SECONDS = timeout;
+
+      expect(() => validateApiEnvironment()).toThrow(
+        'SHUTDOWN_TIMEOUT_SECONDS',
+      );
+    },
+  );
+
+  it('rejects an invalid production log level', () => {
+    setValidProductionEnvironment();
+    process.env.LOG_LEVEL = 'verbose';
+
+    expect(() => validateApiEnvironment()).toThrow('LOG_LEVEL');
+  });
+
+  it('rejects a relative migration evidence path', () => {
+    setValidProductionEnvironment();
+    process.env.MIGRATION_EVIDENCE_PATH = 'run/imeal/migration-gate.json';
+
+    expect(() => validateApiEnvironment()).toThrow('MIGRATION_EVIDENCE_PATH');
   });
 
   it.each([

@@ -14,7 +14,6 @@ const OTP_NUMERIC_SETTINGS = [
   ['OTP_CLIENT_RATE_LIMIT', 1],
 ] as const;
 
-
 const GPS_NUMERIC_SETTINGS = [
   ['GPS_DEFAULT_GEOFENCE_RADIUS_METERS', 1],
   ['GPS_DEFAULT_MAX_FIX_AGE_SECONDS', 1],
@@ -30,12 +29,31 @@ const FIXED_OPERATIONAL_SETTINGS = [
   ['QR_CLOCK_SKEW_SECONDS', '2'],
   ['PICKUP_SESSION_TTL_SECONDS', '30'],
 ] as const;
+const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+const PLACEHOLDER_MARKERS = [
+  'change_me_local',
+  'replace-with-',
+  'example.test',
+];
 
-function requireSecret(name: string, env: NodeJS.ProcessEnv): void {
-  const secret = env[name]?.trim();
-  if (!secret) {
+function isPlaceholder(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return PLACEHOLDER_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+function requireValue(name: string, env: NodeJS.ProcessEnv): string {
+  const value = env[name]?.trim();
+  if (!value) {
     throw new Error(`Missing required API environment variables: ${name}`);
   }
+  if (isPlaceholder(value)) {
+    throw new Error(`${name} must not use a placeholder value`);
+  }
+  return value;
+}
+
+function requireSecret(name: string, env: NodeJS.ProcessEnv): void {
+  const secret = requireValue(name, env);
   if (secret.length < 32) {
     throw new Error(`${name} must contain at least 32 characters`);
   }
@@ -45,13 +63,21 @@ function requireInteger(
   name: string,
   minimum: number,
   env: NodeJS.ProcessEnv,
+  maximum?: number,
 ): number {
   const value = env[name]?.trim();
   if (!value) {
     throw new Error(`Missing required API environment variables: ${name}`);
   }
-  if (!/^\d+$/.test(value) || Number(value) < minimum) {
-    throw new Error(`${name} must be an integer >= ${minimum}`);
+  if (
+    !/^\d+$/.test(value) ||
+    Number(value) < minimum ||
+    (maximum !== undefined && Number(value) > maximum)
+  ) {
+    const maximumMessage = maximum === undefined ? '' : ` and <= ${maximum}`;
+    throw new Error(
+      `${name} must be an integer >= ${minimum}${maximumMessage}`,
+    );
   }
   return Number(value);
 }
@@ -61,13 +87,25 @@ function requireExact(
   expected: string,
   env: NodeJS.ProcessEnv,
 ): void {
-  const value = env[name]?.trim();
-  if (!value) {
-    throw new Error(`Missing required API environment variables: ${name}`);
-  }
+  const value = requireValue(name, env);
   if (value !== expected) {
     throw new Error(`${name} must be ${expected}`);
   }
+}
+
+function requireProductionRuntimeSettings(env: NodeJS.ProcessEnv): void {
+  const logLevel = requireValue('LOG_LEVEL', env).toLowerCase();
+  if (!LOG_LEVELS.includes(logLevel as (typeof LOG_LEVELS)[number])) {
+    throw new Error('LOG_LEVEL must be debug, info, warn, or error');
+  }
+
+  requireValue('RELEASE_VERSION', env);
+  requireInteger('SHUTDOWN_TIMEOUT_SECONDS', 1, env, 300);
+  const evidencePath = requireValue('MIGRATION_EVIDENCE_PATH', env);
+  if (!evidencePath.startsWith('/')) {
+    throw new Error('MIGRATION_EVIDENCE_PATH must be an absolute path');
+  }
+  requireValue('MIGRATION_TARGET_IDENTITY', env);
 }
 
 export function isTestAuthBypassEnabled(
@@ -79,6 +117,8 @@ export function isTestAuthBypassEnabled(
 export function validateApiEnvironment(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
+  const isProduction = env.NODE_ENV?.trim() === 'production';
+
   if (isTestAuthBypassEnabled(env)) return;
 
   if (env.REQUIRE_AUTH !== 'true') {
@@ -101,20 +141,28 @@ export function validateApiEnvironment(
     );
   }
 
+  requireValue('DATABASE_URL', env);
+  requireSecret('QR_SIGNING_SECRET', env);
   requireSecret(OTP_HASH_SECRET, env);
   requireSecret(OTP_DELIVERY_ENCRYPTION_KEY, env);
   requireSecret(SESSION_HASH_SECRET, env);
-  otpProviderConfiguration(env);
+  if (isProduction) {
+    requireValue('OTP_PROVIDER_URL', env);
+    requireValue('OTP_PROVIDER_API_KEY', env);
+    requireValue('OTP_PROVIDER_FROM', env);
+    requireProductionRuntimeSettings(env);
+  }
+  const providerEnvironment =
+    isProduction && env.NODE_ENV !== 'production'
+      ? { ...env, NODE_ENV: 'production' }
+      : env;
+  otpProviderConfiguration(providerEnvironment);
 
   for (const [name, minimum] of OTP_NUMERIC_SETTINGS) {
     requireInteger(name, minimum, env);
   }
 
-  const idleTimeout = requireInteger(
-    'SESSION_IDLE_TIMEOUT_SECONDS',
-    1,
-    env,
-  );
+  const idleTimeout = requireInteger('SESSION_IDLE_TIMEOUT_SECONDS', 1, env);
   const absoluteTimeout = requireInteger(
     'SESSION_ABSOLUTE_TIMEOUT_SECONDS',
     1,
@@ -124,10 +172,6 @@ export function validateApiEnvironment(
     throw new Error(
       'SESSION_ABSOLUTE_TIMEOUT_SECONDS must be >= SESSION_IDLE_TIMEOUT_SECONDS',
     );
-  }
-
-  if (env.QR_SIGNING_SECRET!.length < 32) {
-    throw new Error('QR_SIGNING_SECRET must contain at least 32 characters');
   }
 
   for (const [name, minimum] of GPS_NUMERIC_SETTINGS) {
