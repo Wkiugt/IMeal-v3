@@ -648,7 +648,7 @@ describe('Production PostgreSQL concurrency paths', () => {
       throw new Error('Pickup unexpectedly won the disable-first race');
     }
     expect(pickupResult.reason).toMatchObject({
-      response: { code: 'PICKUP_INTENT_CONFLICT' },
+      response: { code: 'SESSION_REVOKED' },
     });
 
     const finalRegistration = await client.registration.findUniqueOrThrow({
