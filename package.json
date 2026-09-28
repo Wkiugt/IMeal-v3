@@ -16,6 +16,7 @@
     "test:unit": "yarn workspace @imeal/core test:unit && yarn workspace @imeal/contracts test && yarn workspace @imeal/api test && yarn workspace @imeal/worker test",
     "test:db": "yarn workspace @imeal/core test && yarn workspace @imeal/api test:e2e && yarn workspace @imeal/worker test:e2e",
     "verify:production-boundary": "node scripts/verify-production-boundary.mjs",
+    "test:production-boundary": "node --test scripts/verify-production-boundary.test.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,md,html,css,json}\""
   },
   "devDependencies": {

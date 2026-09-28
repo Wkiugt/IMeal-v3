@@ -29,6 +29,18 @@ const secretNames = new Set([
   'SESSION_HASH_SECRET',
   'OTP_PROVIDER_API_KEY',
 ]);
+function parseSecondsDuration(value, name) {
+  const duration = String(value);
+  assert.match(
+    duration,
+    /^\d+s$/,
+    `${name} must be expressed as whole seconds with an s suffix`,
+  );
+  const seconds = Number(duration.slice(0, -1));
+  assert.equal(Number.isSafeInteger(seconds), true, `${name} must be a safe integer`);
+  return seconds;
+}
+
 
 function parseArguments() {
   const args = process.argv.slice(2);
@@ -207,7 +219,10 @@ try {
     true,
   );
 
-  const stopGraceSeconds = Number.parseInt(services.api.stop_grace_period, 10);
+  const stopGraceSeconds = parseSecondsDuration(
+    services.api.stop_grace_period,
+    'STOP_GRACE_PERIOD',
+  );
   const shutdownSeconds = Number.parseInt(
     services.api.environment.SHUTDOWN_TIMEOUT_SECONDS,
     10,
