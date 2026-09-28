@@ -2,7 +2,7 @@
 
 ## Status
 
-Complete. Task 7 was not started.
+Complete. Clean re-review passed across commits `4fdff77..1b0cc17`; Task 7 is now in progress separately.
 
 ## Implemented scope
 
@@ -41,6 +41,13 @@ The previously recorded API database-backed e2e setup caveat remains nonblocking
 - API/worker typechecks passed after the fix round.
 - Scoped Prettier check passed; `git diff --check` passed.
 
+## Re-review status
+
+- Final Task 6 review verdict: clean; prior request-correlation and provider-code findings are addressed.
+- Spec compliance: PASS.
+- Quality and maintainability: PASS.
+- Task 6 is safe for Task 7 execution.
+
 ## Boundaries
 
-No shutdown coordinator, Compose/production overlay, or migration-gate work was started. Task 7 remains not started.
+No shutdown coordinator, Compose/production overlay, or migration-gate work was included in Task 6. Task 7 is being executed separately.
