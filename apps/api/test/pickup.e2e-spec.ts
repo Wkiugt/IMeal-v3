@@ -1,4 +1,4 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, BadRequestException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
@@ -89,6 +89,8 @@ describe('PickupController (e2e)', () => {
     expect(res.body).toEqual({ options: [] });
   });
   it('/api/me/pickup-options (GET) fails closed for incomplete snapshots', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-04T05:00:00.000Z'));
     const actualPickupService = new PickupService();
     const fakePrisma = {
       appSetting: {
@@ -148,6 +150,7 @@ describe('PickupController (e2e)', () => {
       expect(res.body).toEqual({ options: [] });
     } finally {
       await testApp.close();
+      vi.useRealTimers();
     }
   });
 
@@ -228,6 +231,64 @@ describe('PickupController (e2e)', () => {
     expect(confirmPickup).not.toHaveBeenCalled();
   });
 
+  it.each([
+    '/internal/api/v1/pickup/resolve',
+    '/v1/internal/pickup/resolve',
+    '/api/serving/resolve',
+  ])('preserves the pickup resolve route alias %s', async (route) => {
+    resolvePickup.mockClear();
+    const res = await request(app.getHttpServer())
+      .post(route)
+      .send({ qr: 'SIGNED_QR' });
+
+    expect(res.status).toBe(201);
+    expect(resolvePickup).toHaveBeenCalledWith(
+      { qr: 'SIGNED_QR' },
+      expect.objectContaining({ id: 'test-user-id' }),
+    );
+  });
+
+  it.each([
+    '/internal/api/v1/pickup/confirm',
+    '/v1/internal/pickup/confirm',
+    '/api/serving/confirm',
+  ])('preserves the pickup confirm route alias %s', async (route) => {
+    confirmPickup.mockClear();
+    const res = await request(app.getHttpServer())
+      .post(route)
+      .send({ pickupSessionId: 'sess-123', idempotencyKey: 'idem-alias' });
+
+    expect(res.status).toBe(201);
+    expect(confirmPickup).toHaveBeenCalledWith(
+      { pickupSessionId: 'sess-123', idempotencyKey: 'idem-alias' },
+      expect.objectContaining({ id: 'test-user-id' }),
+    );
+  });
+
+  it('maps an idempotency conflict to the stable pickup error envelope', async () => {
+    const requestId = '22222222-2222-4222-8222-222222222222';
+    confirmPickup.mockRejectedValueOnce(
+      new BadRequestException({
+        code: 'IDEMPOTENCY_CONFLICT',
+        message: 'The idempotency key was already used for a different request.',
+      }),
+    );
+    const res = await request(app.getHttpServer())
+      .post('/v1/internal/pickup/confirm')
+      .set('X-Request-Id', requestId)
+      .send({ pickupSessionId: 'sess-123', idempotencyKey: 'idem-conflict' });
+
+    expect(res.status).toBe(400);
+    expect(res.headers['x-request-id']).toBe(requestId);
+    expect(res.body).toEqual({
+      error: {
+        code: 'IDEMPOTENCY_CONFLICT',
+        message: 'The idempotency key was already used for a different request.',
+      },
+      requestId,
+    });
+  });
+
   it('requires a valid opaque session with the current kitchen permission', async () => {
     const kitchenUser: AuthenticatedUser = {
       id: 'kitchen-1',
@@ -256,6 +317,9 @@ describe('PickupController (e2e)', () => {
       session: { id: 'public-source-session' },
       items: [],
     });
+
+    const previousRequireAuth = process.env.REQUIRE_AUTH;
+    process.env.REQUIRE_AUTH = 'true';
 
     const testingModule = await Test.createTestingModule({
       controllers: [InternalPickupController],
@@ -307,6 +371,11 @@ describe('PickupController (e2e)', () => {
       expect(resolveSession).toHaveBeenCalledWith('staff-session');
     } finally {
       await testApp.close();
+      if (previousRequireAuth === undefined) {
+        delete process.env.REQUIRE_AUTH;
+      } else {
+        process.env.REQUIRE_AUTH = previousRequireAuth;
+      }
     }
   });
 });

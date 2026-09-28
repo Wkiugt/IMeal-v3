@@ -151,6 +151,61 @@ describe('RegistrationsController (e2e)', () => {
     ]);
   });
 
+  it('returns per-date REGISTRATION_FAILED results for snapshot resolution failures', async () => {
+    mockRegistrationsService.batchRegister.mockResolvedValueOnce([
+      {
+        date: '2026-09-25',
+        success: false,
+        code: 'REGISTRATION_FAILED',
+        reason: 'Employee location assignment is unavailable',
+      },
+      { date: '2026-09-26', success: true },
+    ]);
+
+    const response = await request(app.getHttpServer())
+      .put('/api/registrations/batch')
+      .send({
+        registrations: [
+          {
+            mealDate: '2026-09-25',
+            status: 'ACTIVE',
+            mealChoice: 'REGULAR',
+          },
+          { mealDate: '2026-09-26', status: 'CANCELLED' },
+        ],
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([
+      {
+        date: '2026-09-25',
+        success: false,
+        code: 'REGISTRATION_FAILED',
+        reason: 'Employee location assignment is unavailable',
+      },
+      { date: '2026-09-26', success: true },
+    ]);
+  });
+
+  it('rejects client-selected registration location and menu authority', async () => {
+    const response = await request(app.getHttpServer())
+      .put('/api/registrations/batch')
+      .send({
+        registrations: [
+          {
+            mealDate: '2026-09-25',
+            status: 'ACTIVE',
+            mealChoice: 'REGULAR',
+            locationId: 'client-location',
+            menuRevisionId: 'client-revision',
+          },
+        ],
+      });
+
+    expect(response.status).toBe(400);
+    expect(mockRegistrationsService.batchRegister).not.toHaveBeenCalled();
+  });
+
 
   it.each([
     ['missing body', undefined],

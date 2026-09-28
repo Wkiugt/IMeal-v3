@@ -162,6 +162,30 @@ describe('KitchenDashboardController (e2e)', () => {
       requestId,
     });
   });
+  it('returns the generic mismatch envelope through the /api/kitchen alias', async () => {
+    const requestId = '33333333-3333-4333-8333-333333333333';
+    dashboardService.getDashboardSnapshot = vi
+      .fn()
+      .mockRejectedValue(
+        new InternalServerErrorException(
+          'Kitchen dashboard state invariant violated',
+        ),
+      );
+
+    const res = await request(app.getHttpServer())
+      .get('/api/kitchen/days/2026-09-03/dashboard')
+      .set('X-Request-Id', requestId);
+
+    expect(res.status).toBe(500);
+    expect(res.headers['x-request-id']).toBe(requestId);
+    expect(res.body).toEqual({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Kitchen dashboard state invariant violated',
+      },
+      requestId,
+    });
+  });
   it('serves the real dashboard projection through the HTTP route', async () => {
     const fakePrisma = {
       registration: {
@@ -338,10 +362,10 @@ describe('KitchenDashboardController (e2e)', () => {
       .get('/v1/kitchen/days/2026-09-03/events')
       .buffer(false)
       .parse((res, callback) => {
+        callback(null, null);
         if ('destroy' in res && typeof res.destroy === 'function') {
           res.destroy();
         }
-        callback(null, null);
       });
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('text/event-stream');
@@ -419,9 +443,9 @@ describe('KitchenDashboardController (e2e)', () => {
     );
     expect(body).not.toContain('route-other-date');
   });
-  it('keeps the SSE route alive with heartbeat frames', async () => {
-    vi.useFakeTimers();
-    try {
+  it(
+    'keeps the SSE route alive with heartbeat frames',
+    async () => {
       const bodyPromise = new Promise<string>((resolve, reject) => {
         let settled = false;
         const test = request(app.getHttpServer())
@@ -458,30 +482,70 @@ describe('KitchenDashboardController (e2e)', () => {
           }
         });
       });
-
-      await vi.advanceTimersByTimeAsync(1);
-      await vi.advanceTimersByTimeAsync(15000);
       const body = await bodyPromise;
 
       expect(body).toContain('event: HEARTBEAT');
       expect(body).toContain('data: {"type":"heartbeat","timestamp":');
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-  it('/api/kitchen/days/:date/events (GET SSE) - serves the alias route', async () => {
-    const res = await request(app.getHttpServer())
-      .get('/api/kitchen/days/2026-09-03/events')
-      .buffer(false)
-      .parse((res, callback) => {
-        if ('destroy' in res && typeof res.destroy === 'function') {
-          res.destroy();
-        }
-        callback(null, null);
+    },
+    20_000,
+  );
+  it(
+    '/api/kitchen/days/:date/events (GET SSE) - serves the alias route',
+    async () => {
+      const eventsService = app.get(KitchenEventsService);
+      const bodyPromise = new Promise<string>((resolve, reject) => {
+        let settled = false;
+        const test = request(app.getHttpServer())
+          .get('/api/kitchen/days/2026-09-03/events')
+          .buffer(false)
+          .parse((res, callback) => {
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (chunk: string) => {
+              body += chunk;
+              if (body.includes('id: alias-route-event')) {
+                settled = true;
+                callback(null, body);
+                if (
+                  'destroy' in res &&
+                  typeof res.destroy === 'function'
+                ) {
+                  res.destroy();
+                }
+                resolve(body);
+              }
+            });
+            res.on('error', (error) => {
+              if (!settled) {
+                settled = true;
+                reject(error);
+              }
+            });
+          });
+        test.end((error) => {
+          if (
+            error &&
+            !settled &&
+            (error as NodeJS.ErrnoException).code !== 'ECONNRESET'
+          ) {
+            settled = true;
+            reject(error);
+          }
+        });
       });
-    expect(res.status).toBe(200);
-    expect(res.headers['content-type']).toContain('text/event-stream');
-  });
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      eventsService.emitEvent({
+        eventId: 'alias-route-event',
+        eventType: 'SERVING_CONFIRMED',
+        mealDate: '2026-09-03',
+        payload: { servedCount: 1 },
+      });
+      const body = await bodyPromise;
+      expect(body).toContain('event: SERVING_CONFIRMED');
+    },
+    5_000,
+  );
 
 
   it('/api/kitchen/days/:date/dashboard (GET) - works with alias route', async () => {

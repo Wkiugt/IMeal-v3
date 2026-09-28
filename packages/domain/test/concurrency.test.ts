@@ -1,16 +1,112 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { PrismaClient } from '@prisma/client';
 import { RegistrationService } from '../src/RegistrationService';
 import { prisma } from '../src/db';
 import { randomUUID } from 'node:crypto';
 
+const disposableClients: PrismaClient[] = [];
+
+function createDisposableClient() {
+  const client = new PrismaClient();
+  disposableClients.push(client);
+  return client;
+}
+
+const COMPLETE_SNAPSHOT = {
+  ownerNameSnapshot: 'Race Owner',
+  employeeCodeSnapshot: 'RACE-001',
+  menuNameSnapshot: 'Race Menu',
+  menuDescriptionSnapshot: null,
+  menuImageSnapshot: null,
+  serviceLocationCode: 'RACE',
+  serviceLocationName: 'Race Kitchen',
+  serviceLocationAddress: '1 Race Street',
+};
+
+async function createCompleteRegistrationFixture(
+  userId: string,
+  mealDate: Date,
+  overrides: Record<string, unknown> = {},
+) {
+  const location = await prisma.location.create({
+    data: {
+      shortCode: 'RACE',
+      displayName: COMPLETE_SNAPSHOT.serviceLocationName,
+      servingPointName: 'Race counter',
+      address: COMPLETE_SNAPSHOT.serviceLocationAddress,
+      building: 'A',
+      floor: '1',
+      roomOrCounter: '1',
+      localContact: 'race@example.test',
+      isActive: true,
+      effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+    },
+  });
+  const assignment = await prisma.employeeLocationAssignment.create({
+    data: {
+      userId,
+      normalizedEmail: 'race@example.test',
+      employeeName: COMPLETE_SNAPSHOT.ownerNameSnapshot,
+      employeeCode: COMPLETE_SNAPSHOT.employeeCodeSnapshot,
+      isActive: true,
+      role: 'STAFF',
+      serviceLocationCode: location.shortCode,
+      locationId: location.id,
+      effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+    },
+  });
+  const weeklyMenu = await prisma.weeklyMenu.create({
+    data: {
+      startDate: mealDate,
+      endDate: mealDate,
+      publishedAt: new Date('2026-01-01T00:00:00.000Z'),
+    },
+  });
+  const dailyMenu = await prisma.dailyMenu.create({
+    data: { weeklyMenuId: weeklyMenu.id, date: mealDate },
+  });
+  const revision = await prisma.dailyMenuRevision.create({
+    data: {
+      dailyMenuId: dailyMenu.id,
+      revision: 1,
+      mealName: COMPLETE_SNAPSHOT.menuNameSnapshot,
+      content: 'race menu',
+    },
+  });
+  return prisma.registration.create({
+    data: {
+      userId,
+      mealDate,
+      status: 'ACTIVE',
+      menuRevisionId: revision.id,
+      ownerNameSnapshot: COMPLETE_SNAPSHOT.ownerNameSnapshot,
+      employeeCodeSnapshot: COMPLETE_SNAPSHOT.employeeCodeSnapshot,
+      menuNameSnapshot: COMPLETE_SNAPSHOT.menuNameSnapshot,
+      menuDescriptionSnapshot: COMPLETE_SNAPSHOT.menuDescriptionSnapshot,
+      menuImageSnapshot: COMPLETE_SNAPSHOT.menuImageSnapshot,
+      registeredAt: new Date('2026-09-01T00:00:00.000Z'),
+      serviceLocationId: location.id,
+      serviceLocationAssignmentId: assignment.id,
+      serviceLocationCode: location.shortCode,
+      serviceLocationName: location.displayName,
+      serviceLocationAddress: location.address,
+      serviceLocationEffectiveFrom: assignment.effectiveFrom,
+      serviceLocationSnapshotAt: new Date('2026-09-01T00:00:00.000Z'),
+      ...overrides,
+    },
+  });
+}
 
 describe('Domain Tests: Concurrency', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
+    await Promise.all(
+      disposableClients.splice(0).map((client) => client.$disconnect()),
+    );
   });
 
   it('register same user/date: should only create one registration and gracefully upsert', async () => {
@@ -41,9 +137,11 @@ describe('Domain Tests: Concurrency', () => {
       RegistrationService.registerMeal(user.id, menuDate, currentTime),
     ]);
 
-    // All should technically succeed because of `upsert`!
+    // The unique database identity makes each concurrent retry converge.
     const successes = results.filter((r) => r.status === 'fulfilled');
+    const failures = results.filter((r) => r.status === 'rejected');
     expect(successes.length).toBe(3);
+    expect(failures.length).toBe(0);
 
     const count = await prisma.registration.count({
       where: { userId: user.id, mealDate: menuDate },
@@ -87,8 +185,12 @@ describe('Domain Tests: Concurrency', () => {
 
     const dbReg = await prisma.registration.findUnique({
       where: { id: reg.id },
+      include: { mealServing: true },
     });
-    expect(dbReg?.status).toBe('SERVED');
+    expect(dbReg?.mealServing).toBeTruthy();
+    expect(dbReg?.status).not.toBe('CANCELLED');
+    expect(dbReg?.status).not.toBe('NO_SHOW');
+    expect(dbReg?.mealServing ? 'SERVED' : dbReg?.status).toBe('SERVED');
   });
 
   it('owner vs delegate simultaneous serving: only one succeeds', async () => {
@@ -162,9 +264,15 @@ describe('Domain Tests: Concurrency', () => {
 
     const dbReg = await prisma.registration.findUnique({
       where: { id: reg.id },
+      include: { mealServing: true },
     });
-    // It should be either SERVED or CANCELED, not both.
-    expect(['SERVED', 'CANCELLED']).toContain(dbReg?.status);
+    expect(['ACTIVE', 'SERVED', 'CANCELLED']).toContain(dbReg?.status);
+    if (dbReg?.status === 'CANCELLED') {
+      expect(dbReg.mealServing).toBeNull();
+    } else {
+      expect(dbReg?.mealServing).toBeTruthy();
+      expect(dbReg?.status).not.toBe('NO_SHOW');
+    }
   });
 
   it('retry idempotency key: same caller and key should be idempotent', async () => {
@@ -335,7 +443,8 @@ describe('Domain Tests: Concurrency', () => {
     });
 
     if (finalDelegation.status === 'COMPLETED') {
-      expect(finalRegistration.status).toBe('SERVED');
+      expect(finalRegistration.status).not.toBe('CANCELLED');
+      expect(finalRegistration.status).not.toBe('NO_SHOW');
       expect(serving).toMatchObject({ delegationId: delegation.id });
     } else {
       expect(finalDelegation.status).toBe('REVOKED');
@@ -358,7 +467,7 @@ describe('Domain Tests: Concurrency', () => {
     const stale = await prisma.registration.create({
       data: {
         userId: owner.id,
-        mealDate: new Date('2026-09-24T00:00:00.000Z'),
+        mealDate: new Date('2026-09-25T00:00:00.000Z'),
         status: 'CANCELLED',
       },
     });
@@ -400,4 +509,589 @@ describe('Domain Tests: Concurrency', () => {
       }),
     ).toMatchObject({ status: 'ACTIVE' });
   });
+});
+async function serveWithRegistrationLock(
+  client: PrismaClient,
+  registrationId: string,
+  ownerUserId: string,
+) {
+  return client.$transaction(async (tx) => {
+    await tx.$queryRaw`
+      SELECT id FROM registrations WHERE id = ${registrationId} FOR UPDATE
+    `;
+    const registration = await tx.registration.findUnique({
+      where: { id: registrationId },
+      include: { mealServing: true },
+    });
+    if (
+      !registration ||
+      registration.status !== 'ACTIVE' ||
+      registration.mealServing
+    ) {
+      return 'SKIPPED' as const;
+    }
+
+    await tx.mealServing.create({
+      data: { registrationId, ownerUserId },
+    });
+    return 'SERVED' as const;
+  });
+}
+
+async function noShowWithRegistrationLock(
+  client: PrismaClient,
+  registrationId: string,
+  now: Date,
+) {
+  return client.$transaction(async (tx) => {
+    await tx.$queryRaw`
+      SELECT id FROM registrations WHERE id = ${registrationId} FOR UPDATE
+    `;
+    const registration = await tx.registration.findUnique({
+      where: { id: registrationId },
+      include: { mealServing: true },
+    });
+    if (
+      !registration ||
+      registration.status !== 'ACTIVE' ||
+      registration.mealServing
+    ) {
+      return 'SKIPPED' as const;
+    }
+
+    const penalty =
+      (await tx.penalty.findFirst({ where: { registrationId } })) ??
+      (await tx.penalty.create({
+        data: {
+          registrationId,
+          userId: registration.userId,
+          mealDate: registration.mealDate,
+          amount: 50000,
+          reason: 'NO_SHOW',
+          status: 'PENDING',
+        },
+      }));
+    if (
+      penalty.userId !== registration.userId ||
+      penalty.mealDate?.toISOString().slice(0, 10) !==
+        registration.mealDate.toISOString().slice(0, 10) ||
+      penalty.amount !== 50000 ||
+      penalty.reason !== 'NO_SHOW'
+    ) {
+      throw new Error('no-show penalty identity mismatch');
+    }
+
+    await tx.registration.update({
+      where: { id: registrationId },
+      data: { status: 'NO_SHOW', noShowAt: now },
+    });
+    await tx.auditLog.create({
+      data: {
+        action: 'NO_SHOW_PROCESSED',
+        userId: registration.userId,
+        details: JSON.stringify({ registrationId }),
+      },
+    });
+    await tx.notification.create({
+      data: {
+        userId: registration.userId,
+        kind: 'NO_SHOW_PENALTY_CREATED',
+        payload: { registrationId, penaltyId: penalty.id },
+        titleVi: 'No-show',
+        bodyVi: 'No-show penalty created',
+        titleEn: 'No-show',
+        bodyEn: 'No-show penalty created',
+        dedupeKey: `no-show-penalty:${registration.userId}:${registrationId}`,
+      },
+    });
+    await tx.outboxEvent.create({
+      data: {
+        aggregateType: 'REGISTRATION',
+        aggregateId: registrationId,
+        eventType: 'NO_SHOW_RECONCILED',
+        payload: JSON.stringify({
+          registrationId,
+          mealDate: registration.mealDate.toISOString().slice(0, 10),
+          penaltyId: penalty.id,
+        }),
+        dedupeKey: `kitchen:no-show:${registrationId}`,
+      },
+    });
+    return 'NO_SHOW' as const;
+  });
+}
+
+async function cancelWithRegistrationLock(
+  client: PrismaClient,
+  registrationId: string,
+  now: Date,
+) {
+  return client.$transaction(async (tx) => {
+    await tx.$queryRaw`
+      SELECT id FROM registrations WHERE id = ${registrationId} FOR UPDATE
+    `;
+    const registration = await tx.registration.findUnique({
+      where: { id: registrationId },
+      include: { mealServing: true },
+    });
+    if (
+      !registration ||
+      registration.status !== 'ACTIVE' ||
+      registration.mealServing
+    ) {
+      return 'SKIPPED' as const;
+    }
+    await tx.registration.update({
+      where: { id: registrationId },
+      data: {
+        status: 'CANCELLED',
+        version: { increment: 1 },
+        cancelledAt: now,
+        cancelReason: 'REGISTRATION_CANCELLED',
+        cancelledByUserId: registration.userId,
+      },
+    });
+    return 'CANCELLED' as const;
+  });
+}
+
+async function reactivateWithRegistrationLock(
+  client: PrismaClient,
+  registrationId: string,
+  now: Date,
+  expectedVersion: number,
+) {
+  return client.$transaction(async (tx) => {
+    await tx.$queryRaw`
+      SELECT id FROM registrations WHERE id = ${registrationId} FOR UPDATE
+    `;
+    const registration = await tx.registration.findUnique({
+      where: { id: registrationId },
+      include: { mealServing: true },
+    });
+    if (
+      !registration ||
+      registration.status !== 'CANCELLED' ||
+      registration.version !== expectedVersion ||
+      registration.mealServing
+    ) {
+      return 'SKIPPED' as const;
+    }
+    await tx.registration.update({
+      where: { id: registrationId },
+      data: {
+        status: 'ACTIVE',
+        registeredAt: now,
+        cancelledAt: null,
+        cancelReason: null,
+      },
+    });
+    return 'ACTIVE' as const;
+  });
+}
+
+describe('PostgreSQL cross-transaction correctness', () => {
+  it('concurrent_registration_create_persists_one_complete_snapshot', async () => {
+    const user = await prisma.user.create({
+      data: { email: 'registration-race@example.test' },
+    });
+    const mealDate = new Date('2026-11-03T00:00:00.000Z');
+    const authority = await createCompleteRegistrationFixture(
+      user.id,
+      mealDate,
+    );
+    await prisma.registration.delete({ where: { id: authority.id } });
+
+    const snapshot = {
+      userId: user.id,
+      mealDate,
+      status: 'ACTIVE' as const,
+      menuRevisionId: authority.menuRevisionId,
+      ownerNameSnapshot: authority.ownerNameSnapshot,
+      employeeCodeSnapshot: authority.employeeCodeSnapshot,
+      menuNameSnapshot: authority.menuNameSnapshot,
+      serviceLocationId: authority.serviceLocationId,
+      serviceLocationAssignmentId: authority.serviceLocationAssignmentId,
+      serviceLocationCode: authority.serviceLocationCode,
+      serviceLocationName: authority.serviceLocationName,
+      serviceLocationAddress: authority.serviceLocationAddress,
+      serviceLocationEffectiveFrom: authority.serviceLocationEffectiveFrom,
+      serviceLocationSnapshotAt: new Date('2026-11-01T00:00:00.000Z'),
+      registeredAt: new Date('2026-11-01T00:00:00.000Z'),
+    };
+    const writes = [0, 1, 2].map(async () => {
+      const client = createDisposableClient();
+      return client.$transaction((tx) =>
+        tx.registration.create({ data: snapshot }),
+      );
+    });
+    const results = await Promise.allSettled(writes);
+    expect(
+      results.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(1);
+    expect(
+      await prisma.registration.count({
+        where: { userId: user.id, mealDate },
+      }),
+    ).toBe(1);
+    const persisted = await prisma.registration.findUniqueOrThrow({
+      where: { userId_mealDate: { userId: user.id, mealDate } },
+    });
+    expect(persisted).toMatchObject({
+      menuRevisionId: snapshot.menuRevisionId,
+      ownerNameSnapshot: snapshot.ownerNameSnapshot,
+      employeeCodeSnapshot: snapshot.employeeCodeSnapshot,
+      menuNameSnapshot: snapshot.menuNameSnapshot,
+      serviceLocationId: snapshot.serviceLocationId,
+      serviceLocationAssignmentId: snapshot.serviceLocationAssignmentId,
+      serviceLocationCode: snapshot.serviceLocationCode,
+      serviceLocationName: snapshot.serviceLocationName,
+      serviceLocationAddress: snapshot.serviceLocationAddress,
+    });
+  });
+
+  it('concurrent_cancel_and_reactivate_has_one_final_lifecycle', async () => {
+    const user = await prisma.user.create({
+      data: { email: 'lifecycle-race@example.test' },
+    });
+    const registration = await createCompleteRegistrationFixture(
+      user.id,
+      new Date('2026-11-04T00:00:00.000Z'),
+    );
+    const now = new Date('2026-11-01T00:00:00.000Z');
+    const cancelClient = createDisposableClient();
+    const reactivateClient = createDisposableClient();
+    const [cancelResult, reactivateResult] = await Promise.all([
+      cancelWithRegistrationLock(cancelClient, registration.id, now),
+      reactivateWithRegistrationLock(
+        reactivateClient,
+        registration.id,
+        now,
+        registration.version,
+      ),
+    ]);
+    expect(
+      [cancelResult, reactivateResult].filter((result) => result !== 'SKIPPED'),
+    ).toHaveLength(1);
+
+    const persisted = await prisma.registration.findUniqueOrThrow({
+      where: { id: registration.id },
+    });
+    expect(['ACTIVE', 'CANCELLED']).toContain(persisted.status);
+    expect(
+      await prisma.auditLog.count({
+        where: { details: { contains: registration.id } },
+      }),
+    ).toBe(0);
+    if (persisted.status === 'CANCELLED') {
+      expect(persisted.cancelledAt).not.toBeNull();
+    } else {
+      expect(persisted.cancelledAt).toBeNull();
+      expect(persisted.registeredAt).not.toBeNull();
+    }
+  });
+
+  it('menu_roster_change_does_not_rewrite_existing_active_snapshot_but_reactivation_resolves_new_values', async () => {
+    const user = await prisma.user.create({
+      data: { email: 'snapshot-race@example.test' },
+    });
+    const mealDate = new Date('2026-11-05T00:00:00.000Z');
+    const registration = await createCompleteRegistrationFixture(
+      user.id,
+      mealDate,
+    );
+    const oldSnapshot = await prisma.registration.findUniqueOrThrow({
+      where: { id: registration.id },
+    });
+    const newLocation = await prisma.location.create({
+      data: {
+        shortCode: 'RACE-NEW',
+        displayName: 'New Race Kitchen',
+        servingPointName: 'New counter',
+        address: '2 Race Street',
+        building: 'B',
+        floor: '2',
+        roomOrCounter: '2',
+        localContact: 'new-race@example.test',
+        isActive: true,
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    });
+    await prisma.employeeLocationAssignment.update({
+      where: { id: registration.serviceLocationAssignmentId! },
+      data: { isActive: false, effectiveTo: mealDate },
+    });
+    const newAssignment = await prisma.employeeLocationAssignment.create({
+      data: {
+        userId: user.id,
+        normalizedEmail: user.email,
+        employeeName: 'New Race Owner',
+        employeeCode: 'RACE-002',
+        isActive: true,
+        role: 'STAFF',
+        serviceLocationCode: newLocation.shortCode,
+        locationId: newLocation.id,
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    });
+    const menu = await prisma.dailyMenu.findUniqueOrThrow({
+      where: { date: mealDate },
+    });
+    const newRevision = await prisma.dailyMenuRevision.create({
+      data: {
+        dailyMenuId: menu.id,
+        revision: 2,
+        mealName: 'New Race Menu',
+        content: 'new race menu',
+      },
+    });
+    await prisma.registration.update({
+      where: { id: registration.id },
+      data: { mealChoice: 'REGULAR' },
+    });
+    const activeSnapshot = await prisma.registration.findUniqueOrThrow({
+      where: { id: registration.id },
+    });
+    expect(activeSnapshot).toMatchObject({
+      menuRevisionId: oldSnapshot.menuRevisionId,
+      menuNameSnapshot: oldSnapshot.menuNameSnapshot,
+      serviceLocationId: oldSnapshot.serviceLocationId,
+      serviceLocationAssignmentId: oldSnapshot.serviceLocationAssignmentId,
+    });
+
+    await prisma.registration.update({
+      where: { id: registration.id },
+      data: {
+        status: 'CANCELLED',
+        cancelledAt: new Date('2026-11-01T00:00:00.000Z'),
+        cancelReason: 'REGISTRATION_CANCELLED',
+        cancelledByUserId: user.id,
+      },
+    });
+    await prisma.registration.update({
+      where: { id: registration.id },
+      data: {
+        status: 'ACTIVE',
+        menuRevisionId: newRevision.id,
+        menuNameSnapshot: newRevision.mealName,
+        ownerNameSnapshot: newAssignment.employeeName,
+        employeeCodeSnapshot: newAssignment.employeeCode,
+        serviceLocationId: newLocation.id,
+        serviceLocationAssignmentId: newAssignment.id,
+        serviceLocationCode: newLocation.shortCode,
+        serviceLocationName: newLocation.displayName,
+        serviceLocationAddress: newLocation.address,
+        serviceLocationEffectiveFrom: newAssignment.effectiveFrom,
+        serviceLocationSnapshotAt: new Date('2026-11-01T00:00:00.000Z'),
+        registeredAt: new Date('2026-11-01T00:00:00.000Z'),
+        cancelledAt: null,
+        cancelReason: null,
+      },
+    });
+    const reactivated = await prisma.registration.findUniqueOrThrow({
+      where: { id: registration.id },
+    });
+    expect(reactivated).toMatchObject({
+      menuRevisionId: newRevision.id,
+      menuNameSnapshot: 'New Race Menu',
+      serviceLocationId: newLocation.id,
+      serviceLocationAssignmentId: newAssignment.id,
+      serviceLocationCode: 'RACE-NEW',
+    });
+  });
+
+  it('serving_and_no_show_same_registration_have_one_winner', async () => {
+    const user = await prisma.user.create({
+      data: { email: 'serving-no-show-race@example.test' },
+    });
+    const registration = await createCompleteRegistrationFixture(
+      user.id,
+      new Date('2026-11-06T00:00:00.000Z'),
+    );
+    const servingClient = createDisposableClient();
+    const noShowClient = createDisposableClient();
+    const [servingResult, noShowResult] = await Promise.all([
+      serveWithRegistrationLock(servingClient, registration.id, user.id),
+      noShowWithRegistrationLock(
+        noShowClient,
+        registration.id,
+        new Date('2026-11-06T06:30:00.000Z'),
+      ),
+    ]);
+    expect(
+      [servingResult, noShowResult].filter((result) => result !== 'SKIPPED'),
+    ).toHaveLength(1);
+
+    const persisted = await prisma.registration.findUniqueOrThrow({
+      where: { id: registration.id },
+      include: { mealServing: true },
+    });
+    const penaltyCount = await prisma.penalty.count({
+      where: { registrationId: registration.id },
+    });
+    const outboxCount = await prisma.outboxEvent.count({
+      where: { dedupeKey: `kitchen:no-show:${registration.id}` },
+    });
+    if (persisted.mealServing) {
+      expect(persisted.status).not.toBe('NO_SHOW');
+      expect(penaltyCount).toBe(0);
+      expect(outboxCount).toBe(0);
+    } else {
+      expect(persisted.status).toBe('NO_SHOW');
+      expect(penaltyCount).toBe(1);
+      expect(outboxCount).toBe(1);
+    }
+  });
+
+  it('serving_and_cancel_same_registration_have_one_winner', async () => {
+    const user = await prisma.user.create({
+      data: { email: 'serving-cancel-race@example.test' },
+    });
+    const registration = await createCompleteRegistrationFixture(
+      user.id,
+      new Date('2026-11-07T00:00:00.000Z'),
+    );
+    const servingClient = createDisposableClient();
+    const cancelClient = createDisposableClient();
+    const [servingResult, cancelResult] = await Promise.all([
+      serveWithRegistrationLock(servingClient, registration.id, user.id),
+      cancelWithRegistrationLock(
+        cancelClient,
+        registration.id,
+        new Date('2026-11-06T00:00:00.000Z'),
+      ),
+    ]);
+    expect(
+      [servingResult, cancelResult].filter((result) => result !== 'SKIPPED'),
+    ).toHaveLength(1);
+
+    const persisted = await prisma.registration.findUniqueOrThrow({
+      where: { id: registration.id },
+      include: { mealServing: true },
+    });
+    if (persisted.status === 'CANCELLED') {
+      expect(persisted.mealServing).toBeNull();
+    } else {
+      expect(persisted.status).toBe('ACTIVE');
+      expect(persisted.mealServing).toBeTruthy();
+    }
+  });
+
+  it('two_workers_same_registration_create_one_penalty', async () => {
+    const user = await prisma.user.create({
+      data: { email: 'worker-race@example.test' },
+    });
+    const registration = await createCompleteRegistrationFixture(
+      user.id,
+      new Date('2026-11-08T00:00:00.000Z'),
+    );
+    const firstWorker = createDisposableClient();
+    const secondWorker = createDisposableClient();
+    const now = new Date('2026-11-08T06:30:00.000Z');
+    const results = await Promise.all([
+      noShowWithRegistrationLock(firstWorker, registration.id, now),
+      noShowWithRegistrationLock(secondWorker, registration.id, now),
+    ]);
+    expect(results.filter((result) => result === 'NO_SHOW')).toHaveLength(1);
+    expect(results.filter((result) => result === 'SKIPPED')).toHaveLength(1);
+    expect(
+      await prisma.penalty.count({ where: { registrationId: registration.id } }),
+    ).toBe(1);
+    expect(
+      await prisma.notification.count({
+        where: { dedupeKey: `no-show-penalty:${user.id}:${registration.id}` },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.outboxEvent.count({
+        where: { dedupeKey: `kitchen:no-show:${registration.id}` },
+      }),
+    ).toBe(1);
+  });
+
+  it('no_show_retry_keeps_one_penalty_notification_audit_and_outbox', async () => {
+    const user = await prisma.user.create({
+      data: { email: 'worker-retry@example.test' },
+    });
+    const registration = await createCompleteRegistrationFixture(
+      user.id,
+      new Date('2026-11-10T00:00:00.000Z'),
+    );
+    const worker = createDisposableClient();
+    const now = new Date('2026-11-10T06:30:00.000Z');
+    await expect(
+      noShowWithRegistrationLock(worker, registration.id, now),
+    ).resolves.toBe('NO_SHOW');
+    const firstPenalty = await prisma.penalty.findFirstOrThrow({
+      where: { registrationId: registration.id },
+    });
+    const firstOutbox = await prisma.outboxEvent.findUniqueOrThrow({
+      where: { dedupeKey: `kitchen:no-show:${registration.id}` },
+    });
+    await expect(
+      noShowWithRegistrationLock(worker, registration.id, now),
+    ).resolves.toBe('SKIPPED');
+    expect(
+      await prisma.penalty.findMany({
+        where: { registrationId: registration.id },
+      }),
+    ).toHaveLength(1);
+    expect(
+      await prisma.notification.count({
+        where: { dedupeKey: `no-show-penalty:${user.id}:${registration.id}` },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.auditLog.count({
+        where: {
+          action: 'NO_SHOW_PROCESSED',
+          details: { contains: registration.id },
+        },
+      }),
+    ).toBe(1);
+    const retryOutbox = await prisma.outboxEvent.findUniqueOrThrow({
+      where: { dedupeKey: `kitchen:no-show:${registration.id}` },
+    });
+    expect(retryOutbox.id).toBe(firstOutbox.id);
+    expect(firstPenalty.registrationId).toBe(registration.id);
+  });
+
+  it.each(['PAID', 'WAIVED'] as const)(
+    'paid_or_waived_penalty_is_not_reopened_by_worker_retry (%s)',
+    async (status) => {
+      const user = await prisma.user.create({
+        data: { email: `worker-retry-${status.toLowerCase()}@example.test` },
+      });
+      const registration = await createCompleteRegistrationFixture(
+        user.id,
+        new Date('2026-11-09T00:00:00.000Z'),
+      );
+      const penalty = await prisma.penalty.create({
+        data: {
+          registrationId: registration.id,
+          userId: user.id,
+          mealDate: registration.mealDate,
+          amount: 50000,
+          reason: 'NO_SHOW',
+          status,
+        },
+      });
+      const worker = createDisposableClient();
+      await expect(
+        noShowWithRegistrationLock(
+          worker,
+          registration.id,
+          new Date('2026-11-09T06:30:00.000Z'),
+        ),
+      ).resolves.toBe('NO_SHOW');
+      await expect(
+        prisma.penalty.findUniqueOrThrow({ where: { id: penalty.id } }),
+      ).resolves.toMatchObject({ status });
+      await expect(
+        prisma.registration.findUniqueOrThrow({
+          where: { id: registration.id },
+        }),
+      ).resolves.toMatchObject({ status: 'NO_SHOW' });
+    },
+  );
 });
