@@ -18,7 +18,7 @@
 - [x] Task 5: Replace ACTIVE-only Kitchen dashboard with a canonical projection
 - [x] Task 6: Make no-show and penalty processing per-registration, lock-safe, and retryable
 - [x] Task 7: Publish only committed dashboard events
-- [ ] Task 8: Prove cross-transaction concurrency and all-or-nothing behavior on PostgreSQL
+- [x] Task 8: Prove cross-transaction concurrency and all-or-nothing behavior on PostgreSQL
 - [ ] Task 9: Execute migration rollout gates and update canonical documentation
 
 ## Preflight conflict scan
@@ -93,3 +93,6 @@ Task 6: complete (commits b2fdea475ad5d181596493c2a2cc7be5625637d4..e11cc3472dd2
 Task 7: fix round 1/5 (P1/P2 addressed in test design; PostgreSQL e2e unexecuted; commits 1bb23c6..15922009)
 Task 7 environmental evidence gate: PostgreSQL worker/API e2e remains unexecuted because DATABASE_URL was unavailable; no database evidence was fabricated.
 Task 7: complete with environmental evidence gate (commits 1bb23c6fac30f7d69ec0490a129cade2148b0c29..1592200958e400b2ced512515d38803196beb41f; review conditional)
+Task 8: fix round 1/5 (all findings addressed; commits 5d30e44..73978ca)
+Task 8: fix round 2/5 (all findings addressed; commits 73978ca..70c91cb)
+Task 8: complete (commits 5d30e44ad14325f99482dfe817ec5215e2c85f39..70c91cbea46d0ed18c45e3dec969ccc0fe119d28, review GO with evidence caveat)
