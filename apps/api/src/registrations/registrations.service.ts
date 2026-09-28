@@ -422,7 +422,7 @@ export class RegistrationsService {
 
     return {
       menuRevisionId: revision.id,
-      menuNameSnapshot: revision.mealName.trim(),
+      menuNameSnapshot: revision.mealName,
       menuDescriptionSnapshot: revision.description ?? null,
       menuImageSnapshot: revision.imageUrl ?? null,
       ownerNameSnapshot: assignment.employeeName.trim(),

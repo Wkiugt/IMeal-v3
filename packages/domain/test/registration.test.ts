@@ -177,8 +177,8 @@ describe('Domain Tests: Registration Rules', () => {
       const delegate = await prisma.user.create({
         data: { email: 'disable-delegate@ex.com', name: 'Delegate' },
       });
-      const targetDate1 = new Date('2026-08-30T00:00:00.000Z');
-      const targetDate2 = new Date('2026-08-31T00:00:00.000Z');
+      const targetDate1 = new Date('2026-08-29T00:00:00.000Z');
+      const targetDate2 = new Date('2026-08-30T00:00:00.000Z');
       const location = await prisma.location.create({
         data: {
           shortCode: 'DISABLE',
@@ -241,7 +241,7 @@ describe('Domain Tests: Registration Rules', () => {
           content: 'Disable lunch 2',
         },
       });
-      const current = new Date('2026-08-28T00:00:00.000Z');
+      const current = new Date('2026-08-28T07:01:00.000Z');
       const snapshot = (
         revision: { id: string; mealName: string },
         mealDate: Date,
@@ -282,6 +282,9 @@ describe('Domain Tests: Registration Rules', () => {
         },
       });
 
+      await expect(
+        RegistrationService.cancelRegistration(registration1.id, current),
+      ).rejects.toThrow('Cutoff time has passed');
       const cancelled = await RegistrationService.disableUserAccount(
         user.id,
         current,

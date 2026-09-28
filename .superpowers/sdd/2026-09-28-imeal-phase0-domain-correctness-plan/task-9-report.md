@@ -221,38 +221,45 @@ were recorded, not suppressed or reclassified as rollout approval.
 The following blocker fixes were applied after the review while preserving the
 rollout gate decision above:
 
-- Future `ACTIVE` preflight now checks the complete trimmed text, immutable
-  menu revision identity/content, roster assignment, location identity, and
-  date-effective location/assignment snapshots. The backfill repairs canonical
-  menu snapshot mismatches only from the verified immutable revision; it does
-  not fabricate evidence.
+- Future `ACTIVE` preflight validates required text as non-blank after
+  trimming but compares `menu_name_snapshot` exactly to the verified stored
+  revision name. Backfill preserves that exact stored value for every
+  verified revision and repairs only exact mismatches; pickup and API
+  registration resolution use the same representation and fail closed for
+  blank or mismatched legacy rows.
+- The migration-backed whitespace revision coverage now exercises preflight
+  classification, exact-value backfill/idempotence, API registration
+  resolution, and pickup eligibility without silently trimming the immutable
+  revision.
 - Weekly-menu publish locks the parent row before re-reading the complete
   graph, so concurrent revision commits cannot be published from a stale
   read.
-- Runtime registration cancellation/account disable now uses the canonical
-  cancellation transition with cutoff bypass only for account disable,
-  delegation revocation, audit rows, deterministic notifications, and actor
-  metadata. Incomplete historical fixture writes were moved to a test-only
-  helper outside the `@imeal/core` runtime source surface.
-- Product and UI/backend documentation now uses `PICKUP_INTENT_CONFLICT` and
+- Account disable now locks all eligible registration rows in deterministic
+  `(meal_date, id)` order before locking the user row. It retains the
+  canonical cancellation transition, cutoff bypass, delegation revocation,
+  audit rows, deterministic notifications, actor metadata, and outbox writes.
+  A real pickup/account-disable cross-transaction barrier test covers the
+  registration-first order and no-deadlock winner semantics.
+- Account-disable coverage also proves a future registration is cancelled
+  after the 14:00 VN cutoff while ordinary cancellation rejects at that
+  same time. Incomplete historical fixture writes remain isolated in a
+  test-only helper outside the `@imeal/core` runtime source surface.
+- Product and UI/backend documentation uses `PICKUP_INTENT_CONFLICT` and
   states that failed serving/delegation/request-claim transactions roll back.
   Served dashboard fields are documented as the client projection rather than
   immutable server-side snapshot storage.
 
-Observed verification commands:
+Fresh verification for this follow-up:
 
 ```text
-yarn workspace @imeal/api exec vitest run src/admin/weekly-menus/weekly-menus.service.spec.ts src/registrations/registrations.service.spec.ts
-PASS — 2 files, 31 tests
+yarn workspace @imeal/api exec vitest run src/registrations/registrations.service.spec.ts src/pickup/pickup.service.spec.ts src/admin/weekly-menus/weekly-menus.service.spec.ts
+PASS — 3 files, 81 tests
 
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/imeal yarn workspace @imeal/core exec vitest run --config ./vitest.config.ts test/registration.test.ts test/concurrency.test.ts
-PASS — 2 files, 29 tests
-
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/imeal yarn workspace @imeal/core exec vitest run --config ./vitest.config.ts test/emailOtpLocationServing.test.ts
-PASS — 1 file, 13 tests; includes migration-backed future-active preflight mismatch classification and idempotent backfill assertions
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/imeal yarn workspace @imeal/core exec vitest run --config ./vitest.config.ts test/registration.test.ts test/concurrency.test.ts test/emailOtpLocationServing.test.ts
+BLOCKED — local PostgreSQL refused connections on ::1:5432 and 127.0.0.1:5432; 42 tests skipped and setup/teardown failed to connect
 
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/imeal yarn workspace @imeal/api exec vitest run --config ./vitest.config.e2e.ts test/production-concurrency.e2e-spec.ts
-PASS — 1 file, 9 tests; includes the two-client concurrent update/publish latest-revision scenario
+BLOCKED — setup failed with ECONNREFUSED on ::1:5432 and 127.0.0.1:5432; all 11 tests skipped and the afterAll cleanup hook timed out at 120 seconds
 
 yarn workspace @imeal/api exec tsc --noEmit -p tsconfig.json && yarn workspace @imeal/core exec tsc --noEmit -p tsconfig.json
 PASS

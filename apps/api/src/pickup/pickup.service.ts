@@ -129,27 +129,27 @@ function hasCompleteRegistrationSnapshot(registration: {
 }): boolean {
   return (
     typeof registration.ownerNameSnapshot === 'string' &&
-    registration.ownerNameSnapshot.length > 0 &&
+    registration.ownerNameSnapshot.trim().length > 0 &&
     typeof registration.employeeCodeSnapshot === 'string' &&
-    registration.employeeCodeSnapshot.length > 0 &&
+    registration.employeeCodeSnapshot.trim().length > 0 &&
     typeof registration.serviceLocationId === 'string' &&
-    registration.serviceLocationId.length > 0 &&
+    registration.serviceLocationId.trim().length > 0 &&
     typeof registration.serviceLocationAssignmentId === 'string' &&
-    registration.serviceLocationAssignmentId.length > 0 &&
+    registration.serviceLocationAssignmentId.trim().length > 0 &&
     typeof registration.serviceLocationCode === 'string' &&
-    registration.serviceLocationCode.length > 0 &&
+    registration.serviceLocationCode.trim().length > 0 &&
     typeof registration.serviceLocationName === 'string' &&
-    registration.serviceLocationName.length > 0 &&
+    registration.serviceLocationName.trim().length > 0 &&
     typeof registration.serviceLocationAddress === 'string' &&
-    registration.serviceLocationAddress.length > 0 &&
+    registration.serviceLocationAddress.trim().length > 0 &&
     registration.serviceLocationEffectiveFrom instanceof Date &&
     Number.isFinite(registration.serviceLocationEffectiveFrom.getTime()) &&
     registration.serviceLocationSnapshotAt instanceof Date &&
     Number.isFinite(registration.serviceLocationSnapshotAt.getTime()) &&
     typeof registration.menuRevisionId === 'string' &&
-    registration.menuRevisionId.length > 0 &&
+    registration.menuRevisionId.trim().length > 0 &&
     typeof registration.menuNameSnapshot === 'string' &&
-    registration.menuNameSnapshot.length > 0
+    registration.menuNameSnapshot.trim().length > 0
   );
 }
 

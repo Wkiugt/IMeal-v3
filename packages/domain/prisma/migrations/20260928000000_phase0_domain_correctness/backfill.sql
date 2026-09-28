@@ -148,7 +148,7 @@ $menu_backfill$;
 WITH verified_revisions AS (
   SELECT dmr.id AS revision_id,
          dm.date AS meal_date,
-         btrim(dmr.meal_name) AS meal_name,
+         dmr.meal_name,
          dmr.description,
          dmr.image_url
   FROM daily_menu_revisions AS dmr

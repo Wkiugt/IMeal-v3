@@ -397,8 +397,10 @@ For future `ACTIVE` rows, rollout eligibility is the same complete snapshot
 predicate used by pickup: required text is non-null and non-blank after
 trimming; `registered_at`, location effective/snapshot timestamps and all
 location/assignment references are valid; the immutable revision belongs to
-the same menu date; `menu_name_snapshot` equals the trimmed revision name;
-and nullable description/image snapshots use `IS NOT DISTINCT FROM` equality
+the same menu date; `menu_name_snapshot` equals the exact verified stored
+revision name (after non-blank validation, without silently trimming or
+accepting a mismatch); and nullable description/image snapshots use
+`IS NOT DISTINCT FROM` equality
 with the immutable revision. Any mismatch remains a reported remediation or
 quarantine row and does not weaken pickup's fail-closed behavior.
 

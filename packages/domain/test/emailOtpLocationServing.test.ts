@@ -476,7 +476,7 @@ describe('Task 2 persistence boundaries', () => {
       new Date('2026-10-07T00:00:00.000Z'),
       JSON.stringify({
         revision: 1,
-        mealName: 'Verified historical menu',
+        mealName: '  Verified historical menu  ',
         description: 'Verified historical description',
         imageUrl: null,
       }),
@@ -544,7 +544,7 @@ describe('Task 2 persistence boundaries', () => {
         mealDate: validDate,
         status: 'ACTIVE',
         menuRevisionId: validRevision.id,
-        menuNameSnapshot: 'Stale verified menu',
+        menuNameSnapshot: 'Verified historical menu',
         menuDescriptionSnapshot: 'Verified historical description',
         menuImageSnapshot: null,
         registeredAt: TEST_DATE,
@@ -691,13 +691,20 @@ describe('Task 2 persistence boundaries', () => {
     await runBackfill();
     const secondStates = await readStates();
     expect(secondStates).toEqual(firstStates);
+    const postBackfillReport = await runPreflight();
+    const postBackfillFutureActiveCheck = postBackfillReport.find(
+      (check) => check.check_name === 'future_active_snapshot_incomplete',
+    );
+    expect(postBackfillFutureActiveCheck?.sample_ids).not.toContain(
+      completeMismatchRegistration.id,
+    );
 
     const validState = firstStates.registrations.find(
       (row) => row.id === validRegistration.id,
     );
     expect(validState).toMatchObject({
       menuRevisionId: validRevision.id,
-      menuNameSnapshot: 'Verified historical menu',
+      menuNameSnapshot: '  Verified historical menu  ',
       menuDescriptionSnapshot: 'Verified historical description',
       menuImageSnapshot: null,
       ownerNameSnapshot: validAssignment.employeeName,
@@ -717,7 +724,7 @@ describe('Task 2 persistence boundaries', () => {
     );
     expect(completeMismatchState).toMatchObject({
       menuRevisionId: validRevision.id,
-      menuNameSnapshot: 'Verified historical menu',
+      menuNameSnapshot: '  Verified historical menu  ',
       menuDescriptionSnapshot: 'Verified historical description',
       menuImageSnapshot: null,
       ownerNameSnapshot: mismatchAssignment.employeeName,

@@ -98,3 +98,4 @@ Task 8: fix round 2/5 (all findings addressed; commits 73978ca..70c91cb)
 Task 8: complete (commits 5d30e44ad14325f99482dfe817ec5215e2c85f39..70c91cbea46d0ed18c45e3dec969ccc0fe119d28, review GO with evidence caveat)
 Task 9: fix round 1/5 (F1/F3-F8 addressed; F2 remains external staging/approval gate; commits 9953f4a..e5982e3)
 Task 9: local rollout package complete but blocked (commit e5982e3202c476646ee89bda979e637f55dfbc65; review NO-GO until approved staging/representative evidence and independent approval/audit reference)
+Task 9: final re-review follow-up fixed HIGH-1/HIGH-2/LOW-1 in commit c09d831; API focused tests (81) and API/core typechecks passed, while PostgreSQL core/migration/e2e tests remained blocked by ECONNREFUSED localhost:5432; NO-GO and staging/production approval gates remain unchanged.

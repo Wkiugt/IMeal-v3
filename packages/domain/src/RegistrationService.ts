@@ -103,6 +103,7 @@ export class RegistrationService {
     userId: string,
     currentTime: Date,
     actorUserId = userId,
+    db: typeof prisma = prisma,
   ) {
     const vnCurrent = toZonedTime(currentTime, VN_TIMEZONE);
     const businessDate = new Date(
@@ -113,7 +114,16 @@ export class RegistrationService {
       ),
     );
 
-    return prisma.$transaction(async (tx) => {
+    return db.$transaction(async (tx) => {
+      const registrations = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM registrations
+        WHERE user_id = ${userId}
+          AND meal_date >= ${businessDate}
+          AND status = 'ACTIVE'
+        ORDER BY meal_date ASC, id ASC
+        FOR UPDATE
+      `;
       const user = await tx.user.findUnique({
         where: { id: userId },
         select: { id: true },
@@ -126,15 +136,6 @@ export class RegistrationService {
         data: { isActive: false },
       });
 
-      const registrations = await tx.registration.findMany({
-        where: {
-          userId,
-          mealDate: { gte: businessDate },
-          status: 'ACTIVE',
-        },
-        select: { id: true },
-        orderBy: [{ mealDate: 'asc' }, { id: 'asc' }],
-      });
       const cancelledRegistrationIds: string[] = [];
       for (const registration of registrations) {
         const cancelled = await this.transitionRegistrationToCancelled(

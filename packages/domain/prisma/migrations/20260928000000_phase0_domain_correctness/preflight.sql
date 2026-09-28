@@ -220,7 +220,7 @@ future_active_snapshot_incomplete_affected AS (
       OR btrim(COALESCE(dmr.meal_name, '')) = ''
       OR dm.id IS NULL
       OR dm.date <> r.meal_date
-      OR r.menu_name_snapshot <> btrim(dmr.meal_name)
+      OR r.menu_name_snapshot <> dmr.meal_name
       OR r.menu_description_snapshot IS DISTINCT FROM dmr.description
       OR r.menu_image_snapshot IS DISTINCT FROM dmr.image_url
       OR ela.id IS NULL

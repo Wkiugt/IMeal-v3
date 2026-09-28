@@ -2,6 +2,8 @@ import { PrismaClient, type Prisma } from '@prisma/client';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { randomUUID } from 'node:crypto';
 import { PickupService } from '../src/pickup/pickup.service.js';
 import { RegistrationsService } from '../src/registrations/registrations.service.js';
 import { NotificationsService } from '../src/notifications/notifications.service.js';
@@ -32,7 +34,26 @@ type NoShowWorker = RealPrismaOwner & {
     options: { force: boolean; currentTime: Date },
   ) => Promise<{ processedCount: number }>;
 };
+type DomainRegistrationService = {
+  disableUserAccount(
+    userId: string,
+    currentTime: Date,
+    actorUserId: string,
+    db: PrismaClient,
+  ): Promise<string[]>;
+};
 
+async function loadDomainRegistrationService() {
+  // The API e2e project has rootDir=apps/api; load the core source through
+  // Vite so this test can exercise the real account-disable transaction.
+  const modulePath = pathToFileURL(
+    resolve(process.cwd(), '../../packages/domain/src/RegistrationService.ts'),
+  ).href;
+  const module = (await import(modulePath)) as {
+    RegistrationService: DomainRegistrationService;
+  };
+  return module.RegistrationService;
+}
 function patchPrisma(service: RealPrismaOwner, client: PrismaClient) {
   const original = service.prisma;
   service.prisma = client;
@@ -430,6 +451,117 @@ describe('Production PostgreSQL concurrency paths', () => {
       }),
     ).toBe(1);
   });
+  it('serializes account disable after pickup registration lock without deadlock', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client);
+    const pickupClient = trackClient(new PrismaClient());
+    const disableClient = trackClient(new PrismaClient());
+    const pickup = createPickupService(pickupClient);
+    await pickup.ownedClient.$disconnect();
+
+    type TransactionClientOwner = {
+      $transaction: (
+        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
+        options?: unknown,
+      ) => Promise<unknown>;
+    };
+    const pickupTransaction = pickupClient as unknown as TransactionClientOwner;
+    const originalPickupTransaction = pickupTransaction.$transaction.bind(
+      pickupClient,
+    );
+    let pickupLockEntered!: () => void;
+    const pickupLockStarted = new Promise<void>((resolve) => {
+      pickupLockEntered = resolve;
+    });
+    let releasePickupLock!: () => void;
+    const pickupLockRelease = new Promise<void>((resolve) => {
+      releasePickupLock = resolve;
+    });
+    pickupTransaction.$transaction = (callback, options) =>
+      originalPickupTransaction(
+        async (tx) => {
+          await tx.$queryRaw`
+            SELECT id FROM registrations
+            WHERE id = ${world.registrations[0].id}
+            FOR UPDATE
+          `;
+          pickupLockEntered();
+          await pickupLockRelease;
+          return callback(tx);
+        },
+        options,
+      );
+
+    const disableTransaction = disableClient as unknown as TransactionClientOwner;
+    const originalDisableTransaction = disableTransaction.$transaction.bind(
+      disableClient,
+    );
+    let disableTransactionEntered!: () => void;
+    const disableTransactionStarted = new Promise<void>((resolve) => {
+      disableTransactionEntered = resolve;
+    });
+    disableTransaction.$transaction = (callback, options) =>
+      originalDisableTransaction(
+        async (tx) => {
+          disableTransactionEntered();
+          return callback(tx);
+        },
+        options,
+      );
+
+    vi.setSystemTime(SERVING_TIME);
+    const pickupPromise = pickup.service.confirmPickup(
+      { pickupSessionId: world.session.id, idempotencyKey: 'disable-race-key' },
+      kitchenActor,
+    );
+    await pickupLockStarted;
+    const domainRegistrationService = await loadDomainRegistrationService();
+    const disablePromise = domainRegistrationService.disableUserAccount(
+      world.owner.id,
+      SERVING_TIME,
+      world.kitchen.id,
+      disableClient,
+    );
+    await disableTransactionStarted;
+    releasePickupLock();
+
+    const [pickupResult, disableResult] = await Promise.race([
+      Promise.allSettled([pickupPromise, disablePromise]),
+      sleep(5_000).then(() => {
+        throw new Error('account-disable/pickup race did not complete');
+      }),
+    ]);
+    if (pickupResult.status !== 'fulfilled') throw pickupResult.reason;
+    if (disableResult.status !== 'fulfilled') throw disableResult.reason;
+    expect(disableResult.value).toEqual([]);
+
+    const finalRegistration = await client.registration.findUniqueOrThrow({
+      where: { id: world.registrations[0].id },
+      include: { mealServing: true },
+    });
+    expect(finalRegistration).toMatchObject({
+      status: 'ACTIVE',
+      mealServing: { id: expect.any(String) },
+    });
+    expect(
+      await client.user.findUniqueOrThrow({ where: { id: world.owner.id } }),
+    ).toMatchObject({ isActive: false });
+    expect(
+      await client.auditLog.count({
+        where: { action: 'registration_account_disabled' },
+      }),
+    ).toBe(0);
+    expect(
+      await client.notification.count({
+        where: { kind: 'DELEGATION_REVOKED' },
+      }),
+    ).toBe(0);
+    expect(
+      await client.outboxEvent.count({
+        where: { eventType: 'NOTIFICATION_CREATED' },
+      }),
+    ).toBe(0);
+  });
   it('serializes real RegistrationsService create calls for one registration', async () => {
     const client = trackClient(new PrismaClient());
     const world = await createServingWorld(client, { registrationCount: 0 });
@@ -509,6 +641,109 @@ describe('Production PostgreSQL concurrency paths', () => {
         where: { userId: world.owner.id, mealDate: MEAL_DATE },
       }),
     ).toBe(1);
+  });
+  it('preserves whitespace in verified menu names through resolution and pickup eligibility', async () => {
+    const client = trackClient(new PrismaClient());
+    const owner = await client.user.create({
+      data: {
+        email: `whitespace-owner-${randomUUID()}@example.test`,
+        name: 'Whitespace Owner',
+      },
+    });
+    const location = await client.location.create({
+      data: {
+        shortCode: `WS-${randomUUID().slice(0, 8)}`,
+        displayName: 'Whitespace Kitchen',
+        servingPointName: 'Whitespace counter',
+        address: '1 Whitespace Street',
+        building: 'A',
+        floor: '1',
+        roomOrCounter: '1',
+        localContact: 'whitespace@example.test',
+        isActive: true,
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    });
+    const assignment = await client.employeeLocationAssignment.create({
+      data: {
+        userId: owner.id,
+        normalizedEmail: owner.email,
+        employeeName: owner.name!,
+        employeeCode: `WS-${randomUUID().slice(0, 8)}`,
+        isActive: true,
+        role: 'STAFF',
+        serviceLocationCode: location.shortCode,
+        locationId: location.id,
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    });
+    const mealDate = new Date('2026-10-15T00:00:00.000Z');
+    const weeklyMenu = await client.weeklyMenu.create({
+      data: {
+        startDate: mealDate,
+        endDate: mealDate,
+        publishedAt: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    });
+    const dailyMenu = await client.dailyMenu.create({
+      data: {
+        weeklyMenuId: weeklyMenu.id,
+        date: mealDate,
+        isEnabled: true,
+        isHoliday: false,
+      },
+    });
+    const revision = await client.dailyMenuRevision.create({
+      data: {
+        dailyMenuId: dailyMenu.id,
+        revision: 1,
+        mealName: '  Whitespace lunch  ',
+        description: 'Whitespace description',
+        imageUrl: null,
+        content: 'Whitespace lunch',
+      },
+    });
+    await client.mealDay.create({
+      data: {
+        dailyMenuId: dailyMenu.id,
+        mealType: 'LUNCH',
+        isServingReady: true,
+      },
+    });
+    await client.appSetting.create({
+      data: { key: 'isServingReady:2026-10-15', value: 'true' },
+    });
+
+    vi.setSystemTime(new Date('2026-10-14T06:00:00.000Z'));
+    const registrationClient = trackClient(new PrismaClient());
+    const registration = await createRegistrationService(registrationClient);
+    const result = await registration.service.batchRegister(owner.id, [
+      { mealDate: '2026-10-15', status: 'ACTIVE', mealChoice: 'REGULAR' },
+    ]);
+    expect(result).toEqual([{ date: '2026-10-15', success: true }]);
+    const persisted = await client.registration.findUniqueOrThrow({
+      where: {
+        userId_mealDate: { userId: owner.id, mealDate },
+      },
+    });
+    expect(persisted).toMatchObject({
+      menuRevisionId: revision.id,
+      menuNameSnapshot: revision.mealName,
+    });
+
+    const pickupClient = trackClient(new PrismaClient());
+    const pickup = createPickupService(pickupClient);
+    await registration.ownedClient.$disconnect();
+    await registration.ownedNotificationsClient.$disconnect();
+    await pickup.ownedClient.$disconnect();
+    vi.setSystemTime(new Date('2026-10-15T04:00:00.000Z'));
+    const options = await pickup.service.getPickupOptions(owner.id);
+    expect(options.options).toContainEqual({
+      type: 'OWN',
+      registrationId: persisted.id,
+      mealDate: '2026-10-15',
+      mealChoice: 'REGULAR',
+    });
   });
 
   it('publishes the latest committed revision across concurrent update and publish clients', async () => {
