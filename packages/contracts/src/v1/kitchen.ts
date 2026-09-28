@@ -44,10 +44,20 @@ export const KitchenRegistrationItemSchema = z
     userName: z.string(),
     mealChoice: MealChoiceSchema,
     userEmail: z.string(),
+    state: z.enum(['PENDING', 'SERVED', 'NO_SHOW']),
     isServed: z.boolean(),
     servedAt: z.string().nullable().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((item, context) => {
+    if (item.isServed !== (item.state === 'SERVED')) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['isServed'],
+        message: 'isServed must match the dashboard state',
+      });
+    }
+  });
 export const KitchenDashboardSnapshotSchema = z
   .object({
     date: z.string(),

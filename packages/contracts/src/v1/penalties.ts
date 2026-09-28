@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MealDateSchema } from './registrations';
 
 export const PenaltyStatusSchema = z.enum(['PENDING', 'PAID', 'WAIVED']);
 export type PenaltyStatus = z.infer<typeof PenaltyStatusSchema>;
@@ -16,6 +17,8 @@ export const PenaltyItemDtoSchema = z.object({
   waivedAt: z.string().nullable().optional(),
   waiveReason: z.string().nullable().optional(),
   waivedByUserId: z.string().nullable().optional(),
+  registrationId: z.string().nullable(),
+  mealDate: MealDateSchema.nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

@@ -78,11 +78,56 @@ describe('Contracts v1', () => {
         waivedAt: null,
         waiveReason: null,
         waivedByUserId: null,
+        registrationId: null,
+        mealDate: null,
         createdAt: '2026-09-03T10:00:00.000Z',
         updatedAt: '2026-09-03T10:00:00.000Z',
       };
       const result = v1.PenaltyItemDtoSchema.safeParse(penalty);
       expect(result.success).toBe(true);
+    });
+
+    it('parses_legacy_nullable_menu_and_penalty_metadata', () => {
+      expect(
+        v1.WeekDailyMenuSchema.safeParse({
+          id: 'menu-day-legacy',
+          weeklyMenuId: 'week-legacy',
+          date: '2026-09-21',
+          isHoliday: false,
+          isEnabled: true,
+          menuRevisionId: null,
+          mealName: null,
+          description: null,
+          imageUrl: null,
+          createdAt: '2026-09-01T00:00:00.000Z',
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.PenaltyItemDtoSchema.safeParse({
+          id: 'pen-legacy',
+          userId: 'user-1',
+          amount: 50000,
+          reason: 'NO_SHOW_PENALTY_2026-09-03',
+          status: 'PENDING',
+          registrationId: null,
+          mealDate: null,
+          createdAt: '2026-09-03T10:00:00.000Z',
+          updatedAt: '2026-09-03T10:00:00.000Z',
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.PenaltyItemDtoSchema.safeParse({
+          id: 'pen-current',
+          userId: 'user-1',
+          amount: 50000,
+          reason: 'NO_SHOW_PENALTY_2026-09-03',
+          status: 'PENDING',
+          registrationId: 'registration-1',
+          mealDate: '2026-09-03',
+          createdAt: '2026-09-03T10:00:00.000Z',
+          updatedAt: '2026-09-03T10:00:00.000Z',
+        }).success,
+      ).toBe(true);
     });
 
     it('validates penalty metrics and list response', () => {
@@ -267,6 +312,32 @@ describe('Contracts v1', () => {
         }).success,
       ).toBe(false);
     });
+    it('rejects_client_registration_location_or_menu_fields', () => {
+      const activeRegistration = {
+        mealDate: '2026-09-05',
+        status: 'ACTIVE' as const,
+        mealChoice: 'REGULAR' as const,
+      };
+
+      expect(
+        v1.BatchRegistrationRequestSchema.safeParse({
+          registrations: [{ ...activeRegistration, locationId: 'location-1' }],
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.BatchRegistrationRequestSchema.safeParse({
+          registrations: [
+            { ...activeRegistration, menuRevisionId: 'revision-1' },
+          ],
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.BatchRegistrationRequestSchema.safeParse({
+          registrations: [{ ...activeRegistration, mealName: 'Lunch' }],
+        }).success,
+      ).toBe(false);
+    });
+
 
     it('validates the seven-day week response without Date objects', () => {
       const response = v1.WeekRegistrationResponseSchema.safeParse({
@@ -283,6 +354,10 @@ describe('Contracts v1', () => {
               date: '2026-09-21',
               isHoliday: false,
               isEnabled: true,
+              menuRevisionId: null,
+              mealName: null,
+              description: null,
+              imageUrl: null,
               createdAt: '2026-09-01T00:00:00.000Z',
             },
           ],
@@ -293,6 +368,7 @@ describe('Contracts v1', () => {
             mealDate: '2026-09-25',
             status: 'ACTIVE',
             mealChoice: 'VEGETARIAN',
+            menuRevisionId: null,
           },
         ],
         registrationWindow: {
@@ -506,6 +582,7 @@ describe('Contracts v1', () => {
           userName: 'Meal Owner',
           userEmail: 'owner@example.com',
           mealChoice: 'VEGETARIAN',
+          state: 'PENDING',
           isServed: false,
           servedAt: null,
         }).success,
@@ -523,6 +600,56 @@ describe('Contracts v1', () => {
         }).success,
       ).toBe(true);
     });
+    it('parses_dashboard_pending_served_and_no_show_states', () => {
+      const baseItem = {
+        registrationId: 'registration-1',
+        userId: 'user-1',
+        userName: 'Meal Owner',
+        userEmail: 'owner@example.com',
+        mealChoice: 'REGULAR' as const,
+      };
+
+      expect(
+        v1.KitchenRegistrationItemSchema.safeParse({
+          ...baseItem,
+          state: 'PENDING',
+          isServed: false,
+          servedAt: null,
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.KitchenRegistrationItemSchema.safeParse({
+          ...baseItem,
+          state: 'SERVED',
+          isServed: true,
+          servedAt: '2026-09-25T04:00:00.000Z',
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.KitchenRegistrationItemSchema.safeParse({
+          ...baseItem,
+          state: 'NO_SHOW',
+          isServed: false,
+          servedAt: null,
+        }).success,
+      ).toBe(true);
+    });
+
+    it('rejects dashboard state when isServed does not match', () => {
+      expect(
+        v1.KitchenRegistrationItemSchema.safeParse({
+          registrationId: 'registration-1',
+          userId: 'user-1',
+          userName: 'Meal Owner',
+          userEmail: 'owner@example.com',
+          mealChoice: 'REGULAR',
+          state: 'SERVED',
+          isServed: false,
+          servedAt: null,
+        }).success,
+      ).toBe(false);
+    });
+
     it('rejects unknown fields in all kitchen response objects and lists', () => {
       const counters = {
         totalRegistered: 1,
@@ -538,6 +665,7 @@ describe('Contracts v1', () => {
         userName: 'Meal Owner',
         userEmail: 'owner@example.com',
         mealChoice: 'REGULAR' as const,
+        state: 'SERVED' as const,
         isServed: true,
         servedAt: '2026-09-25T04:00:00.000Z',
       };

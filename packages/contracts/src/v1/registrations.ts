@@ -114,6 +114,7 @@ export const RegistrationRecordSchema = z
     mealDate: MealDateSchema,
     status: RegistrationRecordStatusSchema,
     mealChoice: MealChoiceSchema,
+    menuRevisionId: z.string().nullable(),
   })
   .strict();
 export type RegistrationRecord = z.infer<typeof RegistrationRecordSchema>;
@@ -158,6 +159,10 @@ export const WeekDailyMenuSchema = z
     date: MealDateSchema,
     isHoliday: z.boolean(),
     isEnabled: z.boolean(),
+    menuRevisionId: z.string().nullable(),
+    mealName: z.string().nullable(),
+    description: z.string().nullable(),
+    imageUrl: z.string().nullable(),
     createdAt: UtcDateTimeSchema,
   })
   .strict();
