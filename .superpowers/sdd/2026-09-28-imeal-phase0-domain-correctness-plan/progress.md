@@ -15,7 +15,7 @@
 - [ ] Task 2: Update shared response contracts without adding authority inputs
 - [ ] Task 3: Make registration writes resolve and persist immutable snapshots
 - [x] Task 4: Enforce pickup snapshot reads and serving snapshot writes
-- [ ] Task 5: Replace ACTIVE-only Kitchen dashboard with a canonical projection
+- [x] Task 5: Replace ACTIVE-only Kitchen dashboard with a canonical projection
 - [ ] Task 6: Make no-show and penalty processing per-registration, lock-safe, and retryable
 - [ ] Task 7: Publish only committed dashboard events
 - [ ] Task 8: Prove cross-transaction concurrency and all-or-nothing behavior on PostgreSQL
@@ -85,3 +85,6 @@ The scan covers each task's internal consistency, every pair sharing a file or i
 - Task 3: complete (commits 878b023..25f9e7b, review clean)
 Task 4: fix round 1/5 (1 Important canonical revision selection, 1 Important insufficient consumer/database behavior proof; commits 6051fdf..808f71f7c791ccc76e6492044b5ffdc7e8c6188a)
 Task 4: complete (commits 6051fdf..808f71f7, review clean; requested report hash had a typo)
+Task 5: fix round 1/5 (3 findings addressed; commits a29b726..b127fa5)
+Task 5: fix round 2/5 (3 prior findings addressed; commits 0941f30..3cbc1af)
+Task 5: complete (commits a29b726..b127fa5, review clean with PostgreSQL e2e unavailable)
