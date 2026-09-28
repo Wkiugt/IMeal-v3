@@ -5,7 +5,7 @@ import {
   HttpStatus,
   Optional,
 } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from '../common/prisma.service.js';
 import type { Prisma } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
@@ -48,13 +48,10 @@ type RegistrationSnapshotResolution = {
   serviceLocationSnapshotAt: Date;
 };
 
-function hasCompleteRegistrationSnapshot(
-  registration: {
+function hasCompleteRegistrationSnapshot(registration: {
     [K in keyof RegistrationSnapshotResolution]?:
-      | RegistrationSnapshotResolution[K]
-      | null;
-  },
-): boolean {
+    RegistrationSnapshotResolution[K] | null;
+}): boolean {
   return (
     typeof registration.menuRevisionId === 'string' &&
     registration.menuRevisionId.length > 0 &&
@@ -119,17 +116,20 @@ type WeeklyMenuData = {
 
 @Injectable()
 export class RegistrationsService {
-  private prisma = new PrismaClient();
-  private menuCache = new Map<string, { data: WeeklyMenuData; expiry: number }>();
+  private menuCache = new Map<
+    string,
+    { data: WeeklyMenuData; expiry: number }
+  >();
   private readonly notificationsService: NotificationsService;
   private readonly kitchenEventsService?: KitchenEventsService;
 
   constructor(
+    private readonly prisma: PrismaService,
     @Optional() notificationsService?: NotificationsService,
     @Optional() kitchenEventsService?: KitchenEventsService,
   ) {
     this.notificationsService =
-      notificationsService ?? new NotificationsService();
+      notificationsService ?? new NotificationsService(this.prisma);
     this.kitchenEventsService = kitchenEventsService;
   }
 
@@ -251,7 +251,7 @@ export class RegistrationsService {
         'mealChoice' in registration ? registration.mealChoice : undefined,
       menuRevisionId:
         'menuRevisionId' in registration
-          ? registration.menuRevisionId ?? null
+          ? (registration.menuRevisionId ?? null)
           : null,
     }));
 
@@ -360,7 +360,7 @@ export class RegistrationsService {
       !revision ||
       revision.revision === null ||
       !revision.mealName?.trim() ||
-      (revisions[1]?.revision === revision.revision)
+      revisions[1]?.revision === revision.revision
     ) {
       throw new RegistrationSnapshotResolutionError(
         'Published menu revision is unavailable',
@@ -479,7 +479,8 @@ export class RegistrationsService {
         let transactionAttempt = 0;
         while (true) {
           try {
-            const transactionResult = await this.prisma.$transaction(async (tx) => {
+            const transactionResult = await this.prisma.$transaction(
+              async (tx) => {
               let lifecycleEvent: RegistrationLifecycleEvent | null = null;
               let registration = await tx.registration.findUnique({
                 where: {
@@ -519,7 +520,9 @@ export class RegistrationsService {
 
               if (
                 item.status === 'ACTIVE' &&
-                !getAvailableMealChoices(mealDateStr).includes(item.mealChoice)
+                  !getAvailableMealChoices(mealDateStr).includes(
+                    item.mealChoice,
+                  )
               ) {
                 throw new MealChoiceUnavailableError();
               }
@@ -672,7 +675,8 @@ export class RegistrationsService {
                 }
               }
               return lifecycleEvent;
-            });
+              },
+            );
             if (transactionResult && this.kitchenEventsService) {
               try {
                 this.kitchenEventsService.emitEvent({
@@ -685,7 +689,10 @@ export class RegistrationsService {
                   },
                 });
               } catch (error) {
-                console.warn('Failed to publish registration lifecycle event', error);
+                console.warn(
+                  'Failed to publish registration lifecycle event',
+                  error,
+                );
               }
             }
             break;

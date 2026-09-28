@@ -4,7 +4,8 @@ import {
   ForbiddenException,
   Optional,
 } from '@nestjs/common';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../common/prisma.service.js';
 import { v1 } from '@imeal/contracts';
 import * as crypto from 'crypto';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
@@ -43,7 +44,11 @@ function pickupError(
   message: string,
   details?: Record<string, unknown>,
 ): BadRequestException {
-  return new BadRequestException({ code, message, ...(details ? { details } : {}) });
+  return new BadRequestException({
+    code,
+    message,
+    ...(details ? { details } : {}),
+  });
 }
 
 function pickupForbiddenError(
@@ -51,7 +56,11 @@ function pickupForbiddenError(
   message: string,
   details?: Record<string, unknown>,
 ): ForbiddenException {
-  return new ForbiddenException({ code, message, ...(details ? { details } : {}) });
+  return new ForbiddenException({
+    code,
+    message,
+    ...(details ? { details } : {}),
+  });
 }
 
 function canonicalRegistrationIds(
@@ -80,10 +89,7 @@ function canonicalRegistrationIds(
   return [...normalized].sort();
 }
 
-function exactRegistrationSet(
-  expected: string[],
-  actual: string[],
-): boolean {
+function exactRegistrationSet(expected: string[], actual: string[]): boolean {
   return (
     expected.length === actual.length &&
     expected.every((registrationId, index) => registrationId === actual[index])
@@ -309,15 +315,12 @@ interface StoredPresenterEvidence {
 
 @Injectable()
 export class PickupService {
-  private prisma: PrismaClient;
-
   constructor(
+    private readonly prisma: PrismaService,
     @Optional() private readonly kitchenEventsService?: KitchenEventsService,
     @Optional() private readonly notificationsService?: NotificationsService,
     @Optional() private readonly locationsService?: LocationsService,
-  ) {
-    this.prisma = new PrismaClient();
-  }
+  ) {}
 
   private getTodayDate(now: Date = new Date()) {
     return parseMealDate(getBusinessDate(now));
@@ -356,7 +359,6 @@ export class PickupService {
       details: PICKUP_AVAILABILITY_DETAILS,
     });
   }
-
 
   async getPickupOptions(userId: string): Promise<v1.PickupOptionsResponse> {
     await this.checkServingWindow();
@@ -545,10 +547,7 @@ export class PickupService {
     }>;
   }
 
-  private async resolveIntentLocation(
-    registrationIds: string[],
-    at: Date,
-  ) {
+  private async resolveIntentLocation(registrationIds: string[], at: Date) {
     const contexts = await this.loadRegistrationContexts(registrationIds);
     if (contexts.length !== registrationIds.length) {
       throw pickupError(
@@ -681,10 +680,7 @@ export class PickupService {
     };
   }
 
-  async generateQr(
-    userId: string,
-    input: v1.GenerateQrInput,
-  ) {
+  async generateQr(userId: string, input: v1.GenerateQrInput) {
     await this.checkServingWindow();
     const registrationIds = canonicalRegistrationIds(input?.registrationIds);
     const evidenceResult = v1.PresenterLocationEvidenceSchema.safeParse(
@@ -721,7 +717,12 @@ export class PickupService {
       );
     }
 
-    const signed = this.generateSignedQr(userId, registrationIds, mealDate, now);
+    const signed = this.generateSignedQr(
+      userId,
+      registrationIds,
+      mealDate,
+      now,
+    );
     await this.persistPresenterVerification(
       signed.qrHash,
       signed.nonce,
@@ -1107,7 +1108,6 @@ export class PickupService {
     };
   }
 
-
   async confirmPickup(
     body: v1.ConfirmPickupInput,
     kitchenActor: AuthenticatedUser,
@@ -1152,7 +1152,6 @@ export class PickupService {
     const requestBodyHash = sha256(canonicalConfirmBody(input));
     const requestId = crypto.randomUUID();
     let confirmationTime: Date;
-
 
     const transactionResult = await this.prisma.$transaction(
       async (tx) => {
@@ -1250,7 +1249,6 @@ export class PickupService {
         }
         confirmationTime = new Date();
 
-
         const lockedSessions =
           (await tx.$queryRaw<LockedPickupSession[]>`
             SELECT
@@ -1274,7 +1272,10 @@ export class PickupService {
           `) ?? [];
         const session = lockedSessions[0];
         if (!session) {
-          throw pickupError('PICKUP_INTENT_CONFLICT', 'Invalid pickup session.');
+          throw pickupError(
+            'PICKUP_INTENT_CONFLICT',
+            'Invalid pickup session.',
+          );
         }
         if (
           session.consumedAt ||
@@ -1380,8 +1381,7 @@ export class PickupService {
         }
 
         const mealDateKey = toMealDateKey(session.mealDate);
-        const servingReadiness =
-          await this.assertServingReadyInTransaction(
+        const servingReadiness = await this.assertServingReadyInTransaction(
             tx,
             mealDateKey,
             confirmationTime,
@@ -1455,7 +1455,9 @@ export class PickupService {
             'A serving participant is no longer available.',
           );
         }
-        const accountById = new Map(accounts.map((account) => [account.id, account]));
+        const accountById = new Map(
+          accounts.map((account) => [account.id, account]),
+        );
         const kitchenAccount = accountById.get(callerUserId);
         const presenterAccount = accountById.get(session.presenterUserId);
         if (
@@ -1608,7 +1610,9 @@ export class PickupService {
         }
 
         const servingPlans = registrations.map((registration) => {
-          const acceptedDelegation = acceptedByRegistration.get(registration.id);
+          const acceptedDelegation = acceptedByRegistration.get(
+            registration.id,
+          );
           const receiverType =
             registration.userId === session.presenterUserId
               ? ('SELF' as const)
@@ -1675,7 +1679,8 @@ export class PickupService {
               mealDate: parseMealDate(mealDateKey),
               menuRevisionId: plan.registration.menuRevisionId!,
               menuNameSnapshot: plan.registration.menuNameSnapshot!,
-              menuDescriptionSnapshot: plan.registration.menuDescriptionSnapshot,
+              menuDescriptionSnapshot:
+                plan.registration.menuDescriptionSnapshot,
               menuImageSnapshot: plan.registration.menuImageSnapshot,
               requestId,
               pickupSessionId,
@@ -1684,7 +1689,7 @@ export class PickupService {
               servingVerificationId: verification.id,
               delegationId:
                 plan.receiverType === 'PROXY'
-                  ? plan.acceptedDelegation?.id ?? null
+                  ? (plan.acceptedDelegation?.id ?? null)
                   : null,
               servedAt: confirmationTime,
             },
@@ -1709,7 +1714,8 @@ export class PickupService {
                 },
                 presenter: {
                   id: session.presenterUserId,
-                  email: accountById.get(session.presenterUserId)?.email ?? null,
+                  email:
+                    accountById.get(session.presenterUserId)?.email ?? null,
                   name: accountById.get(session.presenterUserId)?.name ?? null,
                 },
                 receiverType: plan.receiverType,
@@ -1727,7 +1733,7 @@ export class PickupService {
                 },
                 delegationId:
                   plan.receiverType === 'PROXY'
-                    ? plan.acceptedDelegation?.id ?? null
+                    ? (plan.acceptedDelegation?.id ?? null)
                     : null,
                 pickupSessionId,
                 intentHash: session.intentHash,

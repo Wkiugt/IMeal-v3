@@ -4,20 +4,18 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from '../common/prisma.service.js';
 import { v1 } from '@imeal/contracts';
 import { KitchenEventsService } from './kitchen-events.service.js';
 
 @Injectable()
 export class KitchenDashboardService {
-  private prisma: PrismaClient;
   private readonly logger = new Logger(KitchenDashboardService.name);
 
   constructor(
+    private readonly prisma: PrismaService,
     @Optional() private readonly eventsService?: KitchenEventsService,
-  ) {
-    this.prisma = new PrismaClient();
-  }
+  ) {}
 
   getTodayDateStr(): string {
     const now = new Date();
@@ -117,15 +115,13 @@ export class KitchenDashboardService {
     const pendingList = projectionRows
       .filter(
         (registration) =>
-          registration.status === 'ACTIVE' &&
-          registration.mealServing == null,
+          registration.status === 'ACTIVE' && registration.mealServing == null,
       )
       .map(toItem);
     const noShowList = projectionRows
       .filter(
         (registration) =>
-          registration.status === 'NO_SHOW' &&
-          registration.mealServing == null,
+          registration.status === 'NO_SHOW' && registration.mealServing == null,
       )
       .map(toItem);
 
@@ -182,8 +178,7 @@ export class KitchenDashboardService {
           registration.user?.name ??
           registration.user?.email ??
           'N/A',
-        userEmail:
-          serving.ownerEmailSnapshot ?? registration.user?.email ?? '',
+        userEmail: serving.ownerEmailSnapshot ?? registration.user?.email ?? '',
         mealChoice: registration.mealChoice,
         servedAt: serving.servedAt.toISOString(),
         isProxy,

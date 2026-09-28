@@ -3,7 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../../common/prisma.service.js';
 import { v1 } from '@imeal/contracts';
 
 type PenaltyWithUser = Prisma.PenaltyGetPayload<{
@@ -20,11 +21,7 @@ type PenaltyWithUser = Prisma.PenaltyGetPayload<{
 
 @Injectable()
 export class PenaltiesService {
-  private prisma: PrismaClient;
-
-  constructor() {
-    this.prisma = new PrismaClient();
-  }
+  constructor(private readonly prisma: PrismaService) {}
 
   private async lockPenalty(
     tx: Prisma.TransactionClient,
@@ -54,9 +51,7 @@ export class PenaltiesService {
       waiveReason: item.waiveReason,
       waivedByUserId: item.waivedByUserId,
       registrationId: item.registrationId ?? null,
-      mealDate: item.mealDate
-        ? item.mealDate.toISOString().slice(0, 10)
-        : null,
+      mealDate: item.mealDate ? item.mealDate.toISOString().slice(0, 10) : null,
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
     };

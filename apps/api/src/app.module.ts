@@ -1,5 +1,4 @@
-import { Module } from '@nestjs/common';
-import { APP_FILTER } from '@nestjs/core';
+import { Global, Module } from '@nestjs/common';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -11,7 +10,11 @@ import { NotificationsModule } from './notifications/notifications.module.js';
 import { PickupModule } from './pickup/pickup.module.js';
 import { KitchenModule } from './kitchen/kitchen.module.js';
 import { LocationsModule } from './locations/locations.module.js';
+import { APP_FILTER } from '@nestjs/core';
 import { ApiExceptionFilter } from './common/api-exception.filter.js';
+import { PrismaService } from './common/prisma.service.js';
+
+@Global()
 @Module({
   imports: [
     AuthModule,
@@ -26,11 +29,13 @@ import { ApiExceptionFilter } from './common/api-exception.filter.js';
   ],
   controllers: [AppController],
   providers: [
+    PrismaService,
     AppService,
     {
       provide: APP_FILTER,
       useClass: ApiExceptionFilter,
     },
   ],
+  exports: [PrismaService],
 })
 export class AppModule {}

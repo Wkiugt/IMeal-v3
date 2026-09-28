@@ -1,6 +1,9 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
-import { AllowlistService, type AllowlistResolution } from './allowlist.service.js';
+import {
+  AllowlistService,
+  type AllowlistResolution,
+} from './allowlist.service.js';
 import { hashOtpCode, OtpService } from './otp.service.js';
 import { decryptOtpProviderPayload } from '../otp/otp-provider.js';
 
@@ -49,7 +52,9 @@ function createPrisma() {
       update: vi.fn().mockResolvedValue({}),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
-    otpDeliveryOutbox: { create: vi.fn().mockResolvedValue({ id: 'outbox-1' }) },
+    otpDeliveryOutbox: {
+      create: vi.fn().mockResolvedValue({ id: 'outbox-1' }),
+    },
     auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-1' }) },
     user: {
       findUnique: vi.fn().mockResolvedValue({
@@ -67,9 +72,9 @@ function createPrisma() {
 
 function installService() {
   const prisma = createPrisma();
-  const allowlist = new AllowlistService();
+  const allowlist = new AllowlistService(prisma as never);
   Reflect.set(allowlist, 'prisma', prisma);
-  const service = new OtpService(allowlist);
+  const service = new OtpService(allowlist, prisma as never);
   Reflect.set(service, 'prisma', prisma);
   Reflect.set(service, 'generateCode', vi.fn().mockReturnValue('123456'));
   return { service, allowlist, prisma };
@@ -77,8 +82,8 @@ function installService() {
 
 describe('AllowlistService', () => {
   it('normalizes email deterministically before lookup', async () => {
-    const allowlist = new AllowlistService();
     const prisma = createPrisma();
+    const allowlist = new AllowlistService(prisma as never);
     prisma.otpAllowlist.findFirst.mockResolvedValue(null);
     Reflect.set(allowlist, 'prisma', prisma);
 
@@ -114,9 +119,11 @@ describe('OtpService', () => {
     delete process.env.OTP_HASH_SECRET;
   });
 
-  it.each(['unknown@example.test', 'disabled@example.test', 'not-allowlisted@example.test'])(
-    'returns the same safe request response for %s',
-    async (email) => {
+  it.each([
+    'unknown@example.test',
+    'disabled@example.test',
+    'not-allowlisted@example.test',
+  ])('returns the same safe request response for %s', async (email) => {
       const { service, allowlist, prisma } = installService();
       vi.spyOn(allowlist, 'findEligible').mockResolvedValue(null);
 
@@ -127,8 +134,7 @@ describe('OtpService', () => {
 
       expect(response).toEqual({ accepted: true });
       expect(prisma.otpChallenge.create).not.toHaveBeenCalled();
-    },
-  );
+  });
 
   it('creates a hash-backed challenge and delivery outbox without persisting the code', async () => {
     const { service, allowlist, prisma } = installService();
@@ -161,18 +167,15 @@ describe('OtpService', () => {
     expect(JSON.stringify(prisma.auditLog.create.mock.calls)).not.toContain(
       '123456',
     );
-    expect(JSON.stringify(prisma.otpDeliveryOutbox.create.mock.calls)).not.toContain(
-      '123456',
-    );
+    expect(
+      JSON.stringify(prisma.otpDeliveryOutbox.create.mock.calls),
+    ).not.toContain('123456');
   });
   it('stores an encrypted provider payload that the worker can resolve without clear persistence', async () => {
     const { service, allowlist, prisma } = installService();
     vi.spyOn(allowlist, 'findEligible').mockResolvedValue(ALLOWLIST);
 
-    await service.request(
-      { email: EMAIL, purpose: 'SESSION_LOGIN' },
-      context,
-    );
+    await service.request({ email: EMAIL, purpose: 'SESSION_LOGIN' }, context);
 
     const outboxInput = prisma.otpDeliveryOutbox.create.mock.calls[0][0] as {
       data: { providerPayloadRef: string };
@@ -236,13 +239,14 @@ describe('OtpService', () => {
     ]);
 
     const rawCalls = prisma.$queryRaw.mock.calls;
-    const advisoryCalls = rawCalls.filter(([template]) =>
+    const advisoryCalls = rawCalls.filter(
+      ([template]) =>
       Array.isArray(template) &&
       template.join('').includes('pg_advisory_xact_lock'),
     );
-    const addressCalls = rawCalls.filter(([template]) =>
-      Array.isArray(template) &&
-      template.join('').includes('otp_allowlists'),
+    const addressCalls = rawCalls.filter(
+      ([template]) =>
+        Array.isArray(template) && template.join('').includes('otp_allowlists'),
     );
     expect(advisoryCalls).toHaveLength(2);
     expect(addressCalls).toHaveLength(2);
@@ -322,10 +326,7 @@ describe('OtpService', () => {
     prisma.otpChallenge.updateMany.mockResolvedValue({ count: 1 });
 
     await expect(
-      service.verify(
-        { email: EMAIL, purpose: 'SESSION_LOGIN', code },
-        context,
-      ),
+      service.verify({ email: EMAIL, purpose: 'SESSION_LOGIN', code }, context),
     ).rejects.toMatchObject({
       response: expect.objectContaining({ code: 'OTP_INVALID_OR_EXPIRED' }),
     });

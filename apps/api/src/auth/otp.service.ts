@@ -1,8 +1,5 @@
-import {
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { PrismaService } from '../common/prisma.service.js';
 import { createHash, createHmac, randomInt, randomUUID } from 'node:crypto';
 import type { v1 } from '@imeal/contracts';
 import { OtpOutboxService } from '../otp/otp-outbox.service.js';
@@ -66,7 +63,8 @@ function numericSetting(
 }
 
 function verifierSecret(env: NodeJS.ProcessEnv): string {
-  const configured = env.OTP_HASH_SECRET?.trim() || env.QR_SIGNING_SECRET?.trim();
+  const configured =
+    env.OTP_HASH_SECRET?.trim() || env.QR_SIGNING_SECRET?.trim();
   if (configured) return configured;
   if (env.NODE_ENV === 'test') {
     return 'test-only-otp-verifier-secret-32-characters';
@@ -85,22 +83,26 @@ export function hashOtpCode(
     .digest('hex');
 }
 
-function hashMetadata(value: string | undefined, secret: string): string | null {
+function hashMetadata(
+  value: string | undefined,
+  secret: string,
+): string | null {
   if (!value?.trim()) return null;
-  return createHash('sha256').update(`${secret}\n${value}`, 'utf8').digest('hex');
+  return createHash('sha256')
+    .update(`${secret}\n${value}`, 'utf8')
+    .digest('hex');
 }
-
 
 @Injectable()
 export class OtpService {
-  private readonly prisma = new PrismaClient();
   private readonly outboxService: OtpOutboxService;
 
   constructor(
     private readonly allowlistService: AllowlistService,
+    private readonly prisma: PrismaService,
     outboxService?: OtpOutboxService,
   ) {
-    this.outboxService = outboxService ?? new OtpOutboxService();
+    this.outboxService = outboxService ?? new OtpOutboxService(this.prisma);
   }
 
   getConfig(env: NodeJS.ProcessEnv = process.env): OtpServiceConfig {
@@ -182,10 +184,7 @@ export class OtpService {
 
     return this.prisma.$transaction(async (tx) => {
       if (typeof tx.$queryRaw === 'function') {
-        const clientLockKeys = [
-          clientIpHash,
-          clientFingerprintHash,
-        ]
+        const clientLockKeys = [clientIpHash, clientFingerprintHash]
           .filter((value): value is string => Boolean(value))
           .sort();
         for (const identityHash of clientLockKeys) {
@@ -226,7 +225,8 @@ export class OtpService {
           createdAt: { gte: windowStart },
         },
       });
-      const clientCount = clientIpHash || clientFingerprintHash
+      const clientCount =
+        clientIpHash || clientFingerprintHash
         ? await tx.otpChallenge.count({
             where: {
               purpose: input.purpose,
@@ -254,12 +254,8 @@ export class OtpService {
       }
 
       const code = this.generateCode();
-      const expiresAt = new Date(
-        now.getTime() + config.expirySeconds * 1000,
-      );
-      const resendAfter = new Date(
-        now.getTime() + config.resendSeconds * 1000,
-      );
+      const expiresAt = new Date(now.getTime() + config.expirySeconds * 1000);
+      const resendAfter = new Date(now.getTime() + config.resendSeconds * 1000);
       const challenge = await tx.otpChallenge.create({
         data: {
           allowlistId: eligible.id,
@@ -361,7 +357,10 @@ export class OtpService {
           requestId,
           normalizedEmail,
         });
-        return { failure: true, reason: 'INVALID_OR_EXPIRED' } satisfies OtpFailure;
+        return {
+          failure: true,
+          reason: 'INVALID_OR_EXPIRED',
+        } satisfies OtpFailure;
       }
 
       const challengeUser = challenge.allowlist?.user;
@@ -373,7 +372,10 @@ export class OtpService {
           requestId,
           normalizedEmail,
         });
-        return { failure: true, reason: 'INVALID_OR_EXPIRED' } satisfies OtpFailure;
+        return {
+          failure: true,
+          reason: 'INVALID_OR_EXPIRED',
+        } satisfies OtpFailure;
       }
 
       const expired = challenge.expiresAt <= now;
@@ -386,7 +388,10 @@ export class OtpService {
           requestId,
           normalizedEmail,
         });
-        return { failure: true, reason: 'INVALID_OR_EXPIRED' } satisfies OtpFailure;
+        return {
+          failure: true,
+          reason: 'INVALID_OR_EXPIRED',
+        } satisfies OtpFailure;
       }
 
       if (challenge.verifierHash !== verifierHash) {
@@ -406,7 +411,10 @@ export class OtpService {
           requestId,
           normalizedEmail,
         });
-        return { failure: true, reason: 'INVALID_OR_EXPIRED' } satisfies OtpFailure;
+        return {
+          failure: true,
+          reason: 'INVALID_OR_EXPIRED',
+        } satisfies OtpFailure;
       }
 
       const consumed = await tx.otpChallenge.updateMany({
@@ -429,7 +437,10 @@ export class OtpService {
           requestId,
           normalizedEmail,
         });
-        return { failure: true, reason: 'INVALID_OR_EXPIRED' } satisfies OtpFailure;
+        return {
+          failure: true,
+          reason: 'INVALID_OR_EXPIRED',
+        } satisfies OtpFailure;
       }
 
       const principal = this.principalFromUser(

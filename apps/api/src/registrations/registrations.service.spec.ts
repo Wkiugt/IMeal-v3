@@ -107,7 +107,7 @@ describe('RegistrationsService', () => {
 
   it('rejects registration at the exact 14:00:00 Vietnam cutoff', async () => {
     vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -134,7 +134,7 @@ describe('RegistrationsService', () => {
     txMock.registration.findUnique.mockResolvedValue(null);
 
     await expect(
-      new RegistrationsService().batchRegister('user-1', [
+      new RegistrationsService(prismaMock as never).batchRegister('user-1', [
         { mealDate: '2026-09-05', status: 'ACTIVE', mealChoice: 'REGULAR' },
       ]),
     ).resolves.toEqual([{ date: '2026-09-05', success: true }]);
@@ -151,7 +151,7 @@ describe('RegistrationsService', () => {
         mealChoice: 'VEGETARIAN',
       },
     ]);
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     const response = await service.getWeekData('user-1', '2026-09-21');
 
@@ -218,7 +218,7 @@ describe('RegistrationsService', () => {
         },
       ],
     });
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     const response = await service.getWeekData('user-1', '2026-09-21');
 
@@ -284,15 +284,12 @@ describe('RegistrationsService', () => {
       },
     ]);
 
-    const response = await new RegistrationsService().getWeekData(
-      'user-1',
-      '2026-09-21',
-    );
+    const response = await new RegistrationsService(
+      prismaMock as never,
+    ).getWeekData('user-1', '2026-09-21');
 
     expect(response).toMatchObject({
-      registrations: [
-        { id: 'registration-1', menuRevisionId: 'revision-1' },
-      ],
+      registrations: [{ id: 'registration-1', menuRevisionId: 'revision-1' }],
       menu: {
         dailyMenus: [
           {
@@ -307,23 +304,23 @@ describe('RegistrationsService', () => {
   });
 
   it('returns a typed bad request for a valid date outside lunar support', async () => {
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
-    await expect(service.getWeekData('user-1', '2200-01-01')).rejects.toMatchObject(
-      {
+    await expect(
+      service.getWeekData('user-1', '2200-01-01'),
+    ).rejects.toMatchObject({
         status: 400,
         response: {
           code: 'INVALID_MEAL_DATE',
         },
-      },
-    );
+    });
     expect(prismaMock.appSetting.findUnique).not.toHaveBeenCalled();
   });
 
   it('returns ordered partial results and rejects vegetarian meals on ordinary days', async () => {
     vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue(null);
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     const response = await service.batchRegister('user-1', [
       {
@@ -363,7 +360,7 @@ describe('RegistrationsService', () => {
   it('creates a regular registration with version one', async () => {
     vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue(null);
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -390,7 +387,7 @@ describe('RegistrationsService', () => {
     vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue(null);
     txMock.dailyMenuRevision.findMany.mockResolvedValue([]);
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -428,7 +425,7 @@ describe('RegistrationsService', () => {
         effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
       },
     ]);
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -452,7 +449,7 @@ describe('RegistrationsService', () => {
         ...completeRegistrationSnapshot,
       });
     txMock.registration.create.mockRejectedValueOnce({ code: 'P2002' });
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -476,7 +473,7 @@ describe('RegistrationsService', () => {
       delegations: [],
       ...completeRegistrationSnapshot,
     });
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -500,7 +497,7 @@ describe('RegistrationsService', () => {
       delegations: [],
       ...completeRegistrationSnapshot,
     });
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -525,7 +522,7 @@ describe('RegistrationsService', () => {
       mealChoice: 'REGULAR',
       delegations: [],
     });
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -560,7 +557,7 @@ describe('RegistrationsService', () => {
       mealServing: { id: 'serving-1' },
       penalties: [{ id: 'penalty-1' }],
     });
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -600,7 +597,7 @@ describe('RegistrationsService', () => {
         status: 'PENDING',
       },
     ]);
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -644,6 +641,7 @@ describe('RegistrationsService', () => {
     });
 
     const result = await new RegistrationsService(
+      prismaMock as never,
       undefined,
       eventsService,
     ).batchRegister('user-1', [
@@ -673,6 +671,7 @@ describe('RegistrationsService', () => {
     const emitEvent = vi.spyOn(eventsService, 'emitEvent');
 
     await new RegistrationsService(
+      prismaMock as never,
       undefined,
       eventsService,
     ).batchRegister('user-1', [
@@ -717,10 +716,13 @@ describe('RegistrationsService', () => {
     const emitEvent = vi.spyOn(eventsService, 'emitEvent');
 
     await expect(
-      new RegistrationsService(notifications as never, eventsService).batchRegister(
-        'user-1',
-        [{ mealDate: '2026-09-24', status: 'CANCELLED' }],
-      ),
+      new RegistrationsService(
+        prismaMock as never,
+        notifications as never,
+        eventsService,
+      ).batchRegister('user-1', [
+        { mealDate: '2026-09-24', status: 'CANCELLED' },
+      ]),
     ).resolves.toEqual([
       {
         date: '2026-09-24',
@@ -742,7 +744,7 @@ describe('RegistrationsService', () => {
         mealChoice: 'REGULAR',
         delegations: [],
       });
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -766,7 +768,7 @@ describe('RegistrationsService', () => {
         mealChoice: 'REGULAR',
         delegations: [],
       });
-      const service = new RegistrationsService();
+      const service = new RegistrationsService(prismaMock as never);
 
       await expect(
         service.batchRegister('user-1', [
@@ -796,7 +798,7 @@ describe('RegistrationsService', () => {
       mealChoice: 'REGULAR',
       delegations: [],
     });
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -819,7 +821,7 @@ describe('RegistrationsService', () => {
 
   it('returns INVALID_MEAL_DATE for an unsupported batch date', async () => {
     vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -842,8 +844,10 @@ describe('RegistrationsService', () => {
 
   it('returns REGISTRATION_FAILED when an item transaction fails', async () => {
     vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
-    txMock.registration.findUnique.mockRejectedValue(new Error('database down'));
-    const service = new RegistrationsService();
+    txMock.registration.findUnique.mockRejectedValue(
+      new Error('database down'),
+    );
+    const service = new RegistrationsService(prismaMock as never);
 
     await expect(
       service.batchRegister('user-1', [
@@ -864,10 +868,10 @@ describe('RegistrationsService', () => {
   });
 
   it('uses a BadRequestException for malformed week starts', async () => {
-    const service = new RegistrationsService();
+    const service = new RegistrationsService(prismaMock as never);
 
-    await expect(service.getWeekData('user-1', 'not-a-date')).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.getWeekData('user-1', 'not-a-date'),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

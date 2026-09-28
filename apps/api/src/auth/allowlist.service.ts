@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from '../common/prisma.service.js';
 
 export type AllowlistPurpose = 'SESSION_LOGIN';
 
@@ -19,7 +19,7 @@ export interface AllowlistResolution {
 
 @Injectable()
 export class AllowlistService {
-  private readonly prisma = new PrismaClient();
+  constructor(private readonly prisma: PrismaService) {}
 
   normalizeEmail(email: string): string {
     return email.normalize('NFKC').trim().toLowerCase();
@@ -44,12 +44,7 @@ export class AllowlistService {
       include: { user: true },
     });
 
-    if (
-      !record ||
-      !record.userId ||
-      !record.user ||
-      !record.user.isActive
-    ) {
+    if (!record || !record.userId || !record.user || !record.user.isActive) {
       return null;
     }
 

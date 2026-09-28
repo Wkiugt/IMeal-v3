@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PenaltiesService } from './penalties.service.js';
+import { PrismaService } from '../../common/prisma.service.js';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -51,7 +52,10 @@ describe('PenaltiesService', () => {
     vi.clearAllMocks();
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [PenaltiesService],
+      providers: [
+        PenaltiesService,
+        { provide: PrismaService, useValue: mockPrisma },
+      ],
     }).compile();
 
     service = module.get<PenaltiesService>(PenaltiesService);

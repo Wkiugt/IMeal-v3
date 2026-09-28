@@ -60,6 +60,7 @@ describe('RosterImportService', () => {
     vi.resetAllMocks();
     service = new RosterImportService(
       locationsService as unknown as LocationsService,
+      prisma as never,
     );
     locationsService.resolveEffectiveLocation.mockResolvedValue({
       ...LOCATION,

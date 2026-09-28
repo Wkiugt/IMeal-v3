@@ -263,35 +263,20 @@ async function createServingWorld(
 }
 
 function createPickupService(client: PrismaClient) {
-  const service = new PickupService();
-  const ownedClient = patchPrisma(
-    service as unknown as RealPrismaOwner,
-    client,
-  );
-  return { service, ownedClient };
+  const service = new PickupService(client as never);
+  return { service };
 }
 
 async function createRegistrationService(client: PrismaClient) {
-  const notifications = new NotificationsService();
-  const ownedNotificationsClient = (notifications as unknown as RealPrismaOwner).prisma;
-  await disconnectOwnedPrisma(notifications as unknown as RealPrismaOwner);
-  const service = new RegistrationsService(notifications);
-  const ownedClient = patchPrisma(
-    service as unknown as RealPrismaOwner,
-    client,
-  );
-  return { service, ownedClient, ownedNotificationsClient };
+  const notifications = new NotificationsService(client as never);
+  const service = new RegistrationsService(client as never, notifications);
+  return { service };
 }
 
 async function createWeeklyMenusService(client: PrismaClient) {
-  const notifications = new NotificationsService();
-  await disconnectOwnedPrisma(notifications as unknown as RealPrismaOwner);
-  const service = new WeeklyMenusService(notifications);
-  const ownedClient = patchPrisma(
-    service as unknown as RealPrismaOwner,
-    client,
-  );
-  return { service, ownedClient };
+  const notifications = new NotificationsService(client as never);
+  const service = new WeeklyMenusService(notifications, client as never);
+  return { service };
 }
 
 describe('Production PostgreSQL concurrency paths', () => {
@@ -311,7 +296,6 @@ describe('Production PostgreSQL concurrency paths', () => {
     const workerClient = trackClient(new PrismaClient());
     const pickup = createPickupService(pickupClient);
     const worker = await createWorkerService(workerClient);
-    await pickup.ownedClient.$disconnect();
     await worker.ownedClient.$disconnect();
 
     const pickupPromise = pickup.service.confirmPickup(
@@ -353,9 +337,6 @@ describe('Production PostgreSQL concurrency paths', () => {
     const registrationClient = trackClient(new PrismaClient());
     const pickup = createPickupService(pickupClient);
     const registration = await createRegistrationService(registrationClient);
-    await pickup.ownedClient.$disconnect();
-    await registration.ownedClient.$disconnect();
-    await registration.ownedNotificationsClient.$disconnect();
 
     const transactionClient = registrationClient as unknown as {
       $transaction: (
@@ -457,7 +438,6 @@ describe('Production PostgreSQL concurrency paths', () => {
     const pickupClient = trackClient(new PrismaClient());
     const disableClient = trackClient(new PrismaClient());
     const pickup = createPickupService(pickupClient);
-    await pickup.ownedClient.$disconnect();
 
     type TransactionClientOwner = {
       $transaction: (
@@ -568,7 +548,6 @@ describe('Production PostgreSQL concurrency paths', () => {
     const pickupClient = trackClient(new PrismaClient());
     const disableClient = trackClient(new PrismaClient());
     const pickup = createPickupService(pickupClient);
-    await pickup.ownedClient.$disconnect();
 
     type TransactionClientOwner = {
       $transaction: (
@@ -719,10 +698,6 @@ describe('Production PostgreSQL concurrency paths', () => {
     const secondClient = trackClient(new PrismaClient());
     const first = await createRegistrationService(firstClient);
     const second = await createRegistrationService(secondClient);
-    await first.ownedClient.$disconnect();
-    await first.ownedNotificationsClient.$disconnect();
-    await second.ownedClient.$disconnect();
-    await second.ownedNotificationsClient.$disconnect();
 
     type TransactionClientOwner = {
       $transaction: (
@@ -883,9 +858,6 @@ describe('Production PostgreSQL concurrency paths', () => {
 
     const pickupClient = trackClient(new PrismaClient());
     const pickup = createPickupService(pickupClient);
-    await registration.ownedClient.$disconnect();
-    await registration.ownedNotificationsClient.$disconnect();
-    await pickup.ownedClient.$disconnect();
     vi.setSystemTime(new Date('2026-10-15T04:00:00.000Z'));
     const options = await pickup.service.getPickupOptions(owner.id);
     expect(options.options).toContainEqual({
@@ -977,8 +949,6 @@ describe('Production PostgreSQL concurrency paths', () => {
     });
     const publisher = await createWeeklyMenusService(publishClient);
     const updater = await createWeeklyMenusService(updateClient);
-    await publisher.ownedClient.$disconnect();
-    await updater.ownedClient.$disconnect();
 
     type TransactionOwner = {
       $transaction: (
@@ -1132,10 +1102,6 @@ describe('Production PostgreSQL concurrency paths', () => {
     const reactivationClient = trackClient(new PrismaClient());
     const cancellation = await createRegistrationService(cancellationClient);
     const reactivation = await createRegistrationService(reactivationClient);
-    await cancellation.ownedClient.$disconnect();
-    await cancellation.ownedNotificationsClient.$disconnect();
-    await reactivation.ownedClient.$disconnect();
-    await reactivation.ownedNotificationsClient.$disconnect();
 
     const registrationId = world.registrations[0].id;
     const oldRegistration = await client.registration.findUniqueOrThrow({
@@ -1329,8 +1295,6 @@ describe('Production PostgreSQL concurrency paths', () => {
     const pickupClient = trackClient(new PrismaClient());
     const registration = await createRegistrationService(registrationClient);
     const pickup = createPickupService(pickupClient);
-    await registration.ownedClient.$disconnect();
-    await registration.ownedNotificationsClient.$disconnect();
     const reactivationDate = '2026-09-29';
     const reactivationDateValue = new Date(`${reactivationDate}T00:00:00.000Z`);
     const reactivationMenu = await client.weeklyMenu.create({
@@ -1533,16 +1497,12 @@ describe('Production PostgreSQL concurrency paths', () => {
         throw new Error('injected notification failure');
       },
     };
+    const pickupClient = trackClient(new PrismaClient());
     const pickupService = new PickupService(
+      pickupClient as never,
       undefined,
       failingNotifications as never,
     );
-    const pickupClient = trackClient(new PrismaClient());
-    const ownedClient = patchPrisma(
-      pickupService as unknown as RealPrismaOwner,
-      pickupClient,
-    );
-    await ownedClient.$disconnect();
 
     await expect(
       pickupService.confirmPickup(
@@ -1593,8 +1553,6 @@ describe('Production PostgreSQL concurrency paths', () => {
     const retryClient = trackClient(new PrismaClient());
     const first = createPickupService(firstClient);
     const retry = createPickupService(retryClient);
-    await first.ownedClient.$disconnect();
-    await retry.ownedClient.$disconnect();
 
     const body = { pickupSessionId: world.session.id, idempotencyKey: 'same-key' };
     const [firstResult, retryResult] = await Promise.all([
@@ -1619,7 +1577,6 @@ describe('Production PostgreSQL concurrency paths', () => {
     const world = await createServingWorld(client, { registrationCount: 2 });
     const pickupClient = trackClient(new PrismaClient());
     const pickup = createPickupService(pickupClient);
-    await pickup.ownedClient.$disconnect();
     await client.registration.update({
       where: { id: world.registrations[1].id },
       data: {

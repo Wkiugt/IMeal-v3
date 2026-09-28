@@ -4,7 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from '../common/prisma.service.js';
 import { v1 } from '@imeal/contracts';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { displayNotificationName } from '../notifications/notification-copy.js';
@@ -36,11 +36,10 @@ function response(delegation: {
 
 @Injectable()
 export class DelegationsService {
-  private readonly prisma: PrismaClient;
-
-  constructor(private readonly notificationsService: NotificationsService) {
-    this.prisma = new PrismaClient();
-  }
+  constructor(
+    private readonly notificationsService: NotificationsService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async getDelegations(
     userId: string,
@@ -328,7 +327,9 @@ export class DelegationsService {
           delegationId: delegation.id,
           registrationId: delegation.registrationId,
           mealDate: mealDate(delegation.registration.mealDate),
-          counterpartName: displayNotificationName(delegation.registration.user),
+          counterpartName: displayNotificationName(
+            delegation.registration.user,
+          ),
           reason: 'OWNER_REVOKED',
         },
         dedupeKey: `delegation-revoked:${delegation.delegateUserId}:${delegation.id}`,

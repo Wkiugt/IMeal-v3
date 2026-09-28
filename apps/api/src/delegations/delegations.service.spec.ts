@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from '../common/prisma.service.js';
 import { vi, describe, beforeEach, it, expect } from 'vitest';
 import { NotificationsService } from '../notifications/notifications.service.js';
 
@@ -47,9 +47,9 @@ describe('DelegationsService', () => {
           provide: NotificationsService,
           useValue: notificationsServiceMock,
         },
+        { provide: PrismaService, useValue: prismaMock },
       ],
     }).compile();
-
     service = module.get<DelegationsService>(DelegationsService);
     // Replace the internal prisma client with our mock
     (service as any).prisma = prismaMock;

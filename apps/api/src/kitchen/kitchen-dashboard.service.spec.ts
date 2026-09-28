@@ -37,15 +37,12 @@ describe('KitchenDashboardService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     eventsService = new KitchenEventsService();
-    service = new KitchenDashboardService(eventsService);
+    service = new KitchenDashboardService(mockPrisma as never, eventsService);
   });
 
   describe('getDashboardSnapshot', () => {
     const targetDate = '2026-09-03';
-    const serving = (
-      id: string,
-      ownerNameSnapshot: string | null = null,
-    ) => ({
+    const serving = (id: string, ownerNameSnapshot: string | null = null) => ({
       id,
       registrationId: id.replace('srv-', 'reg-'),
       ownerNameSnapshot,
@@ -175,9 +172,9 @@ describe('KitchenDashboardService', () => {
       expect(snapshot.counters.totalRegistered).toBe(2);
       expect(snapshot.counters.noShowTotal).toBe(1);
       expect(snapshot.counters.remaining).toBe(1);
-      expect(snapshot.lists.pending.map((item) => item.registrationId)).toEqual([
-        'reg-pending',
-      ]);
+      expect(snapshot.lists.pending.map((item) => item.registrationId)).toEqual(
+        ['reg-pending'],
+      );
       expect(snapshot.lists.noShow.map((item) => item.registrationId)).toEqual([
         'reg-no-show',
       ]);
@@ -247,9 +244,7 @@ describe('KitchenDashboardService', () => {
       expect(
         snapshot.counters.regularTotal + snapshot.counters.vegetarianTotal,
       ).toBe(snapshot.counters.totalRegistered);
-      expect(snapshot.counters.remaining).toBe(
-        snapshot.lists.pending.length,
-      );
+      expect(snapshot.counters.remaining).toBe(snapshot.lists.pending.length);
     });
 
     it('rejects_state_serving_mismatch_with_internal_error_envelope', async () => {
@@ -261,15 +256,15 @@ describe('KitchenDashboardService', () => {
         }),
       ]);
 
-      await expect(service.getDashboardSnapshot(targetDate)).rejects.toMatchObject(
-        {
+      await expect(
+        service.getDashboardSnapshot(targetDate),
+      ).rejects.toMatchObject({
           response: {
             statusCode: 500,
             message: 'Internal server error',
           },
           status: 500,
-        },
-      );
+      });
       expect(mockPrisma.appSetting.findUnique).not.toHaveBeenCalled();
     });
 
@@ -309,10 +304,7 @@ describe('KitchenDashboardService', () => {
         mealServing: true,
         delegations: true,
       });
-      expect(query.orderBy).toEqual([
-        { createdAt: 'asc' },
-        { id: 'asc' },
-      ]);
+      expect(query.orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
     });
   });
 
@@ -431,7 +423,6 @@ describe('KitchenDashboardService', () => {
         vi.useRealTimers();
       }
     });
-
 
     it('notifyServingConfirmed emits snapshot counters to synchronize all devices', async () => {
       const emitSpy = vi.spyOn(eventsService, 'emitEvent');

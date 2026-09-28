@@ -1,6 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from '../common/prisma.service.js';
 import type { Prisma } from '@prisma/client';
 import { v1 } from '@imeal/contracts';
 import { renderNotificationCopy } from './notification-copy.js';
@@ -30,15 +34,17 @@ function invalid(code: string, message: string): BadRequestException {
 
 @Injectable()
 export class NotificationsService {
-  private readonly prisma: PrismaClient;
+  constructor(private readonly prisma: PrismaService) {}
 
-  constructor() {
-    this.prisma = new PrismaClient();
-  }
-
-  async publish(tx: Prisma.TransactionClient, input: PublishInput): Promise<NotificationRecord> {
+  async publish(
+    tx: Prisma.TransactionClient,
+    input: PublishInput,
+  ): Promise<NotificationRecord> {
     if (input.kind === 'LEGACY_MESSAGE') {
-      throw invalid('INVALID_NOTIFICATION_KIND', 'Legacy notifications are read-only');
+      throw invalid(
+        'INVALID_NOTIFICATION_KIND',
+        'Legacy notifications are read-only',
+      );
     }
 
     const copy = renderNotificationCopy(input.kind, input.payload);
@@ -76,7 +82,10 @@ export class NotificationsService {
 
   async getNotifications(userId: string, cursor?: string, limit = 20) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
-      throw invalid('INVALID_NOTIFICATION_CURSOR', 'Notification limit must be between 1 and 50');
+      throw invalid(
+        'INVALID_NOTIFICATION_CURSOR',
+        'Notification limit must be between 1 and 50',
+      );
     }
 
     let cursorWhere: Record<string, unknown> | undefined;
@@ -86,7 +95,10 @@ export class NotificationsService {
         select: { id: true, createdAt: true },
       });
       if (!cursorItem) {
-        throw invalid('INVALID_NOTIFICATION_CURSOR', 'Notification cursor is invalid');
+        throw invalid(
+          'INVALID_NOTIFICATION_CURSOR',
+          'Notification cursor is invalid',
+        );
       }
       cursorWhere = {
         OR: [
@@ -106,13 +118,15 @@ export class NotificationsService {
     ]);
 
     const hasNextPage = rows.length > limit;
-    const items = (hasNextPage ? rows.slice(0, limit) : rows) as NotificationRecord[];
+    const items = (
+      hasNextPage ? rows.slice(0, limit) : rows
+    ) as NotificationRecord[];
     const data = items.map((item) => this.toItem(item));
 
     return {
       data,
       meta: {
-        nextCursor: hasNextPage ? data[data.length - 1]?.id ?? null : null,
+        nextCursor: hasNextPage ? (data[data.length - 1]?.id ?? null) : null,
         hasNextPage,
         unreadCount,
       },
@@ -166,7 +180,9 @@ export class NotificationsService {
     return {
       data: {
         remindersEnabled: user.remindersEnabled,
-        locale: String(user.notificationLocale).toLowerCase() as v1.NotificationLocale,
+        locale: String(
+          user.notificationLocale,
+        ).toLowerCase() as v1.NotificationLocale,
       },
     };
   }
@@ -197,7 +213,9 @@ export class NotificationsService {
     return {
       data: {
         remindersEnabled: updated.remindersEnabled,
-        locale: String(updated.notificationLocale).toLowerCase() as v1.NotificationLocale,
+        locale: String(
+          updated.notificationLocale,
+        ).toLowerCase() as v1.NotificationLocale,
       },
     };
   }
@@ -215,5 +233,4 @@ export class NotificationsService {
       createdAt: item.createdAt.toISOString(),
     });
   }
-
 }

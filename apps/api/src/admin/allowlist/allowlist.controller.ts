@@ -8,7 +8,7 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from '../../common/prisma.service.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { SessionGuard } from '../../auth/session.guard.js';
@@ -50,7 +50,7 @@ function parseDate(value: string): Date {
 @UseGuards(SessionGuard, PermissionsGuard)
 @RequirePermission('allowlist.manage')
 export class AllowlistController {
-  private readonly prisma = new PrismaClient();
+  constructor(private readonly prisma: PrismaService) {}
 
   @Get()
   list() {

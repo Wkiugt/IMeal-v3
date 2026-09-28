@@ -1,5 +1,5 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from '../../common/prisma.service.js';
 import type { Prisma } from '@prisma/client';
 import { NotificationsService } from '../../notifications/notifications.service.js';
 import type { UpdateDailyMenuInput } from './dto/weekly-menus.schema.js';
@@ -7,11 +7,7 @@ function mealDate(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
-function serviceBoundary(
-  date: Date,
-  utcHour: number,
-  utcMinute: number,
-): Date {
+function serviceBoundary(date: Date, utcHour: number, utcMinute: number): Date {
   return new Date(
     `${mealDate(date)}T${String(utcHour).padStart(2, '0')}:${String(
       utcMinute,
@@ -21,11 +17,10 @@ function serviceBoundary(
 
 @Injectable()
 export class WeeklyMenusService {
-  private readonly prisma: PrismaClient;
-
-  constructor(private readonly notificationsService: NotificationsService) {
-    this.prisma = new PrismaClient();
-  }
+  constructor(
+    private readonly notificationsService: NotificationsService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async getWeeklyMenus() {
     return this.prisma.weeklyMenu.findMany({
@@ -150,7 +145,8 @@ export class WeeklyMenusService {
         }
       }
 
-      const mealName = data.mealName?.trim() ?? latestRevision?.mealName?.trim();
+      const mealName =
+        data.mealName?.trim() ?? latestRevision?.mealName?.trim();
       if (!mealName) {
         throw new HttpException(
           'A verified meal name is required before publishing a menu revision',

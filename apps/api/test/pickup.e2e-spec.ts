@@ -91,7 +91,6 @@ describe('PickupController (e2e)', () => {
   it('/api/me/pickup-options (GET) fails closed for incomplete snapshots', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-04T05:00:00.000Z'));
-    const actualPickupService = new PickupService();
     const fakePrisma = {
       appSetting: {
         findUnique: vi.fn().mockResolvedValue({ value: 'true' }),
@@ -129,10 +128,7 @@ describe('PickupController (e2e)', () => {
       },
       pickupDelegation: { findMany: vi.fn().mockResolvedValue([]) },
     };
-    const pickupServiceWithDatabase = actualPickupService as unknown as {
-      prisma: typeof fakePrisma;
-    };
-    pickupServiceWithDatabase.prisma = fakePrisma;
+    const actualPickupService = new PickupService(fakePrisma as never);
     const moduleFixture = await Test.createTestingModule({
       imports: [AppModule],
     })

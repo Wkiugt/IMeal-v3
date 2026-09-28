@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from '../common/prisma.service.js';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { AuthenticatedUser } from './authenticated-user.js';
 
@@ -69,7 +69,7 @@ function expiresAtAfter(now: Date, seconds: number): Date {
 
 @Injectable()
 export class SessionService {
-  private readonly prisma = new PrismaClient();
+  constructor(private readonly prisma: PrismaService) {}
 
   getConfig(env: NodeJS.ProcessEnv = process.env): SessionTimeoutConfig {
     return {
@@ -191,10 +191,7 @@ export class SessionService {
         id: session.id,
         revokedAt: null,
         absoluteExpiresAt: { gt: now },
-        OR: [
-          { idleExpiresAt: null },
-          { idleExpiresAt: { gt: now } },
-        ],
+        OR: [{ idleExpiresAt: null }, { idleExpiresAt: { gt: now } }],
       },
       data: {
         lastUsedAt: now,

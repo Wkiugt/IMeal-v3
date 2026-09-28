@@ -274,12 +274,7 @@ describe('KitchenDashboardController (e2e)', () => {
         findMany: vi.fn().mockResolvedValue([]),
       },
     };
-    const actualService = new KitchenDashboardService();
-    // Replace only the persistence boundary; the HTTP path uses the real projection code.
-    const serviceWithFakePrisma = actualService as unknown as {
-      prisma: typeof fakePrisma;
-    };
-    serviceWithFakePrisma.prisma = fakePrisma;
+    const actualService = new KitchenDashboardService(fakePrisma as never);
     const moduleFixture = await Test.createTestingModule({
       imports: [AppModule],
     })
@@ -328,13 +323,7 @@ describe('KitchenDashboardController (e2e)', () => {
     async (status) => {
       const client = new PrismaClient();
       registerTestPrismaClient(client);
-      const actualService = new KitchenDashboardService();
-      const actualServiceWithPrisma = actualService as unknown as {
-        prisma: PrismaClient;
-      };
-      const ownedClient = actualServiceWithPrisma.prisma;
-      await ownedClient.$disconnect();
-      actualServiceWithPrisma.prisma = client;
+      const actualService = new KitchenDashboardService(client as never);
 
       await withServingInvariantDisabled(client, async () => {
       const user = await client.user.create({

@@ -29,7 +29,7 @@ describe('NotificationsService', () => {
   let service: NotificationsService;
 
   beforeEach(() => {
-    service = new NotificationsService();
+    service = new NotificationsService(mockPrisma as never);
     vi.clearAllMocks();
   });
 

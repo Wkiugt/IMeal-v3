@@ -1,5 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../common/prisma.service.js';
 import type { Prisma } from '@prisma/client';
 import { v1 } from '@imeal/contracts';
 import { randomUUID } from 'node:crypto';
@@ -75,10 +79,7 @@ export type GpsVerificationResult =
     };
 
 type GpsFailureCode =
-  | 'GPS_UNAVAILABLE'
-  | 'GPS_STALE'
-  | 'GPS_INACCURATE'
-  | 'GPS_RETRY_REQUIRED';
+  'GPS_UNAVAILABLE' | 'GPS_STALE' | 'GPS_INACCURATE' | 'GPS_RETRY_REQUIRED';
 
 export interface LocationConfigurationInput {
   id?: string;
@@ -165,11 +166,7 @@ function haversineDistanceMeters(
 
 @Injectable()
 export class LocationsService {
-  private readonly prisma: PrismaClient;
-
-  constructor() {
-    this.prisma = new PrismaClient();
-  }
+  constructor(private readonly prisma: PrismaService) {}
 
   async resolveEffectiveLocation(
     code: string,

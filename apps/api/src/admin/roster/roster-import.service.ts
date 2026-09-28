@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from '../../common/prisma.service.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { v1 } from '@imeal/contracts';
 type RosterImportRow = v1.RosterImportRow;
@@ -115,11 +115,10 @@ function locationReason(error: unknown): RosterImportReason {
 
 @Injectable()
 export class RosterImportService {
-  private readonly prisma: PrismaClient;
-
-  constructor(private readonly locationsService: LocationsService) {
-    this.prisma = new PrismaClient();
-  }
+  constructor(
+    private readonly locationsService: LocationsService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async preview(
     input: RosterImportBatchInput,

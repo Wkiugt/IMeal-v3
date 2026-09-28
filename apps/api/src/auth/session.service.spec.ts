@@ -72,14 +72,16 @@ describe('SessionService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    prisma.$transaction.mockImplementation(async (callback: (tx: typeof prisma) => unknown) => callback(prisma));
+    prisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
+    );
     prisma.auditLog.create.mockResolvedValue({ id: 'audit-1' });
     prisma.authSession.create.mockResolvedValue({ id: 'session-1' });
     prisma.authSession.updateMany.mockResolvedValue({ count: 1 });
     process.env.NODE_ENV = 'test';
     delete process.env.SESSION_IDLE_TIMEOUT_SECONDS;
     delete process.env.SESSION_ABSOLUTE_TIMEOUT_SECONDS;
-    service = new SessionService();
+    service = new SessionService(prisma as never);
   });
 
   afterEach(() => {

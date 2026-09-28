@@ -20,17 +20,15 @@ describe('AllowlistController validation', () => {
     ['blank email', { email: '   ' }],
     ['invalid email', { email: 'not-an-email' }],
   ])('rejects %s at the admin boundary', async (_label, override) => {
-    const controller = new AllowlistController();
+    const controller = new AllowlistController(prisma as never);
 
     await expect(
       controller.create(
         {
-          ...((
-            {
+          ...({
               email: 'employee@example.test',
               ...(override as Record<string, unknown>),
-            }
-          ) as Record<string, unknown>),
+          } as Record<string, unknown>),
           state: 'ACTIVE',
           effectiveFrom: '2026-09-24T00:00:00.000Z',
         },

@@ -87,7 +87,7 @@ describe('LocationsService', () => {
     prisma.$transaction.mockImplementation(
       async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
     );
-    service = new LocationsService();
+    service = new LocationsService(prisma as never);
   });
 
   it('resolves only an effective active location and policy selected by server code', async () => {

@@ -4,7 +4,6 @@ import { vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 
-
 const mockPrisma = {
   registration: {
     findUnique: vi.fn(),
@@ -100,7 +99,7 @@ describe('PickupService', () => {
   beforeEach(async () => {
     vi.stubEnv('QR_SIGNING_SECRET', 'test-qr-signing-secret-at-least-32');
     vi.resetAllMocks();
-    service = new PickupService();
+    service = new PickupService(mockPrisma as never);
   });
 
   afterEach(() => {
@@ -278,12 +277,12 @@ describe('PickupService', () => {
     ) =>
       (
         target as unknown as {
-          resolveIntentLocation: (
-            ids: string[],
-            at: Date,
-          ) => Promise<unknown>;
+          resolveIntentLocation: (ids: string[], at: Date) => Promise<unknown>;
         }
-      ).resolveIntentLocation(registrationIds, new Date('2026-09-04T04:00:00.000Z'));
+      ).resolveIntentLocation(
+        registrationIds,
+        new Date('2026-09-04T04:00:00.000Z'),
+      );
 
     it.each([
       ['name', { serviceLocationName: null }],
@@ -306,7 +305,9 @@ describe('PickupService', () => {
           'loadRegistrationContexts',
         ).mockResolvedValue([registration] as never);
 
-        await expect(resolveIntentLocation(service, ['reg1'])).rejects.toMatchObject({
+        await expect(
+          resolveIntentLocation(service, ['reg1']),
+        ).rejects.toMatchObject({
           response: { code: 'PICKUP_INTENT_CONFLICT' },
         });
       },
@@ -348,7 +349,6 @@ describe('PickupService', () => {
       expect(loadContexts).toHaveBeenCalledWith(['reg1', 'reg2']);
     });
   });
-
 
   describe('generateQr', () => {
     beforeEach(() => {
@@ -535,10 +535,7 @@ describe('PickupService', () => {
       };
     }
 
-    function makeAccount(
-      id: string,
-      hasKitchenServe = false,
-    ) {
+    function makeAccount(id: string, hasKitchenServe = false) {
       return {
         id,
         email: `${id}@example.test`,
@@ -577,9 +574,7 @@ describe('PickupService', () => {
               resultSnapshot: null,
             },
           ])
-          .mockResolvedValueOnce([
-            overrides.session ?? session,
-          ])
+          .mockResolvedValueOnce([overrides.session ?? session])
           .mockResolvedValueOnce(
             overrides.registrations ?? [makeRegistration('reg-1')],
           )
@@ -868,7 +863,10 @@ describe('PickupService', () => {
 
       await expect(
         service.confirmPickup(
-          { pickupSessionId: 'session-1', idempotencyKey: 'key-stale-snapshot' },
+          {
+            pickupSessionId: 'session-1',
+            idempotencyKey: 'key-stale-snapshot',
+          },
           kitchenActor,
         ),
       ).rejects.toMatchObject({
@@ -884,7 +882,10 @@ describe('PickupService', () => {
       const emitEvent = vi.fn(() => {
         expect(committed).toBe(true);
       });
-      const serviceWithEvents = new PickupService({ emitEvent } as never);
+      const serviceWithEvents = new PickupService(
+        mockPrisma as never,
+        { emitEvent } as never,
+      );
       vi.spyOn(serviceWithEvents, 'checkServingWindow').mockResolvedValue(
         undefined,
       );
@@ -991,7 +992,10 @@ describe('PickupService', () => {
     it('serving_confirmed_event_contains_projection_payload_after_commit', async () => {
       const eventsService = new KitchenEventsService();
       const emitSpy = vi.spyOn(eventsService, 'emitEvent');
-      const serviceWithEvents = new PickupService(eventsService);
+      const serviceWithEvents = new PickupService(
+        mockPrisma as never,
+        eventsService,
+      );
       vi.spyOn(serviceWithEvents, 'checkServingWindow').mockResolvedValue(
         undefined,
       );
@@ -1044,7 +1048,10 @@ describe('PickupService', () => {
     it('does not emit SERVING_CONFIRMED when the serving transaction rolls back', async () => {
       const eventsService = new KitchenEventsService();
       const emitSpy = vi.spyOn(eventsService, 'emitEvent');
-      const serviceWithEvents = new PickupService(eventsService);
+      const serviceWithEvents = new PickupService(
+        mockPrisma as never,
+        eventsService,
+      );
       const transactionError = new Error('serving transaction rolled back');
       mockPrisma.$transaction.mockRejectedValueOnce(transactionError);
 
@@ -1169,7 +1176,9 @@ describe('PickupService', () => {
       ['QR hash', { qrHash: 'tampered-qr' }],
       ['verification link', { servingVerificationId: 'tampered-verification' }],
       ['intent nonce', { intentNonce: 'tampered-nonce' }],
-    ])('rejects a mismatched session %s before serving writes', async (_name, patch) => {
+    ])(
+      'rejects a mismatched session %s before serving writes',
+      async (_name, patch) => {
       const tx = makeTransaction({
         session: { ...session, ...patch },
       });
@@ -1188,15 +1197,11 @@ describe('PickupService', () => {
       expect(tx.mealServing.create).not.toHaveBeenCalled();
       expect(tx.registration.update).not.toHaveBeenCalled();
       expect(tx.pickupSession.update).not.toHaveBeenCalled();
-    });
-
-
+      },
+    );
   });
   describe('serving menu invariant', () => {
-    const assertServingReady = (
-      tx: unknown,
-      mealDateKey = '2026-09-24',
-    ) => {
+    const assertServingReady = (tx: unknown, mealDateKey = '2026-09-24') => {
       const privateService = service as unknown as {
         assertServingReadyInTransaction: (
           transaction: unknown,
@@ -1377,6 +1382,7 @@ describe('PickupService', () => {
     it('rejects zero selection and does not issue a usable QR', async () => {
       const locationsService = makeLocationsService();
       const taskService = new PickupService(
+        mockPrisma as never,
         undefined,
         undefined,
         locationsService as never,
@@ -1402,6 +1408,7 @@ describe('PickupService', () => {
         details: { action: 'RETRY' },
       });
       const taskService = new PickupService(
+        mockPrisma as never,
         undefined,
         undefined,
         locationsService as never,
@@ -1444,6 +1451,7 @@ describe('PickupService', () => {
       vi.setSystemTime(new Date('2026-09-04T04:00:00.000Z'));
       const locationsService = makeLocationsService();
       const taskService = new PickupService(
+        mockPrisma as never,
         undefined,
         undefined,
         locationsService as never,
@@ -1472,8 +1480,8 @@ describe('PickupService', () => {
       expect(result.mealDate).toBe('2026-09-04');
       expect(result.ttl).toBe(5);
       expect(mockPrisma.servingVerification.create).toHaveBeenCalledTimes(1);
-      const persisted = mockPrisma.servingVerification.create.mock.calls[0][0]
-        .data;
+      const persisted =
+        mockPrisma.servingVerification.create.mock.calls[0][0].data;
       expect(persisted).toMatchObject({
         presenterUserId: 'presenter-1',
         locationId: 'location-1',
@@ -1488,6 +1496,7 @@ describe('PickupService', () => {
     it('rejects a stale selected item without substituting another eligible item', async () => {
       const locationsService = makeLocationsService();
       const taskService = new PickupService(
+        mockPrisma as never,
         undefined,
         undefined,
         locationsService as never,
@@ -1496,7 +1505,10 @@ describe('PickupService', () => {
       vi.spyOn(taskService, 'getPickupOptions').mockResolvedValue({
         options: [ownPickupOption],
       });
-      const signed = taskService.generateSignedQr('presenter-1', ['reg1', 'reg2']);
+      const signed = taskService.generateSignedQr('presenter-1', [
+        'reg1',
+        'reg2',
+      ]);
       mockPrisma.servingVerification.findUnique.mockResolvedValueOnce({
         id: 'qr-hash',
         presenterUserId: 'presenter-1',
@@ -1508,10 +1520,7 @@ describe('PickupService', () => {
       });
 
       await expect(
-        taskService.resolvePickup(
-          { qr: signed.qr },
-          kitchenActor,
-        ),
+        taskService.resolvePickup({ qr: signed.qr }, kitchenActor),
       ).rejects.toMatchObject({
         response: { code: 'PICKUP_INTENT_CONFLICT' },
       });
@@ -1522,6 +1531,7 @@ describe('PickupService', () => {
       vi.setSystemTime(new Date('2026-09-04T04:00:00.000Z'));
       const locationsService = makeLocationsService();
       const taskService = new PickupService(
+        mockPrisma as never,
         undefined,
         undefined,
         locationsService as never,
@@ -1576,6 +1586,7 @@ describe('PickupService', () => {
       vi.setSystemTime(new Date('2026-09-04T04:00:00.000Z'));
       const locationsService = makeLocationsService();
       const taskService = new PickupService(
+        mockPrisma as never,
         undefined,
         undefined,
         locationsService as never,
@@ -1619,6 +1630,7 @@ describe('PickupService', () => {
         '2026-09-04T04:00:01.000Z',
       );
       const taskService = new PickupService(
+        mockPrisma as never,
         undefined,
         undefined,
         locationsService as never,
@@ -1663,6 +1675,7 @@ describe('PickupService', () => {
       vi.setSystemTime(new Date('2026-09-04T04:00:00.000Z'));
       const locationsService = makeLocationsService();
       const taskService = new PickupService(
+        mockPrisma as never,
         undefined,
         undefined,
         locationsService as never,
@@ -1703,6 +1716,7 @@ describe('PickupService', () => {
         }),
       );
       const taskService = new PickupService(
+        mockPrisma as never,
         undefined,
         undefined,
         locationsService as never,
@@ -1752,7 +1766,7 @@ describe('PickupService', () => {
     });
 
     it('rejects a changed resolved intent at confirm time', async () => {
-      const taskService = new PickupService();
+      const taskService = new PickupService(mockPrisma as never);
 
       await expect(
         taskService.confirmPickup(
@@ -1768,5 +1782,4 @@ describe('PickupService', () => {
       });
     });
   });
-
 });

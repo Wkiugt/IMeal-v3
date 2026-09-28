@@ -3,7 +3,7 @@ import { WeeklyMenusService } from './weekly-menus.service.js';
 import { HttpException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NotificationsService } from '../../notifications/notifications.service.js';
-
+import { PrismaService } from '../../common/prisma.service.js';
 const mockPrisma = {
   weeklyMenu: { findMany: vi.fn(), create: vi.fn() },
   dailyMenu: { findUnique: vi.fn(), update: vi.fn() },
@@ -50,6 +50,7 @@ describe('WeeklyMenusService', () => {
       providers: [
         WeeklyMenusService,
         { provide: NotificationsService, useValue: notificationsServiceMock },
+        { provide: PrismaService, useValue: mockPrisma },
       ],
     }).compile();
 
@@ -180,9 +181,9 @@ describe('WeeklyMenusService', () => {
       },
     ]);
     mockTx.registration.findUnique.mockImplementation(async ({ where }) => {
-      const row = [
-        ...((await mockTx.registration.findMany()) ?? []),
-      ].find((candidate) => candidate.id === where.id);
+      const row = [...((await mockTx.registration.findMany()) ?? [])].find(
+        (candidate) => candidate.id === where.id,
+      );
       return row ?? null;
     });
     mockTx.dailyMenu.findUnique.mockResolvedValue({

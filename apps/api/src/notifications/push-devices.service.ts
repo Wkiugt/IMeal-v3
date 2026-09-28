@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaService } from '../common/prisma.service.js';
 import { v1 } from '@imeal/contracts';
 
 function invalidToken(): BadRequestException {
@@ -11,11 +11,7 @@ function invalidToken(): BadRequestException {
 
 @Injectable()
 export class PushDevicesService {
-  private readonly prisma: PrismaClient;
-
-  constructor() {
-    this.prisma = new PrismaClient();
-  }
+  constructor(private readonly prisma: PrismaService) {}
 
   async register(
     userId: string,
