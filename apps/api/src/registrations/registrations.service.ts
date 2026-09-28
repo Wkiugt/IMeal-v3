@@ -6,6 +6,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { v1 } from '@imeal/contracts';
 import type { VietnameseLunarDate } from '../common/vietnamese-lunar.js';
@@ -28,6 +29,54 @@ const REGISTRATION_FINALIZED_MESSAGE = 'Registration is finalized';
 class RegistrationFinalizedError extends Error {}
 
 class MealChoiceUnavailableError extends Error {}
+class RegistrationSnapshotResolutionError extends Error {}
+
+type RegistrationSnapshotResolution = {
+  menuRevisionId: string;
+  menuNameSnapshot: string;
+  menuDescriptionSnapshot: string | null;
+  menuImageSnapshot: string | null;
+  ownerNameSnapshot: string;
+  employeeCodeSnapshot: string;
+  serviceLocationId: string;
+  serviceLocationAssignmentId: string;
+  serviceLocationCode: string;
+  serviceLocationName: string;
+  serviceLocationAddress: string;
+  serviceLocationEffectiveFrom: Date;
+  serviceLocationSnapshotAt: Date;
+};
+
+function hasCompleteRegistrationSnapshot(
+  registration: {
+    [K in keyof RegistrationSnapshotResolution]?:
+      | RegistrationSnapshotResolution[K]
+      | null;
+  },
+): boolean {
+  return (
+    typeof registration.menuRevisionId === 'string' &&
+    registration.menuRevisionId.length > 0 &&
+    typeof registration.menuNameSnapshot === 'string' &&
+    registration.menuNameSnapshot.length > 0 &&
+    typeof registration.ownerNameSnapshot === 'string' &&
+    registration.ownerNameSnapshot.length > 0 &&
+    typeof registration.employeeCodeSnapshot === 'string' &&
+    registration.employeeCodeSnapshot.length > 0 &&
+    typeof registration.serviceLocationId === 'string' &&
+    registration.serviceLocationId.length > 0 &&
+    typeof registration.serviceLocationAssignmentId === 'string' &&
+    registration.serviceLocationAssignmentId.length > 0 &&
+    typeof registration.serviceLocationCode === 'string' &&
+    registration.serviceLocationCode.length > 0 &&
+    typeof registration.serviceLocationName === 'string' &&
+    registration.serviceLocationName.length > 0 &&
+    typeof registration.serviceLocationAddress === 'string' &&
+    registration.serviceLocationAddress.length > 0 &&
+    registration.serviceLocationEffectiveFrom instanceof Date &&
+    registration.serviceLocationSnapshotAt instanceof Date
+  );
+}
 function isUniqueConstraintError(error: unknown): boolean {
   return (
     typeof error === 'object' &&
@@ -49,6 +98,13 @@ type WeeklyMenuData = {
     isHoliday: boolean;
     isEnabled: boolean;
     createdAt: Date;
+    revisions?: Array<{
+      id: string;
+      revision: number | null;
+      mealName: string | null;
+      description: string | null;
+      imageUrl: string | null;
+    }>;
   }>;
 };
 
@@ -123,7 +179,17 @@ export class RegistrationsService {
     } else {
       menuData = await this.prisma.weeklyMenu.findFirst({
         where: { startDate },
-        include: { dailyMenus: true },
+        include: {
+          dailyMenus: {
+            include: {
+              revisions: {
+                where: { revision: { not: null } },
+                orderBy: [{ revision: 'desc' }, { id: 'desc' }],
+                take: 1,
+              },
+            },
+          },
+        },
       });
       if (menuData) {
         const jitter = Math.floor(Math.random() * 10000) + 15000; // 15-25s
@@ -148,14 +214,21 @@ export class RegistrationsService {
           endDate: menuData.endDate.toISOString().slice(0, 10),
           createdAt: menuData.createdAt.toISOString(),
           updatedAt: menuData.updatedAt.toISOString(),
-          dailyMenus: menuData.dailyMenus.map((dailyMenu) => ({
-            id: dailyMenu.id,
-            weeklyMenuId: dailyMenu.weeklyMenuId,
-            date: dailyMenu.date.toISOString().slice(0, 10),
-            isHoliday: dailyMenu.isHoliday,
-            isEnabled: dailyMenu.isEnabled,
-            createdAt: dailyMenu.createdAt.toISOString(),
-          })),
+          dailyMenus: menuData.dailyMenus.map((dailyMenu) => {
+            const revision = dailyMenu.revisions?.[0] ?? null;
+            return {
+              id: dailyMenu.id,
+              weeklyMenuId: dailyMenu.weeklyMenuId,
+              date: dailyMenu.date.toISOString().slice(0, 10),
+              isHoliday: dailyMenu.isHoliday,
+              isEnabled: dailyMenu.isEnabled,
+              menuRevisionId: revision?.id ?? null,
+              mealName: revision?.mealName ?? null,
+              description: revision?.description ?? null,
+              imageUrl: revision?.imageUrl ?? null,
+              createdAt: dailyMenu.createdAt.toISOString(),
+            };
+          }),
         }
       : null;
     const serializedRegistrations = registrations.map((registration) => ({
@@ -164,6 +237,10 @@ export class RegistrationsService {
       status: registration.status,
       mealChoice:
         'mealChoice' in registration ? registration.mealChoice : undefined,
+      menuRevisionId:
+        'menuRevisionId' in registration
+          ? registration.menuRevisionId ?? null
+          : null,
     }));
 
     return v1.WeekRegistrationResponseSchema.parse({
@@ -234,6 +311,120 @@ export class RegistrationsService {
     });
   }
 
+  private async resolveRegistrationSnapshot(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    mealDate: Date,
+    at: Date,
+  ): Promise<RegistrationSnapshotResolution> {
+    const dailyMenu = await tx.dailyMenu.findFirst({
+      where: {
+        date: mealDate,
+        isEnabled: true,
+        weeklyMenu: { publishedAt: { not: null } },
+      },
+      select: { id: true },
+    });
+    if (!dailyMenu) {
+      throw new RegistrationSnapshotResolutionError(
+        'Published menu is unavailable',
+      );
+    }
+
+    const revisions = await tx.dailyMenuRevision.findMany({
+      where: { dailyMenuId: dailyMenu.id, revision: { not: null } },
+      orderBy: [{ revision: 'desc' }, { id: 'desc' }],
+      take: 2,
+      select: {
+        id: true,
+        revision: true,
+        mealName: true,
+        description: true,
+        imageUrl: true,
+      },
+    });
+    const revision = revisions[0];
+    if (
+      !revision ||
+      revision.revision === null ||
+      !revision.mealName?.trim() ||
+      (revisions[1]?.revision === revision.revision)
+    ) {
+      throw new RegistrationSnapshotResolutionError(
+        'Published menu revision is unavailable',
+      );
+    }
+
+    const assignments = await tx.employeeLocationAssignment.findMany({
+      where: {
+        userId,
+        isActive: true,
+        effectiveFrom: { lte: mealDate },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gt: mealDate } }],
+      },
+      orderBy: { id: 'asc' },
+      select: {
+        id: true,
+        employeeName: true,
+        employeeCode: true,
+        serviceLocationCode: true,
+        locationId: true,
+        effectiveFrom: true,
+      },
+    });
+    if (assignments.length !== 1) {
+      throw new RegistrationSnapshotResolutionError(
+        assignments.length === 0
+          ? 'Employee location assignment is unavailable'
+          : 'Employee location assignment is ambiguous',
+      );
+    }
+    const assignment = assignments[0];
+    const location = await tx.location.findFirst({
+      where: {
+        id: assignment.locationId,
+        isActive: true,
+        effectiveFrom: { lte: mealDate },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gt: mealDate } }],
+      },
+      select: {
+        id: true,
+        shortCode: true,
+        displayName: true,
+        address: true,
+      },
+    });
+    if (
+      !location ||
+      location.id !== assignment.locationId ||
+      location.shortCode !== assignment.serviceLocationCode ||
+      !assignment.employeeName?.trim() ||
+      !assignment.employeeCode?.trim() ||
+      !location.displayName?.trim() ||
+      !location.address?.trim()
+    ) {
+      throw new RegistrationSnapshotResolutionError(
+        'Service location authority is unavailable',
+      );
+    }
+
+    return {
+      menuRevisionId: revision.id,
+      menuNameSnapshot: revision.mealName.trim(),
+      menuDescriptionSnapshot: revision.description ?? null,
+      menuImageSnapshot: revision.imageUrl ?? null,
+      ownerNameSnapshot: assignment.employeeName.trim(),
+      employeeCodeSnapshot: assignment.employeeCode.trim(),
+      serviceLocationId: location.id,
+      serviceLocationAssignmentId: assignment.id,
+      serviceLocationCode: assignment.serviceLocationCode.trim(),
+      serviceLocationName: location.displayName.trim(),
+      serviceLocationAddress: location.address.trim(),
+      serviceLocationEffectiveFrom: assignment.effectiveFrom,
+      serviceLocationSnapshotAt: at,
+    };
+  }
+
   async batchRegister(
     userId: string,
     items: v1.BatchRegistrationItem[],
@@ -284,21 +475,31 @@ export class RegistrationsService {
                     mealDate,
                   },
                 },
-                include: { user: true },
+                include: {
+                  user: true,
+                  mealServing: true,
+                  penalties: true,
+                },
               });
 
               if (registration) {
                 await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registration.id} FOR UPDATE`;
                 registration = await tx.registration.findUnique({
                   where: { id: registration.id },
-                  include: { user: true },
+                  include: {
+                    user: true,
+                    mealServing: true,
+                    penalties: true,
+                  },
                 });
               }
 
               if (
                 registration &&
                 (registration.status === 'SERVED' ||
-                  registration.status === 'NO_SHOW')
+                  registration.status === 'NO_SHOW' ||
+                  registration.mealServing ||
+                  registration.penalties?.length)
               ) {
                 throw new RegistrationFinalizedError();
               }
@@ -311,21 +512,61 @@ export class RegistrationsService {
               }
 
               if (item.status === 'ACTIVE') {
+                const needsResolution =
+                  !registration ||
+                  !hasCompleteRegistrationSnapshot(registration) ||
+                  registration.status === 'CANCELLED';
+                const resolution = needsResolution
+                  ? await this.resolveRegistrationSnapshot(
+                      tx,
+                      userId,
+                      mealDate,
+                      serverNow,
+                    )
+                  : null;
+
                 if (
                   registration &&
                   (registration.status === 'ACTIVE' ||
                     registration.status === 'CANCELLED')
                 ) {
                   if (
-                    registration.status !== 'ACTIVE' ||
-                    registration.mealChoice !== item.mealChoice
+                    registration.status === 'ACTIVE' &&
+                    registration.mealChoice === item.mealChoice &&
+                    resolution === null
                   ) {
-                    await tx.registration.update({
-                      where: { id: registration.id },
+                    return;
+                  }
+                  const choiceChanged =
+                    registration.mealChoice !== item.mealChoice;
+                  await tx.registration.update({
+                    where: { id: registration.id },
+                    data: {
+                      ...(resolution ?? {}),
+                      ...(registration.status === 'CANCELLED'
+                        ? {
+                            status: 'ACTIVE',
+                            mealChoice: item.mealChoice,
+                            version: { increment: 1 },
+                            registeredAt: serverNow,
+                            cancelledAt: null,
+                            cancelReason: null,
+                            cancelledByUserId: null,
+                          }
+                        : choiceChanged
+                          ? {
+                              mealChoice: item.mealChoice,
+                              version: { increment: 1 },
+                            }
+                          : {}),
+                    },
+                  });
+                  if (registration.status === 'CANCELLED') {
+                    await tx.auditLog.create({
                       data: {
-                        status: 'ACTIVE',
-                        mealChoice: item.mealChoice,
-                        version: { increment: 1 },
+                        userId,
+                        action: 'registration_reactivated',
+                        details: `Registration ${registration.id} reactivated; previous cancellation reason=${registration.cancelReason ?? 'UNKNOWN'}`,
                       },
                     });
                   }
@@ -337,6 +578,8 @@ export class RegistrationsService {
                       status: 'ACTIVE',
                       mealChoice: item.mealChoice,
                       version: 1,
+                      registeredAt: serverNow,
+                      ...(resolution ?? {}),
                     },
                   });
                 }
@@ -346,13 +589,26 @@ export class RegistrationsService {
                   data: {
                     status: 'CANCELLED',
                     version: { increment: 1 },
+                    cancelledAt: serverNow,
+                    cancelReason: 'REGISTRATION_CANCELLED',
+                    cancelledByUserId: userId,
                   },
                 });
 
-                const activeDelegations = await tx.pickupDelegation.findMany({
-                  where: {
-                    registrationId: registration.id,
-                    status: { in: ['PENDING', 'ACCEPTED'] },
+                const activeDelegations = (
+                  (await tx.pickupDelegation.findMany({
+                    where: {
+                      registrationId: registration.id,
+                      status: { in: ['PENDING', 'ACCEPTED'] },
+                    },
+                    orderBy: { id: 'asc' },
+                  })) ?? []
+                ).sort((left, right) => left.id.localeCompare(right.id));
+                await tx.auditLog.create({
+                  data: {
+                    userId,
+                    action: 'registration_cancelled',
+                    details: `Registration ${registration.id} cancelled with reason REGISTRATION_CANCELLED`,
                   },
                 });
                 for (const delegation of activeDelegations) {
@@ -375,8 +631,8 @@ export class RegistrationsService {
                       registrationId: registration.id,
                       mealDate: mealDate.toISOString().slice(0, 10),
                       counterpartName:
-                        registration.user.name?.trim() ||
-                        registration.user.email?.trim() ||
+                        registration.user?.name?.trim() ||
+                        registration.user?.email?.trim() ||
                         'nhân viên',
                       reason: 'REGISTRATION_CANCELLED',
                     },

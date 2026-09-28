@@ -13,6 +13,8 @@ import { WeeklyMenusService } from './weekly-menus.service.js';
 import { SessionGuard } from '../../auth/session.guard.js';
 import { PermissionsGuard } from '../../auth/permissions.guard.js';
 import { RequirePermission } from '../../auth/require-permission.decorator.js';
+import { CurrentUser } from '../../auth/current-user.decorator.js';
+import type { AuthenticatedUser } from '../../auth/authenticated-user.js';
 import {
   CreateDraftSchema,
   UpdateDailyMenuSchema,
@@ -39,16 +41,23 @@ export class WeeklyMenusController {
   }
 
   @Put(':date')
-  async updateDailyMenu(@Param('date') date: string, @Body() body: unknown) {
+  async updateDailyMenu(
+    @Param('date') date: string,
+    @Body() body: unknown,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
     const parseResult = UpdateDailyMenuSchema.safeParse(body);
     if (!parseResult.success) {
       throw new HttpException(parseResult.error.errors, HttpStatus.BAD_REQUEST);
     }
-    return this.weeklyMenusService.updateDailyMenu(date, parseResult.data);
+    return this.weeklyMenusService.updateDailyMenu(date, parseResult.data, actor.id);
   }
 
   @Post(':week_start/publish')
-  async publishWeeklyMenu(@Param('week_start') weekStart: string) {
-    return this.weeklyMenusService.publishWeeklyMenu(weekStart);
+  async publishWeeklyMenu(
+    @Param('week_start') weekStart: string,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.weeklyMenusService.publishWeeklyMenu(weekStart, actor.id);
   }
 }

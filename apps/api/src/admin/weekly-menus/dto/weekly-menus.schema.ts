@@ -17,5 +17,10 @@ export const UpdateDailyMenuSchema = z.object({
   isHoliday: z.boolean().optional(),
   isEnabled: z.boolean().optional(),
   mealType: z.string().optional(),
-  content: z.string().optional(), // Used for revision content
+  content: z.string().optional(), // Legacy revision content
+  mealName: z.string().trim().min(1).optional(),
+  description: z.string().nullable().optional(),
+  imageUrl: z.string().url().nullable().optional(),
 });
+
+export type UpdateDailyMenuInput = z.infer<typeof UpdateDailyMenuSchema>;

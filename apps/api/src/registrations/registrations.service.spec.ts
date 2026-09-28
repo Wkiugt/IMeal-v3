@@ -5,6 +5,10 @@ import { RegistrationsService } from './registrations.service.js';
 
 const txMock = {
   $queryRaw: vi.fn(),
+  dailyMenu: { findFirst: vi.fn() },
+  dailyMenuRevision: { findMany: vi.fn() },
+  employeeLocationAssignment: { findMany: vi.fn() },
+  location: { findFirst: vi.fn() },
   registration: {
     findUnique: vi.fn(),
     update: vi.fn(),
@@ -21,6 +25,23 @@ const prismaMock = {
   weeklyMenu: { findFirst: vi.fn() },
   registration: { findMany: vi.fn() },
   $transaction: vi.fn(),
+};
+
+const completeRegistrationSnapshot = {
+  menuRevisionId: 'revision-1',
+  menuNameSnapshot: 'Lunch',
+  menuDescriptionSnapshot: 'Verified lunch',
+  menuImageSnapshot: 'https://example.test/lunch.jpg',
+  ownerNameSnapshot: 'Owner',
+  employeeCodeSnapshot: 'EMP-1',
+  serviceLocationId: 'location-1',
+  serviceLocationAssignmentId: 'assignment-1',
+  serviceLocationCode: 'LOC-A',
+  serviceLocationName: 'Main Hall',
+  serviceLocationAddress: '1 Main Street',
+  serviceLocationEffectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+  serviceLocationSnapshotAt: new Date('2026-09-03T07:00:00.000Z'),
+  registeredAt: new Date('2026-09-03T07:00:00.000Z'),
 };
 
 vi.mock('@prisma/client', () => ({
@@ -51,6 +72,32 @@ describe('RegistrationsService', () => {
       id: '55555555-5555-4555-8555-555555555555',
     });
     txMock.outboxEvent.upsert.mockResolvedValue({});
+    txMock.dailyMenu.findFirst.mockResolvedValue({ id: 'daily-menu-1' });
+    txMock.dailyMenuRevision.findMany.mockResolvedValue([
+      {
+        id: 'revision-1',
+        revision: 1,
+        mealName: 'Lunch',
+        description: 'Verified lunch',
+        imageUrl: 'https://example.test/lunch.jpg',
+      },
+    ]);
+    txMock.employeeLocationAssignment.findMany.mockResolvedValue([
+      {
+        id: 'assignment-1',
+        employeeName: 'Owner',
+        employeeCode: 'EMP-1',
+        serviceLocationCode: 'LOC-A',
+        locationId: 'location-1',
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    ]);
+    txMock.location.findFirst.mockResolvedValue({
+      id: 'location-1',
+      shortCode: 'LOC-A',
+      displayName: 'Main Hall',
+      address: '1 Main Street',
+    });
   });
 
   afterEach(() => {
@@ -78,6 +125,7 @@ describe('RegistrationsService', () => {
       },
     ]);
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    expect(txMock.dailyMenu.findFirst).not.toHaveBeenCalled();
   });
 
   it('publishes seven authoritative days with lunar choices and UTC dates', async () => {
@@ -174,9 +222,74 @@ describe('RegistrationsService', () => {
           date: '2026-09-21',
           isHoliday: false,
           isEnabled: true,
+          menuRevisionId: null,
+          mealName: null,
+          description: null,
+          imageUrl: null,
           createdAt: '2026-09-01T00:00:00.000Z',
         },
       ],
+    });
+  });
+
+  it('maps current menu revisions and registration revision ids in the week response', async () => {
+    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    prismaMock.weeklyMenu.findFirst.mockResolvedValue({
+      id: 'week-1',
+      startDate: new Date('2026-09-21T00:00:00.000Z'),
+      endDate: new Date('2026-09-27T00:00:00.000Z'),
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-02T00:00:00.000Z'),
+      publishedAt: new Date('2026-09-03T00:00:00.000Z'),
+      dailyMenus: [
+        {
+          id: 'daily-menu-1',
+          weeklyMenuId: 'week-1',
+          date: new Date('2026-09-21T00:00:00.000Z'),
+          isHoliday: false,
+          isEnabled: true,
+          createdAt: new Date('2026-09-01T00:00:00.000Z'),
+          revisions: [
+            {
+              id: 'revision-1',
+              revision: 1,
+              mealName: 'Verified lunch',
+              description: 'Soup and rice',
+              imageUrl: 'https://example.test/menu.jpg',
+            },
+          ],
+        },
+      ],
+    });
+    prismaMock.registration.findMany.mockResolvedValue([
+      {
+        id: 'registration-1',
+        mealDate: new Date('2026-09-21T00:00:00.000Z'),
+        status: 'ACTIVE',
+        mealChoice: 'REGULAR',
+        menuRevisionId: 'revision-1',
+      },
+    ]);
+
+    const response = await new RegistrationsService().getWeekData(
+      'user-1',
+      '2026-09-21',
+    );
+
+    expect(response).toMatchObject({
+      registrations: [
+        { id: 'registration-1', menuRevisionId: 'revision-1' },
+      ],
+      menu: {
+        dailyMenus: [
+          {
+            menuRevisionId: 'revision-1',
+            mealName: 'Verified lunch',
+            description: 'Soup and rice',
+            imageUrl: 'https://example.test/menu.jpg',
+          },
+        ],
+      },
     });
   });
 
@@ -228,6 +341,7 @@ describe('RegistrationsService', () => {
         status: 'ACTIVE',
         mealChoice: 'VEGETARIAN',
         version: 1,
+        ...completeRegistrationSnapshot,
       },
     });
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(2);
@@ -254,8 +368,64 @@ describe('RegistrationsService', () => {
         status: 'ACTIVE',
         mealChoice: 'REGULAR',
         version: 1,
+        ...completeRegistrationSnapshot,
       },
     });
+  });
+
+  it('rejects registration when the published menu revision is missing', async () => {
+    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    txMock.registration.findUnique.mockResolvedValue(null);
+    txMock.dailyMenuRevision.findMany.mockResolvedValue([]);
+    const service = new RegistrationsService();
+
+    await expect(
+      service.batchRegister('user-1', [
+        { mealDate: '2026-09-24', status: 'ACTIVE', mealChoice: 'REGULAR' },
+      ]),
+    ).resolves.toEqual([
+      {
+        date: '2026-09-24',
+        success: false,
+        code: 'REGISTRATION_FAILED',
+        reason: 'Published menu revision is unavailable',
+      },
+    ]);
+    expect(txMock.registration.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects registration when effective location assignment authority is ambiguous', async () => {
+    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    txMock.registration.findUnique.mockResolvedValue(null);
+    txMock.employeeLocationAssignment.findMany.mockResolvedValue([
+      {
+        id: 'assignment-1',
+        employeeName: 'Owner',
+        employeeCode: 'EMP-1',
+        serviceLocationCode: 'LOC-A',
+        locationId: 'location-1',
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+      {
+        id: 'assignment-2',
+        employeeName: 'Owner',
+        employeeCode: 'EMP-2',
+        serviceLocationCode: 'LOC-B',
+        locationId: 'location-2',
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    ]);
+    const service = new RegistrationsService();
+
+    await expect(
+      service.batchRegister('user-1', [
+        { mealDate: '2026-09-24', status: 'ACTIVE', mealChoice: 'REGULAR' },
+      ]),
+    ).resolves.toMatchObject([
+      { date: '2026-09-24', success: false, code: 'REGISTRATION_FAILED' },
+    ]);
+    expect(txMock.registration.create).not.toHaveBeenCalled();
+    expect(txMock.location.findFirst).not.toHaveBeenCalled();
   });
   it('retries a raced first registration create as an idempotent no-op', async () => {
     vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
@@ -266,6 +436,7 @@ describe('RegistrationsService', () => {
         status: 'ACTIVE',
         mealChoice: 'REGULAR',
         delegations: [],
+        ...completeRegistrationSnapshot,
       });
     txMock.registration.create.mockRejectedValueOnce({ code: 'P2002' });
     const service = new RegistrationsService();
@@ -290,6 +461,7 @@ describe('RegistrationsService', () => {
       status: 'ACTIVE',
       mealChoice: 'REGULAR',
       delegations: [],
+      ...completeRegistrationSnapshot,
     });
     const service = new RegistrationsService();
 
@@ -313,6 +485,7 @@ describe('RegistrationsService', () => {
       status: 'ACTIVE',
       mealChoice: 'VEGETARIAN',
       delegations: [],
+      ...completeRegistrationSnapshot,
     });
     const service = new RegistrationsService();
 
@@ -327,7 +500,7 @@ describe('RegistrationsService', () => {
     ).resolves.toEqual([{ date: '2026-09-25', success: true }]);
     expect(txMock.registration.update).toHaveBeenCalledWith({
       where: { id: 'registration-1' },
-      data: { status: 'ACTIVE', mealChoice: 'REGULAR', version: { increment: 1 } },
+      data: { mealChoice: 'REGULAR', version: { increment: 1 } },
     });
   });
 
@@ -353,11 +526,43 @@ describe('RegistrationsService', () => {
     expect(txMock.registration.update).toHaveBeenCalledWith({
       where: { id: 'registration-1' },
       data: {
+        ...completeRegistrationSnapshot,
         status: 'ACTIVE',
         mealChoice: 'VEGETARIAN',
         version: { increment: 1 },
+        registeredAt: new Date('2026-09-03T07:00:00.000Z'),
+        cancelledAt: null,
+        cancelReason: null,
+        cancelledByUserId: null,
       },
     });
+  });
+
+  it('rejects reactivation when a serving or penalty already exists', async () => {
+    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    txMock.registration.findUnique.mockResolvedValue({
+      id: 'registration-1',
+      status: 'CANCELLED',
+      mealChoice: 'REGULAR',
+      mealServing: { id: 'serving-1' },
+      penalties: [{ id: 'penalty-1' }],
+    });
+    const service = new RegistrationsService();
+
+    await expect(
+      service.batchRegister('user-1', [
+        { mealDate: '2026-09-25', status: 'ACTIVE', mealChoice: 'REGULAR' },
+      ]),
+    ).resolves.toEqual([
+      {
+        date: '2026-09-25',
+        success: false,
+        code: 'REGISTRATION_FINALIZED',
+        reason: 'Registration is finalized',
+      },
+    ]);
+    expect(txMock.registration.update).not.toHaveBeenCalled();
+    expect(txMock.dailyMenu.findFirst).not.toHaveBeenCalled();
   });
 
   it('cancels active registrations and revokes delegations transactionally', async () => {
@@ -391,7 +596,13 @@ describe('RegistrationsService', () => {
     ).resolves.toEqual([{ date: '2026-09-24', success: true }]);
     expect(txMock.registration.update).toHaveBeenCalledWith({
       where: { id: 'registration-1' },
-      data: { status: 'CANCELLED', version: { increment: 1 } },
+      data: {
+        status: 'CANCELLED',
+        version: { increment: 1 },
+        cancelledAt: new Date('2026-09-03T07:00:00.000Z'),
+        cancelReason: 'REGISTRATION_CANCELLED',
+        cancelledByUserId: 'user-1',
+      },
     });
     expect(txMock.pickupDelegation.update).toHaveBeenCalledWith({
       where: { id: 'delegation-1' },
