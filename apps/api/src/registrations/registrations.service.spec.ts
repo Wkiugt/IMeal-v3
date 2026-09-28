@@ -104,7 +104,7 @@ describe('RegistrationsService', () => {
     vi.useRealTimers();
   });
 
-  it('rejects registration at the exact previous-day cutoff', async () => {
+  it('rejects registration at the exact 14:00:00 Vietnam cutoff', async () => {
     vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
     const service = new RegistrationsService();
 
@@ -126,6 +126,18 @@ describe('RegistrationsService', () => {
     ]);
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
     expect(txMock.dailyMenu.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('accepts registration at 13:59:59 Vietnam time before the 14:00 cutoff', async () => {
+    vi.setSystemTime(new Date('2026-09-04T06:59:59.000Z'));
+    txMock.registration.findUnique.mockResolvedValue(null);
+
+    await expect(
+      new RegistrationsService().batchRegister('user-1', [
+        { mealDate: '2026-09-05', status: 'ACTIVE', mealChoice: 'REGULAR' },
+      ]),
+    ).resolves.toEqual([{ date: '2026-09-05', success: true }]);
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
   });
 
   it('publishes seven authoritative days with lunar choices and UTC dates', async () => {

@@ -208,7 +208,12 @@ export class WeeklyMenusService {
       );
 
       if (publishedAt) {
-        await this.updatePublishedRegistrationSnapshots(tx, date, revision);
+        await this.updatePublishedRegistrationSnapshots(
+          tx,
+          date,
+          revision,
+          actorUserId,
+        );
       }
 
       return tx.dailyMenu.findUnique({
@@ -296,7 +301,12 @@ export class WeeklyMenusService {
             serviceEndAt: serviceBoundary(dailyMenu.date, 6, 30),
           },
         });
-        await this.updatePublishedRegistrationSnapshots(tx, dailyMenu.date, revision);
+        await this.updatePublishedRegistrationSnapshots(
+          tx,
+          dailyMenu.date,
+          revision,
+          actorUserId,
+        );
       }
 
       const published = await tx.weeklyMenu.update({
@@ -343,6 +353,7 @@ export class WeeklyMenusService {
       description: string | null;
       imageUrl: string | null;
     },
+    actorUserId: string,
   ) {
     const registrations =
       (await tx.registration.findMany({
@@ -352,15 +363,34 @@ export class WeeklyMenusService {
       })) ?? [];
     for (const registration of registrations) {
       await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registration.id} FOR UPDATE`;
+      const lockedRegistration = await tx.registration.findUnique({
+        where: { id: registration.id },
+        select: {
+          id: true,
+          userId: true,
+          status: true,
+          noShowAt: true,
+          cancelledAt: true,
+          cancelReason: true,
+          cancelledByUserId: true,
+          mealServing: { select: { id: true } },
+          penalties: { select: { id: true } },
+        },
+      });
       if (
-        registration.mealServing ||
-        registration.noShowAt ||
-        registration.penalties.length > 0
+        !lockedRegistration ||
+        lockedRegistration.status !== 'ACTIVE' ||
+        lockedRegistration.cancelledAt ||
+        lockedRegistration.cancelReason ||
+        lockedRegistration.cancelledByUserId ||
+        lockedRegistration.noShowAt ||
+        lockedRegistration.mealServing ||
+        lockedRegistration.penalties.length > 0
       ) {
         continue;
       }
       await tx.registration.update({
-        where: { id: registration.id },
+        where: { id: lockedRegistration.id },
         data: {
           menuRevisionId: revision.id,
           menuNameSnapshot: revision.mealName,
@@ -371,16 +401,17 @@ export class WeeklyMenusService {
       await this.logAuditTx(
         tx,
         'registration_menu_revision_updated',
-        `Registration ${registration.id} now uses menu revision ${revision.id}`,
+        `Registration ${lockedRegistration.id} now uses menu revision ${revision.id}`,
+        actorUserId,
       );
       await this.notificationsService.publish(tx, {
-        userId: registration.userId,
+        userId: lockedRegistration.userId,
         kind: 'REGISTERED_MENU_CHANGED',
         payload: {
           dailyMenuRevisionId: revision.id,
           mealDate: mealDate(date),
         },
-        dedupeKey: `registered-menu-changed:${registration.userId}:${revision.id}`,
+        dedupeKey: `registered-menu-changed:${lockedRegistration.userId}:${revision.id}`,
       });
     }
   }

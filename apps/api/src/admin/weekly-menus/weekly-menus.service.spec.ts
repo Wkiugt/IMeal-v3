@@ -24,6 +24,7 @@ const mockTx = {
   mealDay: { updateMany: vi.fn() },
   registration: {
     findMany: vi.fn(),
+    findUnique: vi.fn(),
     update: vi.fn(),
   },
   dailyMenuRevision: { findFirst: vi.fn(), create: vi.fn() },
@@ -125,32 +126,65 @@ describe('WeeklyMenusService', () => {
       {
         id: 'reg-1',
         userId: 'user-1',
+        status: 'ACTIVE',
         mealServing: null,
         noShowAt: null,
+        cancelledAt: null,
+        cancelReason: null,
+        cancelledByUserId: null,
         penalties: [],
       },
       {
         id: 'reg-served',
         userId: 'user-2',
+        status: 'ACTIVE',
         mealServing: { id: 'serving-1' },
         noShowAt: null,
+        cancelledAt: null,
+        cancelReason: null,
+        cancelledByUserId: null,
         penalties: [],
       },
       {
         id: 'reg-no-show',
         userId: 'user-3',
+        status: 'ACTIVE',
         mealServing: null,
         noShowAt: new Date('2026-09-01T07:00:00.000Z'),
+        cancelledAt: null,
+        cancelReason: null,
+        cancelledByUserId: null,
         penalties: [],
       },
       {
         id: 'reg-penalty',
         userId: 'user-4',
+        status: 'ACTIVE',
         mealServing: null,
         noShowAt: null,
+        cancelledAt: null,
+        cancelReason: null,
+        cancelledByUserId: null,
         penalties: [{ id: 'penalty-1' }],
       },
+      {
+        id: 'reg-cancelled',
+        userId: 'user-5',
+        status: 'CANCELLED',
+        mealServing: null,
+        noShowAt: null,
+        cancelledAt: new Date('2026-08-31T08:00:00.000Z'),
+        cancelReason: 'REGISTRATION_CANCELLED',
+        cancelledByUserId: 'user-5',
+        penalties: [],
+      },
     ]);
+    mockTx.registration.findUnique.mockImplementation(async ({ where }) => {
+      const row = [
+        ...((await mockTx.registration.findMany()) ?? []),
+      ].find((candidate) => candidate.id === where.id);
+      return row ?? null;
+    });
     mockTx.dailyMenu.findUnique.mockResolvedValue({
       id: 'dm1',
       date,
@@ -192,6 +226,77 @@ describe('WeeklyMenusService', () => {
         menuImageSnapshot: 'https://example.test/new.jpg',
       },
     });
+    expect(mockTx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'registration_menu_revision_updated',
+        userId: 'admin-1',
+      }),
+    });
+  });
+
+  it('does not rewrite a registration finalized after candidate load before lock re-read', async () => {
+    const date = new Date('2026-09-01T00:00:00.000Z');
+    mockTx.dailyMenu.findUnique.mockResolvedValue({
+      id: 'dm1',
+      date,
+      isHoliday: false,
+      isEnabled: true,
+      weeklyMenu: { publishedAt: new Date('2026-08-31T00:00:00.000Z') },
+      revisions: [
+        {
+          id: 'revision-1',
+          revision: 1,
+          mealName: 'Old lunch',
+          description: 'Old description',
+          imageUrl: null,
+          content: 'Old lunch',
+        },
+      ],
+      mealDays: [{ mealType: 'LUNCH' }],
+    });
+    mockTx.weeklyMenu.findUnique.mockResolvedValue({
+      publishedAt: new Date('2026-08-31T00:00:00.000Z'),
+    });
+    mockTx.registration.findMany.mockResolvedValue([
+      {
+        id: 'reg-stale',
+        userId: 'user-1',
+        status: 'ACTIVE',
+        mealServing: null,
+        noShowAt: null,
+        cancelledAt: null,
+        cancelReason: null,
+        cancelledByUserId: null,
+        penalties: [],
+      },
+    ]);
+    mockTx.registration.findUnique.mockResolvedValue({
+      id: 'reg-stale',
+      userId: 'user-1',
+      status: 'CANCELLED',
+      mealServing: null,
+      noShowAt: null,
+      cancelledAt: new Date('2026-08-31T08:00:00.000Z'),
+      cancelReason: 'REGISTRATION_CANCELLED',
+      cancelledByUserId: 'user-1',
+      penalties: [],
+    });
+
+    await service.updateDailyMenu(
+      '2026-09-01',
+      { mealName: 'New lunch' },
+      'admin-1',
+    );
+
+    expect(mockTx.$queryRaw).toHaveBeenCalled();
+    expect(mockTx.registration.update).not.toHaveBeenCalled();
+    expect(mockTx.auditLog.create).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'registration_menu_revision_updated',
+        }),
+      }),
+    );
   });
 
   it('publishes registration-opened once per active staff user', async () => {
@@ -254,5 +359,41 @@ describe('WeeklyMenusService', () => {
         serviceEndAt: new Date('2026-09-01T06:30:00.000Z'),
       },
     });
+  });
+
+  it('fails closed when publishing a legacy revision lacks verified menu evidence', async () => {
+    const startDate = new Date('2026-09-01T00:00:00.000Z');
+    mockTx.weeklyMenu.findFirst.mockResolvedValueOnce({
+      id: 'wm1',
+      startDate,
+      endDate: new Date('2026-09-07T00:00:00.000Z'),
+      publishedAt: null,
+      dailyMenus: [
+        {
+          id: 'dm1',
+          date: startDate,
+          revisions: [
+            {
+              id: 'legacy-revision',
+              revision: null,
+              mealName: null,
+              description: null,
+              imageUrl: null,
+              content: 'Unverified legacy text',
+            },
+          ],
+          mealDays: [],
+        },
+      ],
+    });
+    mockTx.weeklyMenu.findUnique.mockResolvedValue({ publishedAt: null });
+
+    await expect(
+      service.publishWeeklyMenu('2026-09-01', 'admin-1'),
+    ).rejects.toThrow(HttpException);
+
+    expect(mockTx.dailyMenuRevision.create).not.toHaveBeenCalled();
+    expect(mockTx.weeklyMenu.update).not.toHaveBeenCalled();
+    expect(mockTx.mealDay.updateMany).not.toHaveBeenCalled();
   });
 });
