@@ -1,5 +1,34 @@
+import { readFileSync } from 'node:fs';
+import { Client } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { prisma } from '../src/db.js';
+
+const BACKFILL_SQL = readFileSync(
+  new URL(
+    '../prisma/migrations/20260928000000_phase0_domain_correctness/backfill.sql',
+    import.meta.url,
+  ),
+  'utf8',
+);
+async function runBackfill() {
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+  const schema = new URL(process.env.DATABASE_URL ?? '').searchParams.get(
+    'schema',
+  );
+  if (!schema) {
+    throw new Error('test database URL must include schema');
+  }
+  await client.query('SELECT set_config($1, $2, false)', [
+    'search_path',
+    `"${schema}"`,
+  ]);
+    await client.query(BACKFILL_SQL);
+  } finally {
+    await client.end();
+  }
+}
 
 const TEST_DATE = new Date('2026-09-24T00:00:00.000Z');
 
@@ -282,12 +311,332 @@ describe('Task 2 persistence boundaries', () => {
       data: { registrationId: registration.id },
     });
     expect(serving.registrationId).toBe(registration.id);
+    await expect(
+      prisma.mealServing.create({
+        data: { registrationId: registration.id },
+      }),
+    ).rejects.toMatchObject({ code: 'P2002' });
     expect(
       await prisma.registration.findUniqueOrThrow({
         where: { id: registration.id },
         select: { status: true, mealServing: { select: { id: true } } },
       }),
     ).toMatchObject({ status: 'ACTIVE', mealServing: { id: serving.id } });
+  });
+
+  it('enforces_serving_consistency_on_serving_side_mutations', async () => {
+    const noShowUser = await createUser('serving-trigger-no-show@example.test');
+    const noShowRegistration = await prisma.registration.create({
+      data: {
+        userId: noShowUser.id,
+        mealDate: TEST_DATE,
+        status: 'NO_SHOW',
+      },
+    });
+    await expect(
+      prisma.mealServing.create({
+        data: { registrationId: noShowRegistration.id },
+      }),
+    ).rejects.toThrow(/state is inconsistent/);
+
+    const servedUser = await createUser('serving-trigger-served@example.test');
+    const servedRegistration = await prisma.registration.create({
+      data: {
+        userId: servedUser.id,
+        mealDate: TEST_DATE,
+        status: 'ACTIVE',
+      },
+    });
+    await prisma.mealServing.create({
+      data: { registrationId: servedRegistration.id },
+    });
+    await prisma.registration.update({
+      where: { id: servedRegistration.id },
+      data: { status: 'SERVED' },
+    });
+    await expect(
+      prisma.mealServing.delete({
+        where: { registrationId: servedRegistration.id },
+      }),
+    ).rejects.toThrow(/state is inconsistent/);
+  });
+
+  it('backfills_only_verified_evidence_and_is_idempotent', async () => {
+    const validDate = new Date('2026-10-01T00:00:00.000Z');
+    const ambiguousDate = new Date('2026-10-08T00:00:00.000Z');
+    const invalidDate = new Date('2026-10-15T00:00:00.000Z');
+    const absentDate = new Date('2026-10-22T00:00:00.000Z');
+    const createRevision = async (
+      date: Date,
+      endDate: Date,
+      content: string,
+    ) => {
+      const weeklyMenu = await prisma.weeklyMenu.create({
+        data: { startDate: date, endDate },
+      });
+      const dailyMenu = await prisma.dailyMenu.create({
+        data: { weeklyMenuId: weeklyMenu.id, date },
+      });
+      return prisma.dailyMenuRevision.create({
+        data: { dailyMenuId: dailyMenu.id, content },
+      });
+    };
+
+    const validRevision = await createRevision(
+      validDate,
+      new Date('2026-10-07T00:00:00.000Z'),
+      JSON.stringify({
+        revision: 1,
+        mealName: 'Verified historical menu',
+        description: 'Verified historical description',
+        imageUrl: null,
+      }),
+    );
+    const ambiguousRevisionOne = await createRevision(
+      ambiguousDate,
+      new Date('2026-10-14T00:00:00.000Z'),
+      JSON.stringify({
+        revision: 1,
+        mealName: 'Ambiguous revision one',
+        description: null,
+        imageUrl: null,
+      }),
+    );
+    const ambiguousRevisionTwo = await prisma.dailyMenuRevision.create({
+      data: {
+        dailyMenuId: ambiguousRevisionOne.dailyMenuId,
+        content: JSON.stringify({
+          revision: 2,
+          mealName: 'Ambiguous revision two',
+          description: null,
+          imageUrl: null,
+        }),
+      },
+    });
+    const invalidRevision = await createRevision(
+      invalidDate,
+      new Date('2026-10-21T00:00:00.000Z'),
+      'legacy text without a verified structure',
+    );
+
+    const validUser = await createUser('backfill-valid@example.test');
+    const validLocation = await createLocation('BACKFILL');
+    const validAssignment = await prisma.employeeLocationAssignment.create({
+      data: {
+        userId: validUser.id,
+        normalizedEmail: validUser.email,
+        employeeName: 'Backfill Owner',
+        employeeCode: 'BACKFILL-001',
+        isActive: true,
+        role: 'staff',
+        serviceLocationCode: validLocation.shortCode,
+        locationId: validLocation.id,
+        effectiveFrom: TEST_DATE,
+      },
+    });
+    const validRegistration = await prisma.registration.create({
+      data: {
+        userId: validUser.id,
+        mealDate: validDate,
+        status: 'ACTIVE',
+        menuNameSnapshot: 'Existing verified name',
+      },
+    });
+    const ambiguousUser = await createUser('backfill-ambiguous@example.test');
+    const ambiguousRegistration = await prisma.registration.create({
+      data: {
+        userId: ambiguousUser.id,
+        mealDate: ambiguousDate,
+        status: 'ACTIVE',
+      },
+    });
+    const invalidUser = await createUser('backfill-invalid@example.test');
+    const invalidRegistration = await prisma.registration.create({
+      data: {
+        userId: invalidUser.id,
+        mealDate: invalidDate,
+        status: 'ACTIVE',
+      },
+    });
+    const absentUser = await createUser('backfill-absent@example.test');
+    const absentRegistration = await prisma.registration.create({
+      data: {
+        userId: absentUser.id,
+        mealDate: absentDate,
+        status: 'ACTIVE',
+      },
+    });
+    const duplicatePenaltyRegistration = await prisma.registration.create({
+      data: {
+        userId: validUser.id,
+        mealDate: new Date('2026-10-23T00:00:00.000Z'),
+        status: 'ACTIVE',
+      },
+    });
+
+    const validPenalty = await prisma.penalty.create({
+      data: {
+        userId: validUser.id,
+        amount: 50000,
+        reason: `NO_SHOW_PENALTY_${validDate.toISOString().slice(0, 10)}_${validRegistration.id}`,
+      },
+    });
+    const invalidPenalty = await prisma.penalty.create({
+      data: {
+        userId: validUser.id,
+        amount: 50000,
+        reason: 'NO_SHOW_PENALTY_not-an-exact-identity',
+      },
+    });
+    const duplicatePenaltyOne = await prisma.penalty.create({
+      data: {
+        userId: validUser.id,
+        amount: 50000,
+        reason: `NO_SHOW_PENALTY_2026-10-23_${duplicatePenaltyRegistration.id}`,
+      },
+    });
+    const duplicatePenaltyTwo = await prisma.penalty.create({
+      data: {
+        userId: validUser.id,
+        amount: 50000,
+        reason: `NO_SHOW_PENALTY_2026-10-23_${duplicatePenaltyRegistration.id}`,
+      },
+    });
+
+    const readStates = async () => ({
+      registrations: await prisma.registration.findMany({
+        where: {
+          id: {
+            in: [
+              validRegistration.id,
+              ambiguousRegistration.id,
+              invalidRegistration.id,
+              absentRegistration.id,
+            ],
+          },
+        },
+        orderBy: { id: 'asc' },
+        select: {
+          id: true,
+          menuRevisionId: true,
+          menuNameSnapshot: true,
+          menuDescriptionSnapshot: true,
+          menuImageSnapshot: true,
+          ownerNameSnapshot: true,
+          employeeCodeSnapshot: true,
+          serviceLocationId: true,
+          serviceLocationAssignmentId: true,
+          serviceLocationCode: true,
+          serviceLocationName: true,
+          serviceLocationAddress: true,
+          serviceLocationEffectiveFrom: true,
+          serviceLocationSnapshotAt: true,
+          registeredAt: true,
+        },
+      }),
+      penalties: await prisma.penalty.findMany({
+        where: {
+          id: {
+            in: [
+              validPenalty.id,
+              invalidPenalty.id,
+              duplicatePenaltyOne.id,
+              duplicatePenaltyTwo.id,
+            ],
+          },
+        },
+        orderBy: { id: 'asc' },
+        select: { id: true, registrationId: true, mealDate: true },
+      }),
+    });
+
+    await runBackfill();
+    const firstStates = await readStates();
+    await runBackfill();
+    const secondStates = await readStates();
+    expect(secondStates).toEqual(firstStates);
+
+    const validState = firstStates.registrations.find(
+      (row) => row.id === validRegistration.id,
+    );
+    expect(validState).toMatchObject({
+      menuRevisionId: validRevision.id,
+      menuNameSnapshot: 'Existing verified name',
+      menuDescriptionSnapshot: 'Verified historical description',
+      menuImageSnapshot: null,
+      ownerNameSnapshot: validAssignment.employeeName,
+      employeeCodeSnapshot: validAssignment.employeeCode,
+      serviceLocationId: validLocation.id,
+      serviceLocationAssignmentId: validAssignment.id,
+      serviceLocationCode: validLocation.shortCode,
+      serviceLocationName: validLocation.displayName,
+      serviceLocationAddress: validLocation.address,
+      serviceLocationEffectiveFrom: validLocation.effectiveFrom,
+      serviceLocationSnapshotAt: null,
+      registeredAt: null,
+    });
+
+    for (const registrationId of [
+      ambiguousRegistration.id,
+      invalidRegistration.id,
+      absentRegistration.id,
+    ]) {
+      const state = firstStates.registrations.find(
+        (row) => row.id === registrationId,
+      );
+      expect(state).toMatchObject({
+        menuRevisionId: null,
+        menuNameSnapshot: null,
+        menuDescriptionSnapshot: null,
+        menuImageSnapshot: null,
+      });
+    }
+
+    const invalidRevisionState =
+      await prisma.dailyMenuRevision.findUniqueOrThrow({
+        where: { id: invalidRevision.id },
+        select: {
+          revision: true,
+          mealName: true,
+          description: true,
+          imageUrl: true,
+        },
+      });
+    expect(invalidRevisionState).toEqual({
+      revision: null,
+      mealName: null,
+      description: null,
+      imageUrl: null,
+    });
+    expect(
+      await prisma.dailyMenuRevision.findUniqueOrThrow({
+        where: { id: ambiguousRevisionOne.id },
+        select: { revision: true, mealName: true },
+      }),
+    ).toMatchObject({ revision: 1, mealName: 'Ambiguous revision one' });
+    expect(
+      await prisma.dailyMenuRevision.findUniqueOrThrow({
+        where: { id: ambiguousRevisionTwo.id },
+        select: { revision: true, mealName: true },
+      }),
+    ).toMatchObject({ revision: 2, mealName: 'Ambiguous revision two' });
+
+    const validPenaltyState = firstStates.penalties.find(
+      (row) => row.id === validPenalty.id,
+    );
+    expect(validPenaltyState).toMatchObject({
+      registrationId: validRegistration.id,
+      mealDate: validDate,
+    });
+    for (const penaltyId of [
+      invalidPenalty.id,
+      duplicatePenaltyOne.id,
+      duplicatePenaltyTwo.id,
+    ]) {
+      expect(
+        firstStates.penalties.find((row) => row.id === penaltyId),
+      ).toMatchObject({ registrationId: null, mealDate: null });
+    }
   });
 
   it('retains_legacy_null_snapshots_without_fabricating_values', async () => {

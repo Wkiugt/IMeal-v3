@@ -113,3 +113,71 @@ $function$;
 ALTER TABLE "registrations"
   ADD CONSTRAINT "registration_serving_consistency"
   CHECK ("registration_serving_consistent"("registrations")) NOT VALID;
+
+CREATE FUNCTION "assert_registration_serving_consistency"(_registration_id TEXT)
+RETURNS VOID
+LANGUAGE PLPGSQL
+AS $function$
+DECLARE
+  registration_row "registrations";
+BEGIN
+  SELECT r.*
+  INTO registration_row
+  FROM "registrations" AS r
+  WHERE r."id" = _registration_id;
+
+  IF registration_row."id" IS NULL THEN
+    RETURN;
+  END IF;
+
+  IF NOT "registration_serving_consistent"(registration_row) THEN
+    RAISE EXCEPTION 'registration and meal serving state is inconsistent'
+      USING ERRCODE = '23514',
+            CONSTRAINT = 'registration_serving_consistency';
+  END IF;
+END;
+$function$;
+
+CREATE FUNCTION "enforce_registration_serving_on_registration"()
+RETURNS TRIGGER
+LANGUAGE PLPGSQL
+AS $function$
+BEGIN
+  IF NOT "registration_serving_consistent"(NEW) THEN
+    RAISE EXCEPTION 'registration and meal serving state is inconsistent'
+      USING ERRCODE = '23514',
+            CONSTRAINT = 'registration_serving_consistency';
+  END IF;
+  RETURN NEW;
+END;
+$function$;
+
+CREATE FUNCTION "enforce_registration_serving_on_meal_serving"()
+RETURNS TRIGGER
+LANGUAGE PLPGSQL
+AS $function$
+BEGIN
+  IF TG_OP <> 'INSERT' THEN
+    PERFORM "assert_registration_serving_consistency"(OLD."registration_id");
+  END IF;
+
+  IF TG_OP <> 'DELETE' THEN
+    PERFORM "assert_registration_serving_consistency"(NEW."registration_id");
+  END IF;
+
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$function$;
+
+CREATE TRIGGER "registrations_serving_consistency_trigger"
+AFTER INSERT OR UPDATE ON "registrations"
+FOR EACH ROW
+EXECUTE FUNCTION "enforce_registration_serving_on_registration"();
+
+CREATE TRIGGER "meal_servings_registration_consistency_trigger"
+AFTER INSERT OR UPDATE OR DELETE ON "meal_servings"
+FOR EACH ROW
+EXECUTE FUNCTION "enforce_registration_serving_on_meal_serving"();

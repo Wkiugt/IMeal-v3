@@ -140,8 +140,75 @@ BEGIN
 END;
 $menu_backfill$;
 
+-- Map each registration only to a verified immutable revision for the same
+-- meal date. A date with multiple verified revisions is ambiguous and remains
+-- null. Existing non-null registration snapshot values are never overwritten.
+WITH verified_revisions AS (
+  SELECT dmr.id AS revision_id,
+         dm.date AS meal_date,
+         dmr.meal_name,
+         dmr.description,
+         dmr.image_url
+  FROM daily_menu_revisions AS dmr
+  JOIN daily_menus AS dm ON dm.id = dmr.daily_menu_id
+  WHERE dmr.revision IS NOT NULL
+    AND dmr.meal_name IS NOT NULL
+),
+unique_revisions_by_date AS (
+  SELECT meal_date,
+         min(revision_id) AS revision_id,
+         min(meal_name) AS meal_name,
+         min(description) AS description,
+         min(image_url) AS image_url
+  FROM verified_revisions
+  GROUP BY meal_date
+  HAVING count(*) = 1
+),
+existing_revision_candidates AS (
+  SELECT r.id AS registration_id,
+         v.revision_id,
+         v.meal_name,
+         v.description,
+         v.image_url
+  FROM registrations AS r
+  JOIN verified_revisions AS v
+    ON v.revision_id = r.menu_revision_id
+   AND v.meal_date = r.meal_date
+  WHERE r.menu_revision_id IS NOT NULL
+),
+unassigned_revision_candidates AS (
+  SELECT r.id AS registration_id,
+         v.revision_id,
+         v.meal_name,
+         v.description,
+         v.image_url
+  FROM registrations AS r
+  JOIN unique_revisions_by_date AS v ON v.meal_date = r.meal_date
+  WHERE r.menu_revision_id IS NULL
+),
+registration_revision_candidates AS (
+  SELECT * FROM existing_revision_candidates
+  UNION ALL
+  SELECT * FROM unassigned_revision_candidates
+)
+UPDATE registrations AS r
+SET menu_revision_id = COALESCE(r.menu_revision_id, c.revision_id),
+    menu_name_snapshot = COALESCE(r.menu_name_snapshot, c.meal_name),
+    menu_description_snapshot = COALESCE(
+      r.menu_description_snapshot,
+      c.description
+    ),
+    menu_image_snapshot = COALESCE(r.menu_image_snapshot, c.image_url)
+FROM registration_revision_candidates AS c
+WHERE r.id = c.registration_id
+  AND (
+    r.menu_revision_id IS NULL
+    OR r.menu_name_snapshot IS NULL
+    OR r.menu_description_snapshot IS NULL
+    OR r.menu_image_snapshot IS NULL
+  );
+
 -- Map a legacy no-show penalty only when its reason has the exact documented
--- identity, owner, and date and the registration identity is unique among all
 -- eligible legacy penalties. Invalid/missing/duplicate candidates remain null.
 WITH legacy_candidates AS (
   SELECT p.id AS penalty_id,
@@ -150,7 +217,7 @@ WITH legacy_candidates AS (
   FROM penalties AS p
   JOIN LATERAL regexp_match(
     p.reason,
-    '^NO_SHOW_PENALTY_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9a-fA-F-]{36}$'
+    '^NO_SHOW_PENALTY_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9a-fA-F-]{36})$'
   ) AS legacy_identity(match_parts) ON TRUE
   JOIN registrations AS r
     ON r.id = legacy_identity.match_parts[2]

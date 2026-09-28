@@ -100,7 +100,7 @@ legacy_penalty_mapping AS (
   FROM penalties AS p
   LEFT JOIN LATERAL regexp_match(
     p.reason,
-    '^NO_SHOW_PENALTY_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9a-fA-F-]{36}$'
+    '^NO_SHOW_PENALTY_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9a-fA-F-]{36})$'
 ) AS legacy_identity(match_parts) ON TRUE
   LEFT JOIN registrations AS r
     ON legacy_identity.match_parts IS NOT NULL
@@ -131,7 +131,7 @@ legacy_penalty_candidates AS (
   FROM penalties AS p
   JOIN LATERAL regexp_match(
     p.reason,
-    '^NO_SHOW_PENALTY_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9a-fA-F-]{36}$'
+    '^NO_SHOW_PENALTY_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9a-fA-F-]{36})$'
 ) AS legacy_identity(match_parts) ON TRUE
   JOIN registrations AS r
     ON r.id = legacy_identity.match_parts[2]
