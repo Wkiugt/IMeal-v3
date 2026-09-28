@@ -43,3 +43,28 @@ DONE_WITH_CONCERNS
 ## Commit
 
 `6051fdf8804063acb423b0c5b1ebd8afc9cf4334` (`fix(api): enforce pickup snapshots and serving history`)
+
+## Review-fix report
+
+### Findings addressed
+
+- `assertServingReadyInTransaction` now filters out nullable legacy `DailyMenuRevision.revision` rows and selects the canonical verified revision with deterministic `revision DESC, id DESC` ordering. Existing MealDay readiness, enabled-menu, service-boundary, serving-window, and meal-date checks remain enforced.
+- Added a behavior test with a later-created legacy revision and an earlier verified revision; the serving readiness result uses the verified revision.
+- Added a consumer-facing pickup route test using the real `PickupService.getPickupOptions` path with a database fixture that returns an incomplete registration snapshot; `GET /api/me/pickup-options` returns an empty eligible set instead of accepting the legacy row. Existing unit coverage continues to exercise all-or-nothing serving, idempotency replay/conflict, serving snapshot copy, stale snapshot rejection, and post-commit timing.
+
+### Review-fix verification
+
+- `yarn workspace @imeal/api exec vitest run src/pickup/pickup.service.spec.ts`: passed — 1 file, 49 tests passed.
+- `yarn workspace @imeal/api exec vitest run test/pickup.e2e-spec.ts`: blocked by the default Vitest include (`**/*.spec.ts`), which discovers no e2e files.
+- `yarn workspace @imeal/api exec vitest run --config ./vitest.config.e2e.ts test/pickup.e2e-spec.ts`: blocked before test execution because `DATABASE_URL` is not set in the environment or `packages/domain/.env.test`.
+- `yarn workspace @imeal/api exec tsc --noEmit --pretty false`: still reports only the three pre-existing `apps/api/src/admin/penalties/penalties.service.ts` errors for missing nullable `registrationId` and `mealDate`; no pickup-service errors were reported.
+- `git diff --check`: passed with no whitespace errors.
+
+### Review-fix concerns
+
+- Consumer-facing route coverage is present but the configured PostgreSQL-backed e2e harness could not execute in this environment because `DATABASE_URL` is unavailable; no runtime e2e result is claimed.
+- API-wide TypeScript remains red only in the upstream/out-of-scope penalties mapping.
+
+### Review-fix commit
+
+`808f71f8d9cd31a7a5d172811358563642dd71cc` (`fix(api): canonicalize pickup menu revision checks`)
