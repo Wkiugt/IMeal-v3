@@ -17,6 +17,9 @@ const requiredNames = [
     ),
   ),
 ];
+const imageNames = requiredNames.filter((name) => name.endsWith('_IMAGE'));
+const IMAGE_DIGEST_PATTERN = /^(?:[a-z0-9.-]+(?::[0-9]+)?\/)?[a-z0-9]+(?:[._\/-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/i;
+const DRAIN_MARGIN_SECONDS = 5;
 const secretNames = new Set([
   'POSTGRES_PASSWORD',
   'MINIO_ROOT_PASSWORD',
@@ -26,65 +29,154 @@ const secretNames = new Set([
   'SESSION_HASH_SECRET',
   'OTP_PROVIDER_API_KEY',
 ]);
-const values = Object.fromEntries(
-  requiredNames.map((name) => {
-    if (name.endsWith('_IMAGE')) {
-      return [name, `registry.example/imeal/${name.toLowerCase()}@sha256:${'b'.repeat(64)}`];
-    }
-    if (secretNames.has(name)) return [name, 'x'.repeat(48)];
-    if (name === 'OTP_PROVIDER_URL') return [name, 'https://otp.example.com'];
-    if (name === 'STOP_GRACE_PERIOD') return [name, '45s'];
-    if (name === 'PROXY_HTTP_PORT') return [name, '80'];
-    if (name === 'PROXY_HTTPS_PORT') return [name, '443'];
-    if (name.endsWith('_VOLUME_NAME')) return [name, `imeal-test-${name.toLowerCase()}`];
-    if (
-      name.endsWith('_PORT') ||
-      name.endsWith('_SECONDS') ||
-      name.endsWith('_LIMIT') ||
-      name.endsWith('_SIZE') ||
-      name.endsWith('_METERS')
-    ) {
-      return [name, '100'];
-    }
-    return [name, `production-${name.toLowerCase()}`];
-  }),
-);
-Object.assign(values, {
-  POSTGRES_USER: 'imeal',
-  POSTGRES_DB: 'imeal',
-  MINIO_ROOT_USER: 'imealadmin',
-  MINIO_BUCKET_NAME: 'imeal-bucket',
-  MIGRATION_TARGET_IDENTITY: 'release-identity',
-  MIGRATION_APPROVAL_ID: 'approval-2026-09-28',
-  RELEASE_VERSION: '2026.09.28',
-  LOG_LEVEL: 'info',
-  SHUTDOWN_TIMEOUT_SECONDS: '30',
-  SERVING_TIME_ZONE: 'Asia/Ho_Chi_Minh',
-  SERVING_WINDOW_START: '10:30',
-  SERVING_WINDOW_END: '13:30',
-  NO_SHOW_PROCESSING_TIME: '13:45',
-  QR_TTL_SECONDS: '5',
-  QR_CLOCK_SKEW_SECONDS: '2',
-  PICKUP_SESSION_TTL_SECONDS: '30',
-});
 
-const tempDir = mkdtempSync(resolve(tmpdir(), 'imeal-production-boundary-'));
-const envFile = resolve(tempDir, 'compose.env');
-writeFileSync(envFile, Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n'));
+function parseArguments() {
+  const args = process.argv.slice(2);
+  let envFile;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--env-file') {
+      envFile = args[++index];
+      assert.ok(envFile, '--env-file requires a path');
+    } else if (arg.startsWith('--env-file=')) {
+      envFile = arg.slice('--env-file='.length);
+      assert.ok(envFile, '--env-file requires a path');
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+  return envFile;
+}
+
+function parseEnvFile(path) {
+  const values = {};
+  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const separator = trimmed.indexOf('=');
+    if (separator < 1) continue;
+    const name = trimmed.slice(0, separator).trim();
+    let value = trimmed.slice(separator + 1).trim();
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
+    ) {
+      value = value.slice(1, -1);
+    }
+    values[name] = value;
+  }
+  return values;
+}
+
+function syntheticValues() {
+  const values = Object.fromEntries(
+    requiredNames.map((name) => {
+      if (name.endsWith('_IMAGE')) {
+        return [
+          name,
+          `registry.example/imeal/${name.toLowerCase()}@sha256:${'b'.repeat(64)}`,
+        ];
+      }
+      if (secretNames.has(name)) return [name, 'x'.repeat(48)];
+      if (name === 'OTP_PROVIDER_URL') return [name, 'https://otp.example.com'];
+      if (name === 'STOP_GRACE_PERIOD') return [name, '45s'];
+      if (name === 'PROXY_HTTP_PORT') return [name, '80'];
+      if (name === 'PROXY_HTTPS_PORT') return [name, '443'];
+      if (name.endsWith('_VOLUME_NAME')) {
+        return [name, `imeal-test-${name.toLowerCase()}`];
+      }
+      if (
+        name.endsWith('_PORT') ||
+        name.endsWith('_SECONDS') ||
+        name.endsWith('_LIMIT') ||
+        name.endsWith('_SIZE') ||
+        name.endsWith('_METERS')
+      ) {
+        return [name, '100'];
+      }
+      return [name, `production-${name.toLowerCase()}`];
+    }),
+  );
+  Object.assign(values, {
+    POSTGRES_USER: 'imeal',
+    POSTGRES_DB: 'imeal',
+    MINIO_ROOT_USER: 'imealadmin',
+    MINIO_BUCKET_NAME: 'imeal-bucket',
+    MIGRATION_TARGET_SCHEMA: 'public',
+    MIGRATION_TARGET_IDENTITY: 'release-identity',
+    MIGRATION_APPROVAL_ID: 'approval-2026-09-28',
+    RELEASE_VERSION: '2026.09.28',
+    LOG_LEVEL: 'info',
+    SHUTDOWN_TIMEOUT_SECONDS: '30',
+    SERVING_TIME_ZONE: 'Asia/Ho_Chi_Minh',
+    SERVING_WINDOW_START: '10:30',
+    SERVING_WINDOW_END: '13:30',
+    NO_SHOW_PROCESSING_TIME: '13:45',
+    QR_TTL_SECONDS: '5',
+    QR_CLOCK_SKEW_SECONDS: '2',
+    PICKUP_SESSION_TTL_SECONDS: '30',
+  });
+  return values;
+}
+
+const deploymentEnvFile = parseArguments();
+const usingDeploymentValues = Boolean(deploymentEnvFile);
+const deploymentFileValues = deploymentEnvFile
+  ? parseEnvFile(deploymentEnvFile)
+  : undefined;
+const values = usingDeploymentValues
+  ? { ...deploymentFileValues, ...process.env }
+  : syntheticValues();
+const envExample = readFileSync(resolve(root, '.env.example'), 'utf8');
+for (const name of imageNames) {
+  assert.match(
+    envExample,
+    new RegExp(`^\\s*#?\\s*${name}=`, 'm'),
+    `.env.example must document ${name}`,
+  );
+  assert.match(
+    values[name] ?? '',
+    IMAGE_DIGEST_PATTERN,
+    `${name} must be repository@sha256:<64 hex> (use --env-file for deployment values)`,
+  );
+}
+
+let tempDir;
+let composeEnvFile = deploymentEnvFile;
+if (!usingDeploymentValues) {
+  tempDir = mkdtempSync(resolve(tmpdir(), 'imeal-production-boundary-'));
+  composeEnvFile = resolve(tempDir, 'compose.env');
+  writeFileSync(
+    composeEnvFile,
+    Object.entries(values)
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n'),
+  );
+}
 
 try {
+  const composeEnvironment = { ...process.env };
+  if (!usingDeploymentValues) {
+    for (const name of requiredNames) delete composeEnvironment[name];
+  }
   const output = execFileSync(
     'docker',
     [
       'compose',
       '--env-file',
-      envFile,
+      composeEnvFile,
       ...composeFiles.flatMap((file) => ['-f', file]),
       'config',
       '--format',
       'json',
     ],
-    { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: composeEnvironment,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
   );
   const config = JSON.parse(output);
   const services = config.services;
@@ -110,17 +202,39 @@ try {
     }
   }
   assert.equal(services.caddy.ports.length, 2, 'Caddy must publish only HTTP and HTTPS');
-  assert.equal(services.caddy.ports.every((port) => port.target === 80 || port.target === 443), true);
+  assert.equal(
+    services.caddy.ports.every((port) => port.target === 80 || port.target === 443),
+    true,
+  );
 
   const stopGraceSeconds = Number.parseInt(services.api.stop_grace_period, 10);
-  const shutdownSeconds = Number.parseInt(services.api.environment.SHUTDOWN_TIMEOUT_SECONDS, 10);
-  assert.equal(stopGraceSeconds > shutdownSeconds, true, 'stop grace must exceed shutdown timeout');
+  const shutdownSeconds = Number.parseInt(
+    services.api.environment.SHUTDOWN_TIMEOUT_SECONDS,
+    10,
+  );
+  assert.equal(
+    stopGraceSeconds >= shutdownSeconds + DRAIN_MARGIN_SECONDS,
+    true,
+    `stop grace must be at least shutdown timeout plus ${DRAIN_MARGIN_SECONDS}s drain margin`,
+  );
   for (const name of ['api', 'worker']) {
     assert.equal(services[name].user, '1000:1000', `${name} must run as the non-root node user`);
     assert.equal(
       Object.hasOwn(services[name].environment, 'MIGRATION_DATABASE_URL'),
       false,
       `${name} must not receive the direct migration database URL`,
+    );
+  }
+  assert.equal(
+    services.worker.healthcheck.test.join(' ').includes('/health/ready'),
+    true,
+    'worker healthcheck must probe readiness, not the always-200 root route',
+  );
+  for (const name of ['api', 'worker', 'admin-web']) {
+    assert.equal(
+      services[name].build,
+      undefined,
+      `${name} must be prebuilt-only in production; build contexts are not allowed`,
     );
   }
 
@@ -152,7 +266,6 @@ try {
     assert.equal(evidenceMount.read_only, true, `${name} migration evidence must be read-only`);
   }
 
-  assert.equal(services['admin-web'].build.dockerfile, 'apps/admin-web/Dockerfile');
   assert.equal(services['admin-web'].user, '101:101', 'admin-web must run as nginx UID 101');
   assert.equal(config.networks.app.internal, true, 'app network must be private');
   assert.equal(config.networks.data.internal, true, 'data network must be private');
@@ -189,7 +302,9 @@ try {
     assert.equal(dockerignore.includes(required), true, `.dockerignore lacks ${required}`);
   }
 
-  console.log('Production Compose boundary checks passed.');
+  console.log(
+    `Production Compose boundary checks passed (${usingDeploymentValues ? 'deployment values' : 'synthetic local values'}).`,
+  );
 } finally {
-  rmSync(tempDir, { recursive: true, force: true });
+  if (tempDir) rmSync(tempDir, { recursive: true, force: true });
 }

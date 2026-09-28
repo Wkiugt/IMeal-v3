@@ -113,9 +113,7 @@ services:
     stop_grace_period: ${STOP_GRACE_PERIOD:?STOP_GRACE_PERIOD is required}
 
   api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
+    build: !reset null
     image: ${API_IMAGE:?API_IMAGE is required}
     user: '1000:1000'
     environment: !override
@@ -179,9 +177,7 @@ services:
     stop_grace_period: ${STOP_GRACE_PERIOD:?STOP_GRACE_PERIOD is required}
 
   worker:
-    build:
-      context: .
-      dockerfile: apps/worker/Dockerfile
+    build: !reset null
     image: ${WORKER_IMAGE:?WORKER_IMAGE is required}
     user: '1000:1000'
     environment: !override
@@ -226,7 +222,7 @@ services:
       migration-gate:
         condition: service_completed_successfully
     healthcheck:
-      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3001/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3001/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -234,9 +230,7 @@ services:
     stop_grace_period: ${STOP_GRACE_PERIOD:?STOP_GRACE_PERIOD is required}
 
   admin-web:
-    build:
-      context: .
-      dockerfile: apps/admin-web/Dockerfile
+    build: !reset null
     image: ${ADMIN_WEB_IMAGE:?ADMIN_WEB_IMAGE is required}
     user: '101:101'
     networks:
