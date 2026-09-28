@@ -1,0 +1,39 @@
+# Task 8 report — production Compose and Caddy boundary
+
+## Status
+
+COMPLETE — implementation commit `0a88169` (`feat: define private production Compose boundary`). This report is a documentation-only follow-up; no production implementation files are changed here. Task 9 remains not started.
+
+## Scope
+
+- Added `docker-compose.production.yml` as a fail-closed production overlay while leaving the development `docker-compose.yml` and local `Caddyfile` behavior unchanged.
+- Production publishes host ports only from Caddy. API, worker, PostgreSQL, PgBouncer, MinIO, bucket setup, and the migration evidence volume stay on private networks; `app` and `data` are internal networks.
+- Production values, image references, volume names, network names, host ports, TLS hostname/email, and migration approval inputs are required with `${NAME:?NAME is required}`. Image values are documented as immutable `repository@sha256:digest` references.
+- PostgreSQL is configured for SCRAM authentication; the production rendering contains no `POSTGRES_HOST_AUTH_METHOD`, MD5 password-encryption setting, or plain PgBouncer auth mode. MinIO setup keeps the bucket private, and no public `/storage/*` route exists.
+- API and worker wait for a successful `migration-gate`, receive only the PgBouncer `DATABASE_URL`, and mount the shared migration evidence read-only. The gate contract alone is declared here; Task 9 still owns the released gate implementation and one-shot migration behavior.
+- Added `Caddyfile.production` with automatic managed TLS, explicit HTTP-to-HTTPS redirection, API routing, Admin Web fallback, SSE/WebSocket-compatible proxy flushing, persistent Caddy data/config storage, and reviewed security headers.
+- Hardened API, worker, and Admin Web Dockerfiles with immutable Node/Nginx bases, built-artifact-only runtime copies, Prisma generation/build preservation, and non-root runtime users. Admin Web retains port 80 compatibility for the development stack; production explicitly enforces the nginx UID and verifies its writable paths.
+- `.dockerignore` excludes `.env*`, `/run/imeal/`, and migration-evidence artifacts. `.env.example` documents the production-only injection contract without adding production secret defaults.
+- Added `scripts/verify-production-boundary.mjs` and the `verify:production-boundary` package script for rendered Compose/static boundary checks.
+
+## Verification
+
+- `node scripts/verify-production-boundary.mjs` — passed. Checked rendered Compose ports, immutable image refs, private networks, SCRAM/no-MD5/no-plain-auth settings, Admin Web Dockerfile/user, successful migration-gate dependencies, read-only evidence mounts, Caddy routing/security requirements, non-root Dockerfiles, and Docker context exclusions.
+- `docker compose -f docker-compose.yml -f docker-compose.production.yml config` without required production variables — failed closed with required-variable errors as expected.
+- Rendered production `docker compose ... config` and `config --images` with non-secret test values — passed; only Caddy published host ports and all rendered image references used digests.
+- Caddy immutable image validation (`caddy validate --config /etc/caddy/Caddyfile`) — `Valid configuration`.
+- API production Docker image build — passed; runtime smoke imported `@imeal/contracts`, `@imeal/observability`, and `@prisma/client` as UID 1000.
+- Worker production Docker image build — passed; runtime smoke imported workspace dependencies as UID 1000.
+- Admin Web production Docker image build — passed; non-root nginx served `/health` successfully on port 80. This also verifies the unchanged development Compose port contract.
+- `git diff --check` — passed before the implementation commit.
+
+## Commit
+
+- `0a88169 feat: define private production Compose boundary`
+
+## Deferred boundaries
+
+- Task 9 migration-gate implementation, migration scripts/tests, and direct PostgreSQL gate behavior were not started. The production overlay only consumes a required released `MIGRATION_GATE_IMAGE` contract so API/worker startup can depend on successful gate completion.
+- No production services were started with real credentials.
+- The current worktree intentionally retains an unstaged `apps/worker/tsconfig.build.tsbuildinfo` change. It was inspected as generated build metadata and left untouched because the Docker image builds were isolated and it may be concurrent user work.
+- The pre-existing untracked plans `docs/superpowers/plans/2026-09-28-production-hardening-plan.md` and `docs/superpowers/plans/2026-09-28-staging-readiness-plan.md` were not staged or modified.

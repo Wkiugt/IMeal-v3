@@ -77,8 +77,17 @@ The production-hardening plan is being executed one task at a time. Completed wo
 - API bounded HTTP/SSE and worker cron/provider admission, immediate health drain readiness, and post-listen scheduler readiness remain covered.
 - Review status: fix rounds 1–2 complete; spec compliance PASS; quality PASS; safe to stop before Task 8.
 
+## Task 8 completion
+
+- Task 8: complete (commit `0a88169`, `feat: define private production Compose boundary`).
+- Report: `.superpowers/sdd/production-hardening-plan/task-8-report.md`.
+- Added the fail-closed production Compose/Caddy boundary: only Caddy host ports, private `edge`/`app`/`data` networks, required production values, immutable digest image references, SCRAM PostgreSQL/PgBouncer, private MinIO setup, persistent TLS storage, and no public `/storage/*` route.
+- API/worker depend on successful `migration-gate` completion and mount shared migration evidence read-only; the migration-gate implementation remains explicitly deferred to Task 9.
+- Hardened API/worker/Admin Web images with immutable bases, built-runtime artifact copies, non-root runtimes, Prisma generation preservation, and the Admin Web port-80 compatibility contract. Added focused rendered Compose/static checks and Docker context exclusions.
+- Verification passed: `node scripts/verify-production-boundary.mjs`; fail-closed Compose rendering without production variables; rendered `config`/`config --images`; Caddy `validate`; API/worker/Admin Web image builds and non-root runtime smoke checks; and `git diff --check`.
+- Scope note: no production services were started with real credentials. The unstaged `apps/worker/tsconfig.build.tsbuildinfo` generated-metadata change was inspected and left untouched as possible concurrent user work. The pre-existing untracked production/staging plan files remain unstaged and unmodified.
+
 ## Remaining tasks
 
-- Task 8: not started (Compose/Caddy production boundary).
 - Task 9: not started (migration gate integration).
 - Later staging/documentation/operational tasks remain unstarted.
