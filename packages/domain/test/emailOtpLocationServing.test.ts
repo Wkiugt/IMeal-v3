@@ -178,7 +178,7 @@ describe('Task 2 persistence boundaries', () => {
           accuracyMeters: null,
         },
       }),
-    ).rejects.toMatchObject({ code: 'P2004' });
+    ).rejects.toThrow(/serving_verifications_accuracy_check/);
   });
 
   it('keeps serving verification IDs unique', async () => {
@@ -210,4 +210,150 @@ describe('Task 2 persistence boundaries', () => {
       }),
     ).rejects.toMatchObject({ code: 'P2002' });
   });
+  it('requires_complete_registration_snapshots_for_new_operational_rows', async () => {
+    const user = await createUser('complete-registration@example.test');
+    const location = await createLocation('COMPLETE');
+    const assignment = await prisma.employeeLocationAssignment.create({
+      data: {
+        userId: user.id,
+        normalizedEmail: user.email,
+        employeeName: 'Complete Registration Owner',
+        employeeCode: 'COMPLETE-001',
+        isActive: true,
+        role: 'staff',
+        serviceLocationCode: location.shortCode,
+        locationId: location.id,
+        effectiveFrom: TEST_DATE,
+      },
+    });
+    const weeklyMenu = await prisma.weeklyMenu.create({
+      data: {
+        startDate: TEST_DATE,
+        endDate: new Date('2026-09-30T00:00:00.000Z'),
+      },
+    });
+    const dailyMenu = await prisma.dailyMenu.create({
+      data: {
+        weeklyMenuId: weeklyMenu.id,
+        date: TEST_DATE,
+      },
+    });
+    const revision = await prisma.dailyMenuRevision.create({
+      data: {
+        dailyMenuId: dailyMenu.id,
+        revision: 1,
+        mealName: 'Complete menu',
+        content: 'legacy content retained',
+      },
+    });
+
+    await expect(
+      prisma.registration.create({
+        data: {
+          userId: user.id,
+          mealDate: TEST_DATE,
+          status: 'ACTIVE',
+          registeredAt: TEST_DATE,
+        },
+      }),
+    ).rejects.toThrow(/registration_lifecycle_snapshot_complete/);
+
+    const registration = await prisma.registration.create({
+      data: {
+        userId: user.id,
+        mealDate: TEST_DATE,
+        status: 'ACTIVE',
+        menuRevisionId: revision.id,
+        ownerNameSnapshot: assignment.employeeName,
+        employeeCodeSnapshot: assignment.employeeCode,
+        menuNameSnapshot: revision.mealName,
+        serviceLocationId: location.id,
+        serviceLocationAssignmentId: assignment.id,
+        serviceLocationCode: location.shortCode,
+        serviceLocationName: location.displayName,
+        serviceLocationAddress: location.address,
+        serviceLocationEffectiveFrom: location.effectiveFrom,
+        serviceLocationSnapshotAt: TEST_DATE,
+        registeredAt: TEST_DATE,
+      },
+    });
+
+    const serving = await prisma.mealServing.create({
+      data: { registrationId: registration.id },
+    });
+    expect(serving.registrationId).toBe(registration.id);
+    expect(
+      await prisma.registration.findUniqueOrThrow({
+        where: { id: registration.id },
+        select: { status: true, mealServing: { select: { id: true } } },
+      }),
+    ).toMatchObject({ status: 'ACTIVE', mealServing: { id: serving.id } });
+  });
+
+  it('retains_legacy_null_snapshots_without_fabricating_values', async () => {
+    const user = await createUser('legacy-registration@example.test');
+    const registration = await prisma.registration.create({
+      data: {
+        userId: user.id,
+        mealDate: TEST_DATE,
+        status: 'ACTIVE',
+      },
+    });
+
+    const persisted = await prisma.registration.findUniqueOrThrow({
+      where: { id: registration.id },
+    });
+    expect(persisted.registeredAt).toBeNull();
+    expect(persisted.menuRevisionId).toBeNull();
+    expect(persisted.ownerNameSnapshot).toBeNull();
+    expect(persisted.employeeCodeSnapshot).toBeNull();
+    expect(persisted.serviceLocationId).toBeNull();
+    expect(persisted.serviceLocationSnapshotAt).toBeNull();
+  });
+
+  it('rejects_duplicate_penalty_registration_id', async () => {
+    const user = await createUser('penalty-registration@example.test');
+    const registration = await prisma.registration.create({
+      data: {
+        userId: user.id,
+        mealDate: TEST_DATE,
+        status: 'ACTIVE',
+      },
+    });
+
+    await prisma.penalty.create({
+      data: {
+        userId: user.id,
+        registrationId: registration.id,
+        mealDate: TEST_DATE,
+        amount: 50000,
+        reason: 'NO_SHOW',
+      },
+    });
+    await expect(
+      prisma.penalty.create({
+        data: {
+          userId: user.id,
+          registrationId: registration.id,
+          mealDate: TEST_DATE,
+          amount: 50000,
+          reason: 'NO_SHOW',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'P2002' });
+  });
+
+  it('rejects_served_status_without_meal_serving', async () => {
+    const user = await createUser('served-without-serving@example.test');
+    await expect(
+      prisma.registration.create({
+        data: {
+          userId: user.id,
+          mealDate: TEST_DATE,
+          status: 'SERVED',
+        },
+      }),
+    ).rejects.toThrow(/registration_serving_consistency/);
+  });
+
 });

@@ -245,22 +245,35 @@ model DailyMenu {
 }
 
 model DailyMenuRevision {
-  id          String   @id @default(uuid())
-  dailyMenuId String   @map("daily_menu_id")
-  content     String
-  createdAt   DateTime @default(now()) @map("created_at")
+  id              String   @id @default(uuid())
+  dailyMenuId     String   @map("daily_menu_id")
+  revision        Int?
+  mealName        String?  @map("meal_name")
+  description     String?
+  imageUrl        String?  @map("image_url")
+  createdByUserId String?  @map("created_by_user_id")
+  content         String
+  createdAt       DateTime @default(now()) @map("created_at")
 
+  registrations Registration[]
   dailyMenu DailyMenu @relation(fields: [dailyMenuId], references: [id], onDelete: Cascade)
 
+  @@unique([dailyMenuId, revision])
   @@map("daily_menu_revisions")
 }
 
 model MealDay {
-  id             String   @id @default(uuid())
-  dailyMenuId    String   @map("daily_menu_id")
-  mealType       String   @map("meal_type")
-  isServingReady Boolean  @default(false) @map("is_serving_ready")
-  createdAt      DateTime @default(now()) @map("created_at")
+  id                    String    @id @default(uuid())
+  dailyMenuId           String    @map("daily_menu_id")
+  mealType              String    @map("meal_type")
+  isServingReady        Boolean   @default(false) @map("is_serving_ready")
+  menuNameSnapshot      String?   @map("menu_name_snapshot")
+  menuDescriptionSnapshot String? @map("menu_description_snapshot")
+  menuImageSnapshot     String?   @map("menu_image_snapshot")
+  lockedAt              DateTime? @map("locked_at")
+  serviceStartAt        DateTime? @map("service_start_at")
+  serviceEndAt          DateTime? @map("service_end_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
 
   dailyMenu DailyMenu @relation(fields: [dailyMenuId], references: [id], onDelete: Cascade)
 
@@ -274,6 +287,17 @@ model Registration {
   mealDate                     DateTime @db.Date @map("meal_date")
   status                       RegistrationStatus
   mealChoice                   MealChoice @default(REGULAR) @map("meal_choice")
+  menuRevisionId               String?  @map("menu_revision_id")
+  ownerNameSnapshot            String?  @map("owner_name_snapshot")
+  employeeCodeSnapshot         String?  @map("employee_code_snapshot")
+  menuNameSnapshot             String?  @map("menu_name_snapshot")
+  menuDescriptionSnapshot      String?  @map("menu_description_snapshot")
+  menuImageSnapshot            String?  @map("menu_image_snapshot")
+  registeredAt                 DateTime? @map("registered_at")
+  cancelledAt                  DateTime? @map("cancelled_at")
+  cancelReason                 String?  @map("cancel_reason")
+  cancelledByUserId            String?  @map("cancelled_by_user_id")
+  noShowAt                     DateTime? @map("no_show_at")
   serviceLocationId            String?  @map("service_location_id")
   serviceLocationAssignmentId  String?  @map("service_location_assignment_id")
   serviceLocationCode          String?  @map("service_location_code")
@@ -286,17 +310,21 @@ model Registration {
   version                      Int      @default(1)
 
   user                       User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  menuRevision               DailyMenuRevision?          @relation(fields: [menuRevisionId], references: [id], onDelete: Restrict)
   serviceLocation            Location?                  @relation("RegistrationServiceLocation", fields: [serviceLocationId], references: [id], onDelete: SetNull)
   serviceLocationAssignment  EmployeeLocationAssignment? @relation(fields: [serviceLocationAssignmentId], references: [id], onDelete: SetNull)
   delegations                PickupDelegation[]
   mealServing                MealServing?
+  penalties                 Penalty[]
 
   @@unique([userId, mealDate])
   @@index([userId, mealDate])
   @@index([serviceLocationId, mealDate])
   @@index([serviceLocationAssignmentId])
+  @@index([menuRevisionId])
   @@map("registrations")
 }
+
 
 model PickupDelegation {
   id             String   @id @default(uuid())
@@ -355,6 +383,9 @@ model MealServing {
   locationAddressSnapshot  String?             @map("location_address_snapshot")
   mealDate                 DateTime?           @db.Date @map("meal_date")
   menuRevisionId           String?             @map("menu_revision_id")
+  menuNameSnapshot         String?             @map("menu_name_snapshot")
+  menuDescriptionSnapshot  String?             @map("menu_description_snapshot")
+  menuImageSnapshot        String?             @map("menu_image_snapshot")
   requestId                String?             @map("request_id")
   pickupSessionId          String?             @map("pickup_session_id")
   intentHash               String?             @map("intent_hash")
@@ -398,6 +429,8 @@ model MealEvent {
 model Penalty {
   id             String    @id @default(uuid())
   userId         String    @map("user_id")
+  registrationId String?   @map("registration_id")
+  mealDate       DateTime? @db.Date @map("meal_date")
   amount         Int
   reason         String
   status         PenaltyStatus @default(PENDING)
@@ -408,11 +441,13 @@ model Penalty {
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  registration Registration? @relation(fields: [registrationId], references: [id], onDelete: Restrict)
 
   @@index([userId, status])
   @@index([status])
   @@index([createdAt])
+  @@index([mealDate])
   @@map("penalties")
 }
 
