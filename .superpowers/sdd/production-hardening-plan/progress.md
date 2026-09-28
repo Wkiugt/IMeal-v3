@@ -87,7 +87,14 @@ The production-hardening plan is being executed one task at a time. Completed wo
 - Verification passed: synthetic and deployment-env verifier runs, mutable image rejection, the 35ms negative test, fail-closed Compose rendering, rendered `config`/`config --images`, Caddy `validate`, prebuilt-only rendered config and no-service-build behavior, prior API/worker/Admin Web image builds and non-root smoke checks, and `git diff --check`.
 - Scope note: no production services were started with real credentials. The unstaged `apps/worker/tsconfig.build.tsbuildinfo` generated-metadata change was inspected and left untouched as possible concurrent user work. The pre-existing untracked production/staging plan files remain unstaged and unmodified.
 
+## Task 9 completion
+
+- Task 9: complete (direct PostgreSQL migration gate, image, command-level tests, README, and production Compose target-schema integration).
+- Report: `.superpowers/sdd/production-hardening-plan/task-9-report.md`.
+- The gate validates a direct primary URL and schema, asserts `current_schema()` in each `psql` session with explicit `search_path` and `ON_ERROR_STOP`, deploys Prisma migrations, runs the unchanged phase-0 preflight/backfill SQL, validates named constraints, and atomically publishes a mode `0444` marker only after all checks pass.
+- Verification passed: 6/6 command-level tests, shell syntax, production boundary verifier, synthetic production Compose rendering, migration image build, disposable PostgreSQL migration/backfill/post-validation smoke twice, negative missing-schema smoke, and scoped diff checks.
+- DB limitation: the disposable database was empty, so mechanics and marker/rerun behavior were exercised but production data-specific backfill outcomes were not. No production services or credentials were used.
+
 ## Remaining tasks
 
-- Task 9: not started (migration gate integration).
 - Later staging/documentation/operational tasks remain unstarted.
