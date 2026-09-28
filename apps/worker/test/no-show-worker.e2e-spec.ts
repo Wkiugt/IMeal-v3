@@ -120,10 +120,15 @@ databaseDescribe('PostgreSQL no-show worker', () => {
     const first = await worker.processNoShows(TARGET_DATE_TEXT, {
       currentTime: PROCESSING_TIME,
     });
+    const outboxAfterFirstRun = await prisma.outboxEvent.findUnique({
+      where: { dedupeKey: `kitchen:no-show:${registration.id}` },
+    });
+    if (!outboxAfterFirstRun) {
+      throw new Error('Expected outbox event after first committed run');
+    }
     const retry = await worker.processNoShows(TARGET_DATE_TEXT, {
       currentTime: PROCESSING_TIME,
     });
-
     expect(first.processedCount).toBe(1);
     expect(retry.processedCount).toBe(0);
     expect(
@@ -147,6 +152,39 @@ databaseDescribe('PostgreSQL no-show worker', () => {
         where: { dedupeKey: `kitchen:no-show:${registration.id}` },
       }),
     ).toBe(1);
+    const penalty = await prisma.penalty.findFirst({
+      where: { registrationId: registration.id },
+    });
+    expect(penalty).toMatchObject({
+      registrationId: registration.id,
+      userId: user.id,
+      mealDate: TARGET_DATE,
+      amount: 50000,
+      reason: 'NO_SHOW',
+    });
+    if (!penalty) {
+      throw new Error('Expected penalty after committed no-show');
+    }
+    const outbox = await prisma.outboxEvent.findUnique({
+      where: { dedupeKey: `kitchen:no-show:${registration.id}` },
+    });
+    expect(outbox).toMatchObject({
+      id: expect.any(String),
+      aggregateType: 'REGISTRATION',
+      aggregateId: registration.id,
+      eventType: 'NO_SHOW_RECONCILED',
+      dedupeKey: `kitchen:no-show:${registration.id}`,
+      status: 'PENDING',
+    });
+    if (!outbox) {
+      throw new Error('Expected outbox event after committed retry');
+    }
+    expect(outbox.id).toBe(outboxAfterFirstRun.id);
+    expect(JSON.parse(outbox.payload)).toEqual({
+      registrationId: registration.id,
+      mealDate: TARGET_DATE_TEXT,
+      penaltyId: penalty.id,
+    });
 
     await expect(
       prisma.penalty.create({
@@ -189,6 +227,14 @@ databaseDescribe('PostgreSQL no-show worker', () => {
     ).toMatchObject({ status: 'NO_SHOW' });
     expect(
       await prisma.penalty.count({ where: { registrationId: registration.id } }),
+    ).toBe(1);
+    expect(
+      await prisma.outboxEvent.count({
+        where: {
+          dedupeKey: `kitchen:no-show:${registration.id}`,
+          eventType: 'NO_SHOW_RECONCILED',
+        },
+      }),
     ).toBe(1);
     expect(
       await prisma.auditLog.count({
@@ -264,5 +310,14 @@ databaseDescribe('PostgreSQL no-show worker', () => {
         },
       }),
     ).toBe(0);
+    expect(
+      await prisma.outboxEvent.count({
+        where: {
+          aggregateId: succeeding.registration.id,
+          eventType: 'NO_SHOW_RECONCILED',
+          dedupeKey: `kitchen:no-show:${succeeding.registration.id}`,
+        },
+      }),
+    ).toBe(1);
   });
 });

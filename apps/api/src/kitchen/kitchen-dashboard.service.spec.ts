@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { KitchenDashboardService } from './kitchen-dashboard.service.js';
 import { KitchenEventsService } from './kitchen-events.service.js';
+import type { SseMessageEvent } from './kitchen-events.service.js';
+import { KitchenDashboardService } from './kitchen-dashboard.service.js';
 
 const mockPrisma = {
   registration: {
@@ -407,6 +408,30 @@ describe('KitchenDashboardService', () => {
       sub1.unsubscribe();
       sub2.unsubscribe();
     });
+    it('emits heartbeat messages for connected kitchen devices', async () => {
+      vi.useFakeTimers();
+      const receivedEvents: SseMessageEvent[] = [];
+      const sub = eventsService.getEvents$('2026-09-03').subscribe((event) => {
+        receivedEvents.push(event);
+      });
+
+      try {
+        await vi.advanceTimersByTimeAsync(15000);
+
+        expect(receivedEvents).toHaveLength(1);
+        expect(receivedEvents[0]).toMatchObject({
+          type: 'HEARTBEAT',
+          data: { type: 'heartbeat' },
+        });
+        expect(receivedEvents[0].data).toMatchObject({
+          timestamp: expect.any(String),
+        });
+      } finally {
+        sub.unsubscribe();
+        vi.useRealTimers();
+      }
+    });
+
 
     it('notifyServingConfirmed emits snapshot counters to synchronize all devices', async () => {
       const emitSpy = vi.spyOn(eventsService, 'emitEvent');

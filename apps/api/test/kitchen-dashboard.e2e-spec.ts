@@ -16,6 +16,8 @@ import {
   expect,
 } from 'vitest';
 import { KitchenDashboardService } from './../src/kitchen/kitchen-dashboard.service.js';
+import { KitchenEventsService } from './../src/kitchen/kitchen-events.service.js';
+import { SessionService } from './../src/auth/session.service.js';
 
 type DashboardServiceMock = {
   getDashboardSnapshot: (...args: unknown[]) => Promise<unknown>;
@@ -285,6 +287,30 @@ describe('KitchenDashboardController (e2e)', () => {
       process.env.REQUIRE_AUTH = previousRequireAuth;
     }
   });
+  it('rejects an authenticated user without kitchen permission', async () => {
+    const previousRequireAuth = process.env.REQUIRE_AUTH;
+    process.env.REQUIRE_AUTH = 'true';
+    try {
+      vi.spyOn(app.get(SessionService), 'resolve').mockResolvedValue({
+        id: 'staff-1',
+        userId: 'staff-1',
+        email: 'staff@example.test',
+        name: 'Staff',
+        roles: [],
+        permissions: [],
+        sessionId: 'session-1',
+        isActive: true,
+      });
+      const res = await request(app.getHttpServer())
+        .get('/v1/kitchen/days/2026-09-03/dashboard')
+        .set('Authorization', 'Bearer valid-session-token');
+
+      expect(res.status).toBe(403);
+      expect(dashboardService.getDashboardSnapshot).not.toHaveBeenCalled();
+    } finally {
+      process.env.REQUIRE_AUTH = previousRequireAuth;
+    }
+  });
   it('preserves array-valued validation details through the canonical mapper', async () => {
     const requestId = '33333333-3333-4333-8333-333333333333';
     const res = await request(app.getHttpServer())
@@ -320,6 +346,143 @@ describe('KitchenDashboardController (e2e)', () => {
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('text/event-stream');
   });
+  it('serializes matching SSE events and filters other meal dates', async () => {
+    const eventsService = app.get(KitchenEventsService);
+    const bodyPromise = new Promise<string>((resolve, reject) => {
+      let settled = false;
+      const timeout = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          reject(new Error('Timed out waiting for matching SSE event'));
+        }
+      }, 2000);
+      const test = request(app.getHttpServer())
+        .get('/v1/kitchen/days/2026-09-03/events')
+        .buffer(false)
+        .parse((res, callback) => {
+          let body = '';
+          res.setEncoding('utf8');
+          res.on('data', (chunk: string) => {
+            body += chunk;
+            if (body.includes('id: route-serving-event')) {
+              settled = true;
+              clearTimeout(timeout);
+              callback(null, body);
+              if ('destroy' in res && typeof res.destroy === 'function') {
+                res.destroy();
+              }
+              resolve(body);
+            }
+          });
+          res.on('error', (error) => {
+            if (!settled) {
+              settled = true;
+              clearTimeout(timeout);
+              reject(error);
+            }
+          });
+        });
+      test.end((error) => {
+        if (
+          error &&
+          !settled &&
+          (error as NodeJS.ErrnoException).code !== 'ECONNRESET'
+        ) {
+          settled = true;
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    eventsService.emitEvent({
+      eventId: 'route-other-date',
+      eventType: 'SERVING_CONFIRMED',
+      mealDate: '2026-09-04',
+      payload: { servedCount: 99 },
+    });
+    eventsService.emitEvent({
+      eventId: 'route-serving-event',
+      eventType: 'SERVING_CONFIRMED',
+      mealDate: '2026-09-03',
+      requestId: 'route-request',
+      occurredAt: '2026-09-03T12:00:00.000Z',
+      payload: { servedCount: 1, servingIds: ['serving-1'] },
+    });
+
+    const body = await bodyPromise;
+    expect(body).toContain('id: route-serving-event');
+    expect(body).toContain('event: SERVING_CONFIRMED');
+    expect(body).toContain(
+      'data: {"eventId":"route-serving-event","eventType":"SERVING_CONFIRMED"',
+    );
+    expect(body).not.toContain('route-other-date');
+  });
+  it('keeps the SSE route alive with heartbeat frames', async () => {
+    vi.useFakeTimers();
+    try {
+      const bodyPromise = new Promise<string>((resolve, reject) => {
+        let settled = false;
+        const test = request(app.getHttpServer())
+          .get('/v1/kitchen/days/2026-09-03/events')
+          .buffer(false)
+          .parse((res, callback) => {
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (chunk: string) => {
+              body += chunk;
+              if (body.includes('event: HEARTBEAT')) {
+                settled = true;
+                callback(null, body);
+                if (
+                  'destroy' in res &&
+                  typeof res.destroy === 'function'
+                ) {
+                  res.destroy();
+                }
+                resolve(body);
+              }
+            });
+            res.on('error', (error) => {
+              if (!settled) {
+                settled = true;
+                reject(error);
+              }
+            });
+          });
+        test.end((error) => {
+          if (error && !settled) {
+            settled = true;
+            reject(error);
+          }
+        });
+      });
+
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(15000);
+      const body = await bodyPromise;
+
+      expect(body).toContain('event: HEARTBEAT');
+      expect(body).toContain('data: {"type":"heartbeat","timestamp":');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('/api/kitchen/days/:date/events (GET SSE) - serves the alias route', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/kitchen/days/2026-09-03/events')
+      .buffer(false)
+      .parse((res, callback) => {
+        if ('destroy' in res && typeof res.destroy === 'function') {
+          res.destroy();
+        }
+        callback(null, null);
+      });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/event-stream');
+  });
+
 
   it('/api/kitchen/days/:date/dashboard (GET) - works with alias route', async () => {
     const res = await request(app.getHttpServer()).get(
