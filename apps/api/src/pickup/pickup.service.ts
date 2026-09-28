@@ -1065,7 +1065,8 @@ export class PickupService {
         dailyMenu: {
           include: {
             revisions: {
-              orderBy: { createdAt: 'desc' },
+              where: { revision: { not: null } },
+              orderBy: [{ revision: 'desc' }, { id: 'desc' }],
               take: 1,
               select: { id: true },
             },

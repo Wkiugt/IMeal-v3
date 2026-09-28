@@ -88,6 +88,68 @@ describe('PickupController (e2e)', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ options: [] });
   });
+  it('/api/me/pickup-options (GET) fails closed for incomplete snapshots', async () => {
+    const actualPickupService = new PickupService();
+    const fakePrisma = {
+      appSetting: {
+        findUnique: vi.fn().mockResolvedValue({ value: 'true' }),
+      },
+      mealDay: { findFirst: vi.fn() },
+      registration: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'legacy-registration',
+          status: 'ACTIVE',
+          mealDate: new Date('2026-09-04T00:00:00.000Z'),
+          mealChoice: 'REGULAR',
+          mealServing: null,
+          ownerNameSnapshot: 'Legacy owner',
+          employeeCodeSnapshot: 'EMP-1',
+          serviceLocationId: 'location-1',
+          serviceLocationAssignmentId: 'assignment-1',
+          serviceLocationCode: 'HQ',
+          serviceLocationName: null,
+          serviceLocationAddress: 'Address',
+          serviceLocationEffectiveFrom: new Date(
+            '2026-09-01T00:00:00.000Z',
+          ),
+          serviceLocationSnapshotAt: new Date('2026-09-01T00:00:00.000Z'),
+          menuRevisionId: 'revision-1',
+          menuNameSnapshot: 'Lunch',
+          menuDescriptionSnapshot: null,
+          menuImageSnapshot: null,
+          menuRevision: {
+            id: 'revision-1',
+            mealName: 'Lunch',
+            description: null,
+            imageUrl: null,
+          },
+        }),
+      },
+      pickupDelegation: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+    const pickupServiceWithDatabase = actualPickupService as unknown as {
+      prisma: typeof fakePrisma;
+    };
+    pickupServiceWithDatabase.prisma = fakePrisma;
+    const moduleFixture = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideProvider(PickupService)
+      .useValue(actualPickupService)
+      .compile();
+    const testApp = moduleFixture.createNestApplication();
+    await testApp.init();
+
+    try {
+      const res = await request(testApp.getHttpServer()).get(
+        '/api/me/pickup-options',
+      );
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ options: [] });
+    } finally {
+      await testApp.close();
+    }
+  });
 
   it('/api/me/qr (POST) requires exact intent and presenter evidence', async () => {
     const res = await request(app.getHttpServer())

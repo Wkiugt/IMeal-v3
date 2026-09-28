@@ -1260,6 +1260,54 @@ describe('PickupService', () => {
       });
       expect(tx.mealDay.findFirst).toHaveBeenCalledTimes(1);
     });
+    it('uses the verified revision when a later-created legacy revision exists', async () => {
+      const revisions = [
+        {
+          id: 'legacy-created-later',
+          revision: null,
+          createdAt: new Date('2026-09-24T03:59:00.000Z'),
+        },
+        {
+          id: 'verified-created-earlier',
+          revision: 1,
+          createdAt: new Date('2026-09-24T03:00:00.000Z'),
+        },
+      ];
+      const findFirst = vi.fn().mockImplementation((query) => {
+        const revisionQuery = query.include.dailyMenu.include.revisions;
+        expect(revisionQuery.where).toEqual({ revision: { not: null } });
+        expect(revisionQuery.orderBy).toEqual([
+          { revision: 'desc' },
+          { id: 'desc' },
+        ]);
+        const selected = revisions
+          .filter((revision) => revision.revision !== null)
+          .sort(
+            (left, right) =>
+              (right.revision ?? 0) - (left.revision ?? 0) ||
+              right.id.localeCompare(left.id),
+          )[0];
+        return {
+          isServingReady: false,
+          serviceStartAt: new Date('2026-09-24T03:30:00.000Z'),
+          serviceEndAt: new Date('2026-09-24T06:30:00.000Z'),
+          dailyMenu: {
+            isEnabled: true,
+            revisions: [{ id: selected.id }],
+          },
+        };
+      });
+      const tx = {
+        appSetting: {
+          findUnique: vi.fn().mockResolvedValue({ value: 'true' }),
+        },
+        mealDay: { findFirst },
+      };
+
+      await expect(assertServingReady(tx)).resolves.toMatchObject({
+        currentMenuRevisionId: 'verified-created-earlier',
+      });
+    });
   });
   describe('Task 7 exact intent and presenter evidence', () => {
     const validEvidence = {
