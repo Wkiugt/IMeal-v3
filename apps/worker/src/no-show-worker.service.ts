@@ -15,6 +15,10 @@ import {
   workerLogFields,
   WORKER_STRUCTURED_LOGGER,
 } from './common/structured-logger.js';
+import {
+  WORKER_HEALTH_SHUTDOWN_COORDINATOR,
+  type WorkerShutdownCoordinatorLike,
+} from './health.service.js';
 
 export interface ProcessNoShowsOptions {
   force?: boolean;
@@ -32,6 +36,9 @@ export class NoShowWorkerService {
     private readonly prisma: PrismaService,
     @Optional() notificationPublisher?: WorkerNotificationPublisher,
     @Optional() @Inject(WORKER_STRUCTURED_LOGGER) logger?: StructuredLogger,
+    @Optional()
+    @Inject(WORKER_HEALTH_SHUTDOWN_COORDINATOR)
+    private readonly shutdown?: WorkerShutdownCoordinatorLike,
   ) {
     this.logger = logger ?? createWorkerStructuredLogger();
     this.notificationPublisher =
@@ -60,6 +67,16 @@ export class NoShowWorkerService {
     timeZone: 'Asia/Ho_Chi_Minh',
   })
   async handleNoShowCron() {
+    const release = this.shutdown?.registerInFlight?.();
+    if (this.shutdown?.registerInFlight && !release) {
+      this.logger.info(
+        'worker.no_show.skipped',
+        workerLogFields('worker.no_show.skipped', {
+          errorCode: 'SHUTDOWN_DRAINING',
+        }),
+      );
+      return;
+    }
     this.logger.info(
       'worker.no_show.started',
       workerLogFields('worker.no_show.started'),
@@ -74,6 +91,8 @@ export class NoShowWorkerService {
         }),
       );
       throw error;
+    } finally {
+      release?.();
     }
   }
 

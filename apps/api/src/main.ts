@@ -34,6 +34,7 @@ async function bootstrap() {
   );
   const logger = app.get<JsonStructuredLogger>(API_STRUCTURED_LOGGER);
   app.useLogger(nestLoggerAdapter(logger));
+  app.enableShutdownHooks(['SIGTERM', 'SIGINT']);
   // Listen on 0.0.0.0 for Docker compatibility
   const port = process.env.PORT ?? 3000;
   await app.listen(port, '0.0.0.0');

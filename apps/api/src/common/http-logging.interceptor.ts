@@ -2,19 +2,25 @@ import {
   CallHandler,
   ExecutionContext,
   HttpException,
-  Inject,
   Injectable,
+  Inject,
   NestInterceptor,
+  Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { REQUEST_ID_HEADER, resolveRequestId } from '@imeal/observability';
 import type { StructuredLogger } from '@imeal/observability';
-import { catchError, type Observable, tap, throwError } from 'rxjs';
+import { catchError, finalize, type Observable, tap, throwError } from 'rxjs';
 import {
   firstHeader,
   requestIdFromRequest,
   type RequestContextRequest,
 } from './request-context.js';
 import { API_STRUCTURED_LOGGER } from './structured-logger.js';
+import {
+  HEALTH_SHUTDOWN_COORDINATOR,
+  type ShutdownCoordinatorLike,
+} from '../health/health.types.js';
 
 export { API_STRUCTURED_LOGGER };
 
@@ -27,6 +33,9 @@ export class HttpLoggingInterceptor implements NestInterceptor {
   constructor(
     @Inject(API_STRUCTURED_LOGGER)
     private readonly logger: StructuredLogger,
+    @Optional()
+    @Inject(HEALTH_SHUTDOWN_COORDINATOR)
+    private readonly shutdown?: ShutdownCoordinatorLike,
   ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -40,6 +49,20 @@ export class HttpLoggingInterceptor implements NestInterceptor {
     );
     const method = request.method ?? 'UNKNOWN';
     const route = normalizeRoute(request);
+    const healthRoute = route === '/health' || route.startsWith('/health/');
+    const release =
+      healthRoute && this.shutdown?.isDraining?.()
+        ? undefined
+        : this.shutdown?.registerInFlight?.();
+    if (this.shutdown?.registerInFlight && !release && !healthRoute) {
+      return throwError(
+        () =>
+          new ServiceUnavailableException({
+            code: 'SERVICE_UNAVAILABLE',
+            message: 'Service is shutting down.',
+          }),
+      );
+    }
 
     const log = (
       statusCode: number,
@@ -66,6 +89,7 @@ export class HttpLoggingInterceptor implements NestInterceptor {
         log(statusCode, 'http.error', 'error');
         return throwError(() => error);
       }),
+      finalize(() => release?.()),
     );
   }
 }

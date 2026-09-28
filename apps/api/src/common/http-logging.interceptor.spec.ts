@@ -93,4 +93,48 @@ describe('HttpLoggingInterceptor', () => {
       JSON.stringify((sink.error as ReturnType<typeof vi.fn>).mock.calls[0]),
     ).not.toContain('123456');
   });
+
+  it('rejects new work while draining but still serves health probes', async () => {
+    const sink = logger();
+    const registerInFlight = vi.fn().mockReturnValue(undefined);
+    const shutdown = {
+      isDraining: vi.fn().mockReturnValue(true),
+      registerInFlight,
+    };
+    const interceptor = new HttpLoggingInterceptor(sink, shutdown);
+    const response = { statusCode: 200 };
+
+    await expect(
+      lastValueFrom(
+        interceptor.intercept(
+          context(
+            {
+              method: 'GET',
+              route: { path: '/registrations' },
+              url: '/registrations',
+            },
+            response,
+          ),
+          { handle: () => of({ ok: true }) },
+        ),
+      ),
+    ).rejects.toMatchObject({ response: { code: 'SERVICE_UNAVAILABLE' } });
+
+    await expect(
+      lastValueFrom(
+        interceptor.intercept(
+          context(
+            {
+              method: 'GET',
+              route: { path: '/health/ready' },
+              url: '/health/ready',
+            },
+            response,
+          ),
+          { handle: () => of({ ok: true }) },
+        ),
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect(registerInFlight).toHaveBeenCalledTimes(1);
+  });
 });

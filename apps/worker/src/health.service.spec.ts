@@ -76,7 +76,7 @@ describe('HealthService', () => {
     );
 
     expect((await service.ready('request-1')).statusCode).toBe(503);
-    service.onModuleInit();
+    service.markSchedulerInitialized();
 
     const result = await service.ready('request-1');
 
@@ -90,7 +90,7 @@ describe('HealthService', () => {
       prisma as unknown as PrismaService,
       shutdown,
     );
-    service.onModuleInit();
+    service.markSchedulerInitialized();
 
     const result = await service.ready('request-1');
 
@@ -105,7 +105,7 @@ describe('HealthService', () => {
       prisma as unknown as PrismaService,
       shutdown,
     );
-    service.onModuleInit();
+    service.markSchedulerInitialized();
 
     const result = await service.ready('request-1');
 
@@ -119,7 +119,7 @@ describe('HealthService', () => {
       prisma as unknown as PrismaService,
       shutdown,
     );
-    service.onModuleInit();
+    service.markSchedulerInitialized();
 
     expect(service.live('request-1').statusCode).toBe(503);
     expect((await service.ready('request-1')).statusCode).toBe(503);

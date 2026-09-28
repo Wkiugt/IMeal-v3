@@ -10,6 +10,10 @@ import {
   workerLogFields,
   WORKER_STRUCTURED_LOGGER,
 } from './common/structured-logger.js';
+import {
+  WORKER_HEALTH_SHUTDOWN_COORDINATOR,
+  type WorkerShutdownCoordinatorLike,
+} from './health.service.js';
 
 const CLAIM_BATCH_SIZE = 100;
 const PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
@@ -162,6 +166,9 @@ export class NotificationDispatchService {
     private readonly prisma: PrismaService,
     @Optional() expo?: Expo,
     @Optional() @Inject(WORKER_STRUCTURED_LOGGER) logger?: StructuredLogger,
+    @Optional()
+    @Inject(WORKER_HEALTH_SHUTDOWN_COORDINATOR)
+    private readonly shutdown?: WorkerShutdownCoordinatorLike,
   ) {
     this.logger = logger ?? createWorkerStructuredLogger();
     this.expo = expo ?? new Expo();
@@ -169,7 +176,21 @@ export class NotificationDispatchService {
 
   @Cron('*/15 * * * * *')
   async handleNotificationDispatchCron() {
-    return this.processNotificationDispatch();
+    const release = this.shutdown?.registerInFlight?.();
+    if (this.shutdown?.registerInFlight && !release) {
+      this.logger.info(
+        'worker.notification_dispatch.skipped',
+        workerLogFields('worker.notification_dispatch.skipped', {
+          errorCode: 'SHUTDOWN_DRAINING',
+        }),
+      );
+      return;
+    }
+    try {
+      return await this.processNotificationDispatch();
+    } finally {
+      release?.();
+    }
   }
 
   async processNotificationDispatch(now: Date = new Date()) {

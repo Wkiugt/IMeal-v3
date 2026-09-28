@@ -10,6 +10,10 @@ import {
   workerLogFields,
   WORKER_STRUCTURED_LOGGER,
 } from './common/structured-logger.js';
+import {
+  WORKER_HEALTH_SHUTDOWN_COORDINATOR,
+  type WorkerShutdownCoordinatorLike,
+} from './health.service.js';
 
 export type OtpPurpose = 'SESSION_LOGIN';
 
@@ -744,6 +748,9 @@ export class OtpDeliveryWorker {
     @Optional() outbox?: OtpDeliveryOutboxPort,
     @Optional() clock?: () => Date,
     @Optional() @Inject(WORKER_STRUCTURED_LOGGER) logger?: StructuredLogger,
+    @Optional()
+    @Inject(WORKER_HEALTH_SHUTDOWN_COORDINATOR)
+    private readonly shutdown?: WorkerShutdownCoordinatorLike,
   ) {
     this.logger = logger ?? createWorkerStructuredLogger();
     this.provider = provider ?? new WorkerConfiguredOtpProvider();
@@ -753,7 +760,27 @@ export class OtpDeliveryWorker {
 
   @Cron('*/15 * * * * *')
   async handleOtpDeliveryCron(): Promise<DeliveryRunResult> {
-    return this.processOnce(new Date());
+    const release = this.shutdown?.registerInFlight?.();
+    if (this.shutdown?.registerInFlight && !release) {
+      this.logger.info(
+        'worker.otp_delivery.skipped',
+        workerLogFields('worker.otp_delivery.skipped', {
+          errorCode: 'SHUTDOWN_DRAINING',
+        }),
+      );
+      return {
+        claimed: 0,
+        sent: 0,
+        retried: 0,
+        failed: 0,
+        suppressed: 0,
+      };
+    }
+    try {
+      return await this.processOnce(new Date());
+    } finally {
+      release?.();
+    }
   }
 
   async processOnce(now: Date): Promise<DeliveryRunResult> {

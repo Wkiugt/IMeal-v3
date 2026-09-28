@@ -10,6 +10,10 @@ import {
   workerLogFields,
   WORKER_STRUCTURED_LOGGER,
 } from './common/structured-logger.js';
+import {
+  WORKER_HEALTH_SHUTDOWN_COORDINATOR,
+  type WorkerShutdownCoordinatorLike,
+} from './health.service.js';
 
 const TIME_ZONE = 'Asia/Ho_Chi_Minh';
 
@@ -60,6 +64,9 @@ export class NotificationReminderService {
     private readonly prisma: PrismaService,
     @Optional() publisher?: WorkerNotificationPublisher,
     @Optional() @Inject(WORKER_STRUCTURED_LOGGER) logger?: StructuredLogger,
+    @Optional()
+    @Inject(WORKER_HEALTH_SHUTDOWN_COORDINATOR)
+    private readonly shutdown?: WorkerShutdownCoordinatorLike,
   ) {
     this.logger = logger ?? createWorkerStructuredLogger();
     this.publisher = publisher ?? new WorkerNotificationPublisher();
@@ -67,12 +74,40 @@ export class NotificationReminderService {
 
   @Cron('0 10 * * 0', { timeZone: TIME_ZONE })
   async handleRegistrationReminderCron() {
-    return this.processRegistrationReminders();
+    const release = this.shutdown?.registerInFlight?.();
+    if (this.shutdown?.registerInFlight && !release) {
+      this.logger.info(
+        'worker.registration_reminder.skipped',
+        workerLogFields('worker.registration_reminder.skipped', {
+          errorCode: 'SHUTDOWN_DRAINING',
+        }),
+      );
+      return;
+    }
+    try {
+      return await this.processRegistrationReminders();
+    } finally {
+      release?.();
+    }
   }
 
   @Cron('30 11 * * *', { timeZone: TIME_ZONE })
   async handlePickupReminderCron() {
-    return this.processPickupReminders();
+    const release = this.shutdown?.registerInFlight?.();
+    if (this.shutdown?.registerInFlight && !release) {
+      this.logger.info(
+        'worker.pickup_reminder.skipped',
+        workerLogFields('worker.pickup_reminder.skipped', {
+          errorCode: 'SHUTDOWN_DRAINING',
+        }),
+      );
+      return;
+    }
+    try {
+      return await this.processPickupReminders();
+    } finally {
+      release?.();
+    }
   }
 
   async processRegistrationReminders(now: Date = new Date()): Promise<ReminderResult> {

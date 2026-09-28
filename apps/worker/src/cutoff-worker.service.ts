@@ -7,6 +7,10 @@ import {
   workerLogFields,
   WORKER_STRUCTURED_LOGGER,
 } from './common/structured-logger.js';
+import {
+  WORKER_HEALTH_SHUTDOWN_COORDINATOR,
+  type WorkerShutdownCoordinatorLike,
+} from './health.service.js';
 
 @Injectable()
 export class CutoffWorkerService {
@@ -15,6 +19,9 @@ export class CutoffWorkerService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() @Inject(WORKER_STRUCTURED_LOGGER) logger?: StructuredLogger,
+    @Optional()
+    @Inject(WORKER_HEALTH_SHUTDOWN_COORDINATOR)
+    private readonly shutdown?: WorkerShutdownCoordinatorLike,
   ) {
     this.logger = logger ?? createWorkerStructuredLogger();
   }
@@ -30,44 +37,59 @@ export class CutoffWorkerService {
     // Normalize to midnight UTC for querying (depends on exact timezone implementation)
     const targetDateStr = tomorrow.toISOString().split('T')[0];
     const jobName = `cutoff_lock_${targetDateStr}`;
-    this.logger.info(
-      'worker.cutoff.started',
-      workerLogFields('worker.cutoff.started', { jobName }),
-    );
-
-    await this.prisma.$transaction(async (tx) => {
-      // Idempotency check
-      const existingJob = await tx.jobRun.findFirst({
-        where: { jobName },
-      });
-
-      if (existingJob) {
-        this.logger.info(
-          'worker.cutoff.skipped',
-          workerLogFields('worker.cutoff.skipped', { jobName }),
-        );
-        return;
-      }
-
-      await tx.jobRun.create({
-        data: {
-          jobName,
-          status: 'COMPLETED',
-          completedAt: new Date(),
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          action: 'cutoff_lock',
-          details: `System locked menus for ${targetDateStr}`,
-        },
-      });
-
+    const release = this.shutdown?.registerInFlight?.();
+    if (this.shutdown?.registerInFlight && !release) {
       this.logger.info(
-        'worker.cutoff.completed',
-        workerLogFields('worker.cutoff.completed', { jobName }),
+        'worker.cutoff.skipped',
+        workerLogFields('worker.cutoff.skipped', {
+          jobName,
+          errorCode: 'SHUTDOWN_DRAINING',
+        }),
       );
-    });
+      return;
+    }
+    try {
+      this.logger.info(
+        'worker.cutoff.started',
+        workerLogFields('worker.cutoff.started', { jobName }),
+      );
+
+      await this.prisma.$transaction(async (tx) => {
+        // Idempotency check
+        const existingJob = await tx.jobRun.findFirst({
+          where: { jobName },
+        });
+
+        if (existingJob) {
+          this.logger.info(
+            'worker.cutoff.skipped',
+            workerLogFields('worker.cutoff.skipped', { jobName }),
+          );
+          return;
+        }
+
+        await tx.jobRun.create({
+          data: {
+            jobName,
+            status: 'COMPLETED',
+            completedAt: new Date(),
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            action: 'cutoff_lock',
+            details: `System locked menus for ${targetDateStr}`,
+          },
+        });
+
+        this.logger.info(
+          'worker.cutoff.completed',
+          workerLogFields('worker.cutoff.completed', { jobName }),
+        );
+      });
+    } finally {
+      release?.();
+    }
   }
 }

@@ -20,8 +20,11 @@ export type ApiHealthResult = {
   body: ApiHealthBody;
 };
 
+export type ShutdownRegistration = () => void;
+
 export interface ShutdownCoordinatorLike {
   isDraining(): boolean;
+  registerInFlight?(): ShutdownRegistration | undefined;
 }
 
 export const HEALTH_SHUTDOWN_COORDINATOR = Symbol(

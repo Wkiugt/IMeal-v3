@@ -3,8 +3,8 @@ import type { LoggerService } from '@nestjs/common';
 import { AppModule } from './app.module.js';
 import { WORKER_STRUCTURED_LOGGER } from './common/structured-logger.js';
 import type { StructuredLogger } from '@imeal/observability';
+import { HealthService } from './health.service.js';
 import { validateWorkerEnvironment } from './otp-delivery-worker.service.js';
-
 function nestLoggerAdapter(logger: StructuredLogger): LoggerService {
   const fields = (event: string) => ({
     service: 'worker' as const,
@@ -26,9 +26,11 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const logger = app.get<StructuredLogger>(WORKER_STRUCTURED_LOGGER);
   app.useLogger(nestLoggerAdapter(logger));
+  app.enableShutdownHooks(['SIGTERM', 'SIGINT']);
   // Listen on 0.0.0.0 for Docker compatibility
   const port = process.env.PORT ?? 3001;
   await app.listen(port, '0.0.0.0');
+  app.get(HealthService).markSchedulerInitialized();
   logger.info('worker.started', {
     service: 'worker',
     release: process.env.RELEASE_VERSION?.trim() || 'unconfigured',

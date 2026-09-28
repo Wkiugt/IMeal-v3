@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { StructuredLogger } from '@imeal/observability';
 import { readMigrationEvidence } from '@imeal/observability';
 import {
@@ -32,8 +32,11 @@ export type WorkerHealthResult = {
   body: WorkerHealthBody;
 };
 
+export type WorkerShutdownRegistration = () => void;
+
 export interface WorkerShutdownCoordinatorLike {
   isDraining(): boolean;
+  registerInFlight?(): WorkerShutdownRegistration | undefined;
 }
 
 export const WORKER_HEALTH_SHUTDOWN_COORDINATOR = Symbol(
@@ -44,7 +47,7 @@ export const WORKER_HEALTH_ENVIRONMENT_VALIDATED = Symbol(
 );
 
 @Injectable()
-export class HealthService implements OnModuleInit {
+export class HealthService {
   private readonly logger: StructuredLogger;
   private schedulerInitialized = false;
   private lastLoop: WorkerHealthCheckState = 'not_configured';
@@ -62,9 +65,6 @@ export class HealthService implements OnModuleInit {
     this.logger = logger ?? createWorkerStructuredLogger();
   }
 
-  onModuleInit(): void {
-    this.schedulerInitialized = true;
-  }
 
   markSchedulerInitialized(): void {
     this.schedulerInitialized = true;

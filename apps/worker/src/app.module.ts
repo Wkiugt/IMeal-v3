@@ -19,7 +19,9 @@ import { HealthController } from './health.controller.js';
 import {
   HealthService,
   WORKER_HEALTH_ENVIRONMENT_VALIDATED,
+  WORKER_HEALTH_SHUTDOWN_COORDINATOR,
 } from './health.service.js';
+import { ShutdownCoordinator } from './shutdown-coordinator.js';
 import {
   createWorkerStructuredLogger,
   WORKER_STRUCTURED_LOGGER,
@@ -31,6 +33,11 @@ import {
   providers: [
     PrismaService,
     HealthService,
+    ShutdownCoordinator,
+    {
+      provide: WORKER_HEALTH_SHUTDOWN_COORDINATOR,
+      useExisting: ShutdownCoordinator,
+    },
     {
       provide: WORKER_HEALTH_ENVIRONMENT_VALIDATED,
       useValue: true,

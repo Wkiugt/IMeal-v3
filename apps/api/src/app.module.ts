@@ -19,9 +19,13 @@ import {
 import { ApiExceptionFilter } from './common/api-exception.filter.js';
 import { HttpLoggingInterceptor } from './common/http-logging.interceptor.js';
 import { RequestIdInterceptor } from './common/request-id.interceptor.js';
+import { ShutdownCoordinator } from './common/shutdown-coordinator.js';
 import { HealthController } from './health/health.controller.js';
 import { HealthService } from './health/health.service.js';
-import { HEALTH_ENVIRONMENT_VALIDATED } from './health/health.types.js';
+import {
+  HEALTH_ENVIRONMENT_VALIDATED,
+  HEALTH_SHUTDOWN_COORDINATOR,
+} from './health/health.types.js';
 import { PrismaService } from './common/prisma.service.js';
 @Global()
 @Module({
@@ -39,6 +43,11 @@ import { PrismaService } from './common/prisma.service.js';
   controllers: [AppController, HealthController],
   providers: [
     PrismaService,
+    ShutdownCoordinator,
+    {
+      provide: HEALTH_SHUTDOWN_COORDINATOR,
+      useExisting: ShutdownCoordinator,
+    },
     AppService,
     HealthService,
     { provide: HEALTH_ENVIRONMENT_VALIDATED, useValue: true },
@@ -52,9 +61,11 @@ import { PrismaService } from './common/prisma.service.js';
     },
     {
       provide: APP_INTERCEPTOR,
-      useFactory: (logger: StructuredLogger) =>
-        new HttpLoggingInterceptor(logger),
-      inject: [API_STRUCTURED_LOGGER],
+      useFactory: (
+        logger: StructuredLogger,
+        shutdown: ShutdownCoordinator,
+      ) => new HttpLoggingInterceptor(logger, shutdown),
+      inject: [API_STRUCTURED_LOGGER, HEALTH_SHUTDOWN_COORDINATOR],
     },
     {
       provide: APP_FILTER,
