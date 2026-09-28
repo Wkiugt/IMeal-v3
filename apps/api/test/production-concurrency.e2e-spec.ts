@@ -562,6 +562,156 @@ describe('Production PostgreSQL concurrency paths', () => {
       }),
     ).toBe(0);
   });
+  it('cancels before pickup when account disable owns the registration lock first', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client);
+    const pickupClient = trackClient(new PrismaClient());
+    const disableClient = trackClient(new PrismaClient());
+    const pickup = createPickupService(pickupClient);
+    await pickup.ownedClient.$disconnect();
+
+    type TransactionClientOwner = {
+      $transaction: (
+        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
+        options?: unknown,
+      ) => Promise<unknown>;
+    };
+    const disableTransaction = disableClient as unknown as TransactionClientOwner;
+    const originalDisableTransaction = disableTransaction.$transaction.bind(
+      disableClient,
+    );
+    let disableLockEntered!: () => void;
+    const disableLockStarted = new Promise<void>((resolve) => {
+      disableLockEntered = resolve;
+    });
+    let releaseDisableLock!: () => void;
+    const disableLockRelease = new Promise<void>((resolve) => {
+      releaseDisableLock = resolve;
+    });
+    disableTransaction.$transaction = (callback, options) =>
+      originalDisableTransaction(
+        async (tx) => {
+          await tx.$queryRaw`
+            SELECT id FROM registrations
+            WHERE id = ${world.registrations[0].id}
+            FOR UPDATE
+          `;
+          disableLockEntered();
+          await disableLockRelease;
+          return callback(tx);
+        },
+        options,
+      );
+
+    const pickupTransaction = pickupClient as unknown as TransactionClientOwner;
+    const originalPickupTransaction = pickupTransaction.$transaction.bind(
+      pickupClient,
+    );
+    let pickupTransactionEntered!: () => void;
+    const pickupTransactionStarted = new Promise<void>((resolve) => {
+      pickupTransactionEntered = resolve;
+    });
+    pickupTransaction.$transaction = (callback, options) =>
+      originalPickupTransaction(
+        async (tx) => {
+          pickupTransactionEntered();
+          return callback(tx);
+        },
+        options,
+      );
+
+    const domainRegistrationService = await loadDomainRegistrationService();
+    vi.setSystemTime(SERVING_TIME);
+    const disablePromise = domainRegistrationService.disableUserAccount(
+      world.owner.id,
+      SERVING_TIME,
+      world.kitchen.id,
+      disableClient,
+    );
+    await disableLockStarted;
+    const pickupPromise = pickup.service.confirmPickup(
+      { pickupSessionId: world.session.id, idempotencyKey: 'disable-first-key' },
+      kitchenActor,
+    );
+    await pickupTransactionStarted;
+    releaseDisableLock();
+
+    const [disableResult, pickupResult] = await Promise.race([
+      Promise.allSettled([disablePromise, pickupPromise]),
+      sleep(5_000).then(() => {
+        throw new Error('disable-first account/pickup race did not complete');
+      }),
+    ]);
+    if (disableResult.status !== 'fulfilled') throw disableResult.reason;
+    expect(disableResult.value).toEqual([world.registrations[0].id]);
+    if (pickupResult.status !== 'rejected') {
+      throw new Error('Pickup unexpectedly won the disable-first race');
+    }
+    expect(pickupResult.reason).toMatchObject({
+      response: { code: 'PICKUP_INTENT_CONFLICT' },
+    });
+
+    const finalRegistration = await client.registration.findUniqueOrThrow({
+      where: { id: world.registrations[0].id },
+      include: { mealServing: true },
+    });
+    expect(finalRegistration).toMatchObject({
+      status: 'CANCELLED',
+      cancelReason: 'ACCOUNT_DISABLED',
+      cancelledByUserId: world.kitchen.id,
+      cancelledAt: SERVING_TIME,
+      mealServing: null,
+    });
+    expect(
+      await client.user.findUniqueOrThrow({ where: { id: world.owner.id } }),
+    ).toMatchObject({ isActive: false });
+    expect(
+      await client.mealServing.count({
+        where: { registrationId: world.registrations[0].id },
+      }),
+    ).toBe(0);
+    expect(
+      await client.servingConfirmRequest.count({
+        where: {
+          callerUserId: kitchenActor.id,
+          idempotencyKey: 'disable-first-key',
+        },
+      }),
+    ).toBe(0);
+    expect(
+      await client.mealEvent.count({
+        where: { mealServing: { registrationId: world.registrations[0].id } },
+      }),
+    ).toBe(0);
+    expect(
+      await client.penalty.count({
+        where: { registrationId: world.registrations[0].id },
+      }),
+    ).toBe(0);
+    expect(
+      await client.pickupDelegation.count({
+        where: { registrationId: world.registrations[0].id },
+      }),
+    ).toBe(0);
+    expect(
+      await client.pickupSession.findUniqueOrThrow({
+        where: { id: world.session.id },
+      }),
+    ).toMatchObject({ consumedAt: null });
+    expect(
+      await client.auditLog.count({
+        where: { action: 'SERVING_CONFIRMED' },
+      }),
+    ).toBe(0);
+    expect(
+      await client.auditLog.count({
+        where: {
+          action: 'registration_account_disabled',
+          userId: world.kitchen.id,
+        },
+      }),
+    ).toBe(1);
+  });
   it('serializes real RegistrationsService create calls for one registration', async () => {
     const client = trackClient(new PrismaClient());
     const world = await createServingWorld(client, { registrationCount: 0 });

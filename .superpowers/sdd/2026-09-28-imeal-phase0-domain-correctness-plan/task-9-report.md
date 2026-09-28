@@ -238,8 +238,9 @@ rollout gate decision above:
   `(meal_date, id)` order before locking the user row. It retains the
   canonical cancellation transition, cutoff bypass, delegation revocation,
   audit rows, deterministic notifications, actor metadata, and outbox writes.
-  A real pickup/account-disable cross-transaction barrier test covers the
-  registration-first order and no-deadlock winner semantics.
+  Real pickup/account-disable cross-transaction barrier scenarios cover both
+  pickup-first and disable-first registration lock ownership, no-deadlock
+  completion, and the corresponding winner/rollback side effects.
 - Account-disable coverage also proves a future registration is cancelled
   after the 14:00 VN cutoff while ordinary cancellation rejects at that
   same time. Incomplete historical fixture writes remain isolated in a
@@ -259,7 +260,7 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/imeal yarn workspace 
 BLOCKED — local PostgreSQL refused connections on ::1:5432 and 127.0.0.1:5432; 42 tests skipped and setup/teardown failed to connect
 
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/imeal yarn workspace @imeal/api exec vitest run --config ./vitest.config.e2e.ts test/production-concurrency.e2e-spec.ts
-BLOCKED — setup failed with ECONNREFUSED on ::1:5432 and 127.0.0.1:5432; all 11 tests skipped and the afterAll cleanup hook timed out at 120 seconds
+BLOCKED — setup failed with ECONNREFUSED on ::1:5432 and 127.0.0.1:5432; all 12 tests skipped and the afterAll cleanup hook timed out at 120 seconds
 
 yarn workspace @imeal/api exec tsc --noEmit -p tsconfig.json && yarn workspace @imeal/core exec tsc --noEmit -p tsconfig.json
 PASS
