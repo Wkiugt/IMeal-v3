@@ -59,6 +59,27 @@ const delegatedPickupOption = {
     email: 'owner@example.com',
   },
 } as const;
+const completePickupSnapshot = {
+  ownerNameSnapshot: 'Meal Owner',
+  employeeCodeSnapshot: 'EMP-1',
+  serviceLocationId: 'location-1',
+  serviceLocationAssignmentId: 'assignment-1',
+  serviceLocationCode: 'HQ',
+  serviceLocationName: 'Approved HQ',
+  serviceLocationAddress: 'Approved address',
+  serviceLocationEffectiveFrom: new Date('2026-09-01T00:00:00.000Z'),
+  serviceLocationSnapshotAt: new Date('2026-09-01T00:00:00.000Z'),
+  menuRevisionId: 'menu-revision-1',
+  menuNameSnapshot: 'Lunch',
+  menuDescriptionSnapshot: 'Lunch description',
+  menuImageSnapshot: 'https://example.test/lunch.jpg',
+  menuRevision: {
+    id: 'menu-revision-1',
+    mealName: 'Lunch',
+    description: 'Lunch description',
+    imageUrl: 'https://example.test/lunch.jpg',
+  },
+} as const;
 
 vi.mock('@prisma/client', () => {
   return {
@@ -158,6 +179,7 @@ describe('PickupService', () => {
         mealDate: new Date('2026-09-04T00:00:00.000Z'),
         mealChoice: 'VEGETARIAN',
         mealServing: null,
+        ...completePickupSnapshot,
       });
       mockPrisma.pickupDelegation.findMany.mockResolvedValueOnce([
         {
@@ -165,11 +187,13 @@ describe('PickupService', () => {
           registrationId: 'reg2',
           registration: {
             id: 'reg2',
+            status: 'ACTIVE',
             mealDate: new Date('2026-09-04T00:00:00.000Z'),
             mealChoice: 'REGULAR',
+            mealServing: null,
+            ...completePickupSnapshot,
             user: {
               id: 'owner-1',
-              name: 'Meal Owner',
               email: 'owner@example.com',
             },
           },
@@ -198,6 +222,130 @@ describe('PickupService', () => {
           },
         },
       ]);
+    });
+    it('getPickupOptions_excludes_legacy_registration_with_null_snapshot', async () => {
+      vi.spyOn(service, 'checkServingWindow').mockResolvedValue(undefined);
+      mockPrisma.registration.findUnique.mockResolvedValueOnce({
+        id: 'legacy-reg',
+        status: 'ACTIVE',
+        mealDate: new Date('2026-09-04T00:00:00.000Z'),
+        mealChoice: 'REGULAR',
+        mealServing: null,
+        ...completePickupSnapshot,
+        serviceLocationName: null,
+      });
+      mockPrisma.pickupDelegation.findMany.mockResolvedValueOnce([]);
+
+      const result = await service.getPickupOptions('owner-1');
+
+      expect(result.options).toEqual([]);
+    });
+    it('accepts null description and image when immutable revision omits them', async () => {
+      vi.spyOn(service, 'checkServingWindow').mockResolvedValue(undefined);
+      mockPrisma.registration.findUnique.mockResolvedValueOnce({
+        id: 'reg-null-content',
+        status: 'ACTIVE',
+        mealDate: new Date('2026-09-04T00:00:00.000Z'),
+        mealChoice: 'REGULAR',
+        mealServing: null,
+        ...completePickupSnapshot,
+        menuDescriptionSnapshot: null,
+        menuImageSnapshot: null,
+        menuRevision: {
+          ...completePickupSnapshot.menuRevision,
+          description: null,
+          imageUrl: null,
+        },
+      });
+      mockPrisma.pickupDelegation.findMany.mockResolvedValueOnce([]);
+
+      const result = await service.getPickupOptions('owner-1');
+
+      expect(result.options).toEqual([
+        {
+          type: 'OWN',
+          registrationId: 'reg-null-content',
+          mealDate: '2026-09-04',
+          mealChoice: 'REGULAR',
+        },
+      ]);
+    });
+  });
+  describe('pickup snapshot invariants', () => {
+    const resolveIntentLocation = (
+      target: PickupService,
+      registrationIds: string[],
+    ) =>
+      (
+        target as unknown as {
+          resolveIntentLocation: (
+            ids: string[],
+            at: Date,
+          ) => Promise<unknown>;
+        }
+      ).resolveIntentLocation(registrationIds, new Date('2026-09-04T04:00:00.000Z'));
+
+    it.each([
+      ['name', { serviceLocationName: null }],
+      ['address', { serviceLocationAddress: null }],
+      ['menu', { menuNameSnapshot: null }],
+    ])(
+      'resolvePickup_rejects_missing_name_address_or_menu_snapshot (%s)',
+      async (_field, patch) => {
+        const registration = {
+          id: 'reg1',
+          userId: 'presenter-1',
+          status: 'ACTIVE',
+          mealDate: new Date('2026-09-04T00:00:00.000Z'),
+          mealServing: null,
+          ...completePickupSnapshot,
+          ...patch,
+        };
+        vi.spyOn(
+          service as unknown as { loadRegistrationContexts: () => unknown },
+          'loadRegistrationContexts',
+        ).mockResolvedValue([registration] as never);
+
+        await expect(resolveIntentLocation(service, ['reg1'])).rejects.toMatchObject({
+          response: { code: 'PICKUP_INTENT_CONFLICT' },
+        });
+      },
+    );
+
+    it('selected_items_must_share_one_snapshot_location', async () => {
+      const registrations = [
+        {
+          id: 'reg1',
+          userId: 'presenter-1',
+          status: 'ACTIVE',
+          mealDate: new Date('2026-09-04T00:00:00.000Z'),
+          mealServing: null,
+          ...completePickupSnapshot,
+        },
+        {
+          id: 'reg2',
+          userId: 'owner-2',
+          status: 'ACTIVE',
+          mealDate: new Date('2026-09-04T00:00:00.000Z'),
+          mealServing: null,
+          ...completePickupSnapshot,
+          serviceLocationId: 'location-2',
+          serviceLocationCode: 'ANNEX',
+        },
+      ];
+      const loadContexts = vi
+        .spyOn(
+          service as unknown as { loadRegistrationContexts: () => unknown },
+          'loadRegistrationContexts',
+        )
+        .mockResolvedValue(registrations as never);
+
+      await expect(
+        resolveIntentLocation(service, ['reg1', 'reg2']),
+      ).rejects.toMatchObject({
+        response: { code: 'PICKUP_INTENT_CONFLICT' },
+      });
+      expect(loadContexts).toHaveBeenCalledWith(['reg1', 'reg2']);
     });
   });
 
@@ -366,11 +514,23 @@ describe('PickupService', () => {
         userId: 'presenter-1',
         mealDate: new Date('2026-09-24T00:00:00.000Z'),
         mealChoice: 'REGULAR',
+        ownerNameSnapshot: 'Presenter',
+        employeeCodeSnapshot: 'EMP-1',
+        menuRevisionId: 'menu-revision-1',
+        menuNameSnapshot: 'Lunch',
+        menuDescriptionSnapshot: 'Lunch description',
+        menuImageSnapshot: 'https://example.test/lunch.jpg',
+        immutableMenuRevisionId: 'menu-revision-1',
+        immutableMenuName: 'Lunch',
+        immutableMenuDescription: 'Lunch description',
+        immutableMenuImage: 'https://example.test/lunch.jpg',
         serviceLocationId: 'location-1',
+        serviceLocationAssignmentId: 'assignment-1',
         serviceLocationCode: 'HQ',
         serviceLocationName: 'Approved HQ',
         serviceLocationAddress: 'Approved address',
         serviceLocationEffectiveFrom: new Date('2026-09-01T00:00:00.000Z'),
+        serviceLocationSnapshotAt: new Date('2026-09-01T00:00:00.000Z'),
         mealServingId: null,
       };
     }
@@ -476,10 +636,18 @@ describe('PickupService', () => {
       vi.spyOn(service, 'checkServingWindow').mockResolvedValue(undefined);
       vi.spyOn(
         service as unknown as {
-          assertServingReadyInTransaction: () => Promise<string | null>;
+          assertServingReadyInTransaction: () => Promise<{
+            currentMenuRevisionId: string;
+            serviceStartAt: Date;
+            serviceEndAt: Date;
+          }>;
         },
         'assertServingReadyInTransaction',
-      ).mockResolvedValue('menu-revision-1');
+      ).mockResolvedValue({
+        currentMenuRevisionId: 'menu-revision-1',
+        serviceStartAt: new Date('2026-09-24T03:30:00.000Z'),
+        serviceEndAt: new Date('2026-09-24T06:30:00.000Z'),
+      });
     });
 
     it('commits every item or none when one locked registration is stale', async () => {
@@ -603,6 +771,7 @@ describe('PickupService', () => {
           {
             ...makeRegistration('reg-1'),
             userId: 'owner-1',
+            ownerNameSnapshot: 'Owner',
           },
         ],
         delegations: [
@@ -650,13 +819,23 @@ describe('PickupService', () => {
           ownerNameSnapshot: 'Owner',
           presenterUserId: 'delegate-1',
           receiverType: 'PROXY',
+          kitchenUserId: 'kitchen-1',
+          locationId: 'location-1',
+          locationShortCode: 'HQ',
+          locationNameSnapshot: 'Approved HQ',
+          locationAddressSnapshot: 'Approved address',
+          mealDate: new Date('2026-09-24T00:00:00.000Z'),
+          menuRevisionId: 'menu-revision-1',
+          menuNameSnapshot: 'Lunch',
+          menuDescriptionSnapshot: 'Lunch description',
+          menuImageSnapshot: 'https://example.test/lunch.jpg',
           intentHash: 'qr-hash-proxy',
           servingVerificationId: 'qr-hash-proxy',
-          menuRevisionId: 'menu-revision-1',
           pickupSessionId: 'session-1',
           delegationId: 'delegation-1',
         }),
       });
+      expect(tx.registration.update).not.toHaveBeenCalled();
       expect(tx.auditLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           userId: 'kitchen-1',
@@ -673,6 +852,32 @@ describe('PickupService', () => {
         data: expect.objectContaining({ consumedAt: expect.any(Date) }),
       });
     });
+    it('confirmPickup_rejects_snapshot_changed_after_resolve', async () => {
+      const tx = makeTransaction({
+        registrations: [
+          {
+            ...makeRegistration('reg-1'),
+            menuRevisionId: 'menu-revision-old',
+            immutableMenuRevisionId: 'menu-revision-old',
+          },
+        ],
+      });
+      mockPrisma.$transaction.mockImplementationOnce(async (callback) =>
+        callback(tx as never),
+      );
+
+      await expect(
+        service.confirmPickup(
+          { pickupSessionId: 'session-1', idempotencyKey: 'key-stale-snapshot' },
+          kitchenActor,
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'PICKUP_INTENT_CONFLICT' },
+      });
+      expect(tx.mealServing.create).not.toHaveBeenCalled();
+      expect(tx.pickupDelegation.updateMany).not.toHaveBeenCalled();
+      expect(tx.registration.update).not.toHaveBeenCalled();
+    });
     it('emits realtime only after the serving transaction resolves', async () => {
       const tx = makeTransaction();
       let committed = false;
@@ -685,10 +890,18 @@ describe('PickupService', () => {
       );
       vi.spyOn(
         serviceWithEvents as unknown as {
-          assertServingReadyInTransaction: () => Promise<null>;
+          assertServingReadyInTransaction: () => Promise<{
+            currentMenuRevisionId: string;
+            serviceStartAt: Date;
+            serviceEndAt: Date;
+          }>;
         },
         'assertServingReadyInTransaction',
-      ).mockResolvedValue(null);
+      ).mockResolvedValue({
+        currentMenuRevisionId: 'menu-revision-1',
+        serviceStartAt: new Date('2026-09-24T03:30:00.000Z'),
+        serviceEndAt: new Date('2026-09-24T06:30:00.000Z'),
+      });
       mockPrisma.$transaction.mockImplementationOnce(async (callback) => {
         const result = await callback(tx as never);
         committed = true;
@@ -784,10 +997,18 @@ describe('PickupService', () => {
       );
       vi.spyOn(
         serviceWithEvents as unknown as {
-          assertServingReadyInTransaction: () => Promise<null>;
+          assertServingReadyInTransaction: () => Promise<{
+            currentMenuRevisionId: string;
+            serviceStartAt: Date;
+            serviceEndAt: Date;
+          }>;
         },
         'assertServingReadyInTransaction',
-      ).mockResolvedValue(null);
+      ).mockResolvedValue({
+        currentMenuRevisionId: 'menu-revision-1',
+        serviceStartAt: new Date('2026-09-24T03:30:00.000Z'),
+        serviceEndAt: new Date('2026-09-24T06:30:00.000Z'),
+      });
       const tx = makeTransaction();
       let committed = false;
       mockPrisma.$transaction.mockImplementationOnce(async (callback) => {
@@ -960,7 +1181,11 @@ describe('PickupService', () => {
           transaction: unknown,
           dateKey: string,
           at: Date,
-        ) => Promise<string | null>;
+        ) => Promise<{
+          currentMenuRevisionId: string;
+          serviceStartAt: Date;
+          serviceEndAt: Date;
+        }>;
       };
       return privateService.assertServingReadyInTransaction(
         tx,
@@ -1018,6 +1243,8 @@ describe('PickupService', () => {
         mealDay: {
           findFirst: vi.fn().mockResolvedValue({
             isServingReady: false,
+            serviceStartAt: new Date('2026-09-24T03:30:00.000Z'),
+            serviceEndAt: new Date('2026-09-24T06:30:00.000Z'),
             dailyMenu: {
               isEnabled: true,
               revisions: [{ id: 'revision-current' }],
@@ -1026,7 +1253,11 @@ describe('PickupService', () => {
         },
       };
 
-      await expect(assertServingReady(tx)).resolves.toBe('revision-current');
+      await expect(assertServingReady(tx)).resolves.toEqual({
+        currentMenuRevisionId: 'revision-current',
+        serviceStartAt: new Date('2026-09-24T03:30:00.000Z'),
+        serviceEndAt: new Date('2026-09-24T06:30:00.000Z'),
+      });
       expect(tx.mealDay.findFirst).toHaveBeenCalledTimes(1);
     });
   });
@@ -1116,9 +1347,8 @@ describe('PickupService', () => {
           userId: 'presenter-1',
           status: 'ACTIVE',
           mealDate: new Date('2026-09-04T00:00:00.000Z'),
-          serviceLocationId: 'location-1',
-          serviceLocationCode: 'HQ',
           mealServing: null,
+          ...completePickupSnapshot,
         },
       ]);
 
@@ -1159,12 +1389,8 @@ describe('PickupService', () => {
           userId: 'presenter-1',
           status: 'ACTIVE',
           mealDate: new Date('2026-09-04T00:00:00.000Z'),
-          serviceLocationId: 'location-1',
-          serviceLocationCode: 'HQ',
-          serviceLocationName: 'HQ',
-          serviceLocationAddress: 'Address',
-          serviceLocationEffectiveFrom: null,
           mealServing: null,
+          ...completePickupSnapshot,
         },
       ]);
 
@@ -1251,9 +1477,8 @@ describe('PickupService', () => {
           userId: 'presenter-1',
           status: 'ACTIVE',
           mealDate: new Date('2026-09-04T00:00:00.000Z'),
-          serviceLocationId: 'location-1',
-          serviceLocationCode: 'HQ',
           mealServing: null,
+          ...completePickupSnapshot,
         },
       ]);
       mockPrisma.$queryRaw.mockResolvedValueOnce([
@@ -1306,9 +1531,8 @@ describe('PickupService', () => {
           userId: 'presenter-1',
           status: 'ACTIVE',
           mealDate: new Date('2026-09-04T00:00:00.000Z'),
-          serviceLocationId: 'location-1',
-          serviceLocationCode: 'HQ',
           mealServing: null,
+          ...completePickupSnapshot,
         },
       ]);
 
@@ -1350,9 +1574,8 @@ describe('PickupService', () => {
           userId: 'presenter-1',
           status: 'ACTIVE',
           mealDate: new Date('2026-09-04T00:00:00.000Z'),
-          serviceLocationId: 'location-1',
-          serviceLocationCode: 'HQ',
           mealServing: null,
+          ...completePickupSnapshot,
         },
       ]);
 
@@ -1390,9 +1613,8 @@ describe('PickupService', () => {
           userId: 'presenter-1',
           status: 'ACTIVE',
           mealDate: new Date('2026-09-05T00:00:00.000Z'),
-          serviceLocationId: 'location-1',
-          serviceLocationCode: 'HQ',
           mealServing: null,
+          ...completePickupSnapshot,
         },
       ]);
 
@@ -1426,9 +1648,9 @@ describe('PickupService', () => {
           userId: 'presenter-1',
           status: 'ACTIVE',
           mealDate: new Date('2026-09-24T00:00:00.000Z'),
-          serviceLocationId: 'location-1',
-          serviceLocationCode: 'MISSING',
           mealServing: null,
+          ...completePickupSnapshot,
+          serviceLocationCode: 'MISSING',
         },
       ]);
 
@@ -1447,9 +1669,9 @@ describe('PickupService', () => {
           userId: 'presenter-1',
           status: 'ACTIVE',
           mealDate: new Date(),
-          serviceLocationId: 'location-1',
-          serviceLocationCode: 'MISSING',
           mealServing: null,
+          ...completePickupSnapshot,
+          serviceLocationCode: 'MISSING',
         },
       ]);
       const signed = taskService.generateSignedQr('presenter-1', ['reg1']);

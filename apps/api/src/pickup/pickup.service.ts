@@ -108,21 +108,95 @@ function exceptionCode(error: unknown): unknown {
   return response.code;
 }
 
-
 function toMealDateKey(value: Date | string): string {
   return value instanceof Date ? value.toISOString().slice(0, 10) : value;
 }
+
+function hasCompleteRegistrationSnapshot(registration: {
+  ownerNameSnapshot: string | null;
+  employeeCodeSnapshot: string | null;
+  serviceLocationId: string | null;
+  serviceLocationAssignmentId: string | null;
+  serviceLocationCode: string | null;
+  serviceLocationName: string | null;
+  serviceLocationAddress: string | null;
+  serviceLocationEffectiveFrom: Date | null;
+  serviceLocationSnapshotAt: Date | null;
+  menuRevisionId: string | null;
+  menuNameSnapshot: string | null;
+  menuDescriptionSnapshot: string | null;
+  menuImageSnapshot: string | null;
+}): boolean {
+  return (
+    typeof registration.ownerNameSnapshot === 'string' &&
+    registration.ownerNameSnapshot.length > 0 &&
+    typeof registration.employeeCodeSnapshot === 'string' &&
+    registration.employeeCodeSnapshot.length > 0 &&
+    typeof registration.serviceLocationId === 'string' &&
+    registration.serviceLocationId.length > 0 &&
+    typeof registration.serviceLocationAssignmentId === 'string' &&
+    registration.serviceLocationAssignmentId.length > 0 &&
+    typeof registration.serviceLocationCode === 'string' &&
+    registration.serviceLocationCode.length > 0 &&
+    typeof registration.serviceLocationName === 'string' &&
+    registration.serviceLocationName.length > 0 &&
+    typeof registration.serviceLocationAddress === 'string' &&
+    registration.serviceLocationAddress.length > 0 &&
+    registration.serviceLocationEffectiveFrom instanceof Date &&
+    Number.isFinite(registration.serviceLocationEffectiveFrom.getTime()) &&
+    registration.serviceLocationSnapshotAt instanceof Date &&
+    Number.isFinite(registration.serviceLocationSnapshotAt.getTime()) &&
+    typeof registration.menuRevisionId === 'string' &&
+    registration.menuRevisionId.length > 0 &&
+    typeof registration.menuNameSnapshot === 'string' &&
+    registration.menuNameSnapshot.length > 0
+  );
+}
+
+interface MenuRevisionSnapshot {
+  id: string;
+  mealName: string | null;
+  description: string | null;
+  imageUrl: string | null;
+}
+
+function hasMatchingMenuSnapshot(
+  registration: Parameters<typeof hasCompleteRegistrationSnapshot>[0],
+  revision: MenuRevisionSnapshot | null,
+): boolean {
+  return (
+    hasCompleteRegistrationSnapshot(registration) &&
+    revision !== null &&
+    registration.menuRevisionId === revision.id &&
+    registration.menuNameSnapshot === revision.mealName &&
+    registration.menuDescriptionSnapshot === revision.description &&
+    registration.menuImageSnapshot === revision.imageUrl
+  );
+}
+
 interface LockedRegistration {
   id: string;
   status: string;
   userId: string;
   mealDate: Date;
   mealChoice: string;
+  ownerNameSnapshot: string | null;
+  employeeCodeSnapshot: string | null;
+  menuRevisionId: string | null;
+  menuNameSnapshot: string | null;
+  menuDescriptionSnapshot: string | null;
+  menuImageSnapshot: string | null;
+  immutableMenuRevisionId: string | null;
+  immutableMenuName: string | null;
+  immutableMenuDescription: string | null;
+  immutableMenuImage: string | null;
   serviceLocationId: string | null;
+  serviceLocationAssignmentId: string | null;
   serviceLocationCode: string | null;
   serviceLocationName: string | null;
   serviceLocationAddress: string | null;
   serviceLocationEffectiveFrom: Date | null;
+  serviceLocationSnapshotAt: Date | null;
   mealServingId: string | null;
 }
 
@@ -290,6 +364,31 @@ export class PickupService {
     const today = this.getTodayDate();
 
     // 1. Own eligible registration
+    const registrationSnapshotSelect = {
+      ownerNameSnapshot: true,
+      employeeCodeSnapshot: true,
+      serviceLocationId: true,
+      serviceLocationAssignmentId: true,
+      serviceLocationCode: true,
+      serviceLocationName: true,
+      serviceLocationAddress: true,
+      serviceLocationEffectiveFrom: true,
+      serviceLocationSnapshotAt: true,
+      menuRevisionId: true,
+      menuNameSnapshot: true,
+      menuDescriptionSnapshot: true,
+      menuImageSnapshot: true,
+      menuRevision: {
+        select: {
+          id: true,
+          mealName: true,
+          description: true,
+          imageUrl: true,
+        },
+      },
+    } as const;
+
+    // 1. Own eligible registration
     const ownRegistration = await this.prisma.registration.findUnique({
       where: { userId_mealDate: { userId, mealDate: today } },
       select: {
@@ -298,6 +397,7 @@ export class PickupService {
         mealDate: true,
         mealChoice: true,
         mealServing: true,
+        ...registrationSnapshotSelect,
       },
     });
 
@@ -316,9 +416,12 @@ export class PickupService {
         registration: {
           select: {
             id: true,
+            status: true,
             mealDate: true,
             mealChoice: true,
-            user: true,
+            mealServing: true,
+            user: { select: { id: true, email: true } },
+            ...registrationSnapshotSelect,
           },
         },
       },
@@ -329,7 +432,9 @@ export class PickupService {
     if (
       ownRegistration &&
       ownRegistration.status === 'ACTIVE' &&
-      !ownRegistration.mealServing
+      !ownRegistration.mealServing &&
+      hasCompleteRegistrationSnapshot(ownRegistration) &&
+      hasMatchingMenuSnapshot(ownRegistration, ownRegistration.menuRevision)
     ) {
       options.push({
         type: 'OWN',
@@ -340,19 +445,26 @@ export class PickupService {
     }
 
     for (const del of delegations) {
+      const registration = del.registration;
+      if (
+        !registration ||
+        registration.status !== 'ACTIVE' ||
+        registration.mealServing ||
+        !hasCompleteRegistrationSnapshot(registration) ||
+        !hasMatchingMenuSnapshot(registration, registration.menuRevision)
+      ) {
+        continue;
+      }
       options.push({
         type: 'DELEGATED',
         registrationId: del.registrationId,
         delegationId: del.id,
-        mealDate: toMealDateKey(del.registration.mealDate),
-        mealChoice: del.registration.mealChoice,
+        mealDate: toMealDateKey(registration.mealDate),
+        mealChoice: registration.mealChoice,
         owner: {
-          id: del.registration.user.id,
-          name:
-            del.registration.user.name ||
-            del.registration.user.email ||
-            'N/A',
-          email: del.registration.user.email,
+          id: registration.user.id,
+          name: registration.ownerNameSnapshot!,
+          email: registration.user.email,
         },
       });
     }
@@ -386,11 +498,27 @@ export class PickupService {
         userId: true,
         status: true,
         mealDate: true,
+        ownerNameSnapshot: true,
+        employeeCodeSnapshot: true,
+        menuRevisionId: true,
+        menuNameSnapshot: true,
+        menuDescriptionSnapshot: true,
+        menuImageSnapshot: true,
+        menuRevision: {
+          select: {
+            id: true,
+            mealName: true,
+            description: true,
+            imageUrl: true,
+          },
+        },
         serviceLocationId: true,
+        serviceLocationAssignmentId: true,
         serviceLocationCode: true,
         serviceLocationName: true,
         serviceLocationAddress: true,
         serviceLocationEffectiveFrom: true,
+        serviceLocationSnapshotAt: true,
         mealServing: { select: { id: true } },
       },
     });
@@ -399,11 +527,20 @@ export class PickupService {
       userId: string;
       status: string;
       mealDate: Date;
+      ownerNameSnapshot: string | null;
+      employeeCodeSnapshot: string | null;
+      menuRevisionId: string | null;
+      menuNameSnapshot: string | null;
+      menuDescriptionSnapshot: string | null;
+      menuImageSnapshot: string | null;
+      menuRevision: MenuRevisionSnapshot | null;
       serviceLocationId: string | null;
+      serviceLocationAssignmentId: string | null;
       serviceLocationCode: string | null;
       serviceLocationName: string | null;
       serviceLocationAddress: string | null;
       serviceLocationEffectiveFrom: Date | null;
+      serviceLocationSnapshotAt: Date | null;
       mealServing: { id: string } | null;
     }>;
   }
@@ -423,12 +560,15 @@ export class PickupService {
     const mealDate = toMealDateKey(contexts[0].mealDate);
     const locationIds = new Set<string>();
     for (const context of contexts) {
+      const completeSnapshot =
+        hasCompleteRegistrationSnapshot(context) &&
+        hasMatchingMenuSnapshot(context, context.menuRevision);
       if (
         context.status !== 'ACTIVE' ||
         context.mealServing ||
         toMealDateKey(context.mealDate) !== mealDate ||
         !context.serviceLocationId ||
-        !context.serviceLocationCode
+        !completeSnapshot
       ) {
         throw pickupError(
           'PICKUP_INTENT_CONFLICT',
@@ -895,7 +1035,11 @@ export class PickupService {
     tx: Prisma.TransactionClient,
     mealDateKey: string,
     at: Date,
-  ): Promise<string | null> {
+  ): Promise<{
+    currentMenuRevisionId: string;
+    serviceStartAt: Date;
+    serviceEndAt: Date;
+  }> {
     if (!isWithinServingWindow(at)) {
       throw new ForbiddenException({
         code: 'PICKUP_WINDOW_CLOSED',
@@ -930,8 +1074,19 @@ export class PickupService {
       },
     });
     const currentMenu = mealDay?.dailyMenu;
-    const menuRevisionId = currentMenu?.revisions?.[0]?.id ?? null;
-    if (!mealDay || !currentMenu || !currentMenu.isEnabled || !menuRevisionId) {
+    const currentMenuRevisionId = currentMenu?.revisions?.[0]?.id ?? null;
+    const serviceStartAt = mealDay?.serviceStartAt ?? null;
+    const serviceEndAt = mealDay?.serviceEndAt ?? null;
+    if (
+      !mealDay ||
+      !currentMenu ||
+      !currentMenu.isEnabled ||
+      !currentMenuRevisionId ||
+      !(serviceStartAt instanceof Date) ||
+      !Number.isFinite(serviceStartAt.getTime()) ||
+      !(serviceEndAt instanceof Date) ||
+      !Number.isFinite(serviceEndAt.getTime())
+    ) {
       throw pickupError(
         'PICKUP_INTENT_CONFLICT',
         'The serving menu is no longer available.',
@@ -944,7 +1099,11 @@ export class PickupService {
         details: PICKUP_AVAILABILITY_DETAILS,
       });
     }
-    return menuRevisionId;
+    return {
+      currentMenuRevisionId,
+      serviceStartAt,
+      serviceEndAt,
+    };
   }
 
 
@@ -1170,12 +1329,6 @@ export class PickupService {
             'Pickup session intent does not match its registration set.',
           );
         }
-        const mealDateKey = toMealDateKey(session.mealDate);
-        const menuRevisionId = await this.assertServingReadyInTransaction(
-          tx,
-          mealDateKey,
-          confirmationTime,
-        );
 
         const registrations =
           (await tx.$queryRaw<LockedRegistration[]>`
@@ -1185,13 +1338,27 @@ export class PickupService {
               r."user_id" AS "userId",
               r."meal_date" AS "mealDate",
               r."meal_choice" AS "mealChoice",
+              r."owner_name_snapshot" AS "ownerNameSnapshot",
+              r."employee_code_snapshot" AS "employeeCodeSnapshot",
+              r."menu_revision_id" AS "menuRevisionId",
+              r."menu_name_snapshot" AS "menuNameSnapshot",
+              r."menu_description_snapshot" AS "menuDescriptionSnapshot",
+              r."menu_image_snapshot" AS "menuImageSnapshot",
+              mr."id" AS "immutableMenuRevisionId",
+              mr."meal_name" AS "immutableMenuName",
+              mr."description" AS "immutableMenuDescription",
+              mr."image_url" AS "immutableMenuImage",
               r."service_location_id" AS "serviceLocationId",
+              r."service_location_assignment_id" AS "serviceLocationAssignmentId",
               r."service_location_code" AS "serviceLocationCode",
               r."service_location_name" AS "serviceLocationName",
               r."service_location_address" AS "serviceLocationAddress",
               r."service_location_effective_from" AS "serviceLocationEffectiveFrom",
+              r."service_location_snapshot_at" AS "serviceLocationSnapshotAt",
               ms."id" AS "mealServingId"
             FROM "registrations" r
+            LEFT JOIN "daily_menu_revisions" mr
+              ON mr."id" = r."menu_revision_id"
             LEFT JOIN "meal_servings" ms
               ON ms."registration_id" = r."id"
             WHERE r."id" IN (${Prisma.join(registrationIds)})
@@ -1211,6 +1378,13 @@ export class PickupService {
           );
         }
 
+        const mealDateKey = toMealDateKey(session.mealDate);
+        const servingReadiness =
+          await this.assertServingReadyInTransaction(
+            tx,
+            mealDateKey,
+            confirmationTime,
+          );
         const delegations =
           (await tx.$queryRaw<LockedDelegation[]>`
             SELECT
@@ -1220,7 +1394,7 @@ export class PickupService {
               d."delegate_user_id" AS "delegateUserId"
             FROM "pickup_delegations" d
             WHERE d."registration_id" IN (${Prisma.join(registrationIds)})
-            ORDER BY d."registration_id", d."id"
+            ORDER BY d."id"
             FOR UPDATE OF d
           `) ?? [];
         const acceptedByRegistration = new Map<string, LockedDelegation>();
@@ -1296,12 +1470,23 @@ export class PickupService {
 
         const registrationLocationIds = new Set<string>();
         for (const registration of registrations) {
+          const completeSnapshot =
+            hasCompleteRegistrationSnapshot(registration) &&
+            hasMatchingMenuSnapshot(registration, {
+              id: registration.immutableMenuRevisionId ?? '',
+              mealName: registration.immutableMenuName,
+              description: registration.immutableMenuDescription,
+              imageUrl: registration.immutableMenuImage,
+            });
           if (
             registration.status !== 'ACTIVE' ||
             registration.mealServingId ||
             toMealDateKey(registration.mealDate) !== mealDateKey ||
             !registration.serviceLocationId ||
-            !registration.serviceLocationCode
+            !registration.serviceLocationCode ||
+            !completeSnapshot ||
+            registration.menuRevisionId !==
+              servingReadiness.currentMenuRevisionId
           ) {
             throw pickupError(
               'PICKUP_INTENT_CONFLICT',
@@ -1473,23 +1658,24 @@ export class PickupService {
           const serving = await tx.mealServing.create({
             data: {
               registrationId: plan.registration.id,
-              ownerUserId: owner.id,
+              ownerUserId: plan.registration.userId,
               ownerEmailSnapshot: owner.email,
-              ownerNameSnapshot: owner.name,
+              ownerNameSnapshot: plan.registration.ownerNameSnapshot!,
               presenterUserId: session.presenterUserId,
               receiverType: plan.receiverType,
               kitchenUserId: callerUserId,
               kitchenPermissionContext: 'kitchen.serve',
               scannerDeviceId: null,
-              locationId: location.id,
-              locationShortCode:
-                plan.registration.serviceLocationCode ?? location.shortCode,
-              locationNameSnapshot:
-                plan.registration.serviceLocationName ?? location.displayName,
+              locationId: plan.registration.serviceLocationId!,
+              locationShortCode: plan.registration.serviceLocationCode!,
+              locationNameSnapshot: plan.registration.serviceLocationName!,
               locationAddressSnapshot:
-                plan.registration.serviceLocationAddress ?? location.address,
+                plan.registration.serviceLocationAddress!,
               mealDate: parseMealDate(mealDateKey),
-              menuRevisionId,
+              menuRevisionId: plan.registration.menuRevisionId!,
+              menuNameSnapshot: plan.registration.menuNameSnapshot!,
+              menuDescriptionSnapshot: plan.registration.menuDescriptionSnapshot,
+              menuImageSnapshot: plan.registration.menuImageSnapshot,
               requestId,
               pickupSessionId,
               intentHash: session.intentHash,
@@ -1501,10 +1687,6 @@ export class PickupService {
                   : null,
               servedAt: confirmationTime,
             },
-          });
-          await tx.registration.update({
-            where: { id: plan.registration.id },
-            data: { status: 'SERVED' },
           });
           await tx.mealEvent.create({
             data: {
@@ -1522,7 +1704,7 @@ export class PickupService {
                 owner: {
                   id: owner.id,
                   email: owner.email,
-                  name: owner.name,
+                  name: plan.registration.ownerNameSnapshot,
                 },
                 presenter: {
                   id: session.presenterUserId,
@@ -1537,15 +1719,10 @@ export class PickupService {
                   permissionContext: 'kitchen.serve',
                 },
                 location: {
-                  id: location.id,
-                  shortCode:
-                    plan.registration.serviceLocationCode ??
-                    location.shortCode,
-                  name:
-                    plan.registration.serviceLocationName ??
-                    location.displayName,
-                  address:
-                    plan.registration.serviceLocationAddress ?? location.address,
+                  id: plan.registration.serviceLocationId,
+                  shortCode: plan.registration.serviceLocationCode,
+                  name: plan.registration.serviceLocationName,
+                  address: plan.registration.serviceLocationAddress,
                 },
                 delegationId:
                   plan.receiverType === 'PROXY'
@@ -1555,7 +1732,11 @@ export class PickupService {
                 intentHash: session.intentHash,
                 mealDate: mealDateKey,
                 mealChoice: plan.registration.mealChoice,
-                menuRevisionId,
+                menuRevisionId: plan.registration.menuRevisionId,
+                menuNameSnapshot: plan.registration.menuNameSnapshot,
+                menuDescriptionSnapshot:
+                  plan.registration.menuDescriptionSnapshot,
+                menuImageSnapshot: plan.registration.menuImageSnapshot,
                 verification: {
                   id: verification.id,
                   result: verification.result,
