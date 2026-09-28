@@ -251,7 +251,31 @@ export async function writeTransaction(
     );
   }
 
+  const servedRegistrationIds = plan.registrations
+    .filter((row) => row.status === 'SERVED')
+    .map((row) => row.id);
+  const existingServingRegistrationIds = new Set(
+    (
+      servedRegistrationIds.length === 0
+        ? []
+        : await tx.mealServing.findMany({
+            where: { registrationId: { in: servedRegistrationIds } },
+            select: { registrationId: true },
+          })
+    ).map((row) => row.registrationId),
+  );
+  const servedRegistrationIdsToFinalize = servedRegistrationIds.filter(
+    (id) => !existingServingRegistrationIds.has(id),
+  );
+
   for (const row of plan.registrations) {
+    // The migration trigger requires a SERVED registration to already have
+    // its mealServing row. Seed those registrations as ACTIVE first, then
+    // finalize their status after the serving upserts below.
+    const registrationRow: SeedRegistrationRow =
+      row.status === 'SERVED' && !existingServingRegistrationIds.has(row.id)
+        ? { ...row, status: 'ACTIVE' }
+        : row;
     await upsertRow(
       stats,
       'registrations',
@@ -260,10 +284,10 @@ export async function writeTransaction(
       () =>
         tx.registration.upsert({
           where: { id: row.id },
-          create: registrationCreate(row),
-          update: registrationUpdate(row),
+          create: registrationCreate(registrationRow),
+          update: registrationUpdate(registrationRow),
         }),
-      () => registrationUpdate(row),
+      () => registrationUpdate(registrationRow),
     );
   }
 
@@ -351,6 +375,17 @@ export async function writeTransaction(
       () => tx.mealServing.upsert({ where: { id: row.id }, create: mealServingCreate(row), update: mealServingUpdate(row) }),
       () => mealServingUpdate(row),
     );
+  }
+
+  if (servedRegistrationIdsToFinalize.length > 0) {
+    try {
+      await tx.registration.updateMany({
+        where: { id: { in: servedRegistrationIdsToFinalize } },
+        data: { status: 'SERVED' },
+      });
+    } catch (error) {
+      throw new SeedOperationError('registrations', 'SERVED', error);
+    }
   }
 
   for (const row of plan.mealEvents) {

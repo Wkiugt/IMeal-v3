@@ -36,8 +36,20 @@ const registrationWindow = {
 const response = {
   menu: null,
   registrations: [
-    { id: 'active-1', mealDate: '2026-09-25', status: 'ACTIVE', mealChoice: 'VEGETARIAN' },
-    { id: 'cancelled-1', mealDate: '2026-09-24', status: 'CANCELLED', mealChoice: 'REGULAR' },
+    {
+      id: 'active-1',
+      mealDate: '2026-09-25',
+      status: 'ACTIVE',
+      mealChoice: 'VEGETARIAN',
+      menuRevisionId: null,
+    },
+    {
+      id: 'cancelled-1',
+      mealDate: '2026-09-24',
+      status: 'CANCELLED',
+      mealChoice: 'REGULAR',
+      menuRevisionId: null,
+    },
   ],
   registrationWindow,
 } satisfies v1.WeekRegistrationResponse;

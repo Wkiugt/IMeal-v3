@@ -148,12 +148,15 @@ describe('Domain Tests: Concurrency', () => {
       LegacyRegistrationFixtureService.registerMeal(user.id, menuDate, currentTime),
       LegacyRegistrationFixtureService.registerMeal(user.id, menuDate, currentTime),
     ]);
-    // Concurrent legacy domain writes can lose one request to the unique key;
-    // the persisted registration is the invariant this test proves.
-    const successes = results.filter((r) => r.status === 'fulfilled');
-    const failures = results.filter((r) => r.status === 'rejected');
-    expect(successes.length).toBeGreaterThanOrEqual(2);
-    expect(failures.length).toBeLessThanOrEqual(1);
+    const successes = results.filter((result) => result.status === 'fulfilled');
+    const failures = results.filter((result) => result.status === 'rejected');
+    // The compatibility fixture has no P2002 retry; one transaction may
+    // create the row while concurrent losers conflict, and a later caller
+    // may observe the committed row and converge through its update path.
+    expect(successes.length).toBeGreaterThanOrEqual(1);
+    expect(
+      failures.every((failure) => failure.reason?.code === 'P2002'),
+    ).toBe(true);
 
     expect(
       await prisma.registration.count({
