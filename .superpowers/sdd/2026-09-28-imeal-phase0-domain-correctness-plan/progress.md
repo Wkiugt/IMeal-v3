@@ -16,7 +16,7 @@
 - [ ] Task 3: Make registration writes resolve and persist immutable snapshots
 - [x] Task 4: Enforce pickup snapshot reads and serving snapshot writes
 - [x] Task 5: Replace ACTIVE-only Kitchen dashboard with a canonical projection
-- [ ] Task 6: Make no-show and penalty processing per-registration, lock-safe, and retryable
+- [x] Task 6: Make no-show and penalty processing per-registration, lock-safe, and retryable
 - [ ] Task 7: Publish only committed dashboard events
 - [ ] Task 8: Prove cross-transaction concurrency and all-or-nothing behavior on PostgreSQL
 - [ ] Task 9: Execute migration rollout gates and update canonical documentation
@@ -88,3 +88,5 @@ Task 4: complete (commits 6051fdf..808f71f7, review clean; requested report hash
 Task 5: fix round 1/5 (3 findings addressed; commits a29b726..b127fa5)
 Task 5: fix round 2/5 (3 prior findings addressed; commits 0941f30..3cbc1af)
 Task 5: complete (commits a29b726..b127fa5, review clean with PostgreSQL e2e unavailable)
+Task 6: fix round 1/5 (3 findings addressed; commits b2fdea4..e11cc34)
+Task 6: complete (commits b2fdea475ad5d181596493c2a2cc7be5625637d4..e11cc3472dd246601ff8b7b6fde1427670b1e0c9, review clean with PostgreSQL e2e unavailable)
