@@ -106,6 +106,9 @@ test('rejects secret-like keys and bounded assignment values before evidence ser
     'apiKey=api-value',
     'otp=123456',
     'providerPayload={"secret":"provider-value"}',
+    { providerPayload: { message: 'provider value' } },
+    '{"password":"actual","token":"abc"}',
+    '{"providerPayload":{"message":"provider value","nested":{"otp":"123456"}}}',
   ]) {
     assert.throws(() => assertNoSecrets(value), /secret/i);
   }
@@ -125,10 +128,13 @@ test('rejects bounded assignment values when writing evidence', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'staging-evidence-secret-'));
   for (const diagnostic of [
     'password=actual',
+    'password="actual secret"; next=ok',
     'token=token-value',
     'apiKey=api-value',
     'otp=123456',
     'provider_payload={"payload":"provider-value"}',
+    '{"password":"actual","token":"abc"}',
+    '{"providerPayload":{"nested":{"apiKey":"provider-value","otp":"123456"}}}',
   ]) {
     await assert.rejects(
       writeEvidence(join(directory, 'evidence.json'), { diagnostic }),
@@ -191,7 +197,7 @@ test('runs psql with shell disabled, validated target search path, timeout and r
       listeners.get('stdout:data')?.(Buffer.from('ok\n'));
       listeners.get('stderr:data')?.(
         Buffer.from(
-          'password=actual token=token-value apiKey=api-value otp=123456 providerPayload={"payload":"provider-value"} passwordless=allowed tokenized=allowed safe check=password authentication failed\n',
+          'password=actual token=token-value apiKey=api-value otp=123456 providerPayload={"payload":"provider-value"} passwordless=allowed tokenized=allowed safe check=password authentication failed {"password":"actual","token":"abc","providerPayload":{"message":"provider payload", "nested":{"apiKey":"value","otp":"123456"}}}\n',
         ),
       );
       listeners.get('close')?.(0);
@@ -210,7 +216,7 @@ test('runs psql with shell disabled, validated target search path, timeout and r
     assert.equal(result.stdout, 'ok\n');
     assert.equal(
       result.stderr,
-      'password=<redacted> token=<redacted> apiKey=<redacted> otp=<redacted> providerPayload=<redacted> passwordless=allowed tokenized=allowed safe check=password authentication failed\n',
+      'password=<redacted> token=<redacted> apiKey=<redacted> otp=<redacted> providerPayload=<redacted> passwordless=allowed tokenized=allowed safe check=password authentication failed {"password":"<redacted>","token":"<redacted>","providerPayload":"<redacted>"}\n',
     );
     assert.deepEqual(result.argv, [
       '--no-psqlrc',
@@ -218,11 +224,7 @@ test('runs psql with shell disabled, validated target search path, timeout and r
       '--dbname',
       'postgresql://<redacted>@db.example/imeal',
       '--command',
-      readOnlyPrelude,
-      '--command',
-      'select 1',
-      '--command',
-      'COMMIT;',
+      `${readOnlyPrelude}\nselect 1\nCOMMIT;`,
     ]);
     assert.equal(invocation.command, 'psql');
     assert.equal(invocation.options.shell, false);
@@ -270,13 +272,16 @@ test('starts read-only psql sessions before read-write overrides and trusted tra
     return child;
   };
   try {
-    await runPsql({
-      databaseUrl: 'postgresql://admin:password@db.example/imeal',
-      schema: 'phase0_staging',
-      sql: 'SET TRANSACTION READ WRITE; INSERT INTO protected_table VALUES (1);',
-      readOnly: true,
-      statementTimeoutSeconds: 5,
-    });
+    await assert.rejects(
+      runPsql({
+        databaseUrl: 'postgresql://admin:password@db.example/imeal',
+        schema: 'phase0_staging',
+        sql: 'SET TRANSACTION READ WRITE; INSERT INTO protected_table VALUES (1);',
+        readOnly: true,
+        statementTimeoutSeconds: 5,
+      }),
+      /read-only transaction control/i,
+    );
     await runPsql({
       databaseUrl: 'postgresql://admin:password@db.example/imeal',
       schema: 'phase0_staging',
@@ -297,7 +302,98 @@ test('starts read-only psql sessions before read-write overrides and trusted tra
         /default_transaction_read_only=on/,
       );
     }
-    assert.match(invocations[1].argv.join('\n'), /BEGIN;\nSELECT 1;\nCOMMIT;/);
+    assert.match(
+      invocations[0].argv.join('\n'),
+      /SET LOCAL search_path TO phase0_staging, pg_catalog;\nSELECT 1;\nCOMMIT;/,
+    );
+  } finally {
+    childProcess.spawn = originalSpawn;
+  }
+});
+test('loads read-only SQL files into one command and rejects transaction overrides', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'staging-psql-'));
+  const sqlFile = join(directory, 'preflight.sql');
+  await writeFile(sqlFile, 'BEGIN;\nSELECT 1;\nCOMMIT;\n', 'utf8');
+  const originalSpawn = childProcess.spawn;
+  const invocations = [];
+  childProcess.spawn = (_command, argv, options) => {
+    invocations.push({ argv, options });
+    const listeners = new Map();
+    const child = {
+      stdout: {
+        on(event, handler) {
+          listeners.set(`stdout:${event}`, handler);
+        },
+      },
+      stderr: {
+        on(event, handler) {
+          listeners.set(`stderr:${event}`, handler);
+        },
+      },
+      on(event, handler) {
+        listeners.set(event, handler);
+        return child;
+      },
+    };
+    queueMicrotask(() => listeners.get('close')?.(0));
+    return child;
+  };
+  try {
+    const readOnlyResult = await runPsql({
+      databaseUrl: 'postgresql://admin:password@db.example/imeal',
+      schema: 'phase0_staging',
+      sqlFile,
+      readOnly: true,
+      statementTimeoutSeconds: 5,
+    });
+    assert.equal(readOnlyResult.exitCode, 0);
+    const readOnlyArgs = invocations[0].argv;
+    assert.equal(
+      readOnlyArgs.filter((argument) => argument === '--command').length,
+      1,
+    );
+    assert.equal(
+      readOnlyArgs[readOnlyArgs.indexOf('--command') + 1],
+      [
+        'BEGIN;',
+        'SET TRANSACTION READ ONLY;',
+        "SET LOCAL statement_timeout = '5000ms';",
+        'SET LOCAL search_path TO phase0_staging, pg_catalog;',
+        'SELECT 1;',
+        'COMMIT;',
+      ].join('\n'),
+    );
+
+    for (const sql of [
+      'SET TRANSACTION READ WRITE;',
+      'SET default_transaction_read_only = off;',
+      'COMMIT;',
+      'ROLLBACK;',
+    ]) {
+      await assert.rejects(
+        runPsql({
+          databaseUrl: 'postgresql://admin:password@db.example/imeal',
+          schema: 'phase0_staging',
+          sql,
+          readOnly: true,
+          statementTimeoutSeconds: 5,
+        }),
+        /read-only transaction control/i,
+      );
+    }
+
+    const readWriteResult = await runPsql({
+      databaseUrl: 'postgresql://admin:password@db.example/imeal',
+      schema: 'phase0_staging',
+      sqlFile,
+      readOnly: false,
+      statementTimeoutSeconds: 5,
+    });
+    assert.equal(readWriteResult.exitCode, 0);
+    const readWriteArgs = invocations[1].argv;
+    assert.equal(readWriteArgs.includes('--file'), true);
+    assert.equal(readWriteArgs.includes(sqlFile), true);
+    assert.equal(readWriteArgs.includes('--command'), false);
   } finally {
     childProcess.spawn = originalSpawn;
   }

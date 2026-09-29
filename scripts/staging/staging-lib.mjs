@@ -1,16 +1,27 @@
 import childProcess from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { chmod, mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { URL } from 'node:url';
 
 const SCHEMA_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SECRET_KEY_PATTERN = /(password|token|secret|apikey|otp)/i;
+const SENSITIVE_JSON_KEY_PATTERN =
+  /^(?:[A-Za-z0-9_-]*(?:password|token|secret)|[A-Za-z0-9_-]*api[_-]?key|otp(?:[_-]?code)?|provider[\s_-]?payload)$/i;
 const POSTGRES_CREDENTIAL_PATTERN =
   /(?:postgres|postgresql):\/\/(?!<redacted>@)[^\/\s@]+@/gi;
+const SENSITIVE_OBJECT_ASSIGNMENT_PATTERN =
+  /\b(password|token|api[_-]?key|otp(?:[_-]?code)?|provider[\s_-]?payload)\b(\s*=\s*)(?=[{\[])/gi;
 const SENSITIVE_ASSIGNMENT_PATTERN =
-  /\b(password|token|api[_-]?key|otp(?:[_-]?code)?|provider[\s_-]?payload)\b(\s*=\s*)((?:"[^"]*"|'[^']*'|[^;\s]+))/gi;
+  /\b(password|token|api[_-]?key|otp(?:[_-]?code)?|provider[\s_-]?payload)\b(\s*=\s*)((?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^;\s]+))/gi;
 const BEARER_PATTERN = /\bBearer\s+[^\s]+/gi;
 const PRIVATE_KEY_PATTERN = /-----BEGIN [^-\n]*PRIVATE KEY-----/i;
 
@@ -137,8 +148,32 @@ function isRedactedAssignmentValue(value) {
 }
 
 function redactSensitiveAssignments(value) {
+  let redacted = '';
+  let cursor = 0;
+  SENSITIVE_OBJECT_ASSIGNMENT_PATTERN.lastIndex = 0;
+  let objectMatch;
+  while (
+    (objectMatch = SENSITIVE_OBJECT_ASSIGNMENT_PATTERN.exec(value)) !== null
+  ) {
+    const openingIndex = objectMatch.index + objectMatch[0].length;
+    const parsedEnd = findJsonEnd(value, openingIndex);
+    const semicolonIndex = value.indexOf(';', openingIndex);
+    const end =
+      parsedEnd === -1
+        ? semicolonIndex === -1
+          ? value.length
+          : semicolonIndex + 1
+        : parsedEnd;
+    redacted +=
+      value.slice(cursor, objectMatch.index) +
+      `${objectMatch[1]}${objectMatch[2]}<redacted>`;
+    cursor = end;
+    SENSITIVE_OBJECT_ASSIGNMENT_PATTERN.lastIndex = end;
+  }
+  redacted += value.slice(cursor);
+
   SENSITIVE_ASSIGNMENT_PATTERN.lastIndex = 0;
-  return value.replace(
+  return redacted.replace(
     SENSITIVE_ASSIGNMENT_PATTERN,
     (match, key, separator, assignmentValue) =>
       isRedactedAssignmentValue(assignmentValue)
@@ -156,6 +191,142 @@ function hasSensitiveAssignment(value) {
     }
   }
   return false;
+}
+function isSensitiveJsonKey(key) {
+  return SENSITIVE_JSON_KEY_PATTERN.test(key);
+}
+
+function redactParsedJson(value) {
+  if (Array.isArray(value)) {
+    let changed = false;
+    const redacted = value.map((item) => {
+      const result = redactParsedJson(item);
+      changed ||= result.changed;
+      return result.value;
+    });
+    return { value: redacted, changed };
+  }
+  if (!value || typeof value !== 'object') {
+    return { value, changed: false };
+  }
+  let changed = false;
+  const redacted = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (isSensitiveJsonKey(key)) {
+      if (typeof child === 'string' && isRedactedAssignmentValue(child)) {
+        redacted[key] = child;
+      } else {
+        redacted[key] = '<redacted>';
+        changed = true;
+      }
+      continue;
+    }
+    const result = redactParsedJson(child);
+    redacted[key] = result.value;
+    changed ||= result.changed;
+  }
+  return { value: redacted, changed };
+}
+
+function findJsonEnd(value, start) {
+  const stack = [value[start] === '{' ? '}' : ']'];
+  let quote;
+  let escaped = false;
+  for (let index = start + 1; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '{') {
+      stack.push('}');
+    } else if (character === '[') {
+      stack.push(']');
+    } else if (character === '}' || character === ']') {
+      if (stack.pop() !== character) {
+        return -1;
+      }
+      if (stack.length === 0) {
+        return index + 1;
+      }
+    }
+  }
+  return -1;
+}
+
+function forEachJsonFragment(value, callback) {
+  let index = 0;
+  while (index < value.length) {
+    if (value[index] !== '{' && value[index] !== '[') {
+      index += 1;
+      continue;
+    }
+    const end = findJsonEnd(value, index);
+    if (end === -1) {
+      index += 1;
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(value.slice(index, end));
+      callback(index, end, parsed);
+      index = end;
+    } catch {
+      index += 1;
+    }
+  }
+}
+
+function redactJsonFragments(value) {
+  let redacted = '';
+  let cursor = 0;
+  let changed = false;
+  forEachJsonFragment(value, (start, end, parsed) => {
+    const result = redactParsedJson(parsed);
+    if (!result.changed) {
+      return;
+    }
+    redacted += value.slice(cursor, start);
+    redacted += JSON.stringify(result.value);
+    cursor = end;
+    changed = true;
+  });
+  return changed ? `${redacted}${value.slice(cursor)}` : value;
+}
+
+function parsedJsonHasSecrets(value) {
+  if (Array.isArray(value)) {
+    return value.some((item) => parsedJsonHasSecrets(item));
+  }
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  return Object.entries(value).some(([key, child]) => {
+    if (
+      isSensitiveJsonKey(key) &&
+      !(typeof child === 'string' && isRedactedAssignmentValue(child))
+    ) {
+      return true;
+    }
+    return parsedJsonHasSecrets(child);
+  });
+}
+
+function hasSensitiveJson(value) {
+  let found = false;
+  forEachJsonFragment(value, (_start, _end, parsed) => {
+    if (parsedJsonHasSecrets(parsed)) {
+      found = true;
+    }
+  });
+  return found;
 }
 
 function safeDiagnostic(value, databaseUrl) {
@@ -178,6 +349,7 @@ function safeDiagnostic(value, databaseUrl) {
     const protocol = match.slice(0, match.indexOf('://'));
     return `${protocol}://<redacted>@`;
   });
+  diagnostic = redactJsonFragments(diagnostic);
   return redactSensitiveAssignments(diagnostic);
 }
 
@@ -249,6 +421,7 @@ function secretValue(value) {
   return (
     typeof value === 'string' &&
     (hasSensitiveAssignment(value) ||
+      hasSensitiveJson(value) ||
       POSTGRES_CREDENTIAL_PATTERN.test(value) ||
       BEARER_PATTERN.test(value) ||
       PRIVATE_KEY_PATTERN.test(value))
@@ -278,7 +451,7 @@ export function assertNoSecrets(value) {
       return;
     }
     for (const [key, child] of Object.entries(current)) {
-      if (SECRET_KEY_PATTERN.test(key)) {
+      if (SECRET_KEY_PATTERN.test(key) || isSensitiveJsonKey(key)) {
         throw new Error(`secret-like key rejected at ${path}.${key}`);
       }
       visit(child, `${path}.${key}`);
@@ -306,6 +479,25 @@ export async function writeEvidence(filePath, payload) {
     throw error;
   }
 }
+function normalizeReadOnlySql(sql) {
+  const source = sql.trim();
+  const outerTransaction = /^BEGIN\s*;\s*([\s\S]*?)\s*COMMIT\s*;?\s*$/i.exec(
+    source,
+  );
+  const body = outerTransaction ? outerTransaction[1].trim() : source;
+  if (
+    /\bSET\s+(?:LOCAL\s+)?TRANSACTION(?:\s+ISOLATION\s+LEVEL)?\s+READ\s+WRITE\b/i.test(
+      body,
+    ) ||
+    /\bSET\s+(?:LOCAL\s+)?(?:default_transaction_read_only|transaction_read_only)\s*(?:=|TO)\s*off\b/i.test(
+      body,
+    ) ||
+    /\b(?:BEGIN|COMMIT|ROLLBACK)\b/i.test(body)
+  ) {
+    throw new Error('read-only transaction control is not allowed');
+  }
+  return body;
+}
 
 export async function runPsql(options) {
   if (!options || typeof options !== 'object') {
@@ -328,6 +520,14 @@ export async function runPsql(options) {
     throw new Error('runPsql requires exactly one of sql or sqlFile');
   }
 
+  let readOnlySql;
+  if (options.readOnly) {
+    const source = hasSql
+      ? options.sql
+      : await readFile(options.sqlFile, 'utf8');
+    readOnlySql = normalizeReadOnlySql(source);
+  }
+
   const args = [
     '--no-psqlrc',
     '--set=ON_ERROR_STOP=1',
@@ -335,22 +535,21 @@ export async function runPsql(options) {
     databaseUrl,
   ];
   if (options.readOnly) {
+    const readOnlyPrelude = [
+      'BEGIN;',
+      'SET TRANSACTION READ ONLY;',
+      `SET LOCAL statement_timeout = '${options.statementTimeoutSeconds * 1000}ms';`,
+      `SET LOCAL search_path TO ${schema}, pg_catalog;`,
+    ].join('\n');
     args.push(
       '--command',
-      [
-        'BEGIN;',
-        'SET TRANSACTION READ ONLY;',
-        `SET LOCAL statement_timeout = '${options.statementTimeoutSeconds * 1000}ms';`,
-        `SET LOCAL search_path TO ${schema}, pg_catalog;`,
-      ].join('\n'),
+      [readOnlyPrelude, readOnlySql, 'COMMIT;'].filter(Boolean).join('\n'),
     );
-  }
-  args.push(
-    hasSql ? '--command' : '--file',
-    hasSql ? options.sql : options.sqlFile,
-  );
-  if (options.readOnly) {
-    args.push('--command', 'COMMIT;');
+  } else {
+    args.push(
+      hasSql ? '--command' : '--file',
+      hasSql ? options.sql : options.sqlFile,
+    );
   }
   const redactedArgs = args.map((argument) =>
     safeDiagnostic(argument, databaseUrl),
