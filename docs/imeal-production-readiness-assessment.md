@@ -195,8 +195,14 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
 
 ## 6. Inventory theo worker/operations
 
-- Worker package/runtime tồn tại, nhưng scan không tìm thấy evidence đầy đủ cho retention worker, retry dashboard, backup job, health/alert integration hoặc documented runbook dưới `apps/worker`.
-- Không có evidence centralized observability (logs/metrics/traces/alerts), backup-restore rehearsal, retention enforcement hoặc CI/CD pipeline/release artifact.
+- Worker package/runtime tồn tại, nhưng chưa có externally observed qualification
+  evidence đầy đủ cho retention worker, retry dashboard, backup job,
+  health/alert integration hoặc documented operator evidence.
+- Chưa có externally observed qualification evidence cho centralized
+  observability, backup-restore rehearsal hoặc retention enforcement. Repository
+  đã có CI/CD và release tooling được kiểm tra ở mức local/workflow contract,
+  nhưng chưa quan sát staging execution, external release artifact/checksum hoặc
+  independent sign-off.
 - Execution plan vẫn để các release/UAT/deployment gates unchecked: `docs/06-execution-plan.md:487-565,569-625`.
 - Dữ liệu vận hành thật (allowlist, roster, bốn location approved, OTP provider) không nằm trong repo theo nguyên tắc `docs/README.md:12-21,91-94`; cần provision có kiểm soát, không dùng sample seed public.
 

@@ -81,17 +81,31 @@ collector or endpoint is a failed gate, not a reason to mark PASS manually.
 
 ## 1. Candidate, fingerprint, and migration status
 
-Create a restricted evidence directory and set only non-secret identifiers in
-the shell. These are synthetic examples; replace them with the approved
-release record without exposing secrets:
+Create a restricted evidence directory on a protected filesystem outside the
+git checkout. The release-manifest command checks that its `repository` is a
+clean worktree, so a repo-relative `artifacts/` path is not acceptable for
+release evidence: generated manifests, checksums, and rollback files must not
+make the checkout dirty. These are synthetic identifiers; replace them with
+the approved release record without exposing secrets:
 
 ```bash
-export EVIDENCE_DIR=artifacts/imeal-20260928-001/staging
 export RELEASE_ID=imeal-20260928-001
+export EVIDENCE_ROOT=/var/lib/imeal/staging-evidence
+export EVIDENCE_DIR="$EVIDENCE_ROOT/$RELEASE_ID"
 export TARGET_SCHEMA=phase0_staging_20260928
 export TARGET_DATABASE_NAME=imeal_staging_20260928
 export RESTORE_DATABASE=imeal_restore_20260928
 export RESTORE_BUCKET=imeal-restore-20260928
+
+REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
+case "$(realpath -m "$EVIDENCE_ROOT")" in
+  "$REPOSITORY_ROOT"|"$REPOSITORY_ROOT"/*)
+    echo 'EVIDENCE_ROOT must be outside the git checkout' >&2
+    exit 1
+    ;;
+esac
+umask 077
+install -d -m 0750 "$EVIDENCE_DIR"
 ```
 
 Inject the direct target connection as `TARGET_DATABASE_URL`; do not place its
@@ -343,11 +357,43 @@ checksums.txt
 signoff.json
 ```
 
-The protected workflow also retains its immutable release artifact names,
-including `runtime-integration.json`, `staging-smoke.json`,
-`deployed-image-sbom-index.json`, and the per-service deployed-image SBOMs.
-The evidence bundle uses `release-manifest.json` references to the approved
-SBOM and smoke artifacts; do not copy secrets from those workflow artifacts.
+The protected workflow emits references named `runtime-integration.json`,
+`staging-smoke.json`, `deployed-image-sbom-index.json`, and the per-service
+deployed-image SBOMs. These are references, not local evidence files, until an
+approved artifact download/provisioning step places them under `$EVIDENCE_DIR`
+and verifies their release/target binding. Do not claim that a referenced file
+exists merely because its path appears in a manifest.
+
+Before generating the manifest or checksums, provision the approved prior
+rollback artifact from the named out-of-band source. The source path and
+expected SHA-256 are injected by the rollback authority; no source value is
+written to the runbook or evidence:
+
+```bash
+: "${PRIOR_ROLLBACK_ARTIFACT_SOURCE:?inject the approved external rollback source path}"
+: "${PRIOR_ROLLBACK_ARTIFACT_SHA256:?inject the approved rollback SHA-256}"
+SOURCE_REALPATH="$(realpath -m "$PRIOR_ROLLBACK_ARTIFACT_SOURCE")"
+case "$SOURCE_REALPATH" in
+  "$REPOSITORY_ROOT"|"$REPOSITORY_ROOT"/*)
+    echo 'rollback source must be outside the git checkout' >&2
+    exit 1
+    ;;
+esac
+test -f "$SOURCE_REALPATH"
+install -d -m 0750 "$EVIDENCE_DIR/rollback"
+install -m 0440 \
+  "$SOURCE_REALPATH" \
+  "$EVIDENCE_DIR/rollback/previous-release.tar"
+test -s "$EVIDENCE_DIR/rollback/previous-release.tar"
+printf '%s  %s\n' \
+  "$PRIOR_ROLLBACK_ARTIFACT_SHA256" \
+  "$EVIDENCE_DIR/rollback/previous-release.tar" |
+  sha256sum --check --strict -
+```
+
+Only after that command succeeds may the operator claim that
+`$EVIDENCE_DIR/rollback/previous-release.tar` is provisioned. A missing source,
+unexpected source location, empty file, or checksum mismatch is an abort.
 
 The command is implemented by the checked-in
 `scripts/staging/release-manifest.mjs` CLI.

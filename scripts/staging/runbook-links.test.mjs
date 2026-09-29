@@ -134,6 +134,24 @@ test('runbook includes every implemented staging operator command', async () => 
   assert.match(runbook, /--session-token-env\s+STAGING_SMOKE_SESSION_TOKEN/u);
 });
 
+test('externalizes evidence and verifies the prior rollback artifact', async () => {
+  const runbook = await readFile(runbookPath, 'utf8');
+  assert.match(
+    runbook,
+    /export EVIDENCE_ROOT=\/var\/lib\/imeal\/staging-evidence/u,
+  );
+  assert.match(runbook, /EVIDENCE_ROOT must be outside the git checkout/u);
+  assert.doesNotMatch(runbook, /export EVIDENCE_DIR=artifacts\//u);
+  assert.match(runbook, /PRIOR_ROLLBACK_ARTIFACT_SOURCE/u);
+  assert.match(runbook, /PRIOR_ROLLBACK_ARTIFACT_SHA256/u);
+  assert.match(runbook, /\$EVIDENCE_DIR\/rollback\/previous-release\.tar/u);
+  assert.match(runbook, /sha256sum\s+--check\s+--strict/u);
+  assert.match(
+    runbook,
+    /--rollback-artifact\s+rollback\/previous-release\.tar/u,
+  );
+});
+
 test('production sections do not contain unsafe local or Firebase rollback instructions', async () => {
   const runbook = await readFile(runbookPath, 'utf8');
   const sections = runbook.split(/(?=^#{1,6}\s)/m);
