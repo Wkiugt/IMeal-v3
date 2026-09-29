@@ -1,0 +1,45 @@
+{
+    email {$ACME_EMAIL}
+}
+
+# Automatic HTTPS serves the owned staging hostname. Keep the explicit redirect
+# so cleartext requests never reach an upstream directly.
+http://{$PUBLIC_HOSTNAME} {
+    redir https://{$PUBLIC_HOSTNAME}{uri} permanent
+}
+
+{$PUBLIC_HOSTNAME} {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src 'self'; connect-src 'self' https: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    }
+
+    @health path /health/live /health/ready
+    handle @health {
+        reverse_proxy api:3000 {
+            header_up X-Request-Id {http.request.header.X-Request-Id}
+        }
+    }
+
+    @api path /api/* /auth/* /registrations/* /admin/* /v1/* /internal/*
+    handle @api {
+        reverse_proxy api:3000 {
+            flush_interval -1
+            header_up X-Request-Id {http.request.header.X-Request-Id}
+        }
+    }
+
+    # Admin Web is the only non-API public fallback. Object storage has no
+    # public route; its bucket is private and reachable only on the data network.
+    handle {
+        reverse_proxy admin-web:80 {
+            flush_interval -1
+            header_up X-Request-Id {http.request.header.X-Request-Id}
+        }
+    }
+}

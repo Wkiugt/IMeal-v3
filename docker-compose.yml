@@ -208,6 +208,7 @@ services:
   admin-web:
     build:
       context: .
+      dockerfile: apps/admin-web/Dockerfile
     container_name: imeal_admin_web
     restart: unless-stopped
     healthcheck:

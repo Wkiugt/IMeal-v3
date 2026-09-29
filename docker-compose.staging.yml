@@ -1,0 +1,288 @@
+services:
+  db:
+    image: ${POSTGRES_IMAGE:?POSTGRES_IMAGE is required}
+    command: ['postgres', '-c', 'password_encryption=scram-sha-256']
+    restart: unless-stopped
+    environment: !override
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=scram-sha-256
+    ports: !reset []
+    volumes: !override
+      - staging_db_data:/var/lib/postgresql/data
+    networks: !override
+      - data
+    healthcheck: !override
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  pgbouncer:
+    image: ${PGBOUNCER_IMAGE:?PGBOUNCER_IMAGE is required}
+    environment: !override
+      DB_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      DB_HOST: db
+      DB_NAME: ${POSTGRES_DB:?POSTGRES_DB is required}
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: ${PGBOUNCER_MAX_CLIENT_CONN:?PGBOUNCER_MAX_CLIENT_CONN is required}
+      DEFAULT_POOL_SIZE: ${PGBOUNCER_DEFAULT_POOL_SIZE:?PGBOUNCER_DEFAULT_POOL_SIZE is required}
+    ports: !reset []
+    networks: !override
+      - data
+    depends_on: !override
+      db:
+        condition: service_healthy
+    healthcheck: !override
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -p 5432 -U "$${DB_USER}" -d "$${DB_NAME}"']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  minio:
+    image: ${MINIO_IMAGE:?MINIO_IMAGE is required}
+    command: ['server', '/data', '--console-address', ':9001']
+    restart: unless-stopped
+    environment: !override
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    ports: !reset []
+    volumes: !override
+      - staging_minio_data:/data
+    networks: !override
+      - data
+    healthcheck: !override
+      test: ['CMD', 'curl', '-f', 'http://127.0.0.1:9000/minio/health/live']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  minio-create-bucket:
+    image: ${MINIO_MC_IMAGE:?MINIO_MC_IMAGE is required}
+    restart: 'no'
+    environment: !override
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:?MINIO_BUCKET_NAME is required}
+    networks: !override
+      - data
+    depends_on: !override
+      minio:
+        condition: service_healthy
+    entrypoint: ['/bin/sh', '-ec']
+    command:
+      - >-
+        /usr/bin/mc alias set myminio http://minio:9000 "$${MINIO_ROOT_USER}"
+        "$${MINIO_ROOT_PASSWORD}";
+        /usr/bin/mc mb "myminio/$${MINIO_BUCKET_NAME}" --ignore-existing;
+        /usr/bin/mc anonymous set private "myminio/$${MINIO_BUCKET_NAME}";
+
+  migrate:
+    build: !reset null
+    image: ${MIGRATION_GATE_IMAGE:?MIGRATION_GATE_IMAGE is required}
+    command: !reset []
+    restart: 'no'
+    environment: !override
+      NODE_ENV: production
+      MIGRATION_DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:?POSTGRES_DB is required}?schema=${MIGRATION_TARGET_SCHEMA:?MIGRATION_TARGET_SCHEMA is required}
+      MIGRATION_TARGET_SCHEMA: ${MIGRATION_TARGET_SCHEMA:?MIGRATION_TARGET_SCHEMA is required}
+      MIGRATION_TARGET_IDENTITY: ${MIGRATION_TARGET_IDENTITY:?MIGRATION_TARGET_IDENTITY is required}
+      MIGRATION_APPROVAL_ID: ${MIGRATION_APPROVAL_ID:?MIGRATION_APPROVAL_ID is required}
+      MIGRATION_EVIDENCE_PATH: /run/imeal/migration-gate.json
+      RELEASE_VERSION: ${RELEASE_VERSION:?RELEASE_VERSION is required}
+    volumes: !override
+      - staging_migration_evidence:/run/imeal
+    networks: !override
+      - data
+    depends_on: !override
+      db:
+        condition: service_healthy
+
+  api:
+    build: !reset null
+    image: ${API_IMAGE:?API_IMAGE is required}
+    user: '1000:1000'
+    environment: !override
+      PORT: 3000
+      NODE_ENV: production
+      DEPLOY_ENV: staging
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@pgbouncer:5432/${POSTGRES_DB:?POSTGRES_DB is required}?schema=${MIGRATION_TARGET_SCHEMA:?MIGRATION_TARGET_SCHEMA is required}&pgbouncer=true
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      AUTH_MODE: otp
+      REQUIRE_AUTH: 'true'
+      QR_SIGNING_SECRET: ${QR_SIGNING_SECRET:?QR_SIGNING_SECRET is required}
+      OTP_HASH_SECRET: ${OTP_HASH_SECRET:?OTP_HASH_SECRET is required}
+      OTP_DELIVERY_ENCRYPTION_KEY: ${OTP_DELIVERY_ENCRYPTION_KEY:?OTP_DELIVERY_ENCRYPTION_KEY is required}
+      OTP_PROVIDER_URL: ${OTP_PROVIDER_URL:?OTP_PROVIDER_URL is required}
+      OTP_PROVIDER_API_KEY: ${OTP_PROVIDER_API_KEY:?OTP_PROVIDER_API_KEY is required}
+      OTP_PROVIDER_FROM: ${OTP_PROVIDER_FROM:?OTP_PROVIDER_FROM is required}
+      OTP_EXPIRY_SECONDS: ${OTP_EXPIRY_SECONDS:?OTP_EXPIRY_SECONDS is required}
+      OTP_RESEND_SECONDS: ${OTP_RESEND_SECONDS:?OTP_RESEND_SECONDS is required}
+      OTP_ATTEMPT_LIMIT: ${OTP_ATTEMPT_LIMIT:?OTP_ATTEMPT_LIMIT is required}
+      OTP_RATE_WINDOW_SECONDS: ${OTP_RATE_WINDOW_SECONDS:?OTP_RATE_WINDOW_SECONDS is required}
+      OTP_ADDRESS_RATE_LIMIT: ${OTP_ADDRESS_RATE_LIMIT:?OTP_ADDRESS_RATE_LIMIT is required}
+      OTP_CLIENT_RATE_LIMIT: ${OTP_CLIENT_RATE_LIMIT:?OTP_CLIENT_RATE_LIMIT is required}
+      SESSION_HASH_SECRET: ${SESSION_HASH_SECRET:?SESSION_HASH_SECRET is required}
+      SESSION_IDLE_TIMEOUT_SECONDS: ${SESSION_IDLE_TIMEOUT_SECONDS:?SESSION_IDLE_TIMEOUT_SECONDS is required}
+      SESSION_ABSOLUTE_TIMEOUT_SECONDS: ${SESSION_ABSOLUTE_TIMEOUT_SECONDS:?SESSION_ABSOLUTE_TIMEOUT_SECONDS is required}
+      GPS_DEFAULT_GEOFENCE_RADIUS_METERS: ${GPS_DEFAULT_GEOFENCE_RADIUS_METERS:?GPS_DEFAULT_GEOFENCE_RADIUS_METERS is required}
+      GPS_DEFAULT_MAX_FIX_AGE_SECONDS: ${GPS_DEFAULT_MAX_FIX_AGE_SECONDS:?GPS_DEFAULT_MAX_FIX_AGE_SECONDS is required}
+      GPS_DEFAULT_MAX_ACCURACY_METERS: ${GPS_DEFAULT_MAX_ACCURACY_METERS:?GPS_DEFAULT_MAX_ACCURACY_METERS is required}
+      SERVING_TIME_ZONE: ${SERVING_TIME_ZONE:?SERVING_TIME_ZONE is required}
+      SERVING_WINDOW_START: ${SERVING_WINDOW_START:?SERVING_WINDOW_START is required}
+      SERVING_WINDOW_END: ${SERVING_WINDOW_END:?SERVING_WINDOW_END is required}
+      NO_SHOW_PROCESSING_TIME: ${NO_SHOW_PROCESSING_TIME:?NO_SHOW_PROCESSING_TIME is required}
+      QR_TTL_SECONDS: ${QR_TTL_SECONDS:?QR_TTL_SECONDS is required}
+      QR_CLOCK_SKEW_SECONDS: ${QR_CLOCK_SKEW_SECONDS:?QR_CLOCK_SKEW_SECONDS is required}
+      PICKUP_SESSION_TTL_SECONDS: ${PICKUP_SESSION_TTL_SECONDS:?PICKUP_SESSION_TTL_SECONDS is required}
+      LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL is required}
+      RELEASE_VERSION: ${RELEASE_VERSION:?RELEASE_VERSION is required}
+      SHUTDOWN_TIMEOUT_SECONDS: ${SHUTDOWN_TIMEOUT_SECONDS:?SHUTDOWN_TIMEOUT_SECONDS is required}
+      MIGRATION_EVIDENCE_PATH: /run/imeal/migration-gate.json
+      MIGRATION_TARGET_IDENTITY: ${MIGRATION_TARGET_IDENTITY:?MIGRATION_TARGET_IDENTITY is required}
+    volumes: !override
+      - staging_migration_evidence:/run/imeal:ro
+    networks: !override
+      - app
+      - data
+    depends_on: !override
+      pgbouncer:
+        condition: service_healthy
+      minio-create-bucket:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    healthcheck: !override
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  worker:
+    build: !reset null
+    image: ${WORKER_IMAGE:?WORKER_IMAGE is required}
+    user: '1000:1000'
+    environment: !override
+      PORT: 3001
+      NODE_ENV: production
+      DEPLOY_ENV: staging
+      REQUIRE_AUTH: 'true'
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@pgbouncer:5432/${POSTGRES_DB:?POSTGRES_DB is required}?schema=${MIGRATION_TARGET_SCHEMA:?MIGRATION_TARGET_SCHEMA is required}&pgbouncer=true
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      OTP_DELIVERY_ENCRYPTION_KEY: ${OTP_DELIVERY_ENCRYPTION_KEY:?OTP_DELIVERY_ENCRYPTION_KEY is required}
+      OTP_PROVIDER_URL: ${OTP_PROVIDER_URL:?OTP_PROVIDER_URL is required}
+      OTP_PROVIDER_API_KEY: ${OTP_PROVIDER_API_KEY:?OTP_PROVIDER_API_KEY is required}
+      OTP_PROVIDER_FROM: ${OTP_PROVIDER_FROM:?OTP_PROVIDER_FROM is required}
+      OTP_DELIVERY_BATCH_SIZE: ${OTP_DELIVERY_BATCH_SIZE:?OTP_DELIVERY_BATCH_SIZE is required}
+      OTP_DELIVERY_MAX_ATTEMPTS: ${OTP_DELIVERY_MAX_ATTEMPTS:?OTP_DELIVERY_MAX_ATTEMPTS is required}
+      OTP_DELIVERY_RETRY_BASE_SECONDS: ${OTP_DELIVERY_RETRY_BASE_SECONDS:?OTP_DELIVERY_RETRY_BASE_SECONDS is required}
+      OTP_DELIVERY_RETRY_MAX_SECONDS: ${OTP_DELIVERY_RETRY_MAX_SECONDS:?OTP_DELIVERY_RETRY_MAX_SECONDS is required}
+      OTP_DELIVERY_CLAIM_TIMEOUT_SECONDS: ${OTP_DELIVERY_CLAIM_TIMEOUT_SECONDS:?OTP_DELIVERY_CLAIM_TIMEOUT_SECONDS is required}
+      SERVING_TIME_ZONE: ${SERVING_TIME_ZONE:?SERVING_TIME_ZONE is required}
+      SERVING_WINDOW_START: ${SERVING_WINDOW_START:?SERVING_WINDOW_START is required}
+      SERVING_WINDOW_END: ${SERVING_WINDOW_END:?SERVING_WINDOW_END is required}
+      NO_SHOW_PROCESSING_TIME: ${NO_SHOW_PROCESSING_TIME:?NO_SHOW_PROCESSING_TIME is required}
+      QR_TTL_SECONDS: ${QR_TTL_SECONDS:?QR_TTL_SECONDS is required}
+      QR_CLOCK_SKEW_SECONDS: ${QR_CLOCK_SKEW_SECONDS:?QR_CLOCK_SKEW_SECONDS is required}
+      PICKUP_SESSION_TTL_SECONDS: ${PICKUP_SESSION_TTL_SECONDS:?PICKUP_SESSION_TTL_SECONDS is required}
+      LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL is required}
+      RELEASE_VERSION: ${RELEASE_VERSION:?RELEASE_VERSION is required}
+      SHUTDOWN_TIMEOUT_SECONDS: ${SHUTDOWN_TIMEOUT_SECONDS:?SHUTDOWN_TIMEOUT_SECONDS is required}
+      MIGRATION_EVIDENCE_PATH: /run/imeal/migration-gate.json
+      MIGRATION_TARGET_IDENTITY: ${MIGRATION_TARGET_IDENTITY:?MIGRATION_TARGET_IDENTITY is required}
+    volumes: !override
+      - staging_migration_evidence:/run/imeal:ro
+    networks: !override
+      - app
+      - data
+    depends_on: !override
+      pgbouncer:
+        condition: service_healthy
+      minio-create-bucket:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    healthcheck: !override
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3001/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  admin-web:
+    build:
+      context: .
+      dockerfile: apps/admin-web/Dockerfile
+    image: ${ADMIN_WEB_IMAGE:?ADMIN_WEB_IMAGE is required}
+    user: '101:101'
+    networks: !override
+      - app
+    healthcheck: !override
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://127.0.0.1:80/health']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  caddy:
+    image: ${CADDY_IMAGE:?CADDY_IMAGE is required}
+    environment: !override
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:?PUBLIC_HOSTNAME is required}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
+    restart: unless-stopped
+    ports: !override
+      - '${PROXY_HTTP_PORT:?PROXY_HTTP_PORT is required}:80'
+      - '${PROXY_HTTPS_PORT:?PROXY_HTTPS_PORT is required}:443'
+    networks: !override
+      - edge
+      - app
+    volumes: !override
+      - ./infra/staging/Caddyfile:/etc/caddy/Caddyfile:ro
+      - staging_caddy_data:/data
+      - staging_caddy_config:/config
+    tmpfs:
+      - /tmp
+    read_only: true
+    depends_on: !override
+      api:
+        condition: service_healthy
+      admin-web:
+        condition: service_healthy
+
+networks:
+  edge:
+    name: ${STAGING_EDGE_NETWORK_NAME:?STAGING_EDGE_NETWORK_NAME is required}
+    driver: bridge
+  app:
+    name: ${STAGING_APP_NETWORK_NAME:?STAGING_APP_NETWORK_NAME is required}
+    driver: bridge
+    internal: true
+  data:
+    name: ${STAGING_DATA_NETWORK_NAME:?STAGING_DATA_NETWORK_NAME is required}
+    driver: bridge
+    internal: true
+
+volumes:
+  staging_db_data:
+    name: ${STAGING_DB_VOLUME_NAME:?STAGING_DB_VOLUME_NAME is required}
+  staging_minio_data:
+    name: ${STAGING_MINIO_VOLUME_NAME:?STAGING_MINIO_VOLUME_NAME is required}
+  staging_migration_evidence:
+    name: ${STAGING_MIGRATION_EVIDENCE_VOLUME_NAME:?STAGING_MIGRATION_EVIDENCE_VOLUME_NAME is required}
+  staging_caddy_data:
+    name: ${STAGING_CADDY_DATA_VOLUME_NAME:?STAGING_CADDY_DATA_VOLUME_NAME is required}
+  staging_caddy_config:
+    name: ${STAGING_CADDY_CONFIG_VOLUME_NAME:?STAGING_CADDY_CONFIG_VOLUME_NAME is required}
