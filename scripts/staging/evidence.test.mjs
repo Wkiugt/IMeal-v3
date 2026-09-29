@@ -17,21 +17,18 @@ const target = { database: 'imeal_staging', schema: 'phase0_staging_20260928' };
 const digest = 'a'.repeat(64);
 
 async function makeEvidenceDirectory({
-  mutableImage = false,
   rollback = true,
   writeChecksum = true,
   rollbackReference = 'rollback/imeal-20260927-004.tar',
   rollbackFile = true,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'staging-evidence-'));
-  const image = mutableImage
-    ? 'registry.example/api:staging'
-    : `registry.example/api@sha256:${digest}`;
   const releaseManifest = {
     releaseId,
+    target,
     commitSha: 'b'.repeat(40),
     images: {
-      api: image,
+      api: `registry.example/api@sha256:${digest}`,
       worker: `registry.example/worker@sha256:${digest}`,
       adminWeb: `registry.example/admin@sha256:${digest}`,
     },
@@ -47,7 +44,7 @@ async function makeEvidenceDirectory({
   );
   await writeFile(
     join(directory, 'target-fingerprint.json'),
-    `${JSON.stringify({ target })}\n`,
+    `${JSON.stringify({ releaseId, target })}\n`,
   );
   for (const name of jsonNames) {
     const payload =
@@ -93,7 +90,9 @@ async function makeEvidenceDirectory({
     await mkdir(join(directory, 'rollback'), { recursive: true });
     await writeFile(join(directory, rollbackReference), 'rollback artifact\n');
   }
-  if (writeChecksum) await writeChecksums({ artifactDirectory: directory });
+  if (writeChecksum && rollback && rollbackFile) {
+    await writeChecksums({ artifactDirectory: directory });
+  }
   return directory;
 }
 
@@ -162,7 +161,15 @@ test('writes checksums only through the explicit checksum command', async () => 
 });
 
 test('rejects mutable image tags and missing rollback references', async () => {
-  const mutableDirectory = await makeEvidenceDirectory({ mutableImage: true });
+  const mutableDirectory = await makeEvidenceDirectory();
+  const mutableManifest = JSON.parse(
+    await readFile(join(mutableDirectory, 'release-manifest.json'), 'utf8'),
+  );
+  mutableManifest.images.api = 'registry.example/api:staging';
+  await writeFile(
+    join(mutableDirectory, 'release-manifest.json'),
+    JSON.stringify(mutableManifest),
+  );
   await assert.rejects(
     createEvidenceManifest({
       releaseId,
@@ -171,7 +178,15 @@ test('rejects mutable image tags and missing rollback references', async () => {
     }),
     /immutable image digest/,
   );
-  const rollbackDirectory = await makeEvidenceDirectory({ rollback: false });
+  const rollbackDirectory = await makeEvidenceDirectory();
+  const rollbackManifest = JSON.parse(
+    await readFile(join(rollbackDirectory, 'release-manifest.json'), 'utf8'),
+  );
+  delete rollbackManifest.rollbackArtifact;
+  await writeFile(
+    join(rollbackDirectory, 'release-manifest.json'),
+    JSON.stringify(rollbackManifest),
+  );
   await assert.rejects(
     createEvidenceManifest({
       releaseId,
@@ -210,6 +225,36 @@ test('rejects artifacts from a different target', async () => {
   );
 });
 
+test('requires exact release and target bindings on every JSON artifact', async () => {
+  const releaseDirectory = await makeEvidenceDirectory();
+  await writeFile(
+    join(releaseDirectory, 'backup-manifest.json'),
+    JSON.stringify({ result: 'PASS' }),
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: releaseDirectory,
+    }),
+    /evidence release binding is required: backup-manifest\.json/,
+  );
+
+  const targetDirectory = await makeEvidenceDirectory();
+  await writeFile(
+    join(targetDirectory, 'preflight-before.json'),
+    JSON.stringify({ result: 'PASS', releaseId }),
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: targetDirectory,
+    }),
+    /evidence target binding is required: preflight-before\.json/,
+  );
+});
+
 test('binds every release-bearing artifact to the exact release', async () => {
   const directory = await makeEvidenceDirectory();
   await writeFile(
@@ -231,6 +276,10 @@ test('rejects failed smoke and observability artifacts', async () => {
   await writeFile(
     join(directory, 'smoke-worker.json'),
     JSON.stringify({ result: 'FAIL', releaseId, target }),
+  );
+  await assert.rejects(
+    writeChecksums({ artifactDirectory: directory }),
+    /smoke-worker\.json must have result PASS/,
   );
   await assert.rejects(
     createEvidenceManifest({ releaseId, target, artifactDirectory: directory }),
@@ -312,6 +361,7 @@ test('requires a local rollback file and covers it with a checksum', async () =>
     join(traversalDirectory, 'release-manifest.json'),
     JSON.stringify({
       releaseId,
+      target,
       commitSha: 'b'.repeat(40),
       images: {
         api: `registry.example/api@sha256:${digest}`,

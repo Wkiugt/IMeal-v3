@@ -276,20 +276,34 @@ function assertChecksumsMatch(checksumArtifact, artifacts, rollbackArtifact) {
 }
 function assertArtifactTargets(artifacts, target, releaseId) {
   for (const artifact of Object.values(artifacts)) {
-    const artifactReleaseId = artifact.parsed?.releaseId;
-    if (artifactReleaseId !== undefined && artifactReleaseId !== releaseId) {
+    if (!artifact.name.endsWith('.json')) continue;
+    const parsed = artifact.parsed;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`evidence JSON binding is required: ${artifact.name}`);
+    }
+    if (parsed.releaseId !== releaseId) {
+      if (
+        typeof parsed.releaseId !== 'string' ||
+        parsed.releaseId.trim() === ''
+      ) {
+        throw new Error(
+          `evidence release binding is required: ${artifact.name}`,
+        );
+      }
       throw new Error(`evidence release mismatch: ${artifact.name}`);
     }
-    const artifactTarget = artifact.parsed?.target;
-    if (!artifactTarget || typeof artifactTarget !== 'object') continue;
+    const artifactTarget = parsed.target;
     if (
-      artifactTarget.database !== undefined &&
-      artifactTarget.database !== target.database
+      !artifactTarget ||
+      typeof artifactTarget !== 'object' ||
+      Array.isArray(artifactTarget) ||
+      typeof artifactTarget.database !== 'string' ||
+      typeof artifactTarget.schema !== 'string'
     ) {
-      throw new Error(`evidence target mismatch: ${artifact.name}`);
+      throw new Error(`evidence target binding is required: ${artifact.name}`);
     }
     if (
-      artifactTarget.schema !== undefined &&
+      artifactTarget.database !== target.database ||
       artifactTarget.schema !== target.schema
     ) {
       throw new Error(`evidence target mismatch: ${artifact.name}`);
@@ -466,7 +480,11 @@ export function assertEvidenceComplete(manifest) {
   }
   return manifest;
 }
-export async function writeChecksums({ artifactDirectory }) {
+export async function writeChecksums({
+  artifactDirectory,
+  releaseId: expectedReleaseId,
+  target: expectedTarget,
+}) {
   const directory = resolve(
     assertNonEmptyString(artifactDirectory, 'artifact directory'),
   );
@@ -476,20 +494,24 @@ export async function writeChecksums({ artifactDirectory }) {
     artifacts[name] = await readArtifact(directory, name);
   }
   const releaseManifest = artifacts['release-manifest.json'].parsed;
-  let rollbackArtifact;
-  const rollbackReference =
-    typeof releaseManifest?.rollbackArtifact === 'string'
-      ? releaseManifest.rollbackArtifact
-      : (releaseManifest?.rollback?.artifact ??
-        releaseManifest?.rollback?.artifactRef);
-  if (rollbackReference !== undefined) {
-    rollbackArtifact = await readRollbackArtifact(directory, rollbackReference);
-  }
+  const safeReleaseId = assertNonEmptyString(
+    expectedReleaseId ?? releaseManifest?.releaseId,
+    'release ID',
+  );
+  const fingerprint = artifacts['target-fingerprint.json'].parsed;
+  const safeTarget = assertTarget(
+    expectedTarget ?? fingerprint?.target ?? fingerprint,
+  );
+  assertArtifactTargets(artifacts, safeTarget, safeReleaseId);
+  const releaseReferences = await assertReleaseReferences(
+    releaseManifest,
+    safeReleaseId,
+    directory,
+  );
+  assertCompletionArtifacts(artifacts, safeReleaseId, safeTarget);
   const checksumLines = [
     ...CHECKSUMMED_EVIDENCE.map((name) => `${artifacts[name].sha256}  ${name}`),
-    ...(rollbackArtifact
-      ? [`${rollbackArtifact.sha256}  ${rollbackArtifact.path}`]
-      : []),
+    `${releaseReferences.rollbackArtifact.sha256}  ${releaseReferences.rollbackArtifact.path}`,
   ];
   const checksums = `${checksumLines.join('\n')}\n`;
   const outputPath = join(directory, 'checksums.txt');
@@ -559,9 +581,6 @@ async function main(argv) {
     'write-checksums': { type: 'boolean' },
   });
   const artifactDirectory = resolve(args.artifacts);
-  if (args['write-checksums']) {
-    await writeChecksums({ artifactDirectory });
-  }
   let targetFingerprint;
   try {
     targetFingerprint = JSON.parse(
@@ -578,6 +597,13 @@ async function main(argv) {
     targetFingerprint,
     targetDatabaseOverride: process.env.TARGET_DATABASE_NAME,
   });
+  if (args['write-checksums']) {
+    await writeChecksums({
+      artifactDirectory,
+      releaseId: args['release-id'],
+      target,
+    });
+  }
   const manifest = await createEvidenceManifest({
     releaseId: args['release-id'],
     target,

@@ -189,12 +189,14 @@ separately and retain their command/results as `smoke-business.json`. Do not
 use local test mode as staging evidence.
 
 Build the complete evidence manifest only after every required artifact,
-including an operator-provided `signoff.json`, exists. Every release-bearing
-JSON must identify this exact release and target. Smoke and observability
-artifacts must have `result: "PASS"`; `smoke-business.json` is the separate
-operator-provided suite record, not the network runner's `NOT_RUN` workflow
-field. Approval must be exact for this release/target, and sign-off must be
-`PASS` with distinct operator/reviewer identities and review metadata.
+including an operator-provided `signoff.json`, exists. Every required `.json`
+artifact—including the release manifest, target fingerprint, backup/preflight
+records, approvals, and smoke/observability records—must identify this exact
+release and target database/schema; no JSON artifact is exempt. Smoke and
+observability artifacts must have `result: "PASS"`; `smoke-business.json` is
+the separate operator-provided suite record, not the network runner's `NOT_RUN`
+workflow field. Approval must be exact for this release/target, and sign-off
+must be `PASS` with distinct operator/reviewer identities and review metadata.
 
 ```bash
 node scripts/staging/evidence.mjs \
@@ -205,7 +207,9 @@ node scripts/staging/evidence.mjs \
 
 The evidence command never creates an approval or sign-off. Checksums can be
 created only by an explicit operator action, after the sign-off artifact is
-reviewed:
+reviewed. `--write-checksums` performs the same release, target, rollback-file,
+status, approval, and sign-off gates before creating `checksums.txt`; it cannot
+be used to checksum an incomplete or failed bundle:
 
 ```bash
 node scripts/staging/evidence.mjs \
