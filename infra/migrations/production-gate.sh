@@ -25,12 +25,35 @@ validate_token() {
   esac
 }
 
+require_value MIGRATION_EVIDENCE_PATH
+case "$MIGRATION_EVIDENCE_PATH" in
+  /*|[A-Za-z]:/*) ;;
+  *) fail invalid_MIGRATION_EVIDENCE_PATH ;;
+esac
+case "$MIGRATION_EVIDENCE_PATH" in
+  *[!A-Za-z0-9_./:-]*) fail invalid_MIGRATION_EVIDENCE_PATH ;;
+esac
+
+if [[ -e "$MIGRATION_EVIDENCE_PATH" || -L "$MIGRATION_EVIDENCE_PATH" ]]; then
+  if ! rm -f -- "$MIGRATION_EVIDENCE_PATH"; then
+    fail evidence_cleanup
+  fi
+fi
+if [[ -e "$MIGRATION_EVIDENCE_PATH" || -L "$MIGRATION_EVIDENCE_PATH" ]]; then
+  fail evidence_cleanup
+fi
 require_value MIGRATION_DATABASE_URL
 require_value MIGRATION_TARGET_SCHEMA
 require_value MIGRATION_TARGET_IDENTITY
 require_value MIGRATION_APPROVAL_ID
 require_value RELEASE_VERSION
-require_value MIGRATION_EVIDENCE_PATH
+url_schema=$(printf '%s' "$MIGRATION_DATABASE_URL" | sed -n 's/.*[?&]schema=\([^&]*\).*/\1/p')
+[[ "$url_schema" == "$MIGRATION_TARGET_SCHEMA" ]] || fail migration_url_schema_mismatch
+psql_database_url="$MIGRATION_DATABASE_URL"
+psql_database_url="${psql_database_url/\?schema=$MIGRATION_TARGET_SCHEMA\&/\?}"
+psql_database_url="${psql_database_url/\&schema=$MIGRATION_TARGET_SCHEMA\&/\&}"
+psql_database_url="${psql_database_url/\&schema=$MIGRATION_TARGET_SCHEMA/}"
+psql_database_url="${psql_database_url/\?schema=$MIGRATION_TARGET_SCHEMA/}"
 
 migration_url_lower=$(printf '%s' "$MIGRATION_DATABASE_URL" | tr '[:upper:]' '[:lower:]')
 case "$MIGRATION_DATABASE_URL" in
@@ -49,29 +72,6 @@ esac
 validate_token MIGRATION_TARGET_IDENTITY
 validate_token MIGRATION_APPROVAL_ID
 validate_token RELEASE_VERSION
-case "$MIGRATION_EVIDENCE_PATH" in
-  /*|[A-Za-z]:/*) ;;
-  *) fail invalid_MIGRATION_EVIDENCE_PATH ;;
-esac
-case "$MIGRATION_EVIDENCE_PATH" in
-  *[!A-Za-z0-9_./:-]*) fail invalid_MIGRATION_EVIDENCE_PATH ;;
-esac
-url_schema=$(printf '%s' "$MIGRATION_DATABASE_URL" | sed -n 's/.*[?&]schema=\([^&]*\).*/\1/p')
-[[ "$url_schema" == "$MIGRATION_TARGET_SCHEMA" ]] || fail migration_url_schema_mismatch
-psql_database_url="$MIGRATION_DATABASE_URL"
-psql_database_url="${psql_database_url/\?schema=$MIGRATION_TARGET_SCHEMA\&/\?}"
-psql_database_url="${psql_database_url/\&schema=$MIGRATION_TARGET_SCHEMA\&/\&}"
-psql_database_url="${psql_database_url/\&schema=$MIGRATION_TARGET_SCHEMA/}"
-psql_database_url="${psql_database_url/\?schema=$MIGRATION_TARGET_SCHEMA/}"
-
-if [[ -e "$MIGRATION_EVIDENCE_PATH" || -L "$MIGRATION_EVIDENCE_PATH" ]]; then
-  if ! rm -f -- "$MIGRATION_EVIDENCE_PATH"; then
-    fail evidence_cleanup
-  fi
-fi
-if [[ -e "$MIGRATION_EVIDENCE_PATH" || -L "$MIGRATION_EVIDENCE_PATH" ]]; then
-  fail evidence_cleanup
-fi
 
 mkdir -p "$GATE_LOG_DIR" "$(dirname "$MIGRATION_EVIDENCE_PATH")"
 work_dir=$(mktemp -d "$GATE_LOG_DIR/run.XXXXXX")

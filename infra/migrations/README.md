@@ -32,19 +32,22 @@ their `pgbouncer=true` query parameter remains intact.
 
 ## Execution order
 
-1. Validate inputs, remove any existing evidence marker, and validate direct-primary
-   URL semantics.
-2. Assert the target database/schema.
-3. Run `prisma migrate deploy` using the direct URL.
-4. Run the checked-in phase-0 read-only preflight. All seven named checks must
+1. Require only `MIGRATION_EVIDENCE_PATH`, validate its absolute safe-path syntax,
+   remove any existing evidence marker, and assert that it is absent.
+2. Require `MIGRATION_DATABASE_URL`, `MIGRATION_TARGET_SCHEMA`,
+   `MIGRATION_TARGET_IDENTITY`, `MIGRATION_APPROVAL_ID`, and `RELEASE_VERSION`,
+   then validate direct-primary URL and target-schema semantics.
+3. Assert the target database/schema.
+4. Run `prisma migrate deploy` using the direct URL.
+5. Run the checked-in phase-0 read-only preflight. All seven named checks must
    report zero affected rows.
-5. Require the explicit approval identifier (before any backfill).
-6. Run the idempotent phase-0 backfill SQL unchanged.
-7. Repeat the exact read-only preflight and require all seven named checks to
+6. Require the explicit approval identifier (before any backfill).
+7. Run the idempotent phase-0 backfill SQL unchanged.
+8. Repeat the exact read-only preflight and require all seven named checks to
    remain zero.
-8. Validate the two phase-0 `NOT VALID` constraints.
-9. Write the five-field evidence marker to a temporary file, set mode `0444`, and
-   atomically rename it into place.
+9. Validate the two phase-0 `NOT VALID` constraints.
+10. Write the five-field evidence marker to a temporary file, set mode `0444`, and
+    atomically rename it into place.
 
 There is no down migration or destructive fallback. A failure exits non-zero and
 leaves no new evidence marker. The command's success output contains only safe

@@ -198,6 +198,48 @@ describe('production migration gate command contract', () => {
       rmSync(harness.directory, { recursive: true, force: true });
     }
   });
+  it('clears the marker before URL validation on a failed rerun', () => {
+    const harness = createHarness();
+    try {
+      const first = runGate(harness.environment);
+      expect(first.status).toBe(0);
+      expect(existsSync(harness.markerPath)).toBe(true);
+
+      const schemaMismatch = runGate({
+        ...harness.environment,
+        MIGRATION_DATABASE_URL:
+          'postgresql://gate_user:gate_password@db:5432/imeal?schema=private',
+      });
+      expect(schemaMismatch.status).not.toBe(0);
+      expect(existsSync(harness.markerPath)).toBe(false);
+      expect(schemaMismatch.stderr).not.toContain('gate_password');
+
+      const invalidUrl = runGate({
+        ...harness.environment,
+        MIGRATION_DATABASE_URL: 'not-a-postgres-url',
+      });
+      expect(invalidUrl.status).not.toBe(0);
+      expect(existsSync(harness.markerPath)).toBe(false);
+      expect(invalidUrl.stderr).not.toContain('gate_password');
+    } finally {
+      rmSync(harness.directory, { recursive: true, force: true });
+    }
+  });
+  it('clears the marker before missing approval validation on a failed rerun', () => {
+    const harness = createHarness();
+    try {
+      const first = runGate(harness.environment);
+      expect(first.status).toBe(0);
+      expect(existsSync(harness.markerPath)).toBe(true);
+
+      const failed = runGate({ ...harness.environment, MIGRATION_APPROVAL_ID: '' });
+      expect(failed.status).not.toBe(0);
+      expect(existsSync(harness.markerPath)).toBe(false);
+      expect(failed.stderr).not.toContain('gate_password');
+    } finally {
+      rmSync(harness.directory, { recursive: true, force: true });
+    }
+  });
 
   it('does not write evidence when postflight preflight fails', () => {
     const harness = createHarness({ FAIL_PHASE: 'postflight' });
