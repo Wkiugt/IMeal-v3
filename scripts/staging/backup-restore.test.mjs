@@ -233,6 +233,40 @@ test('creates an encrypted private backup before object copy with safe commands 
     else process.env.AGE_RECIPIENT = previousRecipient;
   }
 });
+test('does not inherit ambient PGPASSWORD for a passwordless backup URL', async () => {
+  const directory = await makeDirectory();
+  const commands = [];
+  const previousRecipient = process.env.AGE_RECIPIENT;
+  const previousPassword = process.env.PGPASSWORD;
+  process.env.AGE_RECIPIENT = 'age1stagingrecipient';
+  process.env.PGPASSWORD = 'ambient-secret';
+  try {
+    await createBackup({
+      databaseUrl: 'postgresql://backup_user@staging-db.example/imeal_staging',
+      schema,
+      releaseId,
+      outputDirectory: directory,
+      objectStorage: {
+        endpoint: 'https://minio.staging.example',
+        bucket: 'imeal-staging-private',
+        destination: 'backups/imeal-20260928-001',
+      },
+      encryptionRecipientEnv: 'AGE_RECIPIENT',
+      commandRunner: createCommandRunner(commands),
+    });
+    const pgDump = commands.find(
+      ({ command, args }) =>
+        command === 'pg_dump' && args.includes('--format=custom'),
+    );
+    assert.equal(pgDump.options.env.PGPASSWORD, undefined);
+    assertNoSensitiveText(JSON.stringify(pgDump.args));
+  } finally {
+    if (previousRecipient === undefined) delete process.env.AGE_RECIPIENT;
+    else process.env.AGE_RECIPIENT = previousRecipient;
+    if (previousPassword === undefined) delete process.env.PGPASSWORD;
+    else process.env.PGPASSWORD = previousPassword;
+  }
+});
 
 function argsContain(args, value) {
   return Array.isArray(args) && args.includes(value);

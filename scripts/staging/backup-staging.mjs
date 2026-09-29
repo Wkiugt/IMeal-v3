@@ -256,6 +256,7 @@ export async function createBackup({
     objectStorage: await toolVersion(run, 'aws', ['--version']),
   };
   const pgDumpEnvironment = { ...process.env };
+  delete pgDumpEnvironment.PGPASSWORD;
   if (source.password !== undefined) {
     pgDumpEnvironment.PGPASSWORD = source.password;
   }

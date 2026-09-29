@@ -258,6 +258,62 @@ test('runs psql with shell disabled, validated target search path, timeout and r
     childProcess.spawn = originalSpawn;
   }
 });
+test('does not inherit ambient connection credentials without URL credentials', async () => {
+  const variables = [
+    'PGPASSWORD',
+    'PGPASSFILE',
+    'PGHOST',
+    'PGPORT',
+    'PGUSER',
+    'PGDATABASE',
+    'PGSERVICE',
+    'PGSERVICEFILE',
+    'PGSSLMODE',
+  ];
+  const previous = new Map(
+    variables.map((variable) => [variable, process.env[variable]]),
+  );
+  let invocation;
+  try {
+    process.env.PGPASSWORD = 'ambient-secret';
+    process.env.PGPASSFILE = '/tmp/ambient-passfile';
+    process.env.PGHOST = 'ambient-host';
+    process.env.PGPORT = '6543';
+    process.env.PGUSER = 'ambient-user';
+    process.env.PGDATABASE = 'ambient-database';
+    process.env.PGSERVICE = 'ambient-service';
+    process.env.PGSERVICEFILE = '/tmp/ambient-service';
+    process.env.PGSSLMODE = 'verify-full';
+    await runPsql({
+      databaseUrl: 'postgresql://db.example/imeal?sslmode=require',
+      schema: 'phase0_staging',
+      sql: 'select 1',
+      readOnly: false,
+      statementTimeoutSeconds: 3,
+      commandRunner: async (command, args, options) => {
+        invocation = { command, args, options };
+        return { stdout: '1\n', stderr: '', exitCode: 0 };
+      },
+    });
+    assert.equal(invocation.command, 'psql');
+    assertNoCredentialedPsqlArgs(invocation.args);
+    assert.equal(invocation.options.env.PGPASSWORD, undefined);
+    assert.equal(invocation.options.env.PGPASSFILE, undefined);
+    assert.equal(invocation.options.env.PGHOST, undefined);
+    assert.equal(invocation.options.env.PGPORT, undefined);
+    assert.equal(invocation.options.env.PGUSER, undefined);
+    assert.equal(invocation.options.env.PGDATABASE, undefined);
+    assert.equal(invocation.options.env.PGSERVICE, undefined);
+    assert.equal(invocation.options.env.PGSERVICEFILE, undefined);
+    assert.equal(invocation.options.env.PGSSLMODE, 'require');
+  } finally {
+    for (const [variable, value] of previous) {
+      if (value === undefined) delete process.env[variable];
+      else process.env[variable] = value;
+    }
+  }
+});
+
 test('starts read-only psql sessions before read-write overrides and trusted transactions', async () => {
   const originalSpawn = childProcess.spawn;
   const invocations = [];

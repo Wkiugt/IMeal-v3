@@ -388,6 +388,17 @@ const SSL_CONNECTION_PARAMETERS = {
   channel_binding: 'PGCHANNELBINDING',
   sslnegotiation: 'PGSSLNEGOTIATION',
 };
+const CONTROLLED_CONNECTION_ENVIRONMENT = [
+  'PGHOST',
+  'PGPORT',
+  'PGUSER',
+  'PGDATABASE',
+  'PGSERVICE',
+  'PGSERVICEFILE',
+  'PGPASSWORD',
+  'PGPASSFILE',
+  ...Object.values(SSL_CONNECTION_PARAMETERS),
+];
 
 function parseDatabaseConnection(databaseUrl) {
   const parsed = new URL(databaseUrl);
@@ -811,11 +822,12 @@ export async function runPsql(options) {
   if (options.readOnly) {
     pgOptions.push('-c default_transaction_read_only=on');
   }
-  const environment = {
-    ...process.env,
-    ...connection.environment,
-    PGOPTIONS: pgOptions.join(' '),
-  };
+  const environment = { ...process.env };
+  for (const variable of CONTROLLED_CONNECTION_ENVIRONMENT) {
+    delete environment[variable];
+  }
+  Object.assign(environment, connection.environment);
+  environment.PGOPTIONS = pgOptions.join(' ');
   if (connection.password !== undefined) {
     environment.PGPASSWORD = connection.password;
   }
