@@ -480,6 +480,20 @@ README.
 - [ ] Đã test restore backup và quan sát alert cho API/worker/PostgreSQL/OTP.
 - [ ] Không còn P0 defect và có owner/on-call xác nhận go-live.
 
+### Evidence and smoke verification
+
+The Task 5 evidence/smoke tooling has been verified without staging
+credentials with:
+
+```bash
+yarn node --test scripts/staging/evidence.test.mjs scripts/staging/smoke-staging.test.mjs
+```
+
+After the staging target and HTTPS origins are provisioned, run the smoke
+command from the staging runbook and retain its immutable report with the
+release evidence. A local HTTP check is permitted only with the explicit
+`--local-test-mode` flag; it is not a staging qualification.
+
 Không dùng `REQUIRE_AUTH=false`, local auth, `seed:local`, local credentials,
 `docker compose down -v` hoặc `corepack yarn test:db` với production database.
 

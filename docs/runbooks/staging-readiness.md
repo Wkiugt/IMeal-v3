@@ -166,3 +166,50 @@ access:
 Do not store raw `pg_dump` output, plaintext intermediate dumps, database URLs,
 object-storage credentials, AGE private keys, OTPs, bearer tokens, or provider
 payloads in the evidence directory.
+
+## Staging smoke and evidence
+
+Run the public smoke only against the approved staging HTTPS origins. The
+session token is read from the named environment variable and is never placed
+in the command line or report:
+
+```bash
+node scripts/staging/smoke-staging.mjs \
+  --api-origin "$STAGING_API_ORIGIN" \
+  --admin-origin "$STAGING_ADMIN_ORIGIN" \
+  --session-token-env STAGING_SMOKE_SESSION_TOKEN \
+  --output artifacts/imeal-20260928-001/staging/smoke-infrastructure.json
+```
+
+The runner uses bounded abort timeouts, checks the HTTP-to-HTTPS redirect,
+API liveness/readiness, Admin `/health`, response `X-Request-Id`, an optional
+authenticated `/auth/me`, and a safe error envelope. It records business
+workflow status as `NOT_RUN`; execute the existing API/domain/worker suites
+separately and retain their command/results as `smoke-business.json`. Do not
+use local test mode as staging evidence.
+
+Build the complete evidence manifest only after every required artifact,
+including an operator-provided `signoff.json`, exists:
+
+```bash
+node scripts/staging/evidence.mjs \
+  --release-id imeal-20260928-001 \
+  --target phase0_staging_20260928 \
+  --artifacts artifacts/imeal-20260928-001/staging
+```
+
+The evidence command never creates an approval or sign-off. Checksums can be
+created only by an explicit operator action, after the sign-off artifact is
+reviewed:
+
+```bash
+node scripts/staging/evidence.mjs \
+  --release-id imeal-20260928-001 \
+  --target phase0_staging_20260928 \
+  --artifacts artifacts/imeal-20260928-001/staging \
+  --write-checksums
+```
+
+Reject the release for a missing artifact, mutable image tag, missing rollback
+reference, checksum mismatch, failed readiness/smoke, or any secret-bearing
+report. Preserve failed reports; never overwrite an evidence artifact.
