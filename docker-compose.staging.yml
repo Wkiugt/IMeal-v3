@@ -223,9 +223,7 @@ services:
       start_period: 15s
 
   admin-web:
-    build:
-      context: .
-      dockerfile: apps/admin-web/Dockerfile
+    build: !reset null
     image: ${ADMIN_WEB_IMAGE:?ADMIN_WEB_IMAGE is required}
     user: '101:101'
     networks: !override

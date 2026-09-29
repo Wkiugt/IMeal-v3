@@ -140,9 +140,10 @@ function environment(service) {
 test('renders an isolated immutable staging boundary', () => {
   const config = renderCompose(fixtureValues());
   const services = config.services;
-  assert.equal(
-    services['admin-web'].build.dockerfile,
-    'apps/admin-web/Dockerfile',
+  assert.ok(
+    services['admin-web'].build === undefined ||
+      services['admin-web'].build === null,
+    'staging admin-web must use the immutable image without a build fallback',
   );
   for (const name of [
     'db',
