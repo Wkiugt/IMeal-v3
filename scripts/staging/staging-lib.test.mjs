@@ -93,13 +93,19 @@ test('reports target fingerprint mismatches without leaking unrelated values', (
   );
 });
 
-test('rejects secret-like keys and values before evidence serialization', () => {
+test('rejects secret-like keys and bounded assignment values before evidence serialization', () => {
   for (const value of [
     { password: 'do-not-write' },
     { accessToken: 'do-not-write' },
     { nested: { clientSecret: 'do-not-write' } },
     { connection: 'postgresql://user:password@db.example/imeal' },
     { authorization: 'Bearer eyJhbGciOiJub25lIn0.secret' },
+    'password=actual',
+    'password="actual secret"; next=ok',
+    'token=token-value',
+    'apiKey=api-value',
+    'otp=123456',
+    'providerPayload={"secret":"provider-value"}',
   ]) {
     assert.throws(() => assertNoSecrets(value), /secret/i);
   }
@@ -108,6 +114,27 @@ test('rejects secret-like keys and values before evidence serialization', () => 
       databaseUrl: 'postgresql://<redacted>@db.example/imeal',
     }),
   );
+  assert.doesNotThrow(() =>
+    assertNoSecrets(
+      'safe check text: password authentication failed passwordless=allowed tokenized=allowed',
+    ),
+  );
+});
+
+test('rejects bounded assignment values when writing evidence', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'staging-evidence-secret-'));
+  for (const diagnostic of [
+    'password=actual',
+    'token=token-value',
+    'apiKey=api-value',
+    'otp=123456',
+    'provider_payload={"payload":"provider-value"}',
+  ]) {
+    await assert.rejects(
+      writeEvidence(join(directory, 'evidence.json'), { diagnostic }),
+      /secret/i,
+    );
+  }
 });
 
 test('writes redacted evidence atomically and leaves no temporary file', async () => {
@@ -134,6 +161,12 @@ test('writes redacted evidence atomically and leaves no temporary file', async (
 
 test('runs psql with shell disabled, validated target search path, timeout and read-only mode', async () => {
   const originalSpawn = childProcess.spawn;
+  const readOnlyPrelude = [
+    'BEGIN;',
+    'SET TRANSACTION READ ONLY;',
+    "SET LOCAL statement_timeout = '7000ms';",
+    'SET LOCAL search_path TO phase0_staging, pg_catalog;',
+  ].join('\n');
   let invocation;
   childProcess.spawn = (command, argv, options) => {
     invocation = { command, argv, options };
@@ -157,7 +190,9 @@ test('runs psql with shell disabled, validated target search path, timeout and r
     queueMicrotask(() => {
       listeners.get('stdout:data')?.(Buffer.from('ok\n'));
       listeners.get('stderr:data')?.(
-        Buffer.from('password=should-not-escape\n'),
+        Buffer.from(
+          'password=actual token=token-value apiKey=api-value otp=123456 providerPayload={"payload":"provider-value"} passwordless=allowed tokenized=allowed safe check=password authentication failed\n',
+        ),
       );
       listeners.get('close')?.(0);
     });
@@ -173,14 +208,21 @@ test('runs psql with shell disabled, validated target search path, timeout and r
     });
     assert.equal(result.exitCode, 0);
     assert.equal(result.stdout, 'ok\n');
-    assert.equal(result.stderr, 'password=should-not-escape\n');
+    assert.equal(
+      result.stderr,
+      'password=<redacted> token=<redacted> apiKey=<redacted> otp=<redacted> providerPayload=<redacted> passwordless=allowed tokenized=allowed safe check=password authentication failed\n',
+    );
     assert.deepEqual(result.argv, [
       '--no-psqlrc',
       '--set=ON_ERROR_STOP=1',
       '--dbname',
       'postgresql://<redacted>@db.example/imeal',
       '--command',
+      readOnlyPrelude,
+      '--command',
       'select 1',
+      '--command',
+      'COMMIT;',
     ]);
     assert.equal(invocation.command, 'psql');
     assert.equal(invocation.options.shell, false);
@@ -188,7 +230,74 @@ test('runs psql with shell disabled, validated target search path, timeout and r
       invocation.options.env.PGOPTIONS,
       '-c search_path=phase0_staging,pg_catalog -c statement_timeout=7000 -c default_transaction_read_only=on',
     );
-    assert.equal(invocation.argv.includes('password'), false);
+    assert.ok(
+      invocation.argv
+        .join('\u0000')
+        .includes('postgresql://admin:password@db.example/imeal'),
+    );
+    assert.doesNotMatch(result.argv.join('\u0000'), /admin:password@/);
+    assert.doesNotMatch(
+      result.stderr,
+      /actual|token-value|api-value|123456|provider-value/,
+    );
+  } finally {
+    childProcess.spawn = originalSpawn;
+  }
+});
+test('starts read-only psql sessions before read-write overrides and trusted transactions', async () => {
+  const originalSpawn = childProcess.spawn;
+  const invocations = [];
+  childProcess.spawn = (_command, argv, options) => {
+    invocations.push({ argv, options });
+    const listeners = new Map();
+    const child = {
+      stdout: {
+        on(event, handler) {
+          listeners.set(`stdout:${event}`, handler);
+        },
+      },
+      stderr: {
+        on(event, handler) {
+          listeners.set(`stderr:${event}`, handler);
+        },
+      },
+      on(event, handler) {
+        listeners.set(event, handler);
+        return child;
+      },
+    };
+    queueMicrotask(() => listeners.get('close')?.(0));
+    return child;
+  };
+  try {
+    await runPsql({
+      databaseUrl: 'postgresql://admin:password@db.example/imeal',
+      schema: 'phase0_staging',
+      sql: 'SET TRANSACTION READ WRITE; INSERT INTO protected_table VALUES (1);',
+      readOnly: true,
+      statementTimeoutSeconds: 5,
+    });
+    await runPsql({
+      databaseUrl: 'postgresql://admin:password@db.example/imeal',
+      schema: 'phase0_staging',
+      sql: 'BEGIN;\nSELECT 1;\nCOMMIT;',
+      readOnly: true,
+      statementTimeoutSeconds: 5,
+    });
+    for (const invocation of invocations) {
+      const joined = invocation.argv.join('\n');
+      const preludeIndex = joined.indexOf('SET TRANSACTION READ ONLY;');
+      const requestedSqlIndex = joined.indexOf('SET TRANSACTION READ WRITE;');
+      assert.ok(preludeIndex >= 0);
+      if (requestedSqlIndex >= 0) {
+        assert.ok(preludeIndex < requestedSqlIndex);
+      }
+      assert.match(
+        invocation.options.env.PGOPTIONS,
+        /default_transaction_read_only=on/,
+      );
+    }
+    assert.match(invocations[1].argv.join('\n'), /BEGIN;\nSELECT 1;\nCOMMIT;/);
   } finally {
     childProcess.spawn = originalSpawn;
   }

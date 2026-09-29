@@ -9,6 +9,8 @@ const SCHEMA_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SECRET_KEY_PATTERN = /(password|token|secret|apikey|otp)/i;
 const POSTGRES_CREDENTIAL_PATTERN =
   /(?:postgres|postgresql):\/\/(?!<redacted>@)[^\/\s@]+@/gi;
+const SENSITIVE_ASSIGNMENT_PATTERN =
+  /\b(password|token|api[_-]?key|otp(?:[_-]?code)?|provider[\s_-]?payload)\b(\s*=\s*)((?:"[^"]*"|'[^']*'|[^;\s]+))/gi;
 const BEARER_PATTERN = /\bBearer\s+[^\s]+/gi;
 const PRIVATE_KEY_PATTERN = /-----BEGIN [^-\n]*PRIVATE KEY-----/i;
 
@@ -130,6 +132,32 @@ export function redactDatabaseUrl(value) {
   return `${parsed.protocol}//<redacted>@${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
+function isRedactedAssignmentValue(value) {
+  return /^["']?<redacted>["']?$/i.test(value.trim());
+}
+
+function redactSensitiveAssignments(value) {
+  SENSITIVE_ASSIGNMENT_PATTERN.lastIndex = 0;
+  return value.replace(
+    SENSITIVE_ASSIGNMENT_PATTERN,
+    (match, key, separator, assignmentValue) =>
+      isRedactedAssignmentValue(assignmentValue)
+        ? match
+        : `${key}${separator}<redacted>`,
+  );
+}
+
+function hasSensitiveAssignment(value) {
+  SENSITIVE_ASSIGNMENT_PATTERN.lastIndex = 0;
+  let match;
+  while ((match = SENSITIVE_ASSIGNMENT_PATTERN.exec(value)) !== null) {
+    if (!isRedactedAssignmentValue(match[3])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function safeDiagnostic(value, databaseUrl) {
   let diagnostic = String(value);
   if (typeof databaseUrl === 'string' && databaseUrl.length > 0) {
@@ -146,10 +174,11 @@ function safeDiagnostic(value, databaseUrl) {
       // The URL is passed to psql for validation; regex redaction below still applies.
     }
   }
-  return diagnostic.replace(POSTGRES_CREDENTIAL_PATTERN, (match) => {
+  diagnostic = diagnostic.replace(POSTGRES_CREDENTIAL_PATTERN, (match) => {
     const protocol = match.slice(0, match.indexOf('://'));
     return `${protocol}://<redacted>@`;
   });
+  return redactSensitiveAssignments(diagnostic);
 }
 
 function assertDatabaseUrl(value) {
@@ -219,7 +248,8 @@ export function sha256File(filePath) {
 function secretValue(value) {
   return (
     typeof value === 'string' &&
-    (POSTGRES_CREDENTIAL_PATTERN.test(value) ||
+    (hasSensitiveAssignment(value) ||
+      POSTGRES_CREDENTIAL_PATTERN.test(value) ||
       BEARER_PATTERN.test(value) ||
       PRIVATE_KEY_PATTERN.test(value))
   );
@@ -303,9 +333,25 @@ export async function runPsql(options) {
     '--set=ON_ERROR_STOP=1',
     '--dbname',
     databaseUrl,
+  ];
+  if (options.readOnly) {
+    args.push(
+      '--command',
+      [
+        'BEGIN;',
+        'SET TRANSACTION READ ONLY;',
+        `SET LOCAL statement_timeout = '${options.statementTimeoutSeconds * 1000}ms';`,
+        `SET LOCAL search_path TO ${schema}, pg_catalog;`,
+      ].join('\n'),
+    );
+  }
+  args.push(
     hasSql ? '--command' : '--file',
     hasSql ? options.sql : options.sqlFile,
-  ];
+  );
+  if (options.readOnly) {
+    args.push('--command', 'COMMIT;');
+  }
   const redactedArgs = args.map((argument) =>
     safeDiagnostic(argument, databaseUrl),
   );
