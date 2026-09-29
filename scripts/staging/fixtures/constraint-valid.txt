@@ -1,0 +1,10 @@
+BEGIN
+SET
+ALTER TABLE
+ALTER TABLE
+ conname                                | convalidated
+----------------------------------------+--------------
+ registration_lifecycle_snapshot_complete | t
+ registration_serving_consistency         | t
+(2 rows)
+COMMIT
