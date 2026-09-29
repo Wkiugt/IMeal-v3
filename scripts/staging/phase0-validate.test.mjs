@@ -89,6 +89,26 @@ test('parses both named constraints and requires exact valid rows', async () => 
   );
 });
 
+test('rejects a missing evidence output path before spawning psql', async () => {
+  const invocations = [];
+  const restore = installSpawn([], invocations);
+  try {
+    await assert.rejects(
+      runValidation({
+        databaseUrl,
+        schema,
+        releaseId,
+        preflightAfterOutputPath: 'unused-preflight.json',
+        outputPath: '',
+      }),
+      /output path/i,
+    );
+    assert.equal(invocations.length, 0);
+  } finally {
+    restore();
+  }
+});
+
 test('runs post-preflight and named constraint validation before evidence', async () => {
   const directory = await makeDirectory();
   const preflightAfterOutputPath = join(directory, 'preflight-after.json');

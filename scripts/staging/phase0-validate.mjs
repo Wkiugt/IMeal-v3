@@ -156,6 +156,9 @@ export async function runValidation({
   preflightAfterOutputPath,
   outputPath,
 }) {
+  if (typeof outputPath !== 'string' || outputPath.length === 0) {
+    throw new Error('output path is required');
+  }
   const safeSchema = requireSafeSchemaName(schema);
   const safeReleaseId = assertReleaseId(releaseId);
   if (

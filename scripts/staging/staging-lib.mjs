@@ -703,6 +703,13 @@ export async function runPsql(options) {
   ) {
     throw new Error('statementTimeoutSeconds must be a positive integer');
   }
+  if (
+    options.lockTimeoutSeconds !== undefined &&
+    (!Number.isInteger(options.lockTimeoutSeconds) ||
+      options.lockTimeoutSeconds <= 0)
+  ) {
+    throw new Error('lockTimeoutSeconds must be a positive integer');
+  }
   const hasSql = typeof options.sql === 'string';
   const hasSqlFile = typeof options.sqlFile === 'string';
   if (hasSql === hasSqlFile) {
@@ -747,6 +754,9 @@ export async function runPsql(options) {
     `-c search_path=${schema},pg_catalog`,
     `-c statement_timeout=${options.statementTimeoutSeconds * 1000}`,
   ];
+  if (options.lockTimeoutSeconds !== undefined) {
+    pgOptions.push(`-c lock_timeout=${options.lockTimeoutSeconds * 1000}`);
+  }
   if (options.readOnly) {
     pgOptions.push('-c default_transaction_read_only=on');
   }

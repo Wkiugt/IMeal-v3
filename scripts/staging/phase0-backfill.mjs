@@ -25,16 +25,31 @@ const BACKFILL_SQL_PATH = fileURLToPath(
   ),
 );
 const STATEMENT_TIMEOUT_SECONDS = 30;
+const LOCK_TIMEOUT_SECONDS = 5;
 const DATABASE_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// Approval IDs are bounded evidence identifiers, never secret-bearing values.
+const APPROVAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const SECRET_LIKE_APPROVAL_ID_PATTERN = /(password|token|secret|apikey|otp)/i;
 const HASH_PATTERN = /^[a-f0-9]{64}$/i;
 const DECISION = 'APPROVED_FOR_EXACT_BACKFILL';
 const SCOPE = 'phase0_domain_correctness';
+const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function assertReleaseId(value) {
   if (typeof value !== 'string' || !RELEASE_ID_PATTERN.test(value)) {
     throw new Error('invalid release id');
+  }
+  return value;
+}
+
+function assertApprovalId(value) {
+  if (
+    typeof value !== 'string' ||
+    !APPROVAL_ID_PATTERN.test(value) ||
+    SECRET_LIKE_APPROVAL_ID_PATTERN.test(value)
+  ) {
+    throw new Error('invalid approval id');
   }
   return value;
 }
@@ -94,12 +109,7 @@ export function verifyApproval({
   }
   const expectedReleaseId = assertReleaseId(releaseId);
   const expectedTarget = assertTarget(target);
-  if (
-    typeof approval.approvalId !== 'string' ||
-    approval.approvalId.trim() === ''
-  ) {
-    throw new Error('approval id is required');
-  }
+  assertApprovalId(approval.approvalId);
   if (approval.releaseId !== expectedReleaseId) {
     throw new Error('approval release mismatch');
   }
@@ -207,14 +217,21 @@ export async function runBackfill({
   approvalId,
   backupManifestPath,
 }) {
+  if (
+    typeof backupManifestPath !== 'string' ||
+    backupManifestPath.length === 0
+  ) {
+    throw new Error('backup manifest path is required');
+  }
   const safeSchema = requireSafeSchemaName(schema);
   const safeReleaseId = assertReleaseId(releaseId);
   if (typeof outputPath !== 'string' || outputPath.length === 0) {
     throw new Error('output path is required');
   }
-  const [approval, preflight] = await Promise.all([
+  const [approval, preflight, backupManifest] = await Promise.all([
     readJson(approvalPath, 'approval'),
     readJson(preflightPath, 'preflight'),
+    readFile(backupManifestPath, 'utf8'),
   ]);
   if (approvalId !== undefined && approval.approvalId !== approvalId) {
     throw new Error('approval id mismatch');
@@ -245,11 +262,8 @@ export async function runBackfill({
     approval.backupManifestSha256,
     'backup manifest hash',
   );
-  if (backupManifestPath !== undefined) {
-    const backupManifest = await readFile(backupManifestPath, 'utf8');
-    if (sha256Text(backupManifest) !== backupManifestSha256) {
-      throw new Error('backup manifest hash mismatch');
-    }
+  if (sha256Text(backupManifest) !== backupManifestSha256) {
+    throw new Error('backup manifest hash mismatch');
   }
   verifyApproval({
     approval,
@@ -278,6 +292,7 @@ export async function runBackfill({
     sql: backfillSql,
     readOnly: false,
     statementTimeoutSeconds: STATEMENT_TIMEOUT_SECONDS,
+    lockTimeoutSeconds: LOCK_TIMEOUT_SECONDS,
   });
   assertSuccessfulPsql(result, 'backfill SQL');
   const completedAt = new Date().toISOString();
@@ -302,7 +317,7 @@ const CLI_SCHEMA = {
   preflight: { type: 'string', required: false },
   input: { type: 'string', required: false },
   'approval-id': { type: 'string', required: false },
-  'backup-manifest': { type: 'string', required: false },
+  'backup-manifest': { type: 'string', required: true },
   'release-id': { type: 'string', required: true },
   output: { type: 'string', required: true },
 };

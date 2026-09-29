@@ -56,6 +56,15 @@ async function createPreflightFile(directory, overrides = {}) {
   return path;
 }
 
+async function createBackupManifest(
+  directory,
+  content = '{\"result\":\"PASS\"}\n',
+) {
+  const path = join(directory, 'backup-manifest.json');
+  await writeFile(path, content, 'utf8');
+  return { path, sha256: sha256Text(content) };
+}
+
 function approvalRecord(overrides = {}) {
   const now = Date.now();
   return {
@@ -143,6 +152,8 @@ test('accepts only an independent, current approval bound to release and target'
     }),
   );
   for (const [field, value, message] of [
+    ['approvalId', 'approvalToken', /approval id/i],
+    ['approvalId', 'invalid/id', /approval id/i],
     ['decision', 'REJECTED', /decision/i],
     ['releaseId', 'imeal-20260928-002', /release/i],
     ['preflightSha256', 'c'.repeat(64), /preflight/i],
@@ -171,6 +182,7 @@ test('accepts only an independent, current approval bound to release and target'
 test('refuses missing approval before spawning psql', async () => {
   const directory = await makeDirectory();
   const preflightPath = await createPreflightFile(directory);
+  const backupManifest = await createBackupManifest(directory);
   const restore = installSpawn([]);
   try {
     await assert.rejects(
@@ -181,9 +193,101 @@ test('refuses missing approval before spawning psql', async () => {
         preflightPath,
         releaseId,
         outputPath: join(directory, 'backfill-result.json'),
+        backupManifestPath: backupManifest.path,
       }),
       /approval/i,
     );
+  } finally {
+    restore();
+  }
+});
+
+test('requires a backup manifest and verifies its exact bytes before spawning psql', async () => {
+  const directory = await makeDirectory();
+  const preflightPath = await createPreflightFile(directory);
+  const preflightSqlHash = sha256Text(await readPreflightSql());
+  const approval = approvalRecord({ preflightSha256: preflightSqlHash });
+  const approvalPath = join(directory, 'approval.json');
+  await writeFile(
+    approvalPath,
+    `${JSON.stringify(approval, null, 2)}\n`,
+    'utf8',
+  );
+  const outputPath = join(directory, 'backfill-result.json');
+  let restore = installSpawn([]);
+  try {
+    await assert.rejects(
+      runBackfill({
+        databaseUrl,
+        schema,
+        approvalPath,
+        preflightPath,
+        releaseId,
+        outputPath,
+      }),
+      /backup manifest path/i,
+    );
+    await assert.rejects(access(outputPath));
+  } finally {
+    restore();
+  }
+
+  const backupManifest = await createBackupManifest(directory);
+  restore = installSpawn([]);
+  try {
+    await assert.rejects(
+      runBackfill({
+        databaseUrl,
+        schema,
+        approvalPath,
+        preflightPath,
+        releaseId,
+        outputPath,
+        backupManifestPath: backupManifest.path,
+      }),
+      /backup manifest hash mismatch/i,
+    );
+    await assert.rejects(access(outputPath));
+  } finally {
+    restore();
+  }
+});
+
+test('rejects unsafe approval IDs before spawning psql', async () => {
+  const directory = await makeDirectory();
+  const preflightPath = await createPreflightFile(directory);
+  const backupManifest = await createBackupManifest(directory);
+  const preflightSqlHash = sha256Text(await readPreflightSql());
+  const approvalPath = join(directory, 'approval.json');
+  await writeFile(
+    approvalPath,
+    `${JSON.stringify(
+      approvalRecord({
+        approvalId: 'approvalToken',
+        preflightSha256: preflightSqlHash,
+        backupManifestSha256: backupManifest.sha256,
+      }),
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+  const invocations = [];
+  const restore = installSpawn([], invocations);
+  try {
+    await assert.rejects(
+      runBackfill({
+        databaseUrl,
+        schema,
+        approvalPath,
+        preflightPath,
+        releaseId,
+        outputPath: join(directory, 'backfill-result.json'),
+        backupManifestPath: backupManifest.path,
+      }),
+      /approval id/i,
+    );
+    assert.equal(invocations.length, 0);
   } finally {
     restore();
   }
@@ -196,7 +300,11 @@ test('refuses a dirty preflight before fingerprint or backfill', async () => {
   );
   const preflightPath = await createPreflightFile(directory, dirty);
   const preflightSqlHash = sha256Text(await readPreflightSql());
-  const approval = approvalRecord({ preflightSha256: preflightSqlHash });
+  const backupManifest = await createBackupManifest(directory);
+  const approval = approvalRecord({
+    preflightSha256: preflightSqlHash,
+    backupManifestSha256: backupManifest.sha256,
+  });
   const approvalPath = join(directory, 'approval.json');
   await writeFile(
     approvalPath,
@@ -214,6 +322,7 @@ test('refuses a dirty preflight before fingerprint or backfill', async () => {
         preflightPath,
         releaseId,
         outputPath,
+        backupManifestPath: backupManifest.path,
       }),
       /future_active_snapshot_incomplete/i,
     );
@@ -226,7 +335,11 @@ test('runs exact read-write backfill only after fingerprint and approval, and is
   const directory = await makeDirectory();
   const preflightSqlHash = sha256Text(await readPreflightSql());
   const preflightPath = await createPreflightFile(directory);
-  const approval = approvalRecord({ preflightSha256: preflightSqlHash });
+  const backupManifest = await createBackupManifest(directory);
+  const approval = approvalRecord({
+    preflightSha256: preflightSqlHash,
+    backupManifestSha256: backupManifest.sha256,
+  });
   const approvalPath = join(directory, 'approval.json');
   await writeFile(
     approvalPath,
@@ -248,6 +361,7 @@ test('runs exact read-write backfill only after fingerprint and approval, and is
       preflightPath,
       releaseId,
       outputPath,
+      backupManifestPath: backupManifest.path,
     });
     const second = await runBackfill({
       databaseUrl,
@@ -256,6 +370,7 @@ test('runs exact read-write backfill only after fingerprint and approval, and is
       preflightPath,
       releaseId,
       outputPath: secondOutputPath,
+      backupManifestPath: backupManifest.path,
     });
     assert.equal(first.result, 'PASS');
     assert.equal(second.result, 'PASS');
@@ -272,6 +387,7 @@ test('runs exact read-write backfill only after fingerprint and approval, and is
       ),
       false,
     );
+    assert.match(invocations[2].options.env.PGOPTIONS, /lock_timeout=5000/);
     assert.match(invocations[3].argv[5], /phase0-target:/);
     assert.match(invocations[4].argv[5], /phase0-migrations:/);
     assert.equal(invocations[5].argv[5], invocations[2].argv[5]);
@@ -286,7 +402,11 @@ test('fails closed without evidence on target mismatch or failed backfill SQL', 
   const directory = await makeDirectory();
   const preflightSqlHash = sha256Text(await readPreflightSql());
   const preflightPath = await createPreflightFile(directory);
-  const approval = approvalRecord({ preflightSha256: preflightSqlHash });
+  const backupManifest = await createBackupManifest(directory);
+  const approval = approvalRecord({
+    preflightSha256: preflightSqlHash,
+    backupManifestSha256: backupManifest.sha256,
+  });
   const approvalPath = join(directory, 'approval.json');
   await writeFile(
     approvalPath,
@@ -307,6 +427,7 @@ test('fails closed without evidence on target mismatch or failed backfill SQL', 
         preflightPath,
         releaseId,
         outputPath: mismatchOutput,
+        backupManifestPath: backupManifest.path,
       }),
       /target fingerprint mismatch/i,
     );
@@ -329,6 +450,7 @@ test('fails closed without evidence on target mismatch or failed backfill SQL', 
         preflightPath,
         releaseId,
         outputPath: failedOutput,
+        backupManifestPath: backupManifest.path,
       }),
       /backfill SQL failed.*40/i,
     );
@@ -349,6 +471,8 @@ test('backfill CLI fails closed for missing environment, invalid schema and rele
     join(directory, 'approval.json'),
     '--preflight',
     join(directory, 'preflight.json'),
+    '--backup-manifest',
+    join(directory, 'backup-manifest.json'),
     '--release-id',
     releaseId,
     '--output',
