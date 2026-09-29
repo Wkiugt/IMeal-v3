@@ -366,7 +366,12 @@ test('loads read-only SQL files into one command and rejects transaction overrid
 
     for (const sql of [
       'SET TRANSACTION READ WRITE;',
-      'SET default_transaction_read_only = off;',
+      'SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE;',
+      'SET SESSION transaction_read_only = off;',
+      'sEt   SeSsIoN   transaction_read_only TO false;',
+      'SET LOCAL transaction_read_only = 0;',
+      'SET default_transaction_read_only TO no;',
+      'SET SESSION default_transaction_read_only = off;',
       'COMMIT;',
       'ROLLBACK;',
     ]) {
