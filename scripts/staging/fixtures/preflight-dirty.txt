@@ -1,0 +1,24 @@
+BEGIN
+SET
+SET
+SET
+ check_name                            | affected_count | sample_ids
+---------------------------------------+----------------+------------
+ registration_snapshot_incomplete      |              0 | {}
+ registration_serving_mismatch         |              0 | {}
+ roster_assignment_ambiguous           |              0 | {}
+ menu_revision_incomplete              |              0 | {}
+ penalty_registration_mapping_ambiguous |              0 | {}
+ penalty_registration_duplicate_candidate |              0 | {}
+ future_active_snapshot_incomplete     |              1 | {registration-123}
+(7 rows)
+
+ registration_status | row_count
+---------------------+-----------
+ ACTIVE              |         3
+ CANCELLED           |         1
+ SERVED              |         2
+ NO_SHOW             |         0
+(4 rows)
+
+COMMIT
