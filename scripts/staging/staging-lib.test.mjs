@@ -17,6 +17,9 @@ import {
   sha256Text,
   writeEvidence,
 } from './staging-lib.mjs';
+function assertNoCredentialedPsqlArgs(argv) {
+  assert.doesNotMatch(argv.join('\u0000'), /postgres(?:ql)?:\/\/|password/i);
+}
 
 test('accepts only simple approved schema identifiers', () => {
   assert.equal(
@@ -176,6 +179,7 @@ test('runs psql with shell disabled, validated target search path, timeout and r
   let invocation;
   childProcess.spawn = (command, argv, options) => {
     invocation = { command, argv, options };
+    assertNoCredentialedPsqlArgs(argv);
     const listeners = new Map();
     const child = {
       stdout: {
@@ -206,7 +210,8 @@ test('runs psql with shell disabled, validated target search path, timeout and r
   };
   try {
     const result = await runPsql({
-      databaseUrl: 'postgresql://admin:password@db.example/imeal',
+      databaseUrl:
+        'postgresql://admin:password@db.example:5432/imeal?schema=ignored&pgbouncer=true&sslmode=require&sslrootcert=%2Fetc%2Froot.crt',
       schema: 'phase0_staging',
       sql: 'select 1',
       readOnly: true,
@@ -221,8 +226,14 @@ test('runs psql with shell disabled, validated target search path, timeout and r
     assert.deepEqual(result.argv, [
       '--no-psqlrc',
       '--set=ON_ERROR_STOP=1',
+      '--host',
+      'db.example',
+      '--port',
+      '5432',
+      '--username',
+      'admin',
       '--dbname',
-      'postgresql://<redacted>@db.example/imeal',
+      'imeal',
       '--command',
       `${readOnlyPrelude}\nselect 1\nCOMMIT;`,
     ]);
@@ -232,12 +243,13 @@ test('runs psql with shell disabled, validated target search path, timeout and r
       invocation.options.env.PGOPTIONS,
       '-c search_path=phase0_staging,pg_catalog -c statement_timeout=7000 -c default_transaction_read_only=on',
     );
-    assert.ok(
-      invocation.argv
-        .join('\u0000')
-        .includes('postgresql://admin:password@db.example/imeal'),
+    assert.equal(invocation.options.env.PGPASSWORD, 'password');
+    assert.equal(invocation.options.env.PGSSLMODE, 'require');
+    assert.equal(invocation.options.env.PGSSLROOTCERT, '/etc/root.crt');
+    assert.doesNotMatch(
+      invocation.argv.join('\u0000'),
+      /postgres(?:ql)?:\/\/|password/i,
     );
-    assert.doesNotMatch(result.argv.join('\u0000'), /admin:password@/);
     assert.doesNotMatch(
       result.stderr,
       /actual|token-value|api-value|123456|provider-value/,
@@ -251,6 +263,7 @@ test('starts read-only psql sessions before read-write overrides and trusted tra
   const invocations = [];
   childProcess.spawn = (_command, argv, options) => {
     invocations.push({ argv, options });
+    assertNoCredentialedPsqlArgs(argv);
     const listeners = new Map();
     const child = {
       stdout: {
@@ -322,6 +335,7 @@ test('loads read-only SQL files into one command and rejects transaction overrid
   const invocations = [];
   childProcess.spawn = (_command, argv, options) => {
     invocations.push({ argv, options });
+    assertNoCredentialedPsqlArgs(argv);
     const listeners = new Map();
     const child = {
       stdout: {
@@ -375,7 +389,8 @@ test('loads read-only SQL files into one command and rejects transaction overrid
       statementTimeoutSeconds: 5,
     });
     assert.equal(invocations.length, 2);
-    const preservedSql = invocations[1].argv[5];
+    const preservedSql =
+      invocations[1].argv[invocations[1].argv.indexOf('--command') + 1];
     assert.match(preservedSql, /-- retain preflight comment/);
     assert.match(
       preservedSql,
@@ -433,7 +448,8 @@ test('loads read-only SQL files into one command and rejects transaction overrid
 
 test('returns redacted diagnostics and child exit codes on failed psql', async () => {
   const originalSpawn = childProcess.spawn;
-  childProcess.spawn = (_command, _argv, _options) => {
+  childProcess.spawn = (_command, argv, _options) => {
+    assertNoCredentialedPsqlArgs(argv);
     const listeners = new Map();
     const child = {
       stdout: {

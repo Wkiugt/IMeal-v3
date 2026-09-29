@@ -29,6 +29,11 @@ function targetOutput({
 }
 
 const migrationsOutput = 'phase0-migrations:[]\n';
+function commandBody(invocation) {
+  const commandIndex = invocation.argv.indexOf('--command');
+  assert.notEqual(commandIndex, -1);
+  return invocation.argv[commandIndex + 1];
+}
 
 function installSpawn(responses, invocations = []) {
   const originalSpawn = childProcess.spawn;
@@ -37,6 +42,7 @@ function installSpawn(responses, invocations = []) {
     const response = responses[responseIndex++];
     if (!response) throw new Error('unexpected psql invocation');
     invocations.push({ command, argv, options });
+    assert.doesNotMatch(argv.join('\u0000'), /postgres(?:ql)?:\/\/|password/i);
     const listeners = new Map();
     const child = {
       stdout: {
@@ -151,15 +157,18 @@ test('runs post-preflight and named constraint validation before evidence', asyn
     );
     assert.deepEqual(JSON.parse(await readFile(outputPath, 'utf8')), result);
     assert.equal(invocations.length, 8);
-    assert.match(invocations[0].argv[5], /phase0-target:/);
-    assert.match(invocations[1].argv[5], /phase0-migrations:/);
-    assert.match(invocations[2].argv[5], /phase0-target:/);
-    assert.match(invocations[4].argv[5], /future_active_snapshot_incomplete/);
-    assert.match(invocations[5].argv[5], /phase0-target:/);
-    assert.match(invocations[6].argv[5], /phase0-migrations:/);
-    assert.match(invocations[7].argv[5], /VALIDATE CONSTRAINT/);
+    assert.match(commandBody(invocations[0]), /phase0-target:/);
+    assert.match(commandBody(invocations[1]), /phase0-migrations:/);
+    assert.match(commandBody(invocations[2]), /phase0-target:/);
     assert.match(
-      invocations[7].argv[5],
+      commandBody(invocations[4]),
+      /future_active_snapshot_incomplete/,
+    );
+    assert.match(commandBody(invocations[5]), /phase0-target:/);
+    assert.match(commandBody(invocations[6]), /phase0-migrations:/);
+    assert.match(commandBody(invocations[7]), /VALIDATE CONSTRAINT/);
+    assert.match(
+      commandBody(invocations[7]),
       /registration_lifecycle_snapshot_complete/,
     );
     assert.equal(

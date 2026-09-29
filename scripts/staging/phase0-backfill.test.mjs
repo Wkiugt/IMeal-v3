@@ -91,6 +91,11 @@ function targetOutput({
 }
 
 const migrationsOutput = 'phase0-migrations:[]\n';
+function commandBody(invocation) {
+  const commandIndex = invocation.argv.indexOf('--command');
+  assert.notEqual(commandIndex, -1);
+  return invocation.argv[commandIndex + 1];
+}
 
 function installSpawn(responses, invocations = []) {
   const originalSpawn = childProcess.spawn;
@@ -99,6 +104,7 @@ function installSpawn(responses, invocations = []) {
     const response = responses[responseIndex++];
     if (!response) throw new Error('unexpected psql invocation');
     invocations.push({ command, argv, options });
+    assert.doesNotMatch(argv.join('\u0000'), /postgres(?:ql)?:\/\/|password/i);
     const listeners = new Map();
     const child = {
       stdout: {
@@ -377,9 +383,9 @@ test('runs exact read-write backfill only after fingerprint and approval, and is
     assert.equal(first.approvalId, approval.approvalId);
     assert.deepEqual(JSON.parse(await readFile(outputPath, 'utf8')), first);
     assert.equal(invocations.length, 6);
-    assert.match(invocations[0].argv[5], /phase0-target:/);
-    assert.match(invocations[1].argv[5], /phase0-migrations:/);
-    assert.match(invocations[2].argv[5], /UPDATE registrations/);
+    assert.match(commandBody(invocations[0]), /phase0-target:/);
+    assert.match(commandBody(invocations[1]), /phase0-migrations:/);
+    assert.match(commandBody(invocations[2]), /UPDATE registrations/);
     assert.equal(invocations[2].argv.includes('--file'), false);
     assert.equal(
       invocations[2].options.env.PGOPTIONS.includes(
@@ -388,11 +394,11 @@ test('runs exact read-write backfill only after fingerprint and approval, and is
       false,
     );
     assert.match(invocations[2].options.env.PGOPTIONS, /lock_timeout=5000/);
-    assert.match(invocations[3].argv[5], /phase0-target:/);
-    assert.match(invocations[4].argv[5], /phase0-migrations:/);
-    assert.equal(invocations[5].argv[5], invocations[2].argv[5]);
-    assert.equal(invocations[2].argv[5], await readBackfillSql());
-    assert.match(invocations[2].argv[5], /DO \$menu_backfill\$/);
+    assert.match(commandBody(invocations[3]), /phase0-target:/);
+    assert.match(commandBody(invocations[4]), /phase0-migrations:/);
+    assert.equal(commandBody(invocations[5]), commandBody(invocations[2]));
+    assert.equal(commandBody(invocations[2]), await readBackfillSql());
+    assert.match(commandBody(invocations[2]), /DO \$menu_backfill\$/);
   } finally {
     restore();
   }

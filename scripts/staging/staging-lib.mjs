@@ -379,6 +379,51 @@ function assertDatabaseUrl(value) {
   }
   return value;
 }
+const SSL_CONNECTION_PARAMETERS = {
+  sslmode: 'PGSSLMODE',
+  sslcert: 'PGSSLCERT',
+  sslkey: 'PGSSLKEY',
+  sslrootcert: 'PGSSLROOTCERT',
+  sslcrl: 'PGSSLCRL',
+  channel_binding: 'PGCHANNELBINDING',
+  sslnegotiation: 'PGSSLNEGOTIATION',
+};
+
+function parseDatabaseConnection(databaseUrl) {
+  const parsed = new URL(databaseUrl);
+  let database;
+  let username;
+  let password;
+  try {
+    database = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+    username = parsed.username
+      ? decodeURIComponent(parsed.username)
+      : undefined;
+    password = parsed.password
+      ? decodeURIComponent(parsed.password)
+      : undefined;
+  } catch {
+    throw new Error('database URL contains invalid encoding');
+  }
+  if (!database) {
+    throw new Error('database URL database name is required');
+  }
+  const environment = {};
+  for (const [parameter, variable] of Object.entries(
+    SSL_CONNECTION_PARAMETERS,
+  )) {
+    const value = parsed.searchParams.get(parameter);
+    if (value !== null) environment[variable] = value;
+  }
+  return {
+    host: parsed.hostname.replace(/^\[(.*)\]$/, '$1'),
+    port: parsed.port || undefined,
+    username,
+    password,
+    database,
+    environment,
+  };
+}
 
 function comparableValue(value) {
   if (value === undefined) return '<missing>';
@@ -700,6 +745,7 @@ export async function runPsql(options) {
     throw new TypeError('runPsql options are required');
   }
   const databaseUrl = assertDatabaseUrl(options.databaseUrl);
+  const connection = parseDatabaseConnection(databaseUrl);
   const schema = requireSafeSchemaName(options.schema);
   if (typeof options.readOnly !== 'boolean') {
     throw new TypeError('runPsql readOnly must be boolean');
@@ -730,13 +776,11 @@ export async function runPsql(options) {
       : await readFile(options.sqlFile, 'utf8');
     readOnlySql = normalizeReadOnlySql(source);
   }
-
-  const args = [
-    '--no-psqlrc',
-    '--set=ON_ERROR_STOP=1',
-    '--dbname',
-    databaseUrl,
-  ];
+  const args = ['--no-psqlrc', '--set=ON_ERROR_STOP=1'];
+  if (connection.host) args.push('--host', connection.host);
+  if (connection.port) args.push('--port', connection.port);
+  if (connection.username) args.push('--username', connection.username);
+  args.push('--dbname', connection.database);
   if (options.readOnly) {
     const readOnlyPrelude = [
       'BEGIN;',
@@ -769,8 +813,12 @@ export async function runPsql(options) {
   }
   const environment = {
     ...process.env,
+    ...connection.environment,
     PGOPTIONS: pgOptions.join(' '),
   };
+  if (connection.password !== undefined) {
+    environment.PGPASSWORD = connection.password;
+  }
   if (
     options.commandRunner !== undefined &&
     typeof options.commandRunner !== 'function'

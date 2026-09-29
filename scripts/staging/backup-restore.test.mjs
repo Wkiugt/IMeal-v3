@@ -31,6 +31,10 @@ function createCommandRunner(commands, { failCommand } = {}) {
   return async (command, args, options) => {
     commands.push({ command, args, options });
     if (command === 'psql') {
+      assert.doesNotMatch(
+        args.join('\u0000'),
+        /postgres(?:ql)?:\/\/|super-secret|password/i,
+      );
       const sql = args[args.indexOf('--command') + 1] ?? '';
       if (sql.includes('phase0-target:')) {
         return commandResult({ stdout: targetFingerprintOutput() });
@@ -272,6 +276,10 @@ test('fails closed and removes the plaintext dump when encryption fails', async 
   const runner = async (command, args, options) => {
     commands.push({ command, args, options });
     if (command === 'psql') {
+      assert.doesNotMatch(
+        args.join('\u0000'),
+        /postgres(?:ql)?:\/\/|super-secret|password/i,
+      );
       const sql = args[args.indexOf('--command') + 1] ?? '';
       if (sql.includes('phase0-target:')) {
         return commandResult({ stdout: targetFingerprintOutput() });

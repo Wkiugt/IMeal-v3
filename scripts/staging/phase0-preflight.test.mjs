@@ -32,6 +32,7 @@ function installSpawn(responses, invocations = []) {
     const response = responses[responseIndex++];
     if (!response) throw new Error('unexpected psql invocation');
     invocations.push({ command, argv, options });
+    assert.doesNotMatch(argv.join('\u0000'), /postgres(?:ql)?:\/\/|password/i);
     const listeners = new Map();
     const child = {
       stdout: {
@@ -74,6 +75,11 @@ function targetOutput({
 
 const migrationsOutput =
   'phase0-migrations:[{"migration_name":"20260928000000_phase0_domain_correctness","finished_at":"2026-09-28T00:00:00.000Z","rolled_back_at":null,"applied_steps_count":1}]\n';
+function commandBody(invocation) {
+  const commandIndex = invocation.argv.indexOf('--command');
+  assert.notEqual(commandIndex, -1);
+  return invocation.argv[commandIndex + 1];
+}
 
 test('parses every named check and status count from the clean fixture', async () => {
   const report = parsePreflightOutput(await readFixture('preflight-clean.txt'));
@@ -243,7 +249,7 @@ test('runs clean preflight read-only, hashes SQL and writes atomic evidence', as
     assert.equal(preflightInvocation.argv.includes('--file'), false);
     assert.equal(preflightInvocation.argv.includes('--command'), true);
     assert.equal(
-      preflightInvocation.argv[5].includes(
+      commandBody(preflightInvocation).includes(
         sql.slice(
           sql.indexOf('SELECT check_name'),
           sql.indexOf('SELECT check_name') + 40,
@@ -252,7 +258,7 @@ test('runs clean preflight read-only, hashes SQL and writes atomic evidence', as
       true,
     );
     assert.match(
-      preflightInvocation.argv[5],
+      commandBody(preflightInvocation),
       /future_active_snapshot_incomplete/,
     );
   } finally {
