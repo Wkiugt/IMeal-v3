@@ -2,8 +2,10 @@
 
 This runbook is for the isolated staging target only. It is an operator
 procedure, not proof that staging or production has been provisioned. Do not
-enter real credentials, OTP values, employee data, location data, GPS data,
-provider payloads, or real hostnames in this document or in evidence.
+enter credentials, OTP values, employee data, location data, GPS data, provider
+payloads, or secret-bearing URLs in this document or in evidence. Approved
+staging API/Admin origins may appear only as restricted operational metadata in
+the smoke evidence; they are never committed to docs or source.
 
 The current repository evidence is **CONDITIONAL / NO-GO**. Local tests prove
 only the checked-in tooling and disposable fixtures. The release manager must
@@ -82,11 +84,14 @@ collector or endpoint is a failed gate, not a reason to mark PASS manually.
 ## 1. Candidate, fingerprint, and migration status
 
 Create a restricted evidence directory on a protected filesystem outside the
-git checkout. The release-manifest command checks that its `repository` is a
-clean worktree, so a repo-relative `artifacts/` path is not acceptable for
-release evidence: generated manifests, checksums, and rollback files must not
-make the checkout dirty. These are synthetic identifiers; replace them with
-the approved release record without exposing secrets:
+git checkout. Inject `RELEASE_COMMIT` as the exact reviewed checkout commit
+SHA; the command below rejects an empty, malformed, or different checkout
+commit before any release evidence is generated. The release-manifest command
+checks that its `repository` is a clean worktree, so a repo-relative
+`artifacts/` path is not acceptable for release evidence: generated manifests,
+checksums, and rollback files must not make the checkout dirty. These are
+synthetic identifiers; replace them with the approved release record without
+exposing secrets:
 
 ```bash
 export RELEASE_ID=imeal-20260928-001
@@ -96,8 +101,25 @@ export TARGET_SCHEMA=phase0_staging_20260928
 export TARGET_DATABASE_NAME=imeal_staging_20260928
 export RESTORE_DATABASE=imeal_restore_20260928
 export RESTORE_BUCKET=imeal-restore-20260928
+: "${RELEASE_COMMIT:?inject exact reviewed checkout commit SHA}"
+case "$RELEASE_COMMIT" in
+  ''|*[!0-9a-fA-F]*)
+    echo 'RELEASE_COMMIT must be hexadecimal' >&2
+    exit 1
+    ;;
+esac
+if [ "${#RELEASE_COMMIT}" -lt 7 ] || [ "${#RELEASE_COMMIT}" -gt 64 ]; then
+  echo 'RELEASE_COMMIT length is invalid' >&2
+  exit 1
+fi
+
 
 REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
+if [ "$(git -C "$REPOSITORY_ROOT" rev-parse HEAD)" != "$RELEASE_COMMIT" ]; then
+  echo 'checked-out commit does not match RELEASE_COMMIT' >&2
+  exit 1
+fi
+
 case "$(realpath -m "$EVIDENCE_ROOT")" in
   "$REPOSITORY_ROOT"|"$REPOSITORY_ROOT"/*)
     echo 'EVIDENCE_ROOT must be outside the git checkout' >&2
@@ -364,6 +386,10 @@ approved artifact download/provisioning step places them under `$EVIDENCE_DIR`
 and verifies their release/target binding. Do not claim that a referenced file
 exists merely because its path appears in a manifest.
 
+The final protected workflow upload also includes `images.json` and
+`release-version.txt`; the operator must review both against the exact workflow
+run, reviewed commit, and deployment target before provisioning them.
+
 Before generating the manifest, require the protected inputs directory and an
 explicit operator review marker:
 
@@ -383,8 +409,9 @@ test -d "$PROTECTED_INPUTS_REALPATH"
 
 The operator review must confirm that this directory came from the exact
 protected `staging-release-<release-id>` workflow artifact/run and commit, that
-the deployment target and release ID match this evidence directory, and that
-the image/check results and runtime/SBOM/smoke files are from that same run.
+`release-version.txt` matches the reviewed release identity, that the
+deployment target and release ID match this evidence directory, and that the
+image/check results and runtime/SBOM/smoke files are from that same run.
 Do not continue, and record an abort, if the review cannot establish those
 bindings. The marker does not create evidence; it records the completed
 out-of-band review.
@@ -397,6 +424,7 @@ before manifest generation. The loop emits no source values or file contents:
 protected_inputs=(
   'images.json:images.json'
   'check-results.json:check-results.json'
+  'release-version.txt:release-version.txt'
   'runtime-integration.json:runtime-integration.json'
   'staging-smoke.json:artifacts/staging-smoke.json'
   'deployed-image-sbom-index.json:artifacts/deployed-image-sbom-index.json'
@@ -425,10 +453,10 @@ for mapping in "${protected_inputs[@]}"; do
 done
 ```
 
-Only after all eight inputs are installed may the operator describe the
-runtime integration, smoke, SBOM index, and per-service SBOM references as
-provisioned files. A reference without a provisioned source is an abort; do
-not substitute a locally generated or guessed file.
+Only after all nine inputs are installed may the operator describe the
+release-version, runtime integration, smoke, SBOM index, and per-service SBOM
+references as provisioned files. A reference without a provisioned source is
+an abort; do not substitute a locally generated or guessed file.
 
 Before generating the manifest or checksums, provision the approved prior
 rollback artifact from the named out-of-band source. The source path and
@@ -438,6 +466,10 @@ written to the runbook or evidence:
 ```bash
 : "${PRIOR_ROLLBACK_ARTIFACT_SOURCE:?inject the approved external rollback source path}"
 : "${PRIOR_ROLLBACK_ARTIFACT_SHA256:?inject the approved rollback SHA-256}"
+if [ -L "$PRIOR_ROLLBACK_ARTIFACT_SOURCE" ]; then
+  echo 'rollback source must not be a symlink' >&2
+  exit 1
+fi
 SOURCE_REALPATH="$(realpath -m "$PRIOR_ROLLBACK_ARTIFACT_SOURCE")"
 case "$SOURCE_REALPATH" in
   "$REPOSITORY_ROOT"|"$REPOSITORY_ROOT"/*)
@@ -470,7 +502,7 @@ its image/migration/lockfile references have been reviewed:
 ```bash
 yarn staging:manifest \
   --release-id "$RELEASE_ID" \
-  --commit "$GITHUB_SHA" \
+  --commit "$RELEASE_COMMIT" \
   --images-json "$EVIDENCE_DIR/images.json" \
   --checks-json "$EVIDENCE_DIR/check-results.json" \
   --rollback-artifact rollback/previous-release.tar \

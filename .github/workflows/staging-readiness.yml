@@ -449,15 +449,44 @@ jobs:
           NODE
 
       - name: Generate the immutable release manifest
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
         run: |
           mkdir -p "$RUNNER_TEMP/staging-artifacts"
+          : "${RELEASE_COMMIT:?exact reviewed release commit is required}"
+          case "$RELEASE_COMMIT" in
+            ''|*[!0-9a-fA-F]*)
+              echo 'release commit must be hexadecimal' >&2
+              exit 1
+              ;;
+          esac
+          if [ "${#RELEASE_COMMIT}" -lt 7 ] || [ "${#RELEASE_COMMIT}" -gt 64 ]; then
+            echo 'release commit length is invalid' >&2
+            exit 1
+          fi
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT" || {
+            echo 'checked-out commit does not match the reviewed release commit' >&2
+            exit 1
+          }
           yarn staging:manifest \
             --release-id "${{ needs.checks.outputs.release_id }}" \
-            --commit "${GITHUB_SHA}" \
+            --commit "$RELEASE_COMMIT" \
             --images-json "$RUNNER_TEMP/images.json" \
             --checks-json "$RUNNER_TEMP/staging-artifacts/check-results.json" \
             --rollback-artifact "$(cat "$RUNNER_TEMP/rollback-artifact.txt")" \
             --output "$RUNNER_TEMP/staging-artifacts/release-manifest.json"
+
+      - name: Include protected manifest inputs in uploaded evidence
+        if: always()
+        run: |
+          test -f "$RUNNER_TEMP/images.json" && test ! -L "$RUNNER_TEMP/images.json"
+          test -f "$RUNNER_TEMP/release-version.txt" && test ! -L "$RUNNER_TEMP/release-version.txt"
+          install -m 0440 \
+            "$RUNNER_TEMP/images.json" \
+            "$RUNNER_TEMP/staging-artifacts/images.json"
+          install -m 0440 \
+            "$RUNNER_TEMP/release-version.txt" \
+            "$RUNNER_TEMP/staging-artifacts/release-version.txt"
 
       - name: Upload protected staging evidence
         if: always()

@@ -16,6 +16,12 @@ const runbookPath = join(
   'staging-readiness.md',
 );
 const packageJsonPath = join(repositoryRoot, 'package.json');
+const workflowPath = join(
+  repositoryRoot,
+  '.github',
+  'workflows',
+  'staging-readiness.yml',
+);
 
 async function pathExists(relativePath) {
   try {
@@ -144,12 +150,17 @@ test('externalizes evidence and verifies the prior rollback artifact', async () 
   assert.doesNotMatch(runbook, /export EVIDENCE_DIR=artifacts\//u);
   assert.match(runbook, /PRIOR_ROLLBACK_ARTIFACT_SOURCE/u);
   assert.match(runbook, /PRIOR_ROLLBACK_ARTIFACT_SHA256/u);
+  assert.match(runbook, /rollback source must not be a symlink/u);
   assert.match(runbook, /\$EVIDENCE_DIR\/rollback\/previous-release\.tar/u);
   assert.match(runbook, /sha256sum\s+--check\s+--strict/u);
   assert.match(
     runbook,
     /--rollback-artifact\s+rollback\/previous-release\.tar/u,
   );
+  assert.match(runbook, /RELEASE_COMMIT must be hexadecimal/u);
+  assert.match(runbook, /checked-out commit does not match RELEASE_COMMIT/u);
+  assert.match(runbook, /--commit "\$RELEASE_COMMIT"/u);
+  assert.doesNotMatch(runbook, /--commit "\$GITHUB_SHA"/u);
 });
 
 test('provisions protected manifest inputs before generating evidence', async () => {
@@ -165,6 +176,7 @@ test('provisions protected manifest inputs before generating evidence', async ()
   for (const name of [
     'images.json',
     'check-results.json',
+    'release-version.txt',
     'runtime-integration.json',
     'staging-smoke.json',
     'deployed-image-sbom-index.json',
@@ -185,8 +197,25 @@ test('provisions protected manifest inputs before generating evidence', async ()
   );
   assert.match(
     runbook,
-    /Only after all eight inputs are installed may the operator/u,
+    /Only after all nine inputs are installed may the operator/u,
   );
+});
+
+test('protected workflow uploads required operator inputs', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  assert.match(
+    workflow,
+    /Include protected manifest inputs in uploaded evidence[\s\S]*?if: always\(\)/u,
+  );
+  assert.match(workflow, /"\$RUNNER_TEMP\/staging-artifacts\/images\.json"/u);
+  assert.match(
+    workflow,
+    /"\$RUNNER_TEMP\/staging-artifacts\/release-version\.txt"/u,
+  );
+  assert.match(workflow, /RELEASE_COMMIT:/u);
+  assert.match(workflow, /--commit "\$RELEASE_COMMIT"/u);
+  assert.doesNotMatch(workflow, /--commit "\$\{GITHUB_SHA\}"/u);
+  assert.match(workflow, /git rev-parse HEAD\)" = "\$RELEASE_COMMIT"/u);
 });
 
 test('production sections do not contain unsafe local or Firebase rollback instructions', async () => {
