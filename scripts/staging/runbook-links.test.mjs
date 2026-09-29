@@ -152,6 +152,43 @@ test('externalizes evidence and verifies the prior rollback artifact', async () 
   );
 });
 
+test('provisions protected manifest inputs before generating evidence', async () => {
+  const runbook = await readFile(runbookPath, 'utf8');
+  assert.match(runbook, /PROTECTED_RELEASE_INPUTS_DIR/u);
+  assert.match(runbook, /PROTECTED_RELEASE_INPUTS_REVIEWED/u);
+  assert.match(
+    runbook,
+    /protected release inputs must be outside the git checkout/u,
+  );
+  assert.match(runbook, /\[ ! -f "\$source_path" \]/u);
+  assert.match(runbook, /\[ -L "\$source_path" \]/u);
+  for (const name of [
+    'images.json',
+    'check-results.json',
+    'runtime-integration.json',
+    'staging-smoke.json',
+    'deployed-image-sbom-index.json',
+    'deployed-image-sbom-api.spdx.json',
+    'deployed-image-sbom-worker.spdx.json',
+    'deployed-image-sbom-admin-web.spdx.json',
+  ]) {
+    assert.match(runbook, new RegExp(name.replaceAll('.', '\\.'), 'u'));
+  }
+  assert.match(runbook, /install -m 0440/u);
+  assert.match(
+    runbook,
+    /'staging-smoke\.json:artifacts\/staging-smoke\.json'/u,
+  );
+  assert.match(
+    runbook,
+    /'deployed-image-sbom-index\.json:artifacts\/deployed-image-sbom-index\.json'/u,
+  );
+  assert.match(
+    runbook,
+    /Only after all eight inputs are installed may the operator/u,
+  );
+});
+
 test('production sections do not contain unsafe local or Firebase rollback instructions', async () => {
   const runbook = await readFile(runbookPath, 'utf8');
   const sections = runbook.split(/(?=^#{1,6}\s)/m);

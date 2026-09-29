@@ -364,6 +364,72 @@ approved artifact download/provisioning step places them under `$EVIDENCE_DIR`
 and verifies their release/target binding. Do not claim that a referenced file
 exists merely because its path appears in a manifest.
 
+Before generating the manifest, require the protected inputs directory and an
+explicit operator review marker:
+
+```bash
+: "${PROTECTED_RELEASE_INPUTS_DIR:?inject the external protected release inputs directory}"
+: "${PROTECTED_RELEASE_INPUTS_REVIEWED:?set only after reviewing exact release and target binding}"
+test "$PROTECTED_RELEASE_INPUTS_REVIEWED" = reviewed
+PROTECTED_INPUTS_REALPATH="$(realpath -m "$PROTECTED_RELEASE_INPUTS_DIR")"
+case "$PROTECTED_INPUTS_REALPATH" in
+  "$REPOSITORY_ROOT"|"$REPOSITORY_ROOT"/*)
+    echo 'protected release inputs must be outside the git checkout' >&2
+    exit 1
+    ;;
+esac
+test -d "$PROTECTED_INPUTS_REALPATH"
+```
+
+The operator review must confirm that this directory came from the exact
+protected `staging-release-<release-id>` workflow artifact/run and commit, that
+the deployment target and release ID match this evidence directory, and that
+the image/check results and runtime/SBOM/smoke files are from that same run.
+Do not continue, and record an abort, if the review cannot establish those
+bindings. The marker does not create evidence; it records the completed
+out-of-band review.
+
+Install every protected input needed by the manifest references. Each source
+must be a non-symlink regular file; any missing or non-regular source aborts
+before manifest generation. The loop emits no source values or file contents:
+
+```bash
+protected_inputs=(
+  'images.json:images.json'
+  'check-results.json:check-results.json'
+  'runtime-integration.json:runtime-integration.json'
+  'staging-smoke.json:artifacts/staging-smoke.json'
+  'deployed-image-sbom-index.json:artifacts/deployed-image-sbom-index.json'
+  'deployed-image-sbom-api.spdx.json:artifacts/deployed-image-sbom-api.spdx.json'
+  'deployed-image-sbom-worker.spdx.json:artifacts/deployed-image-sbom-worker.spdx.json'
+  'deployed-image-sbom-admin-web.spdx.json:artifacts/deployed-image-sbom-admin-web.spdx.json'
+)
+install -d -m 0750 "$EVIDENCE_DIR/artifacts"
+for mapping in "${protected_inputs[@]}"; do
+  source_name="${mapping%%:*}"
+  destination_name="${mapping#*:}"
+  source_path="$PROTECTED_INPUTS_REALPATH/$source_name"
+  destination_path="$EVIDENCE_DIR/$destination_name"
+  if [ ! -f "$source_path" ] || [ -L "$source_path" ]; then
+    echo 'required protected release input is absent or not a regular file' >&2
+    exit 1
+  fi
+  install -m 0440 "$source_path" "$destination_path" >/dev/null 2>&1 || {
+    echo 'protected release input installation failed' >&2
+    exit 1
+  }
+  if [ ! -f "$destination_path" ] || [ -L "$destination_path" ]; then
+    echo 'installed protected release input is not a regular file' >&2
+    exit 1
+  fi
+done
+```
+
+Only after all eight inputs are installed may the operator describe the
+runtime integration, smoke, SBOM index, and per-service SBOM references as
+provisioned files. A reference without a provisioned source is an abort; do
+not substitute a locally generated or guessed file.
+
 Before generating the manifest or checksums, provision the approved prior
 rollback artifact from the named out-of-band source. The source path and
 expected SHA-256 are injected by the rollback authority; no source value is
