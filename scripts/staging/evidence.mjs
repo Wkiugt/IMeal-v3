@@ -1,6 +1,6 @@
 import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -39,6 +39,14 @@ const COMMIT_PATTERN = /^[a-f0-9]{7,64}$/i;
 const IMMUTABLE_IMAGE_PATTERN = /@sha256:[a-f0-9]{64}$/i;
 const SENSITIVE_TEXT_PATTERN =
   /(?:postgres(?:ql)?:\/\/[^\s<]+@|\bBearer\s+(?!<redacted>)[^\s]+|\b(?:password|token|secret|api[_-]?key|otp)\b\s*[:=]\s*(?!<redacted>|PASS\b)[^\s,}\]]+)/i;
+const REQUIRED_PASS_ARTIFACTS = [
+  'smoke-infrastructure.json',
+  'smoke-auth-rbac.json',
+  'smoke-business.json',
+  'smoke-mobile-admin.json',
+  'smoke-worker.json',
+  'observability-alert-test.json',
+];
 
 function assertNonEmptyString(value, label) {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -136,8 +144,50 @@ function assertImmutableImages(images) {
     adminWeb: images.adminWeb ?? images['admin-web'],
   };
 }
+async function readRollbackArtifact(artifactDirectory, reference) {
+  const normalized = assertNonEmptyString(
+    reference,
+    'rollback artifact reference',
+  ).replaceAll('\\', '/');
+  if (
+    normalized.startsWith('/') ||
+    isAbsolute(normalized) ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(normalized) ||
+    normalized.split('/').some((part) => part === '..') ||
+    REQUIRED_EVIDENCE.includes(normalized)
+  ) {
+    throw new Error('rollback artifact must be a local bundle file');
+  }
+  const filePath = resolve(artifactDirectory, normalized);
+  const relativePath = relative(artifactDirectory, filePath);
+  if (
+    !relativePath ||
+    relativePath.startsWith('..') ||
+    isAbsolute(relativePath)
+  ) {
+    throw new Error('rollback artifact must stay under artifact directory');
+  }
+  let metadata;
+  try {
+    metadata = await lstat(filePath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new Error('rollback artifact is missing');
+    }
+    throw error;
+  }
+  if (!metadata.isFile()) {
+    throw new Error('rollback artifact must be a regular file');
+  }
+  const bytes = await readFile(filePath);
+  return { path: normalized, bytes: bytes.length, sha256: hashBytes(bytes) };
+}
 
-function assertReleaseReferences(releaseManifest, releaseId) {
+async function assertReleaseReferences(
+  releaseManifest,
+  releaseId,
+  artifactDirectory,
+) {
   if (!releaseManifest || typeof releaseManifest !== 'object') {
     throw new Error('release manifest is required');
   }
@@ -163,12 +213,38 @@ function assertReleaseReferences(releaseManifest, releaseId) {
   ) {
     throw new Error('release manifest migration references are required');
   }
-  const rollbackArtifact =
+  const rollbackReference =
     typeof releaseManifest.rollbackArtifact === 'string'
       ? releaseManifest.rollbackArtifact
       : (releaseManifest.rollback?.artifact ??
         releaseManifest.rollback?.artifactRef);
-  assertNonEmptyString(rollbackArtifact, 'rollback artifact reference');
+  const rollbackArtifact = artifactDirectory
+    ? await readRollbackArtifact(artifactDirectory, rollbackReference)
+    : typeof rollbackReference === 'object' && rollbackReference !== null
+      ? {
+          path: assertNonEmptyString(
+            rollbackReference.path,
+            'rollback artifact reference',
+          ),
+          bytes: rollbackReference.bytes,
+          sha256: rollbackReference.sha256,
+        }
+      : {
+          path: assertNonEmptyString(
+            rollbackReference,
+            'rollback artifact reference',
+          ),
+        };
+  if (
+    !Number.isInteger(rollbackArtifact.bytes) ||
+    rollbackArtifact.bytes < 0 ||
+    typeof rollbackArtifact.sha256 !== 'string' ||
+    !SHA256_PATTERN.test(rollbackArtifact.sha256)
+  ) {
+    if (!artifactDirectory) {
+      throw new Error('rollback artifact checksum metadata is invalid');
+    }
+  }
   return { commitSha, images, migrations, rollbackArtifact };
 }
 
@@ -184,9 +260,9 @@ function parseChecksums(text) {
   return entries;
 }
 
-function assertChecksumsMatch(checksumArtifact, artifacts) {
+function assertChecksumsMatch(checksumArtifact, artifacts, rollbackArtifact) {
   const entries = parseChecksums(checksumArtifact.text);
-  if (entries.size !== CHECKSUMMED_EVIDENCE.length) {
+  if (entries.size !== CHECKSUMMED_EVIDENCE.length + 1) {
     throw new Error('checksums.txt does not cover every required artifact');
   }
   for (const name of CHECKSUMMED_EVIDENCE) {
@@ -194,10 +270,16 @@ function assertChecksumsMatch(checksumArtifact, artifacts) {
       throw new Error(`checksums.txt mismatch: ${name}`);
     }
   }
+  if (entries.get(rollbackArtifact.path) !== rollbackArtifact.sha256) {
+    throw new Error('checksums.txt mismatch: rollback artifact');
+  }
 }
-
-function assertArtifactTargets(artifacts, target) {
+function assertArtifactTargets(artifacts, target, releaseId) {
   for (const artifact of Object.values(artifacts)) {
+    const artifactReleaseId = artifact.parsed?.releaseId;
+    if (artifactReleaseId !== undefined && artifactReleaseId !== releaseId) {
+      throw new Error(`evidence release mismatch: ${artifact.name}`);
+    }
     const artifactTarget = artifact.parsed?.target;
     if (!artifactTarget || typeof artifactTarget !== 'object') continue;
     if (
@@ -215,6 +297,77 @@ function assertArtifactTargets(artifacts, target) {
   }
 }
 
+function assertBoundArtifact(artifact, name, releaseId, target) {
+  if (!artifact || typeof artifact !== 'object') {
+    throw new Error(`${name} artifact is required`);
+  }
+  if (artifact.releaseId !== releaseId) {
+    throw new Error(`${name} release mismatch`);
+  }
+  if (
+    !artifact.target ||
+    artifact.target.database !== target.database ||
+    artifact.target.schema !== target.schema
+  ) {
+    throw new Error(`${name} target mismatch`);
+  }
+}
+
+function assertCompletionArtifacts(artifacts, releaseId, target) {
+  for (const name of REQUIRED_PASS_ARTIFACTS) {
+    const artifact = artifacts[name].parsed;
+    if (!artifact || artifact.result !== 'PASS') {
+      throw new Error(`${name} must have result PASS`);
+    }
+    assertBoundArtifact(artifact, name, releaseId, target);
+  }
+  const business = artifacts['smoke-business.json'].parsed;
+  assertNonEmptyString(business.command, 'smoke-business command');
+  assertNonEmptyString(business.operator, 'smoke-business operator');
+
+  const approval = artifacts['approval.json'].parsed;
+  assertBoundArtifact(approval, 'approval', releaseId, target);
+  assertNonEmptyString(approval.approvalId, 'approval ID');
+  assertNonEmptyString(approval.approver, 'approval approver');
+  assertNonEmptyString(approval.rollbackAuthority, 'rollback authority');
+  assertNonEmptyString(
+    approval.rollbackDecisionWindow,
+    'rollback decision window',
+  );
+  if (approval.decision !== 'APPROVED_FOR_EXACT_BACKFILL') {
+    throw new Error('approval decision is not exact backfill approval');
+  }
+
+  const signoff = artifacts['signoff.json'].parsed;
+  assertBoundArtifact(signoff, 'signoff', releaseId, target);
+  if (signoff.result !== 'PASS') {
+    throw new Error('signoff.json must contain an explicit PASS');
+  }
+  const operator = assertNonEmptyString(signoff.operator, 'signoff operator');
+  const reviewer = assertNonEmptyString(signoff.reviewer, 'signoff reviewer');
+  if (operator === reviewer) {
+    throw new Error('signoff operator and reviewer must be distinct');
+  }
+  if (signoff.decision !== 'REVIEWED') {
+    throw new Error('signoff decision must be REVIEWED');
+  }
+  if (
+    Object.hasOwn(signoff, 'approvalId') ||
+    Object.hasOwn(signoff, 'approver') ||
+    Object.hasOwn(signoff, 'rollbackAuthority') ||
+    Object.hasOwn(signoff, 'rollbackDecisionWindow')
+  ) {
+    throw new Error('signoff contains unrelated approval fields');
+  }
+  assertNonEmptyString(signoff.decision, 'signoff decision');
+  if (
+    typeof signoff.signedAt !== 'string' ||
+    !Number.isFinite(Date.parse(signoff.signedAt))
+  ) {
+    throw new Error('signoff signedAt is required');
+  }
+}
+
 export async function createEvidenceManifest({
   releaseId,
   target,
@@ -229,15 +382,18 @@ export async function createEvidenceManifest({
   for (const name of REQUIRED_EVIDENCE) {
     artifacts[name] = await readArtifact(directory, name);
   }
-  assertArtifactTargets(artifacts, safeTarget);
-  const releaseReferences = assertReleaseReferences(
+  assertArtifactTargets(artifacts, safeTarget, releaseId);
+  const releaseReferences = await assertReleaseReferences(
     artifacts['release-manifest.json'].parsed,
     releaseId,
+    directory,
   );
-  assertChecksumsMatch(artifacts['checksums.txt'], artifacts);
-  if (artifacts['signoff.json'].parsed?.result !== 'PASS') {
-    throw new Error('signoff.json must contain an explicit PASS');
-  }
+  assertCompletionArtifacts(artifacts, releaseId, safeTarget);
+  assertChecksumsMatch(
+    artifacts['checksums.txt'],
+    artifacts,
+    releaseReferences.rollbackArtifact,
+  );
   const manifest = {
     result: 'PASS',
     releaseId,
@@ -276,19 +432,40 @@ export function assertEvidenceComplete(manifest) {
       throw new Error(`evidence artifact checksum is invalid: ${name}`);
     }
   }
-  assertReleaseReferences(
-    {
-      releaseId: manifest.releaseId,
-      commitSha: manifest.references?.commitSha,
-      images: manifest.references?.images,
-      migrations: manifest.references?.migrations,
-      rollbackArtifact: manifest.references?.rollbackArtifact,
-    },
-    manifest.releaseId,
-  );
+  const references = manifest.references;
+  if (!references || typeof references !== 'object') {
+    throw new Error('evidence release references are required');
+  }
+  if (
+    typeof references.commitSha !== 'string' ||
+    !COMMIT_PATTERN.test(references.commitSha)
+  ) {
+    throw new Error('evidence commit reference is required');
+  }
+  assertImmutableImages(references.images);
+  if (
+    !Array.isArray(references.migrations) ||
+    references.migrations.length === 0 ||
+    references.migrations.some(
+      (migration) => typeof migration !== 'string' || migration.trim() === '',
+    )
+  ) {
+    throw new Error('evidence migration references are required');
+  }
+  const rollback = references.rollbackArtifact;
+  if (
+    !rollback ||
+    typeof rollback !== 'object' ||
+    typeof rollback.path !== 'string' ||
+    !Number.isInteger(rollback.bytes) ||
+    rollback.bytes < 0 ||
+    typeof rollback.sha256 !== 'string' ||
+    !SHA256_PATTERN.test(rollback.sha256)
+  ) {
+    throw new Error('evidence rollback artifact metadata is invalid');
+  }
   return manifest;
 }
-
 export async function writeChecksums({ artifactDirectory }) {
   const directory = resolve(
     assertNonEmptyString(artifactDirectory, 'artifact directory'),
@@ -298,13 +475,23 @@ export async function writeChecksums({ artifactDirectory }) {
   for (const name of CHECKSUMMED_EVIDENCE) {
     artifacts[name] = await readArtifact(directory, name);
   }
-  const signoff = await readArtifact(directory, 'signoff.json');
-  if (signoff.parsed?.result !== 'PASS') {
-    throw new Error('signoff.json must contain an explicit PASS');
+  const releaseManifest = artifacts['release-manifest.json'].parsed;
+  let rollbackArtifact;
+  const rollbackReference =
+    typeof releaseManifest?.rollbackArtifact === 'string'
+      ? releaseManifest.rollbackArtifact
+      : (releaseManifest?.rollback?.artifact ??
+        releaseManifest?.rollback?.artifactRef);
+  if (rollbackReference !== undefined) {
+    rollbackArtifact = await readRollbackArtifact(directory, rollbackReference);
   }
-  const checksums = `${CHECKSUMMED_EVIDENCE.map(
-    (name) => `${artifacts[name].sha256}  ${name}`,
-  ).join('\n')}\n`;
+  const checksumLines = [
+    ...CHECKSUMMED_EVIDENCE.map((name) => `${artifacts[name].sha256}  ${name}`),
+    ...(rollbackArtifact
+      ? [`${rollbackArtifact.sha256}  ${rollbackArtifact.path}`]
+      : []),
+  ];
+  const checksums = `${checksumLines.join('\n')}\n`;
   const outputPath = join(directory, 'checksums.txt');
   try {
     await writeFile(outputPath, checksums, {
@@ -337,6 +524,32 @@ async function writeManifest(outputPath, manifest) {
   }
 }
 
+export function resolveEvidenceTarget({
+  targetId,
+  targetFingerprint,
+  targetDatabaseOverride,
+}) {
+  const fingerprintTarget =
+    targetFingerprint?.target ?? targetFingerprint ?? {};
+  if (
+    targetDatabaseOverride !== undefined &&
+    targetDatabaseOverride !== fingerprintTarget.database
+  ) {
+    throw new Error('TARGET_DATABASE_NAME does not match target fingerprint');
+  }
+  const database = fingerprintTarget.database;
+  const schema = fingerprintTarget.schema;
+  if (
+    typeof database !== 'string' ||
+    database.trim() === '' ||
+    typeof schema !== 'string' ||
+    schema !== targetId
+  ) {
+    throw new Error('target fingerprint does not match --target');
+  }
+  return { database, schema };
+}
+
 async function main(argv) {
   const args = parseArgs(argv, {
     'release-id': { type: 'string', required: true },
@@ -360,21 +573,14 @@ async function main(argv) {
   } catch {
     throw new Error('target-fingerprint.json is required before evidence CLI');
   }
-  const fingerprintTarget = targetFingerprint.target ?? targetFingerprint;
-  const targetDatabase =
-    process.env.TARGET_DATABASE_NAME ?? fingerprintTarget.database;
-  const targetSchema = fingerprintTarget.schema ?? args.target;
-  if (
-    typeof targetDatabase !== 'string' ||
-    targetDatabase.trim() === '' ||
-    typeof targetSchema !== 'string' ||
-    targetSchema !== args.target
-  ) {
-    throw new Error('target fingerprint does not match --target');
-  }
+  const target = resolveEvidenceTarget({
+    targetId: args.target,
+    targetFingerprint,
+    targetDatabaseOverride: process.env.TARGET_DATABASE_NAME,
+  });
   const manifest = await createEvidenceManifest({
     releaseId: args['release-id'],
-    target: { database: targetDatabase, schema: args.target },
+    target,
     artifactDirectory,
   });
   const outputPath = resolve(

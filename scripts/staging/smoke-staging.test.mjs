@@ -146,7 +146,7 @@ test('checks the HTTP to HTTPS redirect and requires request IDs', async () => {
     redirectOrigin: 'http://staging.example.test',
     fetchImpl: async (url) => {
       if (url.startsWith('http://')) {
-        return response(308, {}, undefined, {
+        return response(308, {}, '550e8400-e29b-41d4-a716-446655440000', {
           location: 'https://staging.example.test/health/live',
         });
       }
@@ -163,4 +163,80 @@ test('checks the HTTP to HTTPS redirect and requires request IDs', async () => {
     report.checks.find(({ name }) => name === 'api-live').reason,
     /request[- ]id/i,
   );
+});
+
+test('rejects an HTTPS redirect to an unexpected origin or path', async () => {
+  const output = await outputPath();
+  const report = await runSmoke({
+    apiOrigin: 'https://staging.example.test',
+    adminOrigin: 'https://admin.staging.example.test',
+    redirectOrigin: 'http://staging.example.test',
+    fetchImpl: async (url) => {
+      if (url.startsWith('http://')) {
+        return response(308, {}, '550e8400-e29b-41d4-a716-446655440000', {
+          location: 'https://evil.example.test/health/live',
+        });
+      }
+      return response(200, { status: 'ok' });
+    },
+    outputPath: output,
+  });
+  assert.equal(
+    report.checks.find(({ name }) => name === 'https-redirect').result,
+    'FAIL',
+  );
+  assert.match(
+    report.checks.find(({ name }) => name === 'https-redirect').reason,
+    /expected HTTPS origin|path/i,
+  );
+});
+
+test('rejects an HTTPS redirect without a valid request ID', async () => {
+  const output = await outputPath();
+  const report = await runSmoke({
+    apiOrigin: 'https://staging.example.test',
+    adminOrigin: 'https://admin.staging.example.test',
+    redirectOrigin: 'http://staging.example.test',
+    fetchImpl: async (url) => {
+      if (url.startsWith('http://')) {
+        return response(308, {}, null, {
+          location: 'https://staging.example.test/health/live',
+        });
+      }
+      return response(200, { status: 'ok' });
+    },
+    outputPath: output,
+  });
+  assert.equal(
+    report.checks.find(({ name }) => name === 'https-redirect').result,
+    'FAIL',
+  );
+  assert.match(
+    report.checks.find(({ name }) => name === 'https-redirect').reason,
+    /request[- ]id/i,
+  );
+});
+
+test('does not copy a bearer request ID into a smoke report', async () => {
+  const output = await outputPath();
+  const report = await runSmoke({
+    apiOrigin: 'https://staging.example.test',
+    adminOrigin: 'https://admin.staging.example.test',
+    redirectOrigin: 'http://staging.example.test',
+    fetchImpl: async (url) => {
+      if (url.startsWith('http://')) {
+        return response(308, {}, 'Bearer redirect-secret', {
+          location: 'https://staging.example.test/health/live',
+        });
+      }
+      return response(200, { status: 'ok' });
+    },
+    outputPath: output,
+  });
+  assert.equal(
+    report.checks.find(({ name }) => name === 'https-redirect').result,
+    'FAIL',
+  );
+  const serialized = await readFile(output, 'utf8');
+  assert.doesNotMatch(serialized, /Bearer|redirect-secret/);
 });

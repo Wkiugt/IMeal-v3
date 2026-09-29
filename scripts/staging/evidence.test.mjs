@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,6 +8,7 @@ import {
   REQUIRED_EVIDENCE,
   assertEvidenceComplete,
   createEvidenceManifest,
+  resolveEvidenceTarget,
   writeChecksums,
 } from './evidence.mjs';
 
@@ -19,6 +20,8 @@ async function makeEvidenceDirectory({
   mutableImage = false,
   rollback = true,
   writeChecksum = true,
+  rollbackReference = 'rollback/imeal-20260927-004.tar',
+  rollbackFile = true,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'staging-evidence-'));
   const image = mutableImage
@@ -33,9 +36,7 @@ async function makeEvidenceDirectory({
       adminWeb: `registry.example/admin@sha256:${digest}`,
     },
     migrations: ['20260928000000_phase0_domain_correctness'],
-    ...(rollback
-      ? { rollbackArtifact: 'rollback/imeal-20260927-004.tar' }
-      : {}),
+    ...(rollback ? { rollbackArtifact: rollbackReference } : {}),
   };
   const jsonNames = REQUIRED_EVIDENCE.filter(
     (name) => name.endsWith('.json') && name !== 'release-manifest.json',
@@ -44,11 +45,33 @@ async function makeEvidenceDirectory({
     join(directory, 'release-manifest.json'),
     `${JSON.stringify(releaseManifest)}\n`,
   );
+  await writeFile(
+    join(directory, 'target-fingerprint.json'),
+    `${JSON.stringify({ target })}\n`,
+  );
   for (const name of jsonNames) {
-    await writeFile(
-      join(directory, name),
-      `${JSON.stringify({ result: 'PASS', releaseId, target })}\n`,
-    );
+    const payload =
+      name === 'approval.json'
+        ? {
+            result: 'PASS',
+            releaseId,
+            target,
+            approvalId: 'approval-20260928-001',
+            decision: 'APPROVED_FOR_EXACT_BACKFILL',
+            approver: 'data-owner',
+            rollbackAuthority: 'release-manager',
+            rollbackDecisionWindow: '24h',
+          }
+        : name === 'smoke-business.json'
+          ? {
+              result: 'PASS',
+              releaseId,
+              target,
+              command: 'yarn test:unit',
+              operator: 'qa-operator',
+            }
+          : { result: 'PASS', releaseId, target };
+    await writeFile(join(directory, name), `${JSON.stringify(payload)}\n`);
   }
   await writeFile(
     join(directory, 'migration-status.txt'),
@@ -56,8 +79,20 @@ async function makeEvidenceDirectory({
   );
   await writeFile(
     join(directory, 'signoff.json'),
-    `${JSON.stringify({ result: 'PASS', releaseId, target, decision: 'REVIEWED' })}\n`,
+    `${JSON.stringify({
+      result: 'PASS',
+      releaseId,
+      target,
+      operator: 'release-operator',
+      reviewer: 'independent-reviewer',
+      decision: 'REVIEWED',
+      signedAt: '2026-09-28T12:00:00.000Z',
+    })}\n`,
   );
+  if (rollback && rollbackFile) {
+    await mkdir(join(directory, 'rollback'), { recursive: true });
+    await writeFile(join(directory, rollbackReference), 'rollback artifact\n');
+  }
   if (writeChecksum) await writeChecksums({ artifactDirectory: directory });
   return directory;
 }
@@ -114,10 +149,9 @@ test('computes deterministic artifact hashes and does not overwrite artifacts', 
     writeChecksums({ artifactDirectory: directory }),
     /checksums\.txt already exists/,
   );
-  assert.match(
-    await readFile(join(directory, 'checksums.txt'), 'utf8'),
-    /release-manifest\.json/,
-  );
+  const checksums = await readFile(join(directory, 'checksums.txt'), 'utf8');
+  assert.match(checksums, /release-manifest\.json/);
+  assert.match(checksums, /rollback\/imeal-20260927-004\.tar/);
 });
 
 test('writes checksums only through the explicit checksum command', async () => {
@@ -173,5 +207,154 @@ test('rejects artifacts from a different target', async () => {
   await assert.rejects(
     createEvidenceManifest({ releaseId, target, artifactDirectory: directory }),
     /evidence target mismatch/,
+  );
+});
+
+test('binds every release-bearing artifact to the exact release', async () => {
+  const directory = await makeEvidenceDirectory();
+  await writeFile(
+    join(directory, 'smoke-worker.json'),
+    JSON.stringify({
+      result: 'PASS',
+      releaseId: 'imeal-20260928-002',
+      target,
+    }),
+  );
+  await assert.rejects(
+    createEvidenceManifest({ releaseId, target, artifactDirectory: directory }),
+    /evidence release mismatch: smoke-worker\.json/,
+  );
+});
+
+test('rejects failed smoke and observability artifacts', async () => {
+  const directory = await makeEvidenceDirectory();
+  await writeFile(
+    join(directory, 'smoke-worker.json'),
+    JSON.stringify({ result: 'FAIL', releaseId, target }),
+  );
+  await assert.rejects(
+    createEvidenceManifest({ releaseId, target, artifactDirectory: directory }),
+    /smoke-worker\.json must have result PASS/,
+  );
+});
+
+test('requires exact approval and independent signoff metadata', async () => {
+  const approvalDirectory = await makeEvidenceDirectory();
+  await writeFile(
+    join(approvalDirectory, 'approval.json'),
+    JSON.stringify({
+      result: 'PASS',
+      releaseId,
+      target,
+      approvalId: 'approval-20260928-001',
+      decision: 'REJECTED',
+      approver: 'data-owner',
+      rollbackAuthority: 'release-manager',
+      rollbackDecisionWindow: '24h',
+    }),
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: approvalDirectory,
+    }),
+    /approval decision is not exact backfill approval/,
+  );
+
+  const signoffDirectory = await makeEvidenceDirectory();
+  await writeFile(
+    join(signoffDirectory, 'signoff.json'),
+    JSON.stringify({
+      result: 'PASS',
+      releaseId,
+      target,
+      operator: 'same-person',
+      reviewer: 'same-person',
+      decision: 'REVIEWED',
+      signedAt: '2026-09-28T12:00:00.000Z',
+    }),
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: signoffDirectory,
+    }),
+    /signoff operator and reviewer must be distinct/,
+  );
+});
+
+test('requires a local rollback file and covers it with a checksum', async () => {
+  const tamperedDirectory = await makeEvidenceDirectory();
+  await writeFile(
+    join(tamperedDirectory, 'rollback/imeal-20260927-004.tar'),
+    'tampered rollback artifact\n',
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: tamperedDirectory,
+    }),
+    /checksums\.txt mismatch: rollback artifact/,
+  );
+
+  const directory = await makeEvidenceDirectory();
+  await unlink(join(directory, 'rollback/imeal-20260927-004.tar'));
+  await assert.rejects(
+    createEvidenceManifest({ releaseId, target, artifactDirectory: directory }),
+    /rollback artifact is missing/,
+  );
+
+  const traversalDirectory = await makeEvidenceDirectory();
+  await writeFile(
+    join(traversalDirectory, 'release-manifest.json'),
+    JSON.stringify({
+      releaseId,
+      commitSha: 'b'.repeat(40),
+      images: {
+        api: `registry.example/api@sha256:${digest}`,
+        worker: `registry.example/worker@sha256:${digest}`,
+        adminWeb: `registry.example/admin@sha256:${digest}`,
+      },
+      migrations: ['20260928000000_phase0_domain_correctness'],
+      rollbackArtifact: '../outside.tar',
+    }),
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: traversalDirectory,
+    }),
+    /rollback artifact must be a local bundle file/,
+  );
+});
+
+test('requires a target fingerprint and rejects database overrides', () => {
+  assert.deepEqual(
+    resolveEvidenceTarget({
+      targetId: target.schema,
+      targetFingerprint: { target },
+    }),
+    target,
+  );
+  assert.throws(
+    () =>
+      resolveEvidenceTarget({
+        targetId: target.schema,
+        targetFingerprint: { target },
+        targetDatabaseOverride: 'other_staging',
+      }),
+    /TARGET_DATABASE_NAME does not match target fingerprint/,
+  );
+  assert.throws(
+    () =>
+      resolveEvidenceTarget({
+        targetId: target.schema,
+        targetFingerprint: { target: { schema: target.schema } },
+      }),
+    /target fingerprint does not match --target/,
   );
 });

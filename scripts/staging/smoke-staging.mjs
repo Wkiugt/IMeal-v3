@@ -62,6 +62,13 @@ function getHeader(response, name) {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
+function safeRequestId(response) {
+  const requestId = getHeader(response, 'x-request-id');
+  return requestId && REQUEST_ID_PATTERN.test(requestId)
+    ? requestId
+    : undefined;
+}
+
 function safeBodyCheck(body) {
   if (body === undefined) return;
   try {
@@ -99,16 +106,18 @@ async function fetchWithTimeout(fetchImpl, url, options, timeoutMs) {
 }
 
 function passCheck(name, response, extra = {}) {
+  const requestId = safeRequestId(response);
   return {
     name,
     result: 'PASS',
     statusCode: response?.status,
-    requestId: getHeader(response, 'x-request-id'),
+    ...(requestId ? { requestId } : {}),
     ...extra,
   };
 }
 
 function failCheck(name, reason, response) {
+  const requestId = safeRequestId(response);
   return {
     name,
     result: 'FAIL',
@@ -116,9 +125,7 @@ function failCheck(name, reason, response) {
     ...(typeof response?.status === 'number'
       ? { statusCode: response.status }
       : {}),
-    ...(getHeader(response, 'x-request-id')
-      ? { requestId: getHeader(response, 'x-request-id') }
-      : {}),
+    ...(requestId ? { requestId } : {}),
   };
 }
 
@@ -151,8 +158,8 @@ async function checkHttp({
   } catch {
     return failCheck(name, 'request failed or timed out');
   }
-  const requestId = getHeader(response, 'x-request-id');
-  if (!requestId || !REQUEST_ID_PATTERN.test(requestId)) {
+  const requestId = safeRequestId(response);
+  if (!requestId) {
     return failCheck(
       name,
       'response is missing a valid X-Request-Id header',
@@ -180,7 +187,7 @@ async function checkHttp({
   return passCheck(name, response);
 }
 
-async function checkRedirect({ origin, fetchImpl, timeoutMs }) {
+async function checkRedirect({ origin, expectedOrigin, fetchImpl, timeoutMs }) {
   const url = new URL('/health/live', origin).href;
   let response;
   try {
@@ -196,14 +203,34 @@ async function checkRedirect({ origin, fetchImpl, timeoutMs }) {
       'HTTP redirect request failed or timed out',
     );
   }
+  if (!safeRequestId(response)) {
+    return failCheck(
+      'https-redirect',
+      'redirect response is missing a valid X-Request-Id header',
+      response,
+    );
+  }
   const location = getHeader(response, 'location');
+  let parsedLocation;
+  try {
+    parsedLocation = new URL(location);
+  } catch {
+    parsedLocation = undefined;
+  }
   if (
     !REDIRECT_STATUSES.has(response.status) ||
-    !location?.startsWith('https://')
+    !parsedLocation ||
+    parsedLocation.protocol !== 'https:' ||
+    parsedLocation.origin !== expectedOrigin ||
+    parsedLocation.pathname !== '/health/live' ||
+    parsedLocation.search ||
+    parsedLocation.hash ||
+    parsedLocation.username ||
+    parsedLocation.password
   ) {
     return failCheck(
       'https-redirect',
-      'HTTP origin did not redirect to HTTPS',
+      'HTTP origin did not redirect to the expected HTTPS origin/path',
       response,
     );
   }
@@ -213,6 +240,7 @@ async function checkRedirect({ origin, fetchImpl, timeoutMs }) {
 async function writeSmokeReport(outputPath, report) {
   const directory = resolve(outputPath, '..');
   await mkdir(directory, { recursive: true });
+  assertNoSecrets(report);
   const serialized = `${JSON.stringify(report, null, 2)}\n`;
   try {
     await writeFile(outputPath, serialized, {
@@ -266,7 +294,12 @@ export async function runSmoke({
       redirectOrigin ?? api.replace(/^https:/, 'http:'),
     );
     checks.push(
-      await checkRedirect({ origin: redirect, fetchImpl, timeoutMs }),
+      await checkRedirect({
+        origin: redirect,
+        expectedOrigin: api,
+        fetchImpl,
+        timeoutMs,
+      }),
     );
   }
   checks.push(
