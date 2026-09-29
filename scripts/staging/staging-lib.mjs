@@ -581,7 +581,7 @@ function maskSqlLiterals(sql) {
   while (index < sql.length) {
     if (dollarQuote) {
       if (sql.startsWith(dollarQuote, index)) {
-        output += ' '.repeat(dollarQuote.length);
+        output += dollarQuote;
         index += dollarQuote.length;
         dollarQuote = undefined;
       } else {
@@ -592,17 +592,21 @@ function maskSqlLiterals(sql) {
     }
     if (quote) {
       const character = sql[index];
-      output += mask(character);
-      index += 1;
-      if (character === '\\' && index < sql.length) {
-        output += mask(sql[index]);
+      if (character === quote) {
+        output += character;
         index += 1;
-      } else if (character === quote) {
         if (sql[index] === quote) {
-          output += mask(sql[index]);
+          output += sql[index];
           index += 1;
         } else {
           quote = undefined;
+        }
+      } else {
+        output += mask(character);
+        index += 1;
+        if (character === '\\' && index < sql.length) {
+          output += mask(sql[index]);
+          index += 1;
         }
       }
       continue;
@@ -610,7 +614,7 @@ function maskSqlLiterals(sql) {
     const character = sql[index];
     if (character === "'" || character === '"') {
       quote = character;
-      output += ' ';
+      output += character;
       index += 1;
       continue;
     }
@@ -618,7 +622,7 @@ function maskSqlLiterals(sql) {
       character === '$' ? sqlDollarQuoteAt(sql, index) : undefined;
     if (delimiter) {
       dollarQuote = delimiter;
-      output += ' '.repeat(delimiter.length);
+      output += delimiter;
       index += delimiter.length;
       continue;
     }
@@ -629,48 +633,62 @@ function maskSqlLiterals(sql) {
 }
 
 function removeSafeReadOnlyStatement(body) {
-  const visible = maskSqlLiterals(body);
-  const safeStatement = /(^|[;\n])\s*SET\s+TRANSACTION\s+READ\s+ONLY\s*;\s*/gi;
+  const visible = maskSqlLiterals(stripSqlComments(body));
+  const safeStatement = /(^|[;\n])\s*SET\s+TRANSACTION\s+READ\s+ONLY\s*;/gi;
   let output = '';
   let cursor = 0;
   let match;
   while ((match = safeStatement.exec(visible)) !== null) {
-    const removeStart = match.index + match[1].length;
-    const removeEnd = match.index + match[0].length;
-    output += body.slice(cursor, removeStart);
-    cursor = removeEnd;
+    const setOffset = match[0].search(/\bSET\b/i);
+    const statementStart = match.index + setOffset;
+    const statementEnd = match.index + match[0].length;
+    output += body.slice(cursor, statementStart);
+    cursor = statementEnd;
   }
   return `${output}${body.slice(cursor)}`;
 }
 
 function normalizeReadOnlySql(sql) {
-  const source = stripSqlComments(sql).trim();
-  const visible = maskSqlLiterals(source);
-  const beginPrefix = /^BEGIN\s*;\s*/i.exec(visible);
+  const source = sql;
+  const commentFree = stripSqlComments(source);
+  const visible = maskSqlLiterals(commentFree);
+  const leadingWhitespace = /^\s*/.exec(visible)[0].length;
+  const beginStatement = /^BEGIN\s*;/i.exec(visible.slice(leadingWhitespace));
   let body = source;
-  if (beginPrefix) {
-    const afterBegin = visible.slice(beginPrefix[0].length);
-    const commitSuffix = /\s*COMMIT\s*;?\s*$/i.exec(afterBegin);
+  let hasOuterTransaction = false;
+  if (beginStatement) {
+    const beginStart = leadingWhitespace;
+    const beginEnd = beginStart + beginStatement[0].length;
+    const afterBegin = visible.slice(beginEnd);
+    const commitSuffix = /\s*\bCOMMIT\b\s*;?\s*$/i.exec(afterBegin);
     if (commitSuffix) {
-      body = source
-        .slice(
-          beginPrefix[0].length,
-          beginPrefix[0].length + commitSuffix.index,
-        )
-        .trim();
+      const commitOffset = commitSuffix[0].search(/\bCOMMIT\b/i);
+      const commitStart = beginEnd + commitSuffix.index + commitOffset;
+      const commitSemicolon = visible.indexOf(';', commitStart);
+      const commitEnd =
+        commitSemicolon === -1
+          ? commitStart + 'COMMIT'.length
+          : commitSemicolon + 1;
+      body =
+        source.slice(0, beginStart) +
+        source.slice(beginEnd, commitStart) +
+        source.slice(commitEnd);
+      hasOuterTransaction = true;
     }
   }
   const withoutSafeReadOnly = removeSafeReadOnlyStatement(body);
-  const visibleBody = maskSqlLiterals(withoutSafeReadOnly);
+  const visibleWithoutSafe = maskSqlLiterals(
+    stripSqlComments(withoutSafeReadOnly),
+  );
   if (
-    TRANSACTION_SETTING_PATTERN.test(visibleBody) ||
-    /\bREAD\s+WRITE\b/i.test(visibleBody) ||
-    TRANSACTION_READ_ONLY_OFF_PATTERN.test(visibleBody) ||
-    /\b(?:BEGIN|COMMIT|ROLLBACK)\b/i.test(visibleBody)
+    TRANSACTION_SETTING_PATTERN.test(visibleWithoutSafe) ||
+    /\bREAD\s+WRITE\b/i.test(visibleWithoutSafe) ||
+    TRANSACTION_READ_ONLY_OFF_PATTERN.test(visibleWithoutSafe) ||
+    /\b(?:BEGIN|COMMIT|ROLLBACK)\b/i.test(visibleWithoutSafe)
   ) {
     throw new Error('read-only transaction control is not allowed');
   }
-  return withoutSafeReadOnly.trim();
+  return (hasOuterTransaction ? withoutSafeReadOnly : body).trim();
 }
 
 export async function runPsql(options) {

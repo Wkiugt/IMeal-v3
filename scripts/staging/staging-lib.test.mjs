@@ -370,11 +370,19 @@ test('loads read-only SQL files into one command and rejects transaction overrid
     await runPsql({
       databaseUrl: 'postgresql://admin:password@db.example/imeal',
       schema: 'phase0_staging',
-      sql: "SET/*x*/TRANSACTION/*y*/READ/*z*/ONLY; SELECT 'SET/*x*/TRANSACTION READ WRITE'; SELECT $$READ WRITE$$;",
+      sql: "-- retain preflight comment\nSET/*x*/TRANSACTION/*y*/READ/*z*/ONLY;\nSELECT 'no-show text: -- not a comment /* literal */';\nSELECT $$dollar -- text /* literal */$$;\n-- retain trailing comment",
       readOnly: true,
       statementTimeoutSeconds: 5,
     });
     assert.equal(invocations.length, 2);
+    const preservedSql = invocations[1].argv[5];
+    assert.match(preservedSql, /-- retain preflight comment/);
+    assert.match(
+      preservedSql,
+      /no-show text: -- not a comment \/\* literal \*\//,
+    );
+    assert.match(preservedSql, /dollar -- text \/\* literal \*\//);
+    assert.match(preservedSql, /-- retain trailing comment/);
 
     for (const sql of [
       'SET TRANSACTION READ WRITE;',
