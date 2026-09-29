@@ -215,8 +215,17 @@ function parseObjectVerification(stdout, artifact) {
   };
 }
 
-function parseDatabaseVerification(value) {
-  if (
+function parseDatabaseVerification(value, requirePassResult = false) {
+  if (requirePassResult) {
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      value.result !== 'PASS'
+    ) {
+      throw new Error('restore database row count failed');
+    }
+  } else if (
     value &&
     typeof value === 'object' &&
     !Array.isArray(value) &&
@@ -251,8 +260,38 @@ function parseDatabaseVerification(value) {
   return { result: 'PASS', rows: count, count };
 }
 
+function parseMigrationVerification(value, requirePassResult = false) {
+  if (requirePassResult) {
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      value.result !== 'PASS' ||
+      value.unfinished !== 0
+    ) {
+      throw new Error('restore migration status failed');
+    }
+    return { result: 'PASS', unfinished: 0 };
+  }
+  const rawUnfinished =
+    typeof value === 'string' ? value.trim() : String(value ?? '');
+  if (!/^\d+$/.test(rawUnfinished)) {
+    throw new Error('restore migration status failed');
+  }
+  const unfinished = Number(rawUnfinished);
+  if (!Number.isSafeInteger(unfinished) || unfinished !== 0) {
+    throw new Error('restore migration status failed');
+  }
+  return { result: 'PASS', unfinished };
+}
+
 function assertCheckResult(value, label) {
-  if (value === false || (value && value.result === 'FAIL')) {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    value.result !== 'PASS'
+  ) {
     throw new Error(`${label} failed`);
   }
   return { result: 'PASS' };
@@ -428,6 +467,8 @@ export async function restoreRehearsal({
             commandRunner,
             'psql',
             [
+              '--no-psqlrc',
+              '--set=ON_ERROR_STOP=1',
               '--dbname',
               safeRestoreDatabase,
               '--tuples-only',
@@ -444,7 +485,10 @@ export async function restoreRehearsal({
             },
           )
         ).stdout;
-    databaseVerification = parseDatabaseVerification(databaseResult);
+    databaseVerification = parseDatabaseVerification(
+      databaseResult,
+      Boolean(databaseCheck),
+    );
     await runCommand(
       commandRunner,
       'aws',
@@ -494,41 +538,32 @@ export async function restoreRehearsal({
       'restored object verification',
     );
     objectVerification = parseObjectVerification(objectHead.stdout, artifact);
-    const migration = migrationCheck
+    const migrationResult = migrationCheck
       ? await migrationCheck({
           database: safeRestoreDatabase,
           bucket: safeRestoreBucket,
         })
-      : undefined;
-    if (migrationCheck) {
-      if (
-        migration === false ||
-        migration?.result === 'FAIL' ||
-        Number(migration?.unfinished ?? 0) !== 0
-      ) {
-        throw new Error('restore migration status failed');
-      }
-      migrationStatus = { result: 'PASS', unfinished: 0 };
-    } else {
-      const migrationResult = await runCommand(
-        commandRunner,
-        'psql',
-        [
-          '--dbname',
-          safeRestoreDatabase,
-          '--tuples-only',
-          '--no-align',
-          '--command',
-          MIGRATION_STATUS_SQL,
-        ],
-        'restore migration status',
-      );
-      const unfinished = Number(migrationResult.stdout.trim());
-      if (!Number.isInteger(unfinished) || unfinished !== 0) {
-        throw new Error('restore migration status failed');
-      }
-      migrationStatus = { result: 'PASS', unfinished };
-    }
+      : (
+          await runCommand(
+            commandRunner,
+            'psql',
+            [
+              '--no-psqlrc',
+              '--set=ON_ERROR_STOP=1',
+              '--dbname',
+              safeRestoreDatabase,
+              '--tuples-only',
+              '--no-align',
+              '--command',
+              MIGRATION_STATUS_SQL,
+            ],
+            'restore migration status',
+          )
+        ).stdout;
+    migrationStatus = parseMigrationVerification(
+      migrationResult,
+      Boolean(migrationCheck),
+    );
 
     const readiness = readinessCheck
       ? assertCheckResult(
@@ -560,7 +595,14 @@ export async function restoreRehearsal({
       await runCommand(
         commandRunner,
         'psql',
-        ['--dbname', safeRestoreDatabase, '--command', 'SELECT 1;'],
+        [
+          '--no-psqlrc',
+          '--set=ON_ERROR_STOP=1',
+          '--dbname',
+          safeRestoreDatabase,
+          '--command',
+          'SELECT 1;',
+        ],
         'restore smoke check',
       );
     }

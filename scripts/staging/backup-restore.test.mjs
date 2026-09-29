@@ -499,6 +499,14 @@ test('restores into isolated fresh targets and records checksum, readiness, smok
     restoreCommands[databaseIndex].options.env.PGOPTIONS,
     '-c statement_timeout=30000',
   );
+  assert.deepEqual(restoreCommands[databaseIndex].args.slice(0, 2), [
+    '--no-psqlrc',
+    '--set=ON_ERROR_STOP=1',
+  ]);
+  assert.deepEqual(restoreCommands[migrationIndex].args.slice(0, 2), [
+    '--no-psqlrc',
+    '--set=ON_ERROR_STOP=1',
+  ]);
   for (const invocation of restoreCommands)
     assert.equal(invocation.options.shell, false);
   assert.deepEqual(
@@ -529,8 +537,6 @@ test('records callback database row-count verification before later gates', asyn
       assert.equal(targetSchema, schema);
       return { result: 'PASS', rows: 7 };
     },
-    readinessCheck: async () => ({ result: 'PASS' }),
-    smokeCheck: async () => ({ result: 'PASS' }),
   });
   assert.deepEqual(report.database, {
     restored: 'PASS',
@@ -546,6 +552,21 @@ test('records callback database row-count verification before later gates', asyn
     ),
     false,
   );
+  const migrationInvocation = commands.find(
+    ({ command, args }) =>
+      command === 'psql' &&
+      args.some((arg) => arg.includes('_prisma_migrations')),
+  );
+  const smokeInvocation = commands.find(
+    ({ command, args }) => command === 'psql' && args.includes('SELECT 1;'),
+  );
+  for (const invocation of [migrationInvocation, smokeInvocation]) {
+    assert.ok(invocation);
+    assert.deepEqual(invocation.args.slice(0, 2), [
+      '--no-psqlrc',
+      '--set=ON_ERROR_STOP=1',
+    ]);
+  }
 });
 
 test('fails closed on invalid database row-count verification', async () => {
@@ -583,6 +604,146 @@ test('fails closed on invalid database row-count verification', async () => {
   );
   const failure = JSON.parse(await readFile(outputPath, 'utf8'));
   assert.deepEqual(failure.database, { result: 'FAIL' });
+});
+test('requires explicit PASS from database row-count callbacks', async () => {
+  for (const [name, result] of [
+    ['missing-result', { rows: 1 }],
+    ['unknown-result', { result: 'UNKNOWN', rows: 1 }],
+  ]) {
+    const directory = await makeDirectory();
+    const manifestPath = await writeRestoreFixture(directory);
+    const commands = [];
+    let readinessCalled = false;
+    let smokeCalled = false;
+    const outputPath = join(directory, `${name}-failure.json`);
+    await assert.rejects(
+      restoreRehearsal({
+        backupManifestPath: manifestPath,
+        restoreDatabase: 'imeal_restore_20260928',
+        restoreBucket: 'imeal-restore-20260928',
+        outputPath,
+        commandRunner: createCommandRunner(commands),
+        databaseCheck: async () => result,
+        readinessCheck: async () => {
+          readinessCalled = true;
+          return { result: 'PASS' };
+        },
+        smokeCheck: async () => {
+          smokeCalled = true;
+          return { result: 'PASS' };
+        },
+      }),
+      /restore database row count failed/i,
+    );
+    assert.equal(readinessCalled, false);
+    assert.equal(smokeCalled, false);
+    assert.equal(
+      commands.some(
+        ({ command, args }) =>
+          command === 'aws' && args.includes('create-bucket'),
+      ),
+      false,
+    );
+    assert.deepEqual(JSON.parse(await readFile(outputPath, 'utf8')).database, {
+      result: 'FAIL',
+    });
+  }
+});
+
+test('fails closed on invalid readiness callback results before smoke', async () => {
+  const directory = await makeDirectory();
+  const manifestPath = await writeRestoreFixture(directory);
+  const commands = [];
+  let smokeCalled = false;
+  const outputPath = join(directory, 'readiness-invalid.json');
+  await assert.rejects(
+    restoreRehearsal({
+      backupManifestPath: manifestPath,
+      restoreDatabase: 'imeal_restore_20260928',
+      restoreBucket: 'imeal-restore-20260928',
+      outputPath,
+      commandRunner: createCommandRunner(commands),
+      readinessCheck: async () => ({ result: 'UNKNOWN' }),
+      smokeCheck: async () => {
+        smokeCalled = true;
+        return { result: 'PASS' };
+      },
+    }),
+    /readiness check failed/i,
+  );
+  assert.equal(smokeCalled, false);
+  assert.equal(JSON.parse(await readFile(outputPath, 'utf8')).result, 'FAIL');
+});
+
+test('fails closed on undefined smoke callback results', async () => {
+  const directory = await makeDirectory();
+  const manifestPath = await writeRestoreFixture(directory);
+  const commands = [];
+  let readinessCalled = false;
+  const outputPath = join(directory, 'smoke-undefined.json');
+  await assert.rejects(
+    restoreRehearsal({
+      backupManifestPath: manifestPath,
+      restoreDatabase: 'imeal_restore_20260928',
+      restoreBucket: 'imeal-restore-20260928',
+      outputPath,
+      commandRunner: createCommandRunner(commands),
+      readinessCheck: async () => {
+        readinessCalled = true;
+        return { result: 'PASS' };
+      },
+      smokeCheck: async () => undefined,
+    }),
+    /smoke check failed/i,
+  );
+  assert.equal(readinessCalled, true);
+  assert.equal(JSON.parse(await readFile(outputPath, 'utf8')).result, 'FAIL');
+});
+test('requires explicit PASS and zero unfinished migrations from callbacks', async () => {
+  for (const [name, result] of [
+    ['missing-result', { unfinished: 0 }],
+    ['unknown-result', { result: 'UNKNOWN', unfinished: 0 }],
+    ['unfinished', { result: 'PASS', unfinished: 1 }],
+  ]) {
+    const directory = await makeDirectory();
+    const manifestPath = await writeRestoreFixture(directory);
+    const commands = [];
+    let readinessCalled = false;
+    let smokeCalled = false;
+    const outputPath = join(directory, `${name}-migration-failure.json`);
+    await assert.rejects(
+      restoreRehearsal({
+        backupManifestPath: manifestPath,
+        restoreDatabase: 'imeal_restore_20260928',
+        restoreBucket: 'imeal-restore-20260928',
+        outputPath,
+        commandRunner: createCommandRunner(commands),
+        migrationCheck: async () => result,
+        readinessCheck: async () => {
+          readinessCalled = true;
+          return { result: 'PASS' };
+        },
+        smokeCheck: async () => {
+          smokeCalled = true;
+          return { result: 'PASS' };
+        },
+      }),
+      /restore migration status failed/i,
+    );
+    assert.equal(readinessCalled, false);
+    assert.equal(smokeCalled, false);
+    assert.equal(
+      commands.some(
+        ({ command, args }) =>
+          command === 'psql' &&
+          args.some((arg) => arg.includes('_prisma_migrations')),
+      ),
+      false,
+    );
+    assert.deepEqual(JSON.parse(await readFile(outputPath, 'utf8')).migration, {
+      result: 'FAIL',
+    });
+  }
 });
 
 test('fails before migration checks when restored object size mismatches', async () => {
