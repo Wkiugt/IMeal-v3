@@ -19,6 +19,13 @@ http://{$PUBLIC_HOSTNAME} {
         Content-Security-Policy "default-src 'self'; connect-src 'self' https: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     }
 
+    # Keep the metrics endpoint private to the internal monitoring network.
+    # Do not allow the public Admin Web fallback to serve this path.
+    @metrics path /metrics /metrics/*
+    handle @metrics {
+        respond 404
+    }
+
     @health path /health/live /health/ready
     handle @health {
         reverse_proxy api:3000 {

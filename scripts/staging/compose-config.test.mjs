@@ -249,7 +249,15 @@ test('Caddy owns HTTPS redirect, health routes, headers and request IDs without 
   assert.doesNotMatch(caddyText, /\brate_limit\b|rate-limit/);
   assert.doesNotMatch(caddyText, /minio|storage\//i);
   assert.match(alertRulesText, /approved edge WAF or rate-limit control/i);
-  assert.doesNotMatch(caddyText, /\/metrics|worker:3001/i);
+  const metricsHandle = caddyText.match(
+    /handle @metrics \{[\s\S]*?\n\s*\}/,
+  )?.[0];
+  assert.ok(metricsHandle, 'Caddy must define an explicit /metrics deny route');
+  assert.match(metricsHandle, /respond 404/);
+  assert.doesNotMatch(metricsHandle, /reverse_proxy/);
+  const metricsIndex = caddyText.indexOf('handle @metrics');
+  assert.ok(metricsIndex < caddyText.indexOf('handle @api'));
+  assert.ok(metricsIndex < caddyText.lastIndexOf('handle {'));
   assert.doesNotMatch(alertRulesText, /\brate_limit\s*:/i);
 });
 
