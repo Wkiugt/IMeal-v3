@@ -20,6 +20,7 @@ env:
   NODE_VERSION: '20.x'
   YARN_VERSION: '4.18.0'
   CI: 'true'
+  TRIVY_IMAGE: aquasec/trivy@sha256:fa9a2d2a839e69bfc0e774e885c526b5db20dc1feba5bcd1bfb59e51e7855ae0
 
 jobs:
   checks:
@@ -132,7 +133,7 @@ jobs:
             "imeal/admin-web:${GITHUB_SHA}"; do
             docker run --rm \
               --volume /var/run/docker.sock:/var/run/docker.sock \
-              aquasec/trivy:0.56.1 \
+              "${TRIVY_IMAGE}" \
               image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$image"
           done
 
@@ -166,7 +167,6 @@ jobs:
             "db": "PASS",
             "compose": "PASS",
             "stagingTools": "PASS",
-            "security": "PASS",
             "sbom": "artifacts/build-image-sbom-index.json"
           }
           JSON
@@ -312,6 +312,35 @@ jobs:
           await writeFile(releasePath, releaseVersion);
           NODE
 
+      - name: Scan exact protected deployment image digests
+        run: |
+          mkdir -p "$RUNNER_TEMP/staging-artifacts"
+          for service in api worker admin-web; do
+            image="$(
+              node --input-type=module - \
+                "$RUNNER_TEMP/images.json" "$service" <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          const [path, service] = process.argv.slice(2);
+          const images = JSON.parse(await readFile(path, 'utf8'));
+          const key = service === 'admin-web' ? 'adminWeb' : service;
+          process.stdout.write(images[key]);
+          NODE
+            )"
+            if ! docker pull "$image" \
+              >"$RUNNER_TEMP/staging-artifacts/deployed-image-pull-${service}.log" 2>&1; then
+              echo 'failed to pull a protected deployment image digest' >&2
+              exit 1
+            fi
+            if ! docker run --rm --pull=always \
+              --volume /var/run/docker.sock:/var/run/docker.sock \
+              "${TRIVY_IMAGE}" \
+              image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$image" \
+              >"$RUNNER_TEMP/staging-artifacts/deployed-image-trivy-${service}.log" 2>&1; then
+              echo 'protected deployment image security scan failed' >&2
+              exit 1
+            fi
+          done
+
       - name: Render protected staging Compose configuration
         run: >-
           docker compose --env-file "$RUNNER_TEMP/staging.env"
@@ -411,8 +440,11 @@ jobs:
           const runtime = JSON.parse(await readFile(runtimePath, 'utf8'));
           if (runtime.result !== 'PASS') throw new Error('runtime integration did not PASS');
           const checks = JSON.parse(await readFile(checksPath, 'utf8'));
+          checks.runtimeIntegration = 'PASS';
+          checks.stagingSmoke = 'PASS';
+          checks.security = 'PASS';
           checks.sbom = 'artifacts/deployed-image-sbom-index.json';
-          checks.stagingSmoke = 'artifacts/staging-smoke.json';
+          checks.stagingSmokeReference = 'artifacts/staging-smoke.json';
           await writeFile(checksPath, `${JSON.stringify(checks, null, 2)}\n`, 'utf8');
           NODE
 

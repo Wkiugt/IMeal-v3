@@ -21,6 +21,8 @@ const REQUIRED_CHECKS = [
   'compose',
   'stagingTools',
   'security',
+  'runtimeIntegration',
+  'stagingSmoke',
 ];
 const REQUIRED_MANIFEST_KEYS = [
   'releaseId',
@@ -378,8 +380,13 @@ export async function createReleaseManifest({
     checkResults.sbom ?? checkResults.sbomReference,
     'SBOM reference',
   );
+  const stagingSmokeReference =
+    checkResults.stagingSmokeReference ??
+    (checkResults.stagingSmoke === 'PASS'
+      ? undefined
+      : checkResults.stagingSmoke);
   const stagingSmoke = assertReference(
-    checkResults.stagingSmoke ?? checkResults.stagingSmokeReference,
+    stagingSmokeReference,
     'staging smoke reference',
   );
   const manifest = {

@@ -82,8 +82,10 @@ function options(fixtureData, overrides = {}) {
       compose: 'PASS',
       stagingTools: 'PASS',
       security: 'PASS',
+      runtimeIntegration: 'PASS',
+      stagingSmoke: 'PASS',
       sbom: 'artifacts/sbom.spdx.json',
-      stagingSmoke: 'artifacts/staging-smoke.json',
+      stagingSmokeReference: 'artifacts/staging-smoke.json',
     },
     rollbackArtifact: 'imeal-20260927-004',
     ...overrides,
@@ -116,6 +118,8 @@ test('creates a deterministic immutable release manifest', async () => {
       compose: 'PASS',
       stagingTools: 'PASS',
       security: 'PASS',
+      runtimeIntegration: 'PASS',
+      stagingSmoke: 'PASS',
     },
     sbom: 'artifacts/sbom.spdx.json',
     stagingSmoke: 'artifacts/staging-smoke.json',
@@ -184,6 +188,17 @@ test('rejects mutable image references and missing or failed checks', async () =
       }),
     ),
     /lint.*PASS/i,
+  );
+  await assert.rejects(
+    createReleaseManifest(
+      options(fixtureData, {
+        checkResults: {
+          ...options(fixtureData).checkResults,
+          runtimeIntegration: undefined,
+        },
+      }),
+    ),
+    /runtimeIntegration.*PASS/i,
   );
 });
 
