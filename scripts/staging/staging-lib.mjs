@@ -25,8 +25,8 @@ const SENSITIVE_ASSIGNMENT_PATTERN =
 const BEARER_PATTERN = /\bBearer\s+[^\s]+/gi;
 const TRANSACTION_SETTING_PATTERN =
   /\bSET\s+(?:(?:SESSION|LOCAL)\s+)?(?:CHARACTERISTICS\s+AS\s+)?TRANSACTION\b/i;
-const TRANSACTION_READ_ONLY_OFF_PATTERN =
-  /\bSET\s+(?:(?:SESSION|LOCAL)\s+)?(?:default_transaction_read_only|transaction_read_only)\s*(?:=|TO)\s*['"]?(?:off|false|0|no)['"]?\b/i;
+const TRANSACTION_READ_ONLY_SETTING_PATTERN =
+  /\bSET\s+(?:(?:SESSION|LOCAL)\s+)?(?:default_)?transaction_read_only\b/i;
 const PRIVATE_KEY_PATTERN = /-----BEGIN [^-\n]*PRIVATE KEY-----/i;
 
 function normalizeSchemaDefinition(schema) {
@@ -682,8 +682,8 @@ function normalizeReadOnlySql(sql) {
   );
   if (
     TRANSACTION_SETTING_PATTERN.test(visibleWithoutSafe) ||
+    TRANSACTION_READ_ONLY_SETTING_PATTERN.test(visibleWithoutSafe) ||
     /\bREAD\s+WRITE\b/i.test(visibleWithoutSafe) ||
-    TRANSACTION_READ_ONLY_OFF_PATTERN.test(visibleWithoutSafe) ||
     /\b(?:BEGIN|COMMIT|ROLLBACK)\b/i.test(visibleWithoutSafe)
   ) {
     throw new Error('read-only transaction control is not allowed');
