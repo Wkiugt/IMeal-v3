@@ -268,6 +268,37 @@ try {
     true,
     'migration-gate must receive the direct database URL',
   );
+  const targetSchema = services['migration-gate'].environment.MIGRATION_TARGET_SCHEMA;
+  assert.match(
+    targetSchema ?? '',
+    /^[A-Za-z_][A-Za-z0-9_]*$/,
+    'MIGRATION_TARGET_SCHEMA must be a safe SQL schema identifier',
+  );
+  const schemaFromUrl = (url, name) => {
+    const match = String(url).match(/[?&]schema=([^&]+)/);
+    assert.ok(match, `${name} must include a schema query parameter`);
+    return match[1];
+  };
+  assert.equal(
+    schemaFromUrl(
+      services['migration-gate'].environment.MIGRATION_DATABASE_URL,
+      'migration-gate',
+    ),
+    targetSchema,
+    'migration-gate must use MIGRATION_TARGET_SCHEMA',
+  );
+  for (const name of ['api', 'worker']) {
+    assert.equal(
+      schemaFromUrl(services[name].environment.DATABASE_URL, name),
+      targetSchema,
+      `${name} must use MIGRATION_TARGET_SCHEMA`,
+    );
+    assert.match(
+      services[name].environment.DATABASE_URL,
+      /[?&]pgbouncer=true$/,
+      `${name} must preserve the PgBouncer query parameter`,
+    );
+  }
   for (const name of ['api', 'worker']) {
     assert.equal(
       services[name].depends_on['migration-gate'].condition,

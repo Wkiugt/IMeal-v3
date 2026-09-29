@@ -64,6 +64,15 @@ psql_database_url="${psql_database_url/\&schema=$MIGRATION_TARGET_SCHEMA\&/\&}"
 psql_database_url="${psql_database_url/\&schema=$MIGRATION_TARGET_SCHEMA/}"
 psql_database_url="${psql_database_url/\?schema=$MIGRATION_TARGET_SCHEMA/}"
 
+if [[ -e "$MIGRATION_EVIDENCE_PATH" || -L "$MIGRATION_EVIDENCE_PATH" ]]; then
+  if ! rm -f -- "$MIGRATION_EVIDENCE_PATH"; then
+    fail evidence_cleanup
+  fi
+fi
+if [[ -e "$MIGRATION_EVIDENCE_PATH" || -L "$MIGRATION_EVIDENCE_PATH" ]]; then
+  fail evidence_cleanup
+fi
+
 mkdir -p "$GATE_LOG_DIR" "$(dirname "$MIGRATION_EVIDENCE_PATH")"
 work_dir=$(mktemp -d "$GATE_LOG_DIR/run.XXXXXX")
 temporary_marker=''
@@ -79,7 +88,7 @@ run_psql_stream() {
   local phase="$1"
   local log_file="$work_dir/${phase}.log"
   if ! {
-    printf 'SET search_path TO :"target_schema", public;\n'
+    printf 'SET search_path TO :"target_schema";\n'
     printf "SELECT 1 / CASE WHEN current_schema() = :'target_schema' THEN 1 ELSE 0 END\n"
     printf '\\g /dev/null\n'
     cat

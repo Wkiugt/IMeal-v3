@@ -54,6 +54,8 @@ esac
 printf 'psql:%s\\n' "$phase" >> "$GATE_TEST_LOG"
 sql=$(cat)
 if ! printf '%s' "$sql" | grep -Fq '\\g /dev/null'; then exit 19; fi
+if ! printf '%s' "$sql" | grep -Fq 'SET search_path TO :"target_schema";'; then exit 20; fi
+if printf '%s' "$sql" | grep -Fq 'SET search_path TO :"target_schema", public;'; then exit 21; fi
 if [ "\${FAIL_PHASE:-}" = "$phase" ]; then exit 17; fi
 if [ "$phase" = "preflight" ] || [ "$phase" = "postflight" ]; then
   printf 'registration_snapshot_incomplete|0|{}\\n'
@@ -177,6 +179,21 @@ describe('production migration gate command contract', () => {
         'psql:postflight',
         'psql:post-validation',
       ]);
+    } finally {
+      rmSync(harness.directory, { recursive: true, force: true });
+    }
+  });
+  it('removes stale evidence before a failed rerun', () => {
+    const harness = createHarness();
+    try {
+      const first = runGate(harness.environment);
+      expect(first.status).toBe(0);
+      expect(existsSync(harness.markerPath)).toBe(true);
+
+      const failed = runGate({ ...harness.environment, FAIL_PHASE: 'target-assert' });
+      expect(failed.status).not.toBe(0);
+      expect(existsSync(harness.markerPath)).toBe(false);
+      expect(failed.stderr).not.toContain('gate_password');
     } finally {
       rmSync(harness.directory, { recursive: true, force: true });
     }

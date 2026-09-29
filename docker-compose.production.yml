@@ -119,7 +119,7 @@ services:
     environment: !override
       PORT: 3000
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@pgbouncer:5432/${POSTGRES_DB:?POSTGRES_DB is required}?schema=public&pgbouncer=true
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@pgbouncer:5432/${POSTGRES_DB:?POSTGRES_DB is required}?schema=${MIGRATION_TARGET_SCHEMA:?MIGRATION_TARGET_SCHEMA is required}&pgbouncer=true
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
@@ -183,7 +183,7 @@ services:
     environment: !override
       PORT: 3001
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@pgbouncer:5432/${POSTGRES_DB:?POSTGRES_DB is required}?schema=public&pgbouncer=true
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@pgbouncer:5432/${POSTGRES_DB:?POSTGRES_DB is required}?schema=${MIGRATION_TARGET_SCHEMA:?MIGRATION_TARGET_SCHEMA is required}&pgbouncer=true
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}

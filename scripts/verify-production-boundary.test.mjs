@@ -107,3 +107,30 @@ test('rejects millisecond stop grace values before Compose duration coercion', (
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('requires migration-gate, API, and worker schema alignment', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'imeal-production-schema-test-'));
+  const envFile = join(directory, 'compose.env');
+  const values = testValues();
+  values.STOP_GRACE_PERIOD = '45s';
+  values.MIGRATION_TARGET_SCHEMA = 'release_schema';
+  writeFileSync(envFile, Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n'));
+  const childEnv = { ...process.env };
+  for (const name of requiredNames) delete childEnv[name];
+
+  try {
+    const output = execFileSync(
+      process.execPath,
+      [resolve(root, 'scripts/verify-production-boundary.mjs'), '--env-file', envFile],
+      {
+        cwd: root,
+        env: childEnv,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    assert.match(output, /Production Compose boundary checks passed/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

@@ -22,13 +22,18 @@ The gate requires all of the following environment variables:
 
 The gate validates the target schema in the same direct database session used for
 its SQL checks. Every `psql` invocation uses `ON_ERROR_STOP=1`, an explicit
-`search_path`, and a `current_schema()` assertion. The successful assertion result
-is redirected to `/dev/null`, so preflight and postflight logs contain only the
-named report rows parsed by the gate.
+target-only `search_path` (`SET search_path TO target_schema`; `pg_catalog`
+resolution remains implicit), and a `current_schema()` assertion. There is no
+fallback to `public`, so missing target tables cannot resolve dirty public tables.
+The successful assertion result is redirected to `/dev/null`, so preflight and
+postflight logs contain only the named report rows parsed by the gate. Production
+Compose injects the same target schema into the API and worker PgBouncer URLs;
+their `pgbouncer=true` query parameter remains intact.
 
 ## Execution order
 
-1. Validate inputs and direct-primary URL semantics.
+1. Validate inputs, remove any existing evidence marker, and validate direct-primary
+   URL semantics.
 2. Assert the target database/schema.
 3. Run `prisma migrate deploy` using the direct URL.
 4. Run the checked-in phase-0 read-only preflight. All seven named checks must
