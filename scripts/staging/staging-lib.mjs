@@ -23,8 +23,8 @@ const SENSITIVE_OBJECT_ASSIGNMENT_PATTERN =
 const SENSITIVE_ASSIGNMENT_PATTERN =
   /\b(password|token|api[_-]?key|otp(?:[_-]?code)?|provider[\s_-]?payload)\b(\s*=\s*)((?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^;\s]+))/gi;
 const BEARER_PATTERN = /\bBearer\s+[^\s]+/gi;
-const TRANSACTION_READ_WRITE_PATTERN =
-  /\bSET\s+(?:(?:SESSION|LOCAL)\s+)?(?:(?:CHARACTERISTICS\s+AS\s+)?TRANSACTION)(?:\s+ISOLATION\s+LEVEL(?:\s+\w+)*)?\s+READ\s+WRITE\b/i;
+const TRANSACTION_SETTING_PATTERN =
+  /\bSET\s+(?:(?:SESSION|LOCAL)\s+)?(?:CHARACTERISTICS\s+AS\s+)?TRANSACTION\b/i;
 const TRANSACTION_READ_ONLY_OFF_PATTERN =
   /\bSET\s+(?:(?:SESSION|LOCAL)\s+)?(?:default_transaction_read_only|transaction_read_only)\s*(?:=|TO)\s*['"]?(?:off|false|0|no)['"]?\b/i;
 const PRIVATE_KEY_PATTERN = /-----BEGIN [^-\n]*PRIVATE KEY-----/i;
@@ -489,14 +489,19 @@ function normalizeReadOnlySql(sql) {
     source,
   );
   const body = outerTransaction ? outerTransaction[1].trim() : source;
+  const withoutSafeReadOnly = body.replace(
+    /(^|[;\n])\s*SET TRANSACTION READ ONLY\s*;\s*/gi,
+    '$1',
+  );
   if (
-    TRANSACTION_READ_WRITE_PATTERN.test(body) ||
-    TRANSACTION_READ_ONLY_OFF_PATTERN.test(body) ||
-    /\b(?:BEGIN|COMMIT|ROLLBACK)\b/i.test(body)
+    TRANSACTION_SETTING_PATTERN.test(withoutSafeReadOnly) ||
+    /\bREAD\s+WRITE\b/i.test(withoutSafeReadOnly) ||
+    TRANSACTION_READ_ONLY_OFF_PATTERN.test(withoutSafeReadOnly) ||
+    /\b(?:BEGIN|COMMIT|ROLLBACK)\b/i.test(withoutSafeReadOnly)
   ) {
     throw new Error('read-only transaction control is not allowed');
   }
-  return body;
+  return withoutSafeReadOnly.trim();
 }
 
 export async function runPsql(options) {

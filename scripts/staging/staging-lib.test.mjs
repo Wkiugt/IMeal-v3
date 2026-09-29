@@ -313,7 +313,11 @@ test('starts read-only psql sessions before read-write overrides and trusted tra
 test('loads read-only SQL files into one command and rejects transaction overrides', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'staging-psql-'));
   const sqlFile = join(directory, 'preflight.sql');
-  await writeFile(sqlFile, 'BEGIN;\nSELECT 1;\nCOMMIT;\n', 'utf8');
+  await writeFile(
+    sqlFile,
+    'BEGIN;\nSET TRANSACTION READ ONLY;\nSELECT 1;\nCOMMIT;\n',
+    'utf8',
+  );
   const originalSpawn = childProcess.spawn;
   const invocations = [];
   childProcess.spawn = (_command, argv, options) => {
@@ -366,6 +370,7 @@ test('loads read-only SQL files into one command and rejects transaction overrid
 
     for (const sql of [
       'SET TRANSACTION READ WRITE;',
+      'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ WRITE;',
       'SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE;',
       'SET SESSION transaction_read_only = off;',
       'sEt   SeSsIoN   transaction_read_only TO false;',
