@@ -88,6 +88,24 @@ describe('JSON structured logging', () => {
       'postgresql://user:password@db.internal/imeal',
     );
   });
+  it('redacts provider and QR secrets embedded in safe string fields', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.error('qr://pickup?signature=qr-secret', {
+      service: 'api',
+      release: 'r1',
+      providerCode: 'apiKey=provider-secret',
+    });
+
+    const output = JSON.parse(lines[0]);
+    expect(output.event).toBe('qr://pickup?signature=[REDACTED]');
+    expect(output.providerCode).toBe('apiKey=[REDACTED]');
+    expect(lines[0]).not.toContain('qr-secret');
+    expect(lines[0]).not.toContain('provider-secret');
+  });
 
   it('redacts sensitive suffix keys and arbitrary attacker-controlled keys', () => {
     const lines: string[] = [];

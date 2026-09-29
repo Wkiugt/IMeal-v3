@@ -58,6 +58,10 @@ function redactString(value: string): string {
     .replace(/(?:ExpoPushToken|ExponentPushToken)\[[^\]\r\n]*\]/g, REDACTED)
     .replace(/Bearer\s+[^\s,]+/gi, `Bearer ${REDACTED}`)
     .replace(
+      /(\b(?:api[-_ ]?key|access[-_ ]?token|authorization|password|secret|signature|token)\s*[:=]\s*)[^\s&#,;]+/gi,
+      `$1${REDACTED}`,
+    )
+    .replace(
       /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?):\/\/[^\s"']+/gi,
       REDACTED,
     )
