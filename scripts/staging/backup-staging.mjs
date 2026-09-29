@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import {
   filterPostgresEnvironment,
   parseArgs,
+  parseDatabaseConnection,
   requireSafeSchemaName,
   safeDiagnostic,
   sha256File,
@@ -46,41 +47,15 @@ function assertNonProduction(value, label) {
 }
 
 function sourceTarget(databaseUrl) {
-  if (typeof databaseUrl !== 'string' || databaseUrl.length === 0) {
-    throw new Error('database URL is required');
-  }
-  let parsed;
-  try {
-    parsed = new URL(databaseUrl);
-  } catch {
-    throw new Error('database URL is invalid');
-  }
-  if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
-    throw new Error('database URL must use PostgreSQL');
-  }
-  let database;
-  let username = '';
-  let password;
-  try {
-    database = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
-    username = decodeURIComponent(parsed.username);
-    password = parsed.password
-      ? decodeURIComponent(parsed.password)
-      : undefined;
-  } catch {
-    throw new Error('database URL contains invalid encoding');
-  }
-  if (!IDENTIFIER_PATTERN.test(database)) {
+  const source = parseDatabaseConnection(databaseUrl);
+  if (!IDENTIFIER_PATTERN.test(source.database)) {
     throw new Error('database name is invalid');
   }
-  assertNonProduction(parsed.hostname, 'database host');
-  assertNonProduction(database, 'database name');
+  assertNonProduction(source.host, 'database host');
+  assertNonProduction(source.database, 'database name');
   return {
-    database,
-    host: parsed.hostname,
-    port: parsed.port || undefined,
-    username,
-    password,
+    ...source,
+    username: source.username ?? '',
   };
 }
 
@@ -257,6 +232,7 @@ export async function createBackup({
     objectStorage: await toolVersion(run, 'aws', ['--version']),
   };
   const pgDumpEnvironment = filterPostgresEnvironment(process.env);
+  Object.assign(pgDumpEnvironment, source.environment);
   if (source.password !== undefined) {
     pgDumpEnvironment.PGPASSWORD = source.password;
   }

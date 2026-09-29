@@ -286,6 +286,91 @@ test('does not inherit ambient PGPASSWORD for a passwordless backup URL', async 
   }
 });
 
+test('preserves URL-derived SSL settings for pg_dump after ambient filtering', async () => {
+  const directory = await makeDirectory();
+  const commands = [];
+  const previousRecipient = process.env.AGE_RECIPIENT;
+  const variables = [
+    'PGSSLMODE',
+    'PGSSLROOTCERT',
+    'PGSSLCOMPRESSION',
+    'PGSSLSNI',
+    'PGSSLMINPROTOCOLVERSION',
+    'PGCONNECT_TIMEOUT',
+  ];
+  const previousEnvironment = new Map(
+    variables.map((variable) => [variable, process.env[variable]]),
+  );
+  process.env.AGE_RECIPIENT = 'age1stagingrecipient';
+  process.env.PGSSLMODE = 'verify-full';
+  process.env.PGSSLROOTCERT = '/ambient/root.crt';
+  process.env.PGSSLCOMPRESSION = '0';
+  process.env.PGSSLSNI = 'false';
+  process.env.PGSSLMINPROTOCOLVERSION = 'TLSv1.1';
+  process.env.PGCONNECT_TIMEOUT = '900';
+  try {
+    await createBackup({
+      databaseUrl:
+        'postgresql://backup_user@staging-db.example/imeal_staging?sslmode=require&sslrootcert=%2Fetc%2Froot.crt&sslcompression=1&sslsni=true&ssl_min_protocol_version=TLSv1.3&connect_timeout=5',
+      schema,
+      releaseId,
+      outputDirectory: directory,
+      objectStorage: {
+        endpoint: 'https://minio.staging.example',
+        bucket: 'imeal-staging-private',
+        destination: 'backups/imeal-20260928-001',
+      },
+      encryptionRecipientEnv: 'AGE_RECIPIENT',
+      commandRunner: createCommandRunner(commands),
+    });
+    const pgDump = commands.find(
+      ({ command, args }) =>
+        command === 'pg_dump' && args.includes('--format=custom'),
+    );
+    assert.equal(pgDump.options.env.PGSSLMODE, 'require');
+    assert.equal(pgDump.options.env.PGSSLROOTCERT, '/etc/root.crt');
+    assert.equal(pgDump.options.env.PGSSLCOMPRESSION, '1');
+    assert.equal(pgDump.options.env.PGSSLSNI, 'true');
+    assert.equal(pgDump.options.env.PGSSLMINPROTOCOLVERSION, 'TLSv1.3');
+    assert.equal(pgDump.options.env.PGCONNECT_TIMEOUT, '5');
+  } finally {
+    if (previousRecipient === undefined) delete process.env.AGE_RECIPIENT;
+    else process.env.AGE_RECIPIENT = previousRecipient;
+    for (const [variable, value] of previousEnvironment) {
+      if (value === undefined) delete process.env[variable];
+      else process.env[variable] = value;
+    }
+  }
+});
+
+test('rejects unsupported backup URL secret parameters before commands', async () => {
+  const commands = [];
+  await assert.rejects(
+    createBackup({
+      databaseUrl:
+        'postgresql://backup_user@staging-db.example/imeal_staging?sslpassword=private-key-secret',
+      schema,
+      releaseId,
+      outputDirectory: 'staging-backups',
+      objectStorage: {
+        endpoint: 'https://minio.staging.example',
+        bucket: 'imeal-staging-private',
+        destination: 'backups/imeal-20260928-001',
+      },
+      commandRunner: createCommandRunner(commands),
+    }),
+    (error) => {
+      assert.match(
+        error.message,
+        /unsupported database URL parameter: sslpassword/,
+      );
+      assert.doesNotMatch(error.message, /private-key-secret/);
+      assert.equal(commands.length, 0);
+      return true;
+    },
+  );
+});
+
 function argsContain(args, value) {
   return Array.isArray(args) && args.includes(value);
 }

@@ -437,8 +437,9 @@ const LIBPQ_URL_ENVIRONMENT_PARAMETERS = {
 };
 const IGNORED_DATABASE_URL_PARAMETERS = new Set(['schema', 'pgbouncer']);
 
-function parseDatabaseConnection(databaseUrl) {
-  const parsed = new URL(databaseUrl);
+export function parseDatabaseConnection(databaseUrl) {
+  const validatedUrl = assertDatabaseUrl(databaseUrl);
+  const parsed = new URL(validatedUrl);
   let database;
   let username;
   let password;
