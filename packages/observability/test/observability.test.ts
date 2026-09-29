@@ -107,7 +107,7 @@ describe('JSON structured logging', () => {
     expect(lines[0]).not.toContain('provider-secret');
   });
 
-  it('redacts sensitive suffix keys and arbitrary attacker-controlled keys', () => {
+  it('omits unknown and sensitive field names from structured output', () => {
     const lines: string[] = [];
     const logger = new JsonStructuredLogger('api', 'r1', (line) =>
       lines.push(line),
@@ -120,19 +120,95 @@ describe('JSON structured logging', () => {
       secretId: 'opaque-secret-id',
       passwordId: 'opaque-password-id',
       attackerControlled: 'attacker-value',
+      'Bearer opaque-key-name': 'attacker-value',
+      'sessionToken=opaque-key-name': 'attacker-value',
+      count: 4,
     });
 
     const output = JSON.parse(lines[0]);
-    expect(output).toMatchObject({
-      tokenId: '[REDACTED]',
-      secretId: '[REDACTED]',
-      passwordId: '[REDACTED]',
-      attackerControlled: '[REDACTED]',
-    });
+    expect(output).toMatchObject({ count: 4 });
+    expect(output).not.toHaveProperty('tokenId');
+    expect(output).not.toHaveProperty('secretId');
+    expect(output).not.toHaveProperty('passwordId');
+    expect(output).not.toHaveProperty('attackerControlled');
+    expect(output).not.toHaveProperty('Bearer opaque-key-name');
+    expect(output).not.toHaveProperty('sessionToken=opaque-key-name');
     expect(lines[0]).not.toContain('opaque-token-id');
-    expect(lines[0]).not.toContain('opaque-secret-id');
-    expect(lines[0]).not.toContain('opaque-password-id');
-    expect(lines[0]).not.toContain('attacker-value');
+    expect(lines[0]).not.toContain('opaque-key-name');
+  });
+
+  it.each([
+    ['sessionToken=opaque-session-token', 'opaque-session-token'],
+    ['session_id=opaque-session-id', 'opaque-session-id'],
+    ['clientSecret=provider-secret', 'provider-secret'],
+    ['provider_secret=provider-secret', 'provider-secret'],
+    ['api-key=provider-api-key', 'provider-api-key'],
+    ['imeal:v2:presenter:user-1:opaque-signed-qr', 'opaque-signed-qr'],
+    ['sig=opaque-signature', 'opaque-signature'],
+    ['qr=opaque-qr-payload', 'opaque-qr-payload'],
+    [
+      'provider payload {"body":"opaque-provider-payload"}',
+      'opaque-provider-payload',
+    ],
+    ['lat=10.7769; lon=106.7009', '10.7769'],
+    ['latitude: 10.7769 longitude: 106.7009', '106.7009'],
+  ])('redacts sensitive format %s', (event, secret) => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.error(event, {
+      service: 'api',
+      release: 'r1',
+      providerCode: event,
+    });
+
+    expect(lines[0]).not.toContain(secret);
+  });
+
+  it('preserves six-digit operational identifiers in approved fields', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('worker', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.info('/v1/items/123456', {
+      service: 'worker',
+      release: 'r1',
+      route: '/v1/items/123456',
+      jobName: 'run-123456',
+      jobRunId: 'job-123456',
+      errorCode: 'PROVIDER_123456',
+      providerCode: 'HTTP_123456',
+    });
+
+    const output = JSON.parse(lines[0]);
+    expect(output.event).toBe('/v1/items/123456');
+    expect(output.route).toBe('/v1/items/123456');
+    expect(output.jobName).toBe('run-123456');
+    expect(output.jobRunId).toBe('job-123456');
+    expect(output.errorCode).toBe('PROVIDER_123456');
+    expect(output.providerCode).toBe('HTTP_123456');
+  });
+
+  it('redacts labeled OTP values without scrubbing operational digits', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.warn('otp=123456 verification code: 654321', {
+      service: 'api',
+      release: 'r1',
+      errorCode: 'OTP_123456',
+      providerCode: 'HTTP_654321',
+    });
+
+    const output = JSON.parse(lines[0]);
+    expect(output.event).toBe('otp=[REDACTED] verification code: [REDACTED]');
+    expect(output.errorCode).toBe('OTP_123456');
+    expect(output.providerCode).toBe('HTTP_654321');
   });
 
   it('writes one line for each log level', () => {
@@ -188,6 +264,14 @@ describe('migration evidence', () => {
       'approvalId',
       'approval-1',
     );
+  });
+  it('rejects an oversized migration marker before parsing', () => {
+    const file = temporaryFile('x'.repeat(70_000));
+
+    expect(readMigrationEvidence(file, 'release-1', 'staging-schema')).toEqual({
+      ok: false,
+      reason: 'marker_too_large',
+    });
   });
 
   it.each([

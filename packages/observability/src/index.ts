@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 
 export const REQUEST_ID_HEADER = 'x-request-id';
 export const REQUEST_ID_PATTERN =
@@ -53,29 +53,73 @@ const SAFE_FIELD_KEYS: Record<string, true> = {
   retry: true,
 };
 
-function redactString(value: string): string {
+const SENSITIVE_LABEL_PATTERN =
+  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)(["'])(?:\\.|(?!\2)[^\r\n])*\2/gi;
+const SENSITIVE_UNQUOTED_PATTERN =
+  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)[^\s"'`&#,;}\])]+/gi;
+const PAYLOAD_LABEL_PATTERN =
+  /((?:^|[\s,{}(]|\[)["']?(?:body|title|data|to|payload|message)["']?\s*[:=]\s*)(["'])(?:\\.|(?!\2)[^\r\n])*\2/gi;
+const PAYLOAD_UNQUOTED_PATTERN =
+  /((?:^|[\s,{}(]|\[)["']?(?:body|title|data|to|payload|message)["']?\s*[:=]\s*)[^\s"'`&#,;}\])]+/gi;
+const OTP_LABEL_PATTERN =
+  /(\b(?:otp|one[- ]time|verification|auth(?:entication)?)(?:\s+(?:code|password))?(?:(?:\s*[:=]\s*)|\s+))(\d{6})\b/gi;
+
+function redactPayloadLabels(value: string): string {
   return value
+    .replace(
+      PAYLOAD_LABEL_PATTERN,
+      (_match, prefix: string, quote: string) =>
+        `${prefix}${quote}${REDACTED}${quote}`,
+    )
+    .replace(PAYLOAD_UNQUOTED_PATTERN, `$1${REDACTED}`);
+}
+
+function redactString(
+  value: string,
+  context: 'event' | 'field',
+  key?: string,
+): string {
+  let redacted = value
+    .replace(/\bimeal:v2:[^\s"'`]+/gi, REDACTED)
     .replace(/(?:ExpoPushToken|ExponentPushToken)\[[^\]\r\n]*\]/g, REDACTED)
     .replace(/Bearer\s+[^\s,]+/gi, `Bearer ${REDACTED}`)
     .replace(
-      /(\b(?:api[-_ ]?key|access[-_ ]?token|authorization|password|secret|signature|token)\s*[:=]\s*)[^\s&#,;]+/gi,
-      `$1${REDACTED}`,
+      SENSITIVE_LABEL_PATTERN,
+      (_match, prefix: string, quote: string) =>
+        `${prefix}${quote}${REDACTED}${quote}`,
     )
+    .replace(SENSITIVE_UNQUOTED_PATTERN, `$1${REDACTED}`)
     .replace(
       /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?):\/\/[^\s"']+/gi,
       REDACTED,
     )
+    .replace(/\bhttps?:\/\/[^/\s:@]+:[^@\s]+@/gi, 'https://[REDACTED]@')
+    .replace(
+      /(\b(?:lat(?:itude)?|lon(?:gitude)?|lng)\s*[:=]\s*)-?\d+(?:\.\d+)?/gi,
+      `$1${REDACTED}`,
+    )
     .replace(/\b-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+\b/g, REDACTED)
-    .replace(/\b\d{6}\b/g, REDACTED);
+    .replace(OTP_LABEL_PATTERN, `$1${REDACTED}`);
+
+  if (context === 'event' || key === 'providerCode') {
+    redacted = redactPayloadLabels(redacted);
+  }
+
+  return redacted;
 }
 
-function sanitizeField(key: string, value: unknown): string | number | boolean {
-  if (SAFE_FIELD_KEYS[key] !== true) return REDACTED;
+function sanitizeField(
+  key: string,
+  value: unknown,
+): string | number | boolean | undefined {
+  if (SAFE_FIELD_KEYS[key] !== true) return undefined;
 
   if (typeof value === 'string') {
-    return key === 'route'
-      ? redactString(value).split('?')[0]
-      : redactString(value);
+    if (key === 'requestId' && !REQUEST_ID_PATTERN.test(value)) {
+      return REDACTED;
+    }
+    const redacted = redactString(value, 'field', key);
+    return key === 'route' ? redacted.split('?')[0] : redacted;
   }
 
   if (typeof value === 'number')
@@ -98,7 +142,9 @@ function sanitizeFields(
       value === undefined
     )
       continue;
-    result[key] = sanitizeField(key, value);
+
+    const sanitized = sanitizeField(key, value);
+    if (sanitized !== undefined) result[key] = sanitized;
   }
   return result;
 }
@@ -136,7 +182,7 @@ export class JsonStructuredLogger implements StructuredLogger {
       level,
       service: this.service,
       release: this.release,
-      event: redactString(event),
+      event: redactString(event, 'event'),
       ...sanitizeFields(fields),
     };
     this.sink(JSON.stringify(output));
@@ -194,6 +240,70 @@ function isMigrationEvidence(value: unknown): value is MigrationEvidence {
   );
 }
 
+const MAX_MIGRATION_EVIDENCE_BYTES = 64 * 1024;
+
+type BoundedMarkerRead =
+  | { ok: true; contents: string }
+  | {
+      ok: false;
+      reason: 'marker_too_large' | 'marker_changed' | 'marker_unavailable';
+    };
+
+function readBoundedMarker(filePath: string): BoundedMarkerRead {
+  let fileDescriptor: number | undefined;
+
+  try {
+    fileDescriptor = openSync(filePath, 'r');
+    const initialSize = fstatSync(fileDescriptor).size;
+    if (
+      !Number.isSafeInteger(initialSize) ||
+      initialSize > MAX_MIGRATION_EVIDENCE_BYTES
+    ) {
+      return { ok: false, reason: 'marker_too_large' };
+    }
+
+    const buffer = Buffer.allocUnsafe(MAX_MIGRATION_EVIDENCE_BYTES + 1);
+    let offset = 0;
+    while (offset <= MAX_MIGRATION_EVIDENCE_BYTES) {
+      const bytesRead = readSync(
+        fileDescriptor,
+        buffer,
+        offset,
+        MAX_MIGRATION_EVIDENCE_BYTES + 1 - offset,
+        null,
+      );
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+
+    const finalSize = fstatSync(fileDescriptor).size;
+    if (
+      offset > MAX_MIGRATION_EVIDENCE_BYTES ||
+      finalSize > MAX_MIGRATION_EVIDENCE_BYTES
+    ) {
+      return { ok: false, reason: 'marker_too_large' };
+    }
+    if (finalSize !== initialSize || offset !== finalSize) {
+      return { ok: false, reason: 'marker_changed' };
+    }
+
+    return {
+      ok: true,
+      contents: buffer.toString('utf8', 0, offset),
+    };
+  } catch {
+    return { ok: false, reason: 'marker_unavailable' };
+  } finally {
+    if (fileDescriptor !== undefined) {
+      try {
+        closeSync(fileDescriptor);
+      } catch {
+        // The marker result remains safe if closing an already-closed descriptor fails.
+      }
+    }
+  }
+}
+
 export function readMigrationEvidence(
   filePath: string,
   expectedRelease: string,
@@ -206,12 +316,10 @@ export function readMigrationEvidence(
     return { ok: false, reason: 'expected_identity_missing' };
   }
 
-  let contents: string;
-  try {
-    contents = readFileSync(filePath, 'utf8');
-  } catch {
-    return { ok: false, reason: 'marker_unavailable' };
-  }
+  const marker = readBoundedMarker(filePath);
+  if (!marker.ok) return { ok: false, reason: marker.reason };
+
+  const contents = marker.contents;
 
   let parsed: unknown;
   try {
