@@ -248,6 +248,9 @@ test('Caddy owns HTTPS redirect, health routes, headers and request IDs without 
   assert.match(caddyText, /X-Request-Id/);
   assert.doesNotMatch(caddyText, /\brate_limit\b|rate-limit/);
   assert.doesNotMatch(caddyText, /minio|storage\//i);
+  assert.match(alertRulesText, /approved edge WAF or rate-limit control/i);
+  assert.doesNotMatch(caddyText, /\/metrics|worker:3001/i);
+  assert.doesNotMatch(alertRulesText, /\brate_limit\s*:/i);
 });
 
 test('alert rules use the hardening-owned metric and alert names', () => {

@@ -1,8 +1,10 @@
+# Staging qualification prerequisite: approved edge WAF or rate-limit control must be provisioned and observed before promotion.
+# The stock Caddy image does not provide the required edge rate-limit policy; keep this gate external and explicit.
 groups:
   - name: imeal-staging-hardening
     rules:
       - alert: ImealApiReadinessFailure
-        expr: imeal_health_check_status{service="api",check="ready"} == 0
+        expr: sum(increase(imeal_http_requests_total{route="/health/ready",status=~"5.."}[1m])) >= 2
         for: 1m
         labels:
           severity: critical
@@ -11,6 +13,7 @@ groups:
           summary: IMeal API readiness is failing
           description: The API readiness check has failed for at least one minute.
           action: Inspect API, database, proxy, and the release gate before rollback.
+          alert_test_route: /internal/observability/alert-test
 
       - alert: ImealApiErrorRateHigh
         expr: sum(rate(imeal_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(imeal_http_requests_total[5m])), 1) > 0.05
@@ -22,6 +25,7 @@ groups:
           summary: IMeal API 5xx rate exceeds 5 percent
           description: API server errors exceed the initial staging threshold.
           action: Inspect release and request IDs, then stop promotion if release-correlated.
+          alert_test_route: /internal/observability/alert-test
 
       - alert: ImealApiLatencyHigh
         expr: histogram_quantile(0.95, sum by (le) (rate(imeal_http_request_duration_seconds_bucket[10m]))) > 1
@@ -33,20 +37,22 @@ groups:
           summary: IMeal API p95 latency exceeds one second
           description: Normal traffic p95 request latency exceeds the initial staging threshold.
           action: Inspect database locks, pool saturation, and provider calls.
+          alert_test_route: /internal/observability/alert-test
 
       - alert: ImealOtpBacklog
-        expr: imeal_otp_outbox_oldest_age_seconds > 300
+        expr: imeal_otp_outbox_oldest_age_seconds > 300 or (rate(imeal_otp_delivery_failures_total[5m]) / clamp_min(rate(imeal_otp_delivery_total[5m]), 1) > 0.05) or rate(imeal_otp_delivery_retries_total[5m]) > 10
         for: 5m
         labels:
           severity: critical
           owner: worker
         annotations:
-          summary: IMeal OTP outbox backlog is older than five minutes
-          description: The oldest pending OTP delivery exceeds the staging threshold.
+          summary: IMeal OTP outbox backlog or delivery pressure is high
+          description: The oldest pending OTP delivery or delivery error pressure exceeds the staging threshold.
           action: Inspect provider availability, worker claims, retries, and terminal failures.
+          alert_test_route: /internal/observability/alert-test
 
       - alert: ImealWorkerStale
-        expr: imeal_worker_job_last_success_timestamp_seconds < time() - 600
+        expr: imeal_worker_job_last_success_timestamp_seconds < time() - 600 or imeal_worker_job_lag_seconds > 600 or sum(rate(imeal_worker_runs_total{status="success"}[10m])) == 0
         for: 10m
         labels:
           severity: critical
@@ -55,20 +61,22 @@ groups:
           summary: IMeal worker job has no recent successful run
           description: A required worker job has missed its deadline plus the staging margin.
           action: Inspect the job run record and execute only a controlled audited retry.
+          alert_test_route: /internal/observability/alert-test
 
       - alert: ImealDatabaseCapacity
-        expr: imeal_postgres_disk_usage_ratio > 0.80 or imeal_postgres_pool_saturation_ratio > 0.80
+        expr: imeal_postgres_disk_usage_ratio > 0.80 or imeal_postgres_connection_usage_ratio > 0.80 or rate(imeal_postgres_transaction_errors_total[5m]) > 0 or rate(imeal_postgres_lock_waits_total[5m]) > 0
         for: 10m
         labels:
           severity: warning
           owner: dba
         annotations:
-          summary: IMeal PostgreSQL capacity or pool saturation is high
-          description: PostgreSQL disk or connection pool pressure exceeds the staging threshold.
-          action: Inspect disk, pool usage, lock waits, and active migrations.
+          summary: IMeal PostgreSQL capacity or contention is high
+          description: PostgreSQL disk, connection, transaction, or lock pressure exceeds the staging threshold.
+          action: Inspect disk, connection usage, lock waits, and active migrations.
+          alert_test_route: /internal/observability/alert-test
 
       - alert: ImealObjectStorageUnavailable
-        expr: imeal_object_storage_available == 0
+        expr: imeal_object_storage_capacity_bytes == 0 or rate(imeal_object_storage_errors_total[5m]) > 0
         for: 5m
         labels:
           severity: critical
@@ -76,7 +84,8 @@ groups:
         annotations:
           summary: IMeal object storage is unavailable
           description: The private staging object-storage health check is failing.
-          action: Inspect MinIO health, private bucket policy, and data-network connectivity.
+          action: Inspect object storage health, private bucket policy, and data-network connectivity.
+          alert_test_route: /internal/observability/alert-test
 
       - alert: ImealBackupStale
         expr: imeal_backup_age_seconds > 93600 or imeal_backup_checksum_failures_total > 0 or imeal_restore_test_failures_total > 0
@@ -88,6 +97,7 @@ groups:
           summary: IMeal backup freshness or restore integrity gate failed
           description: The latest backup is older than 26 hours or an integrity/restore test failed.
           action: Block release and run the approved backup/restore investigation.
+          alert_test_route: /internal/observability/alert-test
 
       - alert: ImealSecurityBoundaryViolation
         expr: imeal_security_boundary_violations_total > 0
@@ -99,3 +109,28 @@ groups:
           summary: IMeal staging security boundary violation detected
           description: An internal port, HTTP bearer request, invalid certificate, or unexpected CORS origin was observed.
           action: Stop promotion immediately and preserve the redacted alert evidence.
+          alert_test_route: /internal/observability/alert-test
+
+      - alert: ImealApplicationErrorSpike
+        expr: rate(imeal_auth_attempts_total{result="failure"}[5m]) > 0 or rate(imeal_serving_confirm_total{result=~"error|failure"}[5m]) > 0 or rate(imeal_idempotency_conflicts_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          owner: api
+        annotations:
+          summary: IMeal application error pressure is elevated
+          description: Authentication, serving confirmation, or idempotency conflict errors are sustained.
+          action: Inspect request IDs and application error records before continuing promotion.
+          alert_test_route: /internal/observability/alert-test
+
+      - alert: ImealServingConfirmLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(imeal_serving_confirm_duration_seconds_bucket[10m]))) > 1
+        for: 10m
+        labels:
+          severity: warning
+          owner: api
+        annotations:
+          summary: IMeal serving confirmation latency is high
+          description: Serving confirmation p95 latency exceeds the initial staging threshold.
+          action: Inspect database locks, provider calls, and serving confirmation records.
+          alert_test_route: /internal/observability/alert-test
