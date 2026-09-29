@@ -28,6 +28,8 @@ const TRANSACTION_SETTING_PATTERN =
 const TRANSACTION_READ_ONLY_SETTING_PATTERN =
   /\bSET\s+(?:(?:SESSION|LOCAL)\s+)?(?:default_)?transaction_read_only\b/i;
 const PRIVATE_KEY_PATTERN = /-----BEGIN [^-\n]*PRIVATE KEY-----/i;
+const PRIVATE_KEY_BLOCK_PATTERN =
+  /-----BEGIN [^-\n]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-\n]*PRIVATE KEY-----|$)/gi;
 
 function normalizeSchemaDefinition(schema) {
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
@@ -333,7 +335,7 @@ function hasSensitiveJson(value) {
   return found;
 }
 
-function safeDiagnostic(value, databaseUrl) {
+export function safeDiagnostic(value, databaseUrl) {
   let diagnostic = String(value);
   if (typeof databaseUrl === 'string' && databaseUrl.length > 0) {
     diagnostic = diagnostic
@@ -353,6 +355,11 @@ function safeDiagnostic(value, databaseUrl) {
     const protocol = match.slice(0, match.indexOf('://'));
     return `${protocol}://<redacted>@`;
   });
+  diagnostic = diagnostic.replace(BEARER_PATTERN, 'Bearer <redacted>');
+  diagnostic = diagnostic.replace(
+    PRIVATE_KEY_BLOCK_PATTERN,
+    '<redacted private key>',
+  );
   diagnostic = redactJsonFragments(diagnostic);
   return redactSensitiveAssignments(diagnostic);
 }
@@ -764,6 +771,33 @@ export async function runPsql(options) {
     ...process.env,
     PGOPTIONS: pgOptions.join(' '),
   };
+  if (
+    options.commandRunner !== undefined &&
+    typeof options.commandRunner !== 'function'
+  ) {
+    throw new TypeError('runPsql commandRunner must be a function');
+  }
+  if (typeof options.commandRunner === 'function') {
+    try {
+      const result = await options.commandRunner('psql', args, {
+        env: environment,
+        shell: false,
+      });
+      return {
+        stdout: safeDiagnostic(result?.stdout ?? '', databaseUrl),
+        stderr: safeDiagnostic(result?.stderr ?? '', databaseUrl),
+        exitCode: typeof result?.exitCode === 'number' ? result.exitCode : -1,
+        argv: redactedArgs,
+      };
+    } catch (error) {
+      return {
+        stdout: '',
+        stderr: safeDiagnostic(error, databaseUrl),
+        exitCode: -1,
+        argv: redactedArgs,
+      };
+    }
+  }
 
   return new Promise((resolve) => {
     let child;

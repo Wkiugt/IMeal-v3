@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { createBackup } from './backup-staging.mjs';
 import { restoreRehearsal } from './restore-rehearsal.mjs';
-import { sha256File } from './staging-lib.mjs';
+import { safeDiagnostic, sha256File } from './staging-lib.mjs';
 
 const databaseUrl =
   'postgresql://backup_user:super-secret@staging-db.example/imeal_staging';
@@ -21,9 +21,28 @@ function commandResult(overrides = {}) {
   return { stdout: '', stderr: '', exitCode: 0, ...overrides };
 }
 
+function targetFingerprintOutput() {
+  return 'phase0-target:{"database":"imeal_staging","schema":"phase0_staging_20260928","serverVersion":"PostgreSQL 16.4"}\n';
+}
+
+const migrationFingerprintOutput = 'phase0-migrations:[]\n';
+
 function createCommandRunner(commands, { failCommand } = {}) {
   return async (command, args, options) => {
     commands.push({ command, args, options });
+    if (command === 'psql') {
+      const sql = args[args.indexOf('--command') + 1] ?? '';
+      if (sql.includes('phase0-target:')) {
+        return commandResult({ stdout: targetFingerprintOutput() });
+      }
+      if (sql.includes('phase0-migrations:')) {
+        return commandResult({ stdout: migrationFingerprintOutput });
+      }
+      if (sql.includes('_prisma_migrations')) {
+        return commandResult({ stdout: '0\n' });
+      }
+      return commandResult({ stdout: '1\n' });
+    }
     if (failCommand === command) {
       return commandResult({ stderr: `${command} failed`, exitCode: 42 });
     }
@@ -54,6 +73,17 @@ function assertNoSensitiveText(value) {
   assert.doesNotMatch(value, /super-secret|otp|123456|alice@example\.com/i);
 }
 
+test('redacts JSON secrets, Bearer diagnostics and private keys', () => {
+  const diagnostic = safeDiagnostic(
+    '{"password":"super-secret","provider_payload":{"otp":"123456"}} Bearer bearer-token -----BEGIN PRIVATE KEY-----\nsecret',
+  );
+  assert.doesNotMatch(
+    diagnostic,
+    /super-secret|123456|bearer-token|BEGIN PRIVATE KEY/i,
+  );
+  assert.match(diagnostic, /<redacted>/i);
+});
+
 test('creates an encrypted private backup before object copy with safe commands and manifest', async () => {
   const directory = await makeDirectory();
   const commands = [];
@@ -76,6 +106,12 @@ test('creates an encrypted private backup before object copy with safe commands 
     assert.equal(manifest.result, 'PASS');
     assert.equal(manifest.target.database, 'imeal_staging');
     assert.equal(manifest.target.schema, schema);
+    assert.deepEqual(manifest.targetFingerprint, {
+      database: 'imeal_staging',
+      schema,
+      serverVersion: 'PostgreSQL 16.4',
+      migrationRows: [],
+    });
     assert.equal(manifest.encryption.algorithm, 'age');
     assert.equal(manifest.objects.count, 1);
     assert.equal(manifest.storage.bucket, 'imeal-staging-private');
@@ -97,6 +133,20 @@ test('creates an encrypted private backup before object copy with safe commands 
       ['--format=custom', '--no-owner', '--no-privileges'],
     );
     assert.equal(pgDump.options.shell, false);
+    assert.equal(pgDump.args.includes(databaseUrl), false);
+    assert.equal(pgDump.args.includes('super-secret'), false);
+    assert.equal(pgDump.options.env.PGPASSWORD, 'super-secret');
+    assert.equal(pgDump.args.includes('imeal_staging'), true);
+    const psqlInvocations = commands.filter(
+      ({ command }) => command === 'psql',
+    );
+    assert.equal(psqlInvocations.length, 2);
+    assert.ok(
+      psqlInvocations[0].options.env.PGOPTIONS.includes(
+        'statement_timeout=30000',
+      ),
+    );
+    assert.ok(commands.indexOf(psqlInvocations[1]) < commands.indexOf(pgDump));
     const encryptionIndex = commands.findIndex(
       ({ command }) => command === 'age',
     );
@@ -174,6 +224,15 @@ test('fails closed and removes the plaintext dump when encryption fails', async 
   process.env.AGE_RECIPIENT = 'age1stagingrecipient';
   const runner = async (command, args, options) => {
     commands.push({ command, args, options });
+    if (command === 'psql') {
+      const sql = args[args.indexOf('--command') + 1] ?? '';
+      if (sql.includes('phase0-target:')) {
+        return commandResult({ stdout: targetFingerprintOutput() });
+      }
+      if (sql.includes('phase0-migrations:')) {
+        return commandResult({ stdout: migrationFingerprintOutput });
+      }
+    }
     if (command === 'pg_dump' && args.includes('--version')) {
       return commandResult({ stdout: 'pg_dump (PostgreSQL) 16.4\n' });
     }
@@ -210,6 +269,50 @@ test('fails closed and removes the plaintext dump when encryption fails', async 
       /age encryption/i,
     );
     await assert.rejects(access(join(directory, `${releaseId}.dump`)));
+    await assert.rejects(access(join(directory, 'backup-manifest.json')));
+    assert.equal(
+      commands.some(
+        ({ command, args }) => command === 'aws' && args.includes('s3'),
+      ),
+      false,
+    );
+  } finally {
+    if (previousRecipient === undefined) delete process.env.AGE_RECIPIENT;
+    else process.env.AGE_RECIPIENT = previousRecipient;
+  }
+});
+
+test('fails closed when plaintext cleanup is denied before copy or PASS manifest', async () => {
+  const directory = await makeDirectory();
+  const commands = [];
+  const previousRecipient = process.env.AGE_RECIPIENT;
+  process.env.AGE_RECIPIENT = 'age1stagingrecipient';
+  const fileRemover = async (path) => {
+    if (path.endsWith('.dump')) {
+      const error = new Error('permission denied');
+      error.code = 'EACCES';
+      throw error;
+    }
+  };
+  try {
+    await assert.rejects(
+      createBackup({
+        databaseUrl,
+        schema,
+        releaseId,
+        outputDirectory: directory,
+        objectStorage: {
+          endpoint: 'https://minio.staging.example',
+          bucket: 'imeal-staging-private',
+          destination: 'backups/imeal-20260928-001',
+        },
+        encryptionRecipientEnv: 'AGE_RECIPIENT',
+        commandRunner: createCommandRunner(commands),
+        fileRemover,
+      }),
+      /plaintext dump cleanup|permission denied/i,
+    );
+    await access(join(directory, `${releaseId}.dump`));
     await assert.rejects(access(join(directory, 'backup-manifest.json')));
     assert.equal(
       commands.some(
@@ -296,6 +399,7 @@ test('restores into isolated fresh targets and records checksum, readiness, smok
   });
   assert.equal(report.result, 'PASS');
   assert.equal(report.readiness.result, 'PASS');
+  assert.equal(report.migration.result, 'PASS');
   assert.equal(report.smoke.result, 'PASS');
   assert.ok(Number.isFinite(report.rpoSeconds));
   assert.ok(Number.isFinite(report.rtoSeconds));
@@ -308,14 +412,24 @@ test('restores into isolated fresh targets and records checksum, readiness, smok
   const restoreIndex = restoreCommands.findIndex(
     ({ command }) => command === 'pg_restore',
   );
+  const bucketCreateIndex = restoreCommands.findIndex(
+    ({ command, args }) => command === 'aws' && args.includes('create-bucket'),
+  );
   const objectIndex = restoreCommands.findIndex(
-    ({ command }) => command === 'aws',
+    ({ command, args }) => command === 'aws' && args.includes('cp'),
+  );
+  const migrationIndex = restoreCommands.findIndex(
+    ({ command, args }) =>
+      command === 'psql' &&
+      args.some((arg) => arg.includes('_prisma_migrations')),
   );
   assert.ok(
     decryptIndex >= 0 &&
       createdbIndex > decryptIndex &&
       restoreIndex > createdbIndex &&
-      objectIndex > restoreIndex,
+      bucketCreateIndex > restoreIndex &&
+      objectIndex > bucketCreateIndex &&
+      migrationIndex > objectIndex,
   );
   assert.ok(restoreCommands[restoreIndex].args.includes('--exit-on-error'));
   for (const invocation of restoreCommands)
@@ -331,6 +445,102 @@ test('restores into isolated fresh targets and records checksum, readiness, smok
   assert.equal(manifest.result, 'PASS');
 });
 
+test('aborts before object copy when the fresh restore bucket cannot be created', async () => {
+  const directory = await makeDirectory();
+  const previousRecipient = process.env.AGE_RECIPIENT;
+  process.env.AGE_RECIPIENT = 'age1stagingrecipient';
+  try {
+    await createBackup({
+      databaseUrl,
+      schema,
+      releaseId,
+      outputDirectory: directory,
+      objectStorage: {
+        endpoint: 'https://minio.staging.example',
+        bucket: 'imeal-staging-private',
+        destination: 'backups/imeal-20260928-001',
+      },
+      encryptionRecipientEnv: 'AGE_RECIPIENT',
+      commandRunner: createCommandRunner([]),
+    });
+  } finally {
+    if (previousRecipient === undefined) delete process.env.AGE_RECIPIENT;
+    else process.env.AGE_RECIPIENT = previousRecipient;
+  }
+  const commands = [];
+  const baseRunner = createCommandRunner(commands);
+  const failingRunner = async (command, args, options) => {
+    if (command === 'aws' && args.includes('create-bucket')) {
+      commands.push({ command, args, options });
+      return commandResult({ stderr: 'bucket already exists', exitCode: 409 });
+    }
+    return baseRunner(command, args, options);
+  };
+  const outputPath = join(directory, 'restore-bucket-failure.json');
+  await assert.rejects(
+    restoreRehearsal({
+      backupManifestPath: join(directory, 'backup-manifest.json'),
+      restoreDatabase: 'imeal_restore_20260928',
+      restoreBucket: 'imeal-restore-20260928',
+      outputPath,
+      commandRunner: failingRunner,
+    }),
+    /fresh restore bucket creation|already exists/i,
+  );
+  assert.equal(
+    commands.some(
+      ({ command, args }) => command === 'aws' && args.includes('cp'),
+    ),
+    false,
+  );
+  assert.equal(JSON.parse(await readFile(outputPath, 'utf8')).result, 'FAIL');
+});
+
+test('fails the migration-status gate before readiness and smoke', async () => {
+  const directory = await makeDirectory();
+  const previousRecipient = process.env.AGE_RECIPIENT;
+  process.env.AGE_RECIPIENT = 'age1stagingrecipient';
+  try {
+    await createBackup({
+      databaseUrl,
+      schema,
+      releaseId,
+      outputDirectory: directory,
+      objectStorage: {
+        endpoint: 'https://minio.staging.example',
+        bucket: 'imeal-staging-private',
+        destination: 'backups/imeal-20260928-001',
+      },
+      encryptionRecipientEnv: 'AGE_RECIPIENT',
+      commandRunner: createCommandRunner([]),
+    });
+  } finally {
+    if (previousRecipient === undefined) delete process.env.AGE_RECIPIENT;
+    else process.env.AGE_RECIPIENT = previousRecipient;
+  }
+  const commands = [];
+  let readinessCalled = false;
+  const outputPath = join(directory, 'migration-failure.json');
+  await assert.rejects(
+    restoreRehearsal({
+      backupManifestPath: join(directory, 'backup-manifest.json'),
+      restoreDatabase: 'imeal_restore_20260928',
+      restoreBucket: 'imeal-restore-20260928',
+      outputPath,
+      commandRunner: createCommandRunner(commands),
+      migrationCheck: async () => ({ result: 'FAIL', unfinished: 1 }),
+      readinessCheck: async () => {
+        readinessCalled = true;
+        return { result: 'PASS' };
+      },
+      smokeCheck: async () => ({ result: 'PASS' }),
+    }),
+    /migration status failed/i,
+  );
+  assert.equal(readinessCalled, false);
+  assert.equal(JSON.parse(await readFile(outputPath, 'utf8')).result, 'FAIL');
+});
+
 test('fails closed on checksum mismatch without creating a restore database', async () => {
   const directory = await makeDirectory();
   const manifestPath = join(directory, 'backup-manifest.json');
@@ -341,6 +551,12 @@ test('fails closed on checksum mismatch without creating a restore database', as
       encryption: { algorithm: 'age' },
       releaseId,
       target: { database: 'imeal_staging', schema },
+      targetFingerprint: {
+        database: 'imeal_staging',
+        schema,
+        serverVersion: 'PostgreSQL 16.4',
+        migrationRows: [],
+      },
       artifact: {
         encryptedFile: 'missing.age',
         sha256: 'a'.repeat(64),
@@ -375,6 +591,106 @@ test('fails closed on checksum mismatch without creating a restore database', as
   assert.equal(failureReport.result, 'FAIL');
 });
 
+test('fails the RPO gate before decrypt or restore commands', async () => {
+  const directory = await makeDirectory();
+  const artifactPath = join(directory, 'old.age');
+  await writeFile(artifactPath, 'encrypted artifact', 'utf8');
+  const checksum = await sha256File(artifactPath);
+  const oldCompletedAt = new Date(Date.now() - 90_000_000).toISOString();
+  const manifestPath = join(directory, 'backup-manifest.json');
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      result: 'PASS',
+      encryption: { algorithm: 'age' },
+      releaseId,
+      target: { database: 'imeal_staging', schema },
+      targetFingerprint: {
+        database: 'imeal_staging',
+        schema,
+        serverVersion: 'PostgreSQL 16.4',
+        migrationRows: [],
+      },
+      artifact: {
+        encryptedFile: 'old.age',
+        sha256: checksum,
+        bytes: Buffer.byteLength('encrypted artifact'),
+      },
+      storage: {
+        endpoint: 'https://minio.staging.example',
+        bucket: 'imeal-staging-private',
+        key: 'backups/x',
+      },
+      timestamps: {
+        startedAt: new Date(Date.now() - 90_001_000).toISOString(),
+        completedAt: oldCompletedAt,
+      },
+    }),
+    'utf8',
+  );
+  const commands = [];
+  const outputPath = join(directory, 'rpo-failure.json');
+  await assert.rejects(
+    restoreRehearsal({
+      backupManifestPath: manifestPath,
+      restoreDatabase: 'imeal_restore_20260928',
+      restoreBucket: 'imeal-restore-20260928',
+      outputPath,
+      commandRunner: createCommandRunner(commands),
+    }),
+    /RPO exceeds/i,
+  );
+  assert.equal(commands.length, 0);
+  const failure = JSON.parse(await readFile(outputPath, 'utf8'));
+  assert.equal(failure.result, 'FAIL');
+  assert.ok(failure.rpoSeconds > 86_400);
+});
+test('rejects a restore manifest with an inconsistent target fingerprint before commands', async () => {
+  const directory = await makeDirectory();
+  const manifestPath = join(directory, 'backup-manifest.json');
+  const artifactPath = join(directory, 'encrypted.age');
+  await writeFile(artifactPath, 'artifact', 'utf8');
+  const checksum = await sha256File(artifactPath);
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      result: 'PASS',
+      encryption: { algorithm: 'age' },
+      releaseId,
+      target: { database: 'imeal_staging', schema },
+      targetFingerprint: {
+        database: 'unexpected_database',
+        schema,
+        serverVersion: 'PostgreSQL 16.4',
+        migrationRows: [],
+      },
+      artifact: { encryptedFile: 'encrypted.age', sha256: checksum, bytes: 8 },
+      storage: {
+        endpoint: 'https://minio.staging.example',
+        bucket: 'imeal-staging-private',
+        key: 'backups/x',
+      },
+      timestamps: {
+        startedAt: new Date(Date.now() - 60_000).toISOString(),
+        completedAt: new Date().toISOString(),
+      },
+    }),
+    'utf8',
+  );
+  const commands = [];
+  await assert.rejects(
+    restoreRehearsal({
+      backupManifestPath: manifestPath,
+      restoreDatabase: 'imeal_restore_20260928',
+      restoreBucket: 'imeal-restore-20260928',
+      outputPath: join(directory, 'restore.json'),
+      commandRunner: createCommandRunner(commands),
+    }),
+    /target fingerprint mismatch/i,
+  );
+  assert.equal(commands.length, 0);
+});
+
 test('rejects restoring over the source database or bucket before commands', async () => {
   const directory = await makeDirectory();
   const manifestPath = join(directory, 'backup-manifest.json');
@@ -388,6 +704,12 @@ test('rejects restoring over the source database or bucket before commands', asy
       encryption: { algorithm: 'age' },
       releaseId,
       target: { database: 'imeal_staging', schema },
+      targetFingerprint: {
+        database: 'imeal_staging',
+        schema,
+        serverVersion: 'PostgreSQL 16.4',
+        migrationRows: [],
+      },
       artifact: { encryptedFile: 'encrypted.age', sha256: checksum, bytes: 8 },
       storage: {
         endpoint: 'https://minio.staging.example',

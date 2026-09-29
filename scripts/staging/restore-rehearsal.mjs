@@ -3,9 +3,19 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
 import { defaultCommandRunner } from './backup-staging.mjs';
-import { parseArgs, sha256File, writeEvidence } from './staging-lib.mjs';
+import {
+  parseArgs,
+  requireSafeSchemaName,
+  safeDiagnostic,
+  sha256File,
+  writeEvidence,
+} from './staging-lib.mjs';
 
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const RPO_LIMIT_SECONDS = 86_400;
+const RTO_LIMIT_SECONDS = 3_600;
+const MIGRATION_STATUS_SQL =
+  'SELECT count(*)::integer FROM _prisma_migrations WHERE finished_at IS NULL OR rolled_back_at IS NOT NULL;';
 const DATABASE_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,127}$/;
 const BUCKET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]{2,62}$/;
 const PRODUCTION_PATTERN =
@@ -52,23 +62,12 @@ function assertRestoreBucket(value, sourceBucket) {
   return value;
 }
 
-function scrubDiagnostic(value) {
-  return String(value)
-    .replace(/postgres(?:ql)?:\/\/[^\s"']+/gi, 'postgresql://<redacted>')
-    .replace(
-      /\b(password|token|secret|api[_-]?key|otp)\b\s*[:=]\s*[^\s,;]+/gi,
-      '$1=<redacted>',
-    );
-}
-
 async function readManifest(path) {
   let raw;
   try {
     raw = await readFile(path, 'utf8');
   } catch (error) {
-    throw new Error(
-      `backup manifest cannot be read: ${scrubDiagnostic(error)}`,
-    );
+    throw new Error(`backup manifest cannot be read: ${safeDiagnostic(error)}`);
   }
   let manifest;
   try {
@@ -141,6 +140,33 @@ function assertArtifact(manifest, manifestPath) {
   };
 }
 
+function assertRecordedTargetFingerprint(value, target) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('backup target fingerprint is missing');
+  }
+  if (value.database !== target.database || value.schema !== target.schema) {
+    throw new Error('backup target fingerprint mismatch');
+  }
+  if (
+    typeof value.serverVersion !== 'string' ||
+    value.serverVersion.trim() === ''
+  ) {
+    throw new Error('backup target fingerprint server version is invalid');
+  }
+  if (
+    !Array.isArray(value.migrationRows) ||
+    value.migrationRows.some((row) => typeof row !== 'string')
+  ) {
+    throw new Error('backup target fingerprint migrations are invalid');
+  }
+  return {
+    database: value.database,
+    schema: value.schema,
+    serverVersion: value.serverVersion,
+    migrationRows: [...value.migrationRows],
+  };
+}
+
 function assertCheckResult(value, label) {
   if (value === false || (value && value.result === 'FAIL')) {
     throw new Error(`${label} failed`);
@@ -148,16 +174,28 @@ function assertCheckResult(value, label) {
   return { result: 'PASS' };
 }
 
+async function cleanupRestoreDump(path) {
+  if (!path) return;
+  try {
+    await unlink(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw new Error(
+      `restore plaintext cleanup failed: ${safeDiagnostic(error)}`,
+    );
+  }
+}
+
 async function runCommand(commandRunner, command, args, label) {
   let result;
   try {
     result = await commandRunner(command, args, { shell: false });
   } catch (error) {
-    throw new Error(`${label} could not start: ${scrubDiagnostic(error)}`);
+    throw new Error(`${label} could not start: ${safeDiagnostic(error)}`);
   }
   if (!result || result.exitCode !== 0) {
     throw new Error(
-      `${label} failed with exit code ${result?.exitCode ?? 'unknown'}: ${scrubDiagnostic(result?.stderr?.trim() || 'no diagnostics')}`,
+      `${label} failed with exit code ${result?.exitCode ?? 'unknown'}: ${safeDiagnostic(result?.stderr?.trim() || 'no diagnostics')}`,
     );
   }
   return result;
@@ -180,6 +218,7 @@ export async function restoreRehearsal({
   restoreBucket,
   outputPath,
   commandRunner = defaultCommandRunner,
+  migrationCheck,
   readinessCheck,
   smokeCheck,
 }) {
@@ -195,6 +234,10 @@ export async function restoreRehearsal({
   let safeRestoreDatabase;
   let safeRestoreBucket;
   let restoreDumpPath;
+  let measuredRpoSeconds = null;
+  let measuredRtoSeconds = null;
+  let recordedTargetFingerprint;
+  let migrationStatus;
   try {
     manifest = await readManifest(backupManifestPath);
     if (manifest.encryption?.algorithm !== 'age') {
@@ -207,6 +250,30 @@ export async function restoreRehearsal({
       !DATABASE_PATTERN.test(sourceDatabase)
     ) {
       throw new Error('backup source database is invalid');
+    }
+    const sourceSchema = manifest.target?.schema;
+    try {
+      requireSafeSchemaName(sourceSchema);
+    } catch {
+      throw new Error('backup source schema is invalid');
+    }
+    recordedTargetFingerprint = assertRecordedTargetFingerprint(
+      manifest.targetFingerprint,
+      { database: sourceDatabase, schema: sourceSchema },
+    );
+    const backupCompletedAt = Date.parse(manifest.timestamps?.completedAt);
+    const restoreStartedAt = Date.parse(startedAt);
+    if (!Number.isFinite(backupCompletedAt)) {
+      throw new Error('backup completion timestamp is invalid');
+    }
+    measuredRpoSeconds = Math.max(
+      0,
+      (restoreStartedAt - backupCompletedAt) / 1000,
+    );
+    if (measuredRpoSeconds > RPO_LIMIT_SECONDS) {
+      throw new Error(
+        `RPO exceeds ${RPO_LIMIT_SECONDS}s: ${measuredRpoSeconds}s`,
+      );
     }
     const storage = assertStorageReference(manifest.storage);
     safeRestoreDatabase = assertRestoreDatabase(
@@ -256,7 +323,22 @@ export async function restoreRehearsal({
       ],
       'isolated PostgreSQL restore',
     );
-    await unlink(restoreDumpPath).catch(() => {});
+    await cleanupRestoreDump(restoreDumpPath);
+    await runCommand(
+      commandRunner,
+      'aws',
+      [
+        's3api',
+        'create-bucket',
+        '--bucket',
+        safeRestoreBucket,
+        '--endpoint-url',
+        storage.endpoint,
+        '--acl',
+        'private',
+      ],
+      'fresh restore bucket creation',
+    );
     await runCommand(
       commandRunner,
       'aws',
@@ -273,6 +355,41 @@ export async function restoreRehearsal({
       ],
       'isolated object restore',
     );
+    const migration = migrationCheck
+      ? await migrationCheck({
+          database: safeRestoreDatabase,
+          bucket: safeRestoreBucket,
+        })
+      : undefined;
+    if (migrationCheck) {
+      if (
+        migration === false ||
+        migration?.result === 'FAIL' ||
+        Number(migration?.unfinished ?? 0) !== 0
+      ) {
+        throw new Error('restore migration status failed');
+      }
+      migrationStatus = { result: 'PASS', unfinished: 0 };
+    } else {
+      const migrationResult = await runCommand(
+        commandRunner,
+        'psql',
+        [
+          '--dbname',
+          safeRestoreDatabase,
+          '--tuples-only',
+          '--no-align',
+          '--command',
+          MIGRATION_STATUS_SQL,
+        ],
+        'restore migration status',
+      );
+      const unfinished = Number(migrationResult.stdout.trim());
+      if (!Number.isInteger(unfinished) || unfinished !== 0) {
+        throw new Error('restore migration status failed');
+      }
+      migrationStatus = { result: 'PASS', unfinished };
+    }
 
     const readiness = readinessCheck
       ? assertCheckResult(
@@ -309,15 +426,15 @@ export async function restoreRehearsal({
       );
     }
     const completedAt = new Date().toISOString();
-    const backupCompleted = Date.parse(manifest.timestamps?.completedAt);
-    const restoreStarted = Date.parse(startedAt);
-    const rpoSeconds = Number.isFinite(backupCompleted)
-      ? Math.max(0, (restoreStarted - backupCompleted) / 1000)
-      : null;
-    const rtoSeconds = Math.max(
+    measuredRtoSeconds = Math.max(
       0,
-      (Date.parse(completedAt) - restoreStarted) / 1000,
+      (Date.parse(completedAt) - Date.parse(startedAt)) / 1000,
     );
+    if (measuredRtoSeconds > RTO_LIMIT_SECONDS) {
+      throw new Error(
+        `RTO exceeds ${RTO_LIMIT_SECONDS}s: ${measuredRtoSeconds}s`,
+      );
+    }
     const report = {
       result: 'PASS',
       kind: 'restore-rehearsal',
@@ -325,18 +442,27 @@ export async function restoreRehearsal({
       restoreDatabase: safeRestoreDatabase,
       restoreBucket: safeRestoreBucket,
       timestamps: { startedAt, completedAt },
-      rpoSeconds,
-      rtoSeconds,
+      rpoSeconds: measuredRpoSeconds,
+      rtoSeconds: measuredRtoSeconds,
+      targetFingerprint: recordedTargetFingerprint,
       checksums: { artifact: 'PASS', sha256: artifact.sha256 },
       database: { restored: 'PASS' },
       objects: { restored: 'PASS', count: manifest.objects?.count ?? 1 },
+      migration: migrationStatus,
       readiness,
       smoke,
     };
     await writeEvidence(outputPath, report);
     return report;
   } catch (error) {
-    if (restoreDumpPath) await unlink(restoreDumpPath).catch(() => {});
+    let finalError = error;
+    try {
+      await cleanupRestoreDump(restoreDumpPath);
+    } catch (cleanupError) {
+      finalError = new Error(
+        `${safeDiagnostic(error)}; ${safeDiagnostic(cleanupError)}`,
+      );
+    }
     const completedAt = new Date().toISOString();
     const failureReport = {
       result: 'FAIL',
@@ -348,12 +474,16 @@ export async function restoreRehearsal({
       restoreDatabase: safeRestoreDatabase ?? restoreDatabase,
       restoreBucket: safeRestoreBucket ?? restoreBucket,
       timestamps: { startedAt, completedAt },
-      rpoSeconds: null,
-      rtoSeconds: null,
-      failure: scrubDiagnostic(error instanceof Error ? error.message : error),
+      rpoSeconds: measuredRpoSeconds,
+      rtoSeconds: measuredRtoSeconds,
+      targetFingerprint: recordedTargetFingerprint,
+      migration: migrationStatus ?? { result: 'FAIL' },
+      failure: safeDiagnostic(
+        finalError instanceof Error ? finalError.message : finalError,
+      ),
     };
     await writeEvidence(outputPath, failureReport).catch(() => {});
-    throw error;
+    throw finalError;
   }
 }
 

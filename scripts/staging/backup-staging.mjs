@@ -6,9 +6,11 @@ import { join, resolve } from 'node:path';
 import {
   parseArgs,
   requireSafeSchemaName,
+  safeDiagnostic,
   sha256File,
   writeEvidence,
 } from './staging-lib.mjs';
+import { fingerprintTarget } from './phase0-preflight.mjs';
 
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -55,13 +57,30 @@ function sourceTarget(databaseUrl) {
   if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
     throw new Error('database URL must use PostgreSQL');
   }
-  const database = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+  let database;
+  let username = '';
+  let password;
+  try {
+    database = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+    username = decodeURIComponent(parsed.username);
+    password = parsed.password
+      ? decodeURIComponent(parsed.password)
+      : undefined;
+  } catch {
+    throw new Error('database URL contains invalid encoding');
+  }
   if (!IDENTIFIER_PATTERN.test(database)) {
     throw new Error('database name is invalid');
   }
   assertNonProduction(parsed.hostname, 'database host');
   assertNonProduction(database, 'database name');
-  return { database, host: parsed.hostname };
+  return {
+    database,
+    host: parsed.hostname,
+    port: parsed.port || undefined,
+    username,
+    password,
+  };
 }
 
 function assertObjectStorage(objectStorage) {
@@ -112,15 +131,6 @@ function assertObjectStorage(objectStorage) {
   };
 }
 
-function scrubDiagnostic(value) {
-  return String(value)
-    .replace(/postgres(?:ql)?:\/\/[^\s"']+/gi, 'postgresql://<redacted>')
-    .replace(
-      /\b(password|token|secret|api[_-]?key|otp)\b\s*[:=]\s*[^\s,;]+/gi,
-      '$1=<redacted>',
-    );
-}
-
 export function defaultCommandRunner(command, args, options = {}) {
   return new Promise((resolvePromise, reject) => {
     const child = childProcess.spawn(command, args, {
@@ -142,20 +152,38 @@ export function defaultCommandRunner(command, args, options = {}) {
   });
 }
 
-async function runCommand(commandRunner, command, args, label) {
+async function runCommand(
+  commandRunner,
+  command,
+  args,
+  label,
+  commandOptions = {},
+) {
   let result;
   try {
-    result = await commandRunner(command, args, { shell: false });
+    result = await commandRunner(command, args, {
+      ...commandOptions,
+      shell: false,
+    });
   } catch (error) {
-    throw new Error(`${label} could not start: ${scrubDiagnostic(error)}`);
+    throw new Error(`${label} could not start: ${safeDiagnostic(error)}`);
   }
   if (!result || result.exitCode !== 0) {
-    const detail = scrubDiagnostic(result?.stderr?.trim() || 'no diagnostics');
+    const detail = safeDiagnostic(result?.stderr?.trim() || 'no diagnostics');
     throw new Error(
       `${label} failed with exit code ${result?.exitCode ?? 'unknown'}: ${detail}`,
     );
   }
   return result;
+}
+
+async function cleanupPlaintext(fileRemover, dumpPath) {
+  try {
+    await fileRemover(dumpPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw new Error(`plaintext dump cleanup failed: ${safeDiagnostic(error)}`);
+  }
 }
 
 async function toolVersion(commandRunner, command, args) {
@@ -187,6 +215,7 @@ export async function createBackup({
   encryptionRecipientEnv = 'AGE_RECIPIENT',
   commandRunner = defaultCommandRunner,
   environment = process.env,
+  fileRemover = unlink,
 }) {
   const source = sourceTarget(databaseUrl);
   const safeSchema = requireSafeSchemaName(schema);
@@ -210,11 +239,26 @@ export async function createBackup({
   const encryptedPath = join(outputRoot, `${safeReleaseId}.dump.age`);
   const startedAt = new Date().toISOString();
   const run = commandRunner;
+  const targetFingerprint = await fingerprintTarget({
+    databaseUrl,
+    schema: safeSchema,
+    commandRunner: run,
+  });
+  if (
+    targetFingerprint.database !== source.database ||
+    targetFingerprint.schema !== safeSchema
+  ) {
+    throw new Error('backup target fingerprint mismatch');
+  }
   const toolVersions = {
     pgDump: await toolVersion(run, 'pg_dump', ['--version']),
     age: await toolVersion(run, 'age', ['--version']),
     objectStorage: await toolVersion(run, 'aws', ['--version']),
   };
+  const pgDumpEnvironment = { ...process.env };
+  if (source.password !== undefined) {
+    pgDumpEnvironment.PGPASSWORD = source.password;
+  }
   try {
     await runCommand(
       run,
@@ -227,10 +271,15 @@ export async function createBackup({
         safeSchema,
         '--file',
         dumpPath,
+        '--host',
+        source.host,
+        ...(source.port ? ['--port', source.port] : []),
+        ...(source.username ? ['--username', source.username] : []),
         '--dbname',
-        databaseUrl,
+        source.database,
       ],
       'pg_dump',
+      { env: pgDumpEnvironment },
     );
     await runCommand(
       run,
@@ -246,7 +295,7 @@ export async function createBackup({
       'age encryption',
     );
   } catch (error) {
-    await unlink(dumpPath).catch(() => {});
+    await cleanupPlaintext(fileRemover, dumpPath);
     throw error;
   }
   let encryptedStats;
@@ -255,10 +304,10 @@ export async function createBackup({
     encryptedStats = await stat(encryptedPath);
     encryptedSha256 = await sha256File(encryptedPath);
   } catch (error) {
-    await unlink(dumpPath).catch(() => {});
+    await cleanupPlaintext(fileRemover, dumpPath);
     throw error;
   }
-  await unlink(dumpPath).catch(() => {});
+  await cleanupPlaintext(fileRemover, dumpPath);
 
   const objectKey = `${storage.destination}/${safeReleaseId}.dump.age`;
   await runCommand(
@@ -283,6 +332,7 @@ export async function createBackup({
     kind: 'staging-backup',
     releaseId: safeReleaseId,
     target: { database: source.database, schema: safeSchema },
+    targetFingerprint,
     timestamps: { startedAt, completedAt },
     artifact: {
       encryptedFile: `${safeReleaseId}.dump.age`,

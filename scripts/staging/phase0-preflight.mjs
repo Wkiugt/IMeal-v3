@@ -318,13 +318,18 @@ function parseMigrationResult(raw) {
   });
 }
 
-export async function fingerprintTarget({ databaseUrl, schema }) {
+export async function fingerprintTarget({
+  databaseUrl,
+  schema,
+  commandRunner,
+}) {
   const safeSchema = requireSafeSchemaName(schema);
   const options = {
     databaseUrl,
     schema: safeSchema,
     readOnly: true,
     statementTimeoutSeconds: STATEMENT_TIMEOUT_SECONDS,
+    commandRunner,
   };
   const targetResult = await runPsql({
     ...options,

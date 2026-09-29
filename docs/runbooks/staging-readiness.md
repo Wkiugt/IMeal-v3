@@ -68,20 +68,24 @@ The wrapper performs these gates in order:
 
 1. validates the source and destination isolation rules and requires the named
    AGE recipient environment variable;
-2. captures a PostgreSQL custom-format dump with `--no-owner` and
-   `--no-privileges`;
-3. encrypts the dump with AGE before any object-storage copy;
-4. computes the encrypted artifact size and SHA-256 checksum;
-5. copies only the encrypted artifact to the private destination; and
-6. writes `backup-manifest.json` atomically after every preceding step passes.
+2. runs a bounded read-only target fingerprint and requires its database/schema
+   to match the requested source;
+3. captures a PostgreSQL custom-format dump with `--no-owner` and
+   `--no-privileges`. The database password is passed through the command
+   environment, never as a `pg_dump` argument;
+4. encrypts the dump with AGE before any object-storage copy;
+5. computes the encrypted artifact size and SHA-256 checksum;
+6. copies only the encrypted artifact to the private destination; and
+7. writes `backup-manifest.json` atomically after every preceding step passes.
 
 A failed encryption or copy is an abort. The wrapper removes the plaintext
 intermediate dump and does not write a PASS manifest. Do not manually copy an
 unencrypted dump as a workaround.
 
-The manifest contains only target identifiers, UTC timestamps, artifact and
-object summaries, checksums, tool versions, non-secret storage references, and
-retention ownership. Review that it contains no URL credentials, OTP, token,
+The manifest contains only the release ID, full read-only target fingerprint
+(database, schema, server version, and migration rows), UTC timestamps, artifact
+and object summaries, checksums, tool versions, non-secret storage references,
+and retention ownership. Review that it contains no URL credentials, OTP, token,
 provider payload, raw GPS, or unredacted PII before attaching it to release
 evidence.
 
@@ -107,10 +111,12 @@ SHA-256 checksum. It then decrypts the AGE artifact to a temporary local dump
 1. AGE decryption to a temporary plaintext dump;
 2. `createdb` for the fresh restore database;
 3. `pg_restore --exit-on-error --no-owner --no-privileges` into that database;
-4. an object copy from the private source reference to the fresh restore
+4. `aws s3api create-bucket` for the fresh private restore bucket. Existing
+   buckets or any creation failure abort the rehearsal;
+5. an object copy from the private source reference to the fresh restore
    bucket; and
-5. readiness and smoke checks, supplied as callbacks by automation or run by
-   the default command checks.
+6. readiness, migration-status, and smoke checks, supplied as callbacks by
+   automation or run by the default command checks.
 
 The temporary decrypted dump is removed after `pg_restore`, including when a
 restore command fails. Never retain or upload that plaintext file.
