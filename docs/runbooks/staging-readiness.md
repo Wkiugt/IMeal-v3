@@ -111,18 +111,20 @@ SHA-256 checksum. It then decrypts the AGE artifact to a temporary local dump
 1. AGE decryption to a temporary plaintext dump;
 2. `createdb` for the fresh restore database;
 3. `pg_restore --exit-on-error --no-owner --no-privileges` into that database;
-4. `aws s3api create-bucket` for the fresh private restore bucket. Existing
+4. an exact bounded row-count verification of the restored `"User"` table;
+5. `aws s3api create-bucket` for the fresh private restore bucket. Existing
    buckets or any creation failure abort the rehearsal;
-5. an object copy from the private source reference to the fresh restore
-   bucket; and
-6. readiness, migration-status, and smoke checks, supplied as callbacks by
+6. an object copy from the private source reference to the fresh restore
+   bucket, followed by destination byte/checksum verification; and
+7. readiness, migration-status, and smoke checks, supplied as callbacks by
    automation or run by the default command checks.
 
 The temporary decrypted dump is removed after `pg_restore`, including when a
 restore command fails. Never retain or upload that plaintext file.
 
-The report records PASS/FAIL, checksum status, database/object restore status,
-readiness and smoke results, UTC timestamps, and measured RPO/RTO. A failure
+The report records PASS/FAIL, checksum status, verified database row count,
+verified object byte/checksum status, database/object restore status, readiness
+and smoke results, UTC timestamps, and measured RPO/RTO. A failure
 writes a redacted `result: FAIL` report atomically and propagates the failure;
 no source database or source bucket is ever used as a restore destination.
 

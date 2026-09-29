@@ -16,6 +16,8 @@ const RPO_LIMIT_SECONDS = 86_400;
 const RTO_LIMIT_SECONDS = 3_600;
 const MIGRATION_STATUS_SQL =
   'SELECT count(*)::integer FROM _prisma_migrations WHERE finished_at IS NULL OR rolled_back_at IS NOT NULL;';
+const DATABASE_ROW_COUNT_SQL = (schema) =>
+  `SELECT count(*)::bigint FROM "${schema}"."User";`;
 const DATABASE_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,127}$/;
 const BUCKET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]{2,62}$/;
 const PRODUCTION_PATTERN =
@@ -213,6 +215,42 @@ function parseObjectVerification(stdout, artifact) {
   };
 }
 
+function parseDatabaseVerification(value) {
+  if (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    value.result === 'FAIL'
+  ) {
+    throw new Error('restore database row count failed');
+  }
+  let rawCount = value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    rawCount = value.rows ?? value.count;
+  }
+  if (typeof rawCount === 'string') {
+    const lines = rawCount
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    rawCount = lines.at(-1);
+  }
+  const validCount =
+    (typeof rawCount === 'number' &&
+      Number.isSafeInteger(rawCount) &&
+      rawCount >= 0) ||
+    (typeof rawCount === 'string' && /^\d+$/.test(rawCount));
+  if (!validCount) {
+    throw new Error('restore database row count is invalid');
+  }
+  const count = Number(rawCount);
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error('restore database row count is invalid');
+  }
+  return { result: 'PASS', rows: count, count };
+}
+
 function assertCheckResult(value, label) {
   if (value === false || (value && value.result === 'FAIL')) {
     throw new Error(`${label} failed`);
@@ -232,10 +270,19 @@ async function cleanupRestoreDump(path) {
   }
 }
 
-async function runCommand(commandRunner, command, args, label) {
+async function runCommand(
+  commandRunner,
+  command,
+  args,
+  label,
+  commandOptions = {},
+) {
   let result;
   try {
-    result = await commandRunner(command, args, { shell: false });
+    result = await commandRunner(command, args, {
+      ...commandOptions,
+      shell: false,
+    });
   } catch (error) {
     throw new Error(`${label} could not start: ${safeDiagnostic(error)}`);
   }
@@ -264,6 +311,7 @@ export async function restoreRehearsal({
   restoreBucket,
   outputPath,
   commandRunner = defaultCommandRunner,
+  databaseCheck,
   migrationCheck,
   readinessCheck,
   smokeCheck,
@@ -286,6 +334,7 @@ export async function restoreRehearsal({
   let recordedTargetFingerprint;
   let migrationStatus;
   let objectVerification;
+  let databaseVerification;
   try {
     manifest = await readManifest(backupManifestPath);
     if (manifest.encryption?.algorithm !== 'age') {
@@ -369,6 +418,33 @@ export async function restoreRehearsal({
       'isolated PostgreSQL restore',
     );
     await cleanupRestoreDump(restoreDumpPath);
+    const databaseResult = databaseCheck
+      ? await databaseCheck({
+          database: safeRestoreDatabase,
+          schema: sourceSchema,
+        })
+      : (
+          await runCommand(
+            commandRunner,
+            'psql',
+            [
+              '--dbname',
+              safeRestoreDatabase,
+              '--tuples-only',
+              '--no-align',
+              '--command',
+              DATABASE_ROW_COUNT_SQL(sourceSchema),
+            ],
+            'restore database row count',
+            {
+              env: {
+                ...process.env,
+                PGOPTIONS: '-c statement_timeout=30000',
+              },
+            },
+          )
+        ).stdout;
+    databaseVerification = parseDatabaseVerification(databaseResult);
     await runCommand(
       commandRunner,
       'aws',
@@ -509,7 +585,10 @@ export async function restoreRehearsal({
       rtoSeconds: measuredRtoSeconds,
       targetFingerprint: recordedTargetFingerprint,
       checksums: { artifact: 'PASS', sha256: artifact.sha256 },
-      database: { restored: 'PASS' },
+      database: {
+        restored: 'PASS',
+        ...databaseVerification,
+      },
       objects: {
         restored: 'PASS',
         ...objectVerification,
@@ -544,6 +623,7 @@ export async function restoreRehearsal({
       rpoSeconds: measuredRpoSeconds,
       rtoSeconds: measuredRtoSeconds,
       targetFingerprint: recordedTargetFingerprint,
+      database: databaseVerification ?? { result: 'FAIL' },
       migration: migrationStatus ?? { result: 'FAIL' },
       objects: objectVerification ?? { result: 'FAIL' },
       failure: safeDiagnostic(

@@ -451,6 +451,9 @@ test('restores into isolated fresh targets and records checksum, readiness, smok
   assert.equal(report.objects.result, 'PASS');
   assert.equal(report.objects.bytes, 21);
   assert.equal(report.objects.checksumVerified, 'NOT_RETURNED');
+  assert.equal(report.database.result, 'PASS');
+  assert.equal(report.database.rows, 1);
+  assert.equal(report.database.count, 1);
   assert.ok(Number.isFinite(report.rpoSeconds));
   assert.ok(Number.isFinite(report.rtoSeconds));
   const decryptIndex = restoreCommands.findIndex(
@@ -461,6 +464,11 @@ test('restores into isolated fresh targets and records checksum, readiness, smok
   );
   const restoreIndex = restoreCommands.findIndex(
     ({ command }) => command === 'pg_restore',
+  );
+  const databaseIndex = restoreCommands.findIndex(
+    ({ command, args }) =>
+      command === 'psql' &&
+      args.some((arg) => arg.includes('count(*)::bigint')),
   );
   const bucketCreateIndex = restoreCommands.findIndex(
     ({ command, args }) => command === 'aws' && args.includes('create-bucket'),
@@ -480,12 +488,17 @@ test('restores into isolated fresh targets and records checksum, readiness, smok
     decryptIndex >= 0 &&
       createdbIndex > decryptIndex &&
       restoreIndex > createdbIndex &&
-      bucketCreateIndex > restoreIndex &&
+      databaseIndex > restoreIndex &&
+      bucketCreateIndex > databaseIndex &&
       objectIndex > bucketCreateIndex &&
       objectVerificationIndex > objectIndex &&
       migrationIndex > objectVerificationIndex,
   );
   assert.ok(restoreCommands[restoreIndex].args.includes('--exit-on-error'));
+  assert.equal(
+    restoreCommands[databaseIndex].options.env.PGOPTIONS,
+    '-c statement_timeout=30000',
+  );
   for (const invocation of restoreCommands)
     assert.equal(invocation.options.shell, false);
   assert.deepEqual(
@@ -498,6 +511,80 @@ test('restores into isolated fresh targets and records checksum, readiness, smok
   assert.equal(report.restoreDatabase, 'imeal_restore_20260928');
   assert.equal(manifest.result, 'PASS');
 });
+test('records callback database row-count verification before later gates', async () => {
+  const directory = await makeDirectory();
+  const manifestPath = await writeRestoreFixture(directory);
+  const commands = [];
+  const report = await restoreRehearsal({
+    backupManifestPath: manifestPath,
+    restoreDatabase: 'imeal_restore_20260928',
+    restoreBucket: 'imeal-restore-20260928',
+    outputPath: join(directory, 'database-callback.json'),
+    commandRunner: createCommandRunner(commands),
+    databaseCheck: async ({
+      database: targetDatabase,
+      schema: targetSchema,
+    }) => {
+      assert.equal(targetDatabase, 'imeal_restore_20260928');
+      assert.equal(targetSchema, schema);
+      return { result: 'PASS', rows: 7 };
+    },
+    readinessCheck: async () => ({ result: 'PASS' }),
+    smokeCheck: async () => ({ result: 'PASS' }),
+  });
+  assert.deepEqual(report.database, {
+    restored: 'PASS',
+    result: 'PASS',
+    rows: 7,
+    count: 7,
+  });
+  assert.equal(
+    commands.some(
+      ({ command, args }) =>
+        command === 'psql' &&
+        args.some((arg) => arg.includes('count(*)::bigint')),
+    ),
+    false,
+  );
+});
+
+test('fails closed on invalid database row-count verification', async () => {
+  const directory = await makeDirectory();
+  const manifestPath = await writeRestoreFixture(directory);
+  const commands = [];
+  const outputPath = join(directory, 'database-count-failure.json');
+  await assert.rejects(
+    restoreRehearsal({
+      backupManifestPath: manifestPath,
+      restoreDatabase: 'imeal_restore_20260928',
+      restoreBucket: 'imeal-restore-20260928',
+      outputPath,
+      commandRunner: createCommandRunner(commands),
+      databaseCheck: async () => ({ result: 'PASS', rows: -1 }),
+      readinessCheck: async () => ({ result: 'PASS' }),
+      smokeCheck: async () => ({ result: 'PASS' }),
+    }),
+    /database row count is invalid/i,
+  );
+  assert.equal(
+    commands.some(
+      ({ command, args }) =>
+        command === 'aws' && args.includes('create-bucket'),
+    ),
+    false,
+  );
+  assert.equal(
+    commands.some(
+      ({ command, args }) =>
+        command === 'psql' &&
+        args.some((arg) => arg.includes('_prisma_migrations')),
+    ),
+    false,
+  );
+  const failure = JSON.parse(await readFile(outputPath, 'utf8'));
+  assert.deepEqual(failure.database, { result: 'FAIL' });
+});
+
 test('fails before migration checks when restored object size mismatches', async () => {
   const directory = await makeDirectory();
   const manifestPath = await writeRestoreFixture(directory);
