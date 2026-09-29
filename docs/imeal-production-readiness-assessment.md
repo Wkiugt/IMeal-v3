@@ -43,21 +43,21 @@ observability, identity provisioning và product workflow vẫn chặn release.
 
 ## 2. Tóm tắt quyết định release
 
-| Hạng mục | Đánh giá |
-|---|---|
-| Staff đăng nhập OTP | **Implemented happy path; session-expiry recovery partial** |
-| Staff registration/cutoff | **Implemented API path; weekly UX và menu data partial** |
-| QR/GPS presenter | **Implemented client path; device/a11y/UAT partial** |
-| Kitchen scan/resolve/confirm | **Implemented strongest operational path; concurrency/UAT cần chứng minh** |
-| Kitchen dashboard | **Implemented snapshot/polling; realtime và status filter có gap nghiêm trọng** |
-| Delegation | **List/actions partial; owner create/search missing** |
-| Notification inbox | **Implemented; push/deployment dependent** |
-| Staff history/penalty | **Missing** |
-| Admin menus/penalties/operations | **Partial đến implemented từng module** |
-| Admin user/role/disable/jobs/health | **Missing** |
-| Worker/retention/operations | **Chưa có evidence đủ để release** |
-| Production infrastructure | **Unsafe/local assumptions; not ready** |
-| Tổng thể | **NO-GO** |
+| Hạng mục                            | Đánh giá                                                                        |
+| ----------------------------------- | ------------------------------------------------------------------------------- |
+| Staff đăng nhập OTP                 | **Implemented happy path; session-expiry recovery partial**                     |
+| Staff registration/cutoff           | **Implemented API path; weekly UX và menu data partial**                        |
+| QR/GPS presenter                    | **Implemented client path; device/a11y/UAT partial**                            |
+| Kitchen scan/resolve/confirm        | **Implemented strongest operational path; concurrency/UAT cần chứng minh**      |
+| Kitchen dashboard                   | **Implemented snapshot/polling; realtime và status filter có gap nghiêm trọng** |
+| Delegation                          | **List/actions partial; owner create/search missing**                           |
+| Notification inbox                  | **Implemented; push/deployment dependent**                                      |
+| Staff history/penalty               | **Missing**                                                                     |
+| Admin menus/penalties/operations    | **Partial đến implemented từng module**                                         |
+| Admin user/role/disable/jobs/health | **Missing**                                                                     |
+| Worker/retention/operations         | **Chưa có evidence đủ để release**                                              |
+| Production infrastructure           | **Unsafe/local assumptions; not ready**                                         |
+| Tổng thể                            | **NO-GO**                                                                       |
 
 ## 3. Inventory theo backend/domain
 
@@ -163,21 +163,21 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
 
 ## 4. Inventory theo mobile client
 
-| Area | Evidence | Status |
-|---|---|---|
-| Navigation/auth boundary | `apps/mobile/App.tsx:68-131,185-342`; `src/navigation.ts:5-53` | Implemented, nhưng no-mobile-access và expired-session recovery chưa đủ |
-| OTP/session storage | `src/api/authAPI.ts:61-170`; `src/auth/session.tsx:31-220` | Implemented happy path; web localStorage và no global 401 recovery |
-| Staff calendar | `screens/employee/EmployeeCalendarScreen.tsx:228-976` | Partial: API/cutoff thật, UX save tuần thiếu |
-| Staff Home | `screens/employee/EmployeeDashboardScreen.tsx:27-143` | Partial: status thật, menu/location tĩnh |
-| QR/GPS | `screens/pickup/PickupIntentScreen.tsx`; `api/locationAPI.ts`; `api/pickupAPI.ts` | Implemented path; device/a11y/UAT partial |
-| Kitchen scanner | `screens/kitchen/KitchenScannerScreen.tsx` | Implemented path; physical device/concurrency proof missing |
-| Kitchen dashboard | `screens/kitchen/KitchenDashboardScreen.tsx` | Partial: polling, status/search/realtime gaps |
-| Delegation | `screens/delegation/DelegationScreen.tsx` | Partial: list/actions, create/search missing |
-| Notification inbox | `screens/notifications/NotificationListScreen.tsx`, `NotificationDetailScreen.tsx` | Implemented path |
-| Staff profile | `screens/employee/EmployeeProfileScreen.tsx:202-315` | Prototype data for stats; history/penalties missing |
-| Kitchen profile | `screens/kitchen/KitchenProfileScreen.tsx` | Basic identity/settings/logout only |
-| Accessibility primitives | `src/ui/components/Controls.tsx:44-98,191-232,312-423`; `AppShell.tsx`; `useReducedMotion.ts` | Good foundation; QR countdown gap |
-| API error/retry | `src/api/mobileApiError.ts:15-166`; screen-local Retry | Partial; generic mapping, no offline queue/global session reset |
+| Area                     | Evidence                                                                                      | Status                                                                  |
+| ------------------------ | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Navigation/auth boundary | `apps/mobile/App.tsx:68-131,185-342`; `src/navigation.ts:5-53`                                | Implemented, nhưng no-mobile-access và expired-session recovery chưa đủ |
+| OTP/session storage      | `src/api/authAPI.ts:61-170`; `src/auth/session.tsx:31-220`                                    | Implemented happy path; web localStorage và no global 401 recovery      |
+| Staff calendar           | `screens/employee/EmployeeCalendarScreen.tsx:228-976`                                         | Partial: API/cutoff thật, UX save tuần thiếu                            |
+| Staff Home               | `screens/employee/EmployeeDashboardScreen.tsx:27-143`                                         | Partial: status thật, menu/location tĩnh                                |
+| QR/GPS                   | `screens/pickup/PickupIntentScreen.tsx`; `api/locationAPI.ts`; `api/pickupAPI.ts`             | Implemented path; device/a11y/UAT partial                               |
+| Kitchen scanner          | `screens/kitchen/KitchenScannerScreen.tsx`                                                    | Implemented path; physical device/concurrency proof missing             |
+| Kitchen dashboard        | `screens/kitchen/KitchenDashboardScreen.tsx`                                                  | Partial: polling, status/search/realtime gaps                           |
+| Delegation               | `screens/delegation/DelegationScreen.tsx`                                                     | Partial: list/actions, create/search missing                            |
+| Notification inbox       | `screens/notifications/NotificationListScreen.tsx`, `NotificationDetailScreen.tsx`            | Implemented path                                                        |
+| Staff profile            | `screens/employee/EmployeeProfileScreen.tsx:202-315`                                          | Prototype data for stats; history/penalties missing                     |
+| Kitchen profile          | `screens/kitchen/KitchenProfileScreen.tsx`                                                    | Basic identity/settings/logout only                                     |
+| Accessibility primitives | `src/ui/components/Controls.tsx:44-98,191-232,312-423`; `AppShell.tsx`; `useReducedMotion.ts` | Good foundation; QR countdown gap                                       |
+| API error/retry          | `src/api/mobileApiError.ts:15-166`; screen-local Retry                                        | Partial; generic mapping, no offline queue/global session reset         |
 
 ## 5. Inventory theo Admin Web
 
@@ -223,6 +223,19 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
 
 ### Workstream A Task 9 rollout evidence and blockers — NOT COMPLETE / NO-GO
 
+The operator procedure is the
+[staging readiness runbook](runbooks/staging-readiness.md), and its
+`scripts/staging/runbook-links.test.mjs` acceptance checks pass locally. This
+is documentation/tooling evidence only; it does not claim a staging target,
+external approval, or production qualification.
+
+- **Current hard blocker:** this application has no actual hardening `/metrics`
+  collectors/endpoints, so protected runtime integration fails closed.
+- **Current external blockers:** the approved edge WAF/rate-limit control and
+  alert route are not provisioned; real staging env/DNS/TLS/OTP, backup
+  restore, alert delivery, UAT, identity approval, and location/roster
+  approval are absent.
+
 - Fresh Step 2 disposable sequence at HEAD
   `75a9d719deb511503dfc55a11b52a81ab6d049a6` is GREEN locally:
   `phase0_step2_20260928131738` applied all eight migrations, passed generate/
@@ -234,7 +247,7 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
   no approved staging/representative target, independent approval,
   backup/restore rehearsal or production evidence exists.
 - The rollout scope is `status <> 'CANCELLED' OR meal_date >= current business
-  date in Asia/Ho_Chi_Minh`; only earlier cancelled rows are legacy history
+date in Asia/Ho_Chi_Minh`; only earlier cancelled rows are legacy history
   allowed nullable snapshots. Serving mismatches are checked for every status.
   Roster resolution requires one active, date-effective assignment and
   location.
@@ -268,7 +281,6 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
   target's named rollback authority and decision window; no down migration is
   claimed.
 - See the [Task 9 brief](../.superpowers/sdd/2026-09-28-imeal-phase0-domain-correctness-plan/task-9-brief.md) and [Task 9 report](../.superpowers/sdd/2026-09-28-imeal-phase0-domain-correctness-plan/task-9-report.md). Phase 0 remains **NO-GO** until the independent gates and dirty-data remediation are approved.
-
 
 ### P1 — phải đóng trong pilot gate
 
@@ -382,16 +394,16 @@ Centralized logs/metrics/alerts <--- Caddy/API/Worker/DB
 ### Data correctness và business invariants
 
 - [ ] Registration persist location/menu/owner snapshots and pickup reads them
-  correctly; implementation and disposable focused evidence passed, but staging
-  preflight/backfill approval is not evidenced.
+      correctly; implementation and disposable focused evidence passed, but staging
+      preflight/backfill approval is not evidenced.
 - [ ] Dashboard projection distinguishes pending/served/no-show and retains
-  served rows; implementation and disposable API/e2e evidence passed, but the
-  production gate remains open.
+      served rows; implementation and disposable API/e2e evidence passed, but the
+      production gate remains open.
 - [ ] Serving confirm is all-or-nothing, idempotent and duplicate-safe under
-  retry/concurrency; local PostgreSQL race evidence passed, with no staging
-  approval yet.
+      retry/concurrency; local PostgreSQL race evidence passed, with no staging
+      approval yet.
 - [ ] No-show/penalty creates one registration-keyed penalty under concurrent
-  retry; local worker/e2e evidence passed, with no staging approval yet.
+      retry; local worker/e2e evidence passed, with no staging approval yet.
 - [ ] Cutoff, timezone `Asia/Ho_Chi_Minh`, serving window, QR TTL/skew, pickup session được test bằng server time.
 - [ ] Exact selected intent và delegation consent được kiểm tra server-side.
 
@@ -411,6 +423,11 @@ Centralized logs/metrics/alerts <--- Caddy/API/Worker/DB
 - [ ] Bỏ MD5/plain auth; pin images/dependencies; sửa Dockerfile mismatch.
 - [ ] Production mobile package/bundle IDs, signing ownership, min OS, distribution channel và EAS project đã provision.
 - [ ] API/Admin/CORS/origin topology được test từ browser/device thật.
+- [ ] Actual hardening `/metrics` collectors/endpoints deployed and observed;
+      protected runtime integration remains fail-closed until then.
+- [ ] Approved edge WAF/rate-limit control, alert route, real staging
+      DNS/TLS/OTP, backup restore, UAT, identity, location and roster approvals
+      are provisioned and independently reviewed.
 
 ### Operations
 

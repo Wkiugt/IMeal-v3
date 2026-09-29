@@ -141,17 +141,17 @@ curl.exe http://localhost:3000/health
 
 Chạy mỗi lệnh trong một terminal riêng. API phải chạy trước các chế độ mobile:
 
-| Thành phần        | Lệnh                                                                                      | URL/Ghi chú                                      |
-| ----------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| API               | `corepack yarn workspace @imeal/api start:dev`                                            | `http://localhost:3000`                          |
-| Admin Web         | `$env:VITE_API_URL='http://localhost:3000'; corepack yarn workspace @imeal/admin-web dev` | `http://localhost:5173`                          |
-| Mobile web        | `corepack yarn workspace @imeal/mobile web`                                               | Expo web                                          |
-| Android local     | `corepack yarn workspace @imeal/mobile android:local`                                     | Emulator hoặc Android cắm USB; cần `adb`         |
-| Android Emulator  | `corepack yarn workspace @imeal/mobile android`                                           | Cần AVD đang chạy                                 |
-| iOS Simulator     | `corepack yarn workspace @imeal/mobile ios`                                               | Chỉ macOS + Xcode                                 |
-| Mobile LAN        | `corepack yarn workspace @imeal/mobile start:lan`                                         | Điện thoại và máy cùng LAN                        |
-| Mobile remote     | `corepack yarn workspace @imeal/mobile start:remote`                                      | Cần `EXPO_PACKAGER_PROXY_URL` và API public URL   |
-| Worker            | `corepack yarn workspace @imeal/worker start:dev`                                         | Cần `DATABASE_URL` trong terminal                  |
+| Thành phần       | Lệnh                                                                                      | URL/Ghi chú                                     |
+| ---------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| API              | `corepack yarn workspace @imeal/api start:dev`                                            | `http://localhost:3000`                         |
+| Admin Web        | `$env:VITE_API_URL='http://localhost:3000'; corepack yarn workspace @imeal/admin-web dev` | `http://localhost:5173`                         |
+| Mobile web       | `corepack yarn workspace @imeal/mobile web`                                               | Expo web                                        |
+| Android local    | `corepack yarn workspace @imeal/mobile android:local`                                     | Emulator hoặc Android cắm USB; cần `adb`        |
+| Android Emulator | `corepack yarn workspace @imeal/mobile android`                                           | Cần AVD đang chạy                               |
+| iOS Simulator    | `corepack yarn workspace @imeal/mobile ios`                                               | Chỉ macOS + Xcode                               |
+| Mobile LAN       | `corepack yarn workspace @imeal/mobile start:lan`                                         | Điện thoại và máy cùng LAN                      |
+| Mobile remote    | `corepack yarn workspace @imeal/mobile start:remote`                                      | Cần `EXPO_PACKAGER_PROXY_URL` và API public URL |
+| Worker           | `corepack yarn workspace @imeal/worker start:dev`                                         | Cần `DATABASE_URL` trong terminal               |
 
 API bind trên `0.0.0.0:3000`, nên có thể dùng từ browser và thiết bị trong LAN. Mobile LAN tự suy ra `http://<Metro-host>:3000/api`; không cần `EXPO_PUBLIC_API_URL` cho local/LAN.
 
@@ -398,106 +398,139 @@ object-storage, session hoặc provider secret vào client.
 
 ### Quy trình triển khai
 
-Chạy trên server Linux, sau khi đã chọn production override/configuration đã
-được review (các lệnh dưới đây phản ánh service name hiện có trong repository):
+Staging qualification và production deployment là hai gate khác nhau. Quy trình
+operator canonical nằm trong [staging readiness runbook](docs/runbooks/staging-readiness.md);
+runbook này dùng đúng các wrapper/CLI, staging Compose override, protected CI
+workflow và artifact names đã có trong repository. Không ghi secret, PII,
+domain thật hoặc credential vào command/evidence.
+
+Local repository tooling can be checked without staging credentials:
+
+```bash
+yarn test:staging-tools
+node --test scripts/staging/compose-config.test.mjs
+```
+
+These checks are implementation evidence only. Current release status remains
+**CONDITIONAL / NO-GO** until an approved staging target, backup/restore,
+DNS/TLS, OTP provider path, WAF/rate-limit control, alert delivery, UAT,
+identity approval, and four-location/roster approval exist.
+
+On an approved Linux staging or production host, after the reviewed
+environment file and external gates are complete, the checked-in service names
+are:
 
 ```bash
 corepack yarn install --immutable
 corepack yarn build
 
-# Provision .env production out-of-band, kiểm tra đủ biến ở mục trên.
-# Hoàn tất và xác minh backup PostgreSQL + object storage trước deploy.
-
 docker compose build
-
 docker compose up -d db pgbouncer minio minio-create-bucket migrate
 docker compose wait migrate
 docker compose ps --all
 ```
 
-`migrate` **bắt buộc** phải hiển thị `Exited (0)`. Nếu migration lỗi hoặc
-không ở trạng thái này thì dừng release, không khởi động API/worker và không
-tiếp tục với dữ liệu production.
+`migrate` **bắt buộc** phải hiển thị `Exited (0)`. If migration status,
+target fingerprint, Phase 0 preflight, approval, backfill, post-validation,
+backup/restore, or security gates fail, stop and preserve redacted evidence.
+Do not infer a production gate from disposable local tests.
 
-Sau khi migration đạt gate:
+After migration reaches the reviewed gate:
 
 ```bash
 docker compose up -d api worker admin-web caddy
 docker compose ps --all
-
-# Health route hiện có trong API; kiểm tra từ bên trong container vì
-# Caddyfile hiện tại không public hóa /health.
 docker compose exec api wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health
 ```
 
-Không suy diễn rằng `docker compose build` hiện tại là production-hardened:
-production override phải pin image/version, network, ports, TLS và secrets
-trước khi chạy public. Compose hiện khai báo `admin-web` với `build: context: .`
-nhưng Dockerfile của app nằm ở `apps/admin-web/Dockerfile`; mismatch này phải
-được sửa rõ ràng trong override/configuration đã review, không sửa tạm bằng
-README.
+The commands above describe existing Compose service names only; they do not
+claim that the current base Compose file is production-hardened. The
+production/staging override must pin every image, keep data services private,
+configure TLS and security headers, and provide reviewed secrets and
+trusted-proxy settings before public exposure. The protected staging workflow
+instead uses `docker-compose.yml` plus `docker-compose.staging.yml`, validates
+the rendered configuration, scans the exact digest refs before deployment,
+waits for the migration gate, and runs runtime integration and token-backed
+smoke.
 
 ### Provision dữ liệu và vận hành
 
-- Qua operation server-side được ủy quyền, provision **đúng bốn approved
-  locations và policies**, allowlist-A users, roles/permissions và roster.
-  Không chạy seed local/sample accounts và không import dữ liệu từ `.env.example`.
-- First Admin là một operation server-side riêng, có audit trail và người phê
-  duyệt; không tạo bằng local credentials hay client-supplied role.
-- Theo dõi logs, health checks và alerting cho API, worker, PostgreSQL và OTP
-  delivery. Không log OTP, session/bearer token hoặc provider secret.
-- Backup PostgreSQL và object storage **riêng biệt**, mã hóa và giới hạn
-  access; định kỳ test restore. Meal/audit history giữ theo retention **1 năm**.
-- Mọi schema migration phải được review và backward-compatible trong rollback
-  window. Rollback chỉ hỗ trợ stack v2/PostgreSQL; **không có Firebase path**.
-- Ghi nhận owner, RPO/RTO, retention, lịch backup và quy trình rotate secret
-  trước go-live.
+- Provision **đúng bốn approved locations and policies**, allowlist-A users,
+  roles/permissions and roster through an authorized server-side operation.
+  Never use sample data as operational evidence.
+- First Admin is a separately audited server-side operation; no client-supplied
+  role or local credential is acceptable.
+- Track API, worker, PostgreSQL, OTP, queue and backup health through the
+  approved centralized observability path. The current repository has no
+  actual hardening `/metrics` collectors/endpoints, so runtime integration
+  fails closed until those endpoints and evidence exist.
+- Keep PostgreSQL and object-storage backups separate, encrypted and
+  access-controlled; perform and retain the restore rehearsal before pilot.
+- Schema migration and rollback authority/window must be reviewed for the
+  PostgreSQL v2 stack. The legacy Firebase path is not a rollback mechanism.
 
 ### Checklist bảo mật trước public exposure
 
-- [ ] Port `5432`, `6432`, `9000`, `9001` đang được Compose publish; phải
-  chuyển thành private/firewalled, không mở trực tiếp ra Internet.
-- [ ] Compose hiện dùng PostgreSQL MD5 và PgBouncer `AUTH_TYPE=plain`; đây
-  **không phải** cấu hình hardened, phải thay/bao bọc bằng policy production.
-- [ ] Setup MinIO hiện đặt bucket public; production phải private và
-  least-privilege, không dùng cấu hình này nguyên trạng.
-- [ ] Caddyfile hiện có `auto_https off` và chỉ listener `:80`; production
-  phải cấu hình domain thật do operator sở hữu, certificate/TLS, redirect
-  HTTPS và security headers (không invent domain trong tài liệu).
-- [ ] Pin version hoặc digest cho mọi image, không dùng `latest`.
-- [ ] Không expose worker, database, PgBouncer, MinIO console hoặc admin
-  internals; bearer session và OTP chỉ truyền qua HTTPS.
-- [ ] Bật edge rate limits, xác minh proxy client-IP handling, đồng thời review
-  CORS và trusted-proxy settings trước khi nhận traffic thật.
-- [ ] DB backup được mã hóa và access-controlled; rotate ngay mọi secret có
-  dấu hiệu compromise.
+- [ ] Private/firewalled DB, PgBouncer, MinIO and worker ports; expose only the
+      reviewed edge.
+- [ ] Replace current PostgreSQL/PgBouncer development authentication with the
+      approved production policy.
+- [ ] Make object storage private with least privilege.
+- [ ] Configure an operator-owned domain, TLS certificate, HTTPS redirect,
+      security headers and trusted-proxy handling; do not invent a domain here.
+- [ ] Pin every image/version or digest and verify the exact release manifest.
+- [ ] Enable the approved edge WAF/rate-limit control and verify client-IP
+      handling, CORS and trusted proxy settings.
+- [ ] Verify encrypted backups, restore rehearsal, secret rotation, alert
+      delivery and named on-call ownership.
 
 ### Release gate
 
-- [ ] Staging được dựng từ clean migrations và đã kiểm tra migration exit code.
-- [ ] Đã thử OTP request/verify/logout, RBAC, QR/serving và worker scheduled
-  jobs với dữ liệu được ủy quyền.
-- [ ] Đã test restore backup và quan sát alert cho API/worker/PostgreSQL/OTP.
-- [ ] Không còn P0 defect và có owner/on-call xác nhận go-live.
+- [ ] Staging is rendered from `docker-compose.yml` and
+      `docker-compose.staging.yml` with immutable image refs.
+- [ ] Target fingerprint, migration status, Phase 0 preflight/approval/
+      backfill/post-validation and restore evidence are PASS.
+- [ ] Protected CI records exact deployed image scans, runtime integration and
+      session-token smoke; missing hardening collectors fail closed.
+- [ ] WAF/rate-limit, TLS/DNS, OTP delivery, alert route, UAT, identity,
+      location and roster approvals are present.
+- [ ] Evidence manifest, SHA-256 checksums and independent sign-off are
+      complete; no P0 defect remains and rollback authority is named.
 
 ### Evidence and smoke verification
 
-The Task 5 evidence/smoke tooling has been verified without staging
-credentials with:
+The staging tooling and Compose boundary can be verified without credentials:
 
 ```bash
-yarn node --test scripts/staging/evidence.test.mjs scripts/staging/smoke-staging.test.mjs
+yarn test:staging-tools
+node --test scripts/staging/compose-config.test.mjs
+node --test scripts/staging/runbook-links.test.mjs
 ```
 
-After the staging target and HTTPS origins are provisioned, run the smoke
-command from the staging runbook and retain its immutable report with the
-release evidence. A local HTTP check is permitted only with the explicit
-`--local-test-mode` flag; it is not a staging qualification.
+After an approved staging target exists, follow the [staging readiness
+runbook](docs/runbooks/staging-readiness.md). Its smoke invocation reads the
+session token by name:
 
-Không dùng `REQUIRE_AUTH=false`, local auth, `seed:local`, local credentials,
-`docker compose down -v` hoặc `corepack yarn test:db` với production database.
+```bash
+yarn staging:smoke \
+  --api-origin "$STAGING_API_ORIGIN" \
+  --admin-origin "$STAGING_ADMIN_ORIGIN" \
+  --session-token-env STAGING_SMOKE_SESSION_TOKEN \
+  --output "$EVIDENCE_DIR/smoke-infrastructure.json"
+```
 
-## Docker và kiểm tra
+The network runner's business workflow remains `NOT_RUN`; retain separately
+reviewed business, identity/RBAC, mobile/Admin and worker evidence. CI/local
+results must never be described as staging or production qualification.
+
+Do not put operational credentials, local auth bypasses, sample seeds,
+destructive volume cleanup, or legacy-provider rollback instructions in a
+production procedure.
+
+## Docker và kiểm tra (local-only)
+
+The commands in this section are for local development only, never for a
+staging or production target.
 
 ```powershell
 # Xem service
@@ -508,10 +541,9 @@ docker compose logs -f db pgbouncer minio migrate
 
 # Dừng stack, giữ dữ liệu
 docker compose down
-
-# Xóa toàn bộ dữ liệu local
-docker compose down -v
 ```
+
+Do not remove database volumes as part of a production operation.
 
 ### Kiểm tra database PostgreSQL
 
@@ -557,8 +589,8 @@ Kiểm tra trạng thái migration:
 docker compose run --rm migrate yarn workspace @imeal/core prisma migrate status
 ```
 
-Không chạy `docker compose down -v` nếu chưa muốn xóa volume
-`db_data` và toàn bộ dữ liệu PostgreSQL local.
+Không xóa volume `db_data` trong quy trình staging hoặc production; thao tác
+volume destructive chỉ thuộc môi trường local disposable.
 
 Các port mặc định:
 

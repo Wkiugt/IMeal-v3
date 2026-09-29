@@ -32,37 +32,41 @@ IMeal v2 là một re-platforming so với hệ thống web Firebase/Firestore h
 4. [02 — Technical Requirements](./02-technical-requirements.md) — mobile/backend stack, environment contract, API, network, deployment và NFR.
 5. [04 — UI/UX Design](./04-ui-ux-design.md) — workflow, recovery behavior, interaction/mobile screen requirements.
 6. [06 — Execution Plan](./06-execution-plan.md) — clean-slate re-platform, qualification và rollout.
-7. [07 — Architecture Decisions](./07-architecture-decisions.md) — quyết định kiến trúc và risk assessment.
-8. [08 — IMeal Design System](./08-imeal-design-system.md) — canonical visual tokens and reusable component contracts.
-9. [Local Role Testing Guide](./local-role-testing.md) — local Docker, OTP test harness và role smoke checklist; mọi bypass/fixture trong guide đều non-production.
-10. [Local synthetic seed design](./superpowers/specs/2026-09-24-imeal-local-seed-design.md) — local-only seed safety contract, synthetic cohorts, deterministic data and rerun behavior.
-11. [Local synthetic seed implementation plan](./superpowers/plans/2026-09-24-imeal-local-seed-plan.md) — task sequencing and focused verification for the non-production seed workflow.
-12. [Approved email OTP/GPS design](./superpowers/specs/2026-09-24-imeal-email-otp-presenter-gps-design.md) — source of truth cho OTP, opaque sessions, roster/location, GPS, exact intent và residual risk.
-13. [Implementation plan](./superpowers/plans/2026-09-24-imeal-email-otp-presenter-gps-plan.md) — task sequencing and verification matrix.
+7. [Staging readiness runbook](./runbooks/staging-readiness.md) — exact
+   backup/restore, Phase 0, protected Compose, smoke, runtime integration,
+   evidence and rollback procedure; keep the decision **CONDITIONAL / NO-GO**
+   until external staging gates are approved.
+8. [07 — Architecture Decisions](./07-architecture-decisions.md) — quyết định kiến trúc và risk assessment.
+9. [08 — IMeal Design System](./08-imeal-design-system.md) — canonical visual tokens and reusable component contracts.
+10. [Local Role Testing Guide](./local-role-testing.md) — local Docker, OTP test harness và role smoke checklist; mọi bypass/fixture trong guide đều non-production.
+11. [Local synthetic seed design](./superpowers/specs/2026-09-24-imeal-local-seed-design.md) — local-only seed safety contract, synthetic cohorts, deterministic data and rerun behavior.
+12. [Local synthetic seed implementation plan](./superpowers/plans/2026-09-24-imeal-local-seed-plan.md) — task sequencing and focused verification for the non-production seed workflow.
+13. [Approved email OTP/GPS design](./superpowers/specs/2026-09-24-imeal-email-otp-presenter-gps-design.md) — source of truth cho OTP, opaque sessions, roster/location, GPS, exact intent và residual risk.
+14. [Implementation plan](./superpowers/plans/2026-09-24-imeal-email-otp-presenter-gps-plan.md) — task sequencing and verification matrix.
 
 `08-imeal-design-system.md` is authoritative for visual tokens and reusable component contracts. `04-ui-ux-design.md` remains authoritative for workflow and recovery behavior; `System-design-UI/**` is preserved prototype provenance, not a competing runtime contract.
 
 ## Thuật ngữ canonical
 
-| Thuật ngữ | Định nghĩa |
-| --- | --- |
-| Meal date | Ngày sử dụng suất ăn theo `Asia/Ho_Chi_Minh`, `YYYY-MM-DD` |
-| Week | Tuần hiển thị trên Staff/Kitchen để quản lý menu và registration |
-| Daily menu | Một món cố định cho một meal date |
-| Meal choice | Loại suất `REGULAR` hoặc `VEGETARIAN`; ngày bình thường chỉ `REGULAR`, ngày mùng 1/15 âm lịch (kể cả tháng nhuận) cho phép cả hai |
-| Cutoff | 14:00 ngày trước meal date; đúng `14:00:00` là đã khóa |
-| Registration | Quyền giữ một suất của một user trong một meal date, lưu menu revision cùng meal choice và immutable owner/location snapshots |
-| Serving / Check-in | Kitchen xác nhận suất đã thực sự được giao tại quầy; ghi một `meal_servings` immutable row |
-| Served | Registration có đúng một serving hợp lệ; `ACTIVE + mealServing` là projection canonical, `SERVED` chỉ giữ cho legacy compatibility |
-| No-show | Đã đăng ký nhưng hết meal day vẫn chưa có serving hợp lệ |
-| Delegation | Ủy quyền một user khác nhận hộ một registration; delegate phải accept |
-| Owner | Người sở hữu registration |
-| Delegate | Người được owner yêu cầu nhận hộ và đã chấp nhận |
-| Presenter | Người đang cầm điện thoại và trình bày QR; chỉ presenter thu foreground GPS |
-| Kitchen | Nhân sự canteen quản lý weekly menu và serving/check-in; không tự có quyền Staff |
-| Admin | Quản trị location/allowlist/roster, role `staff`/`kitchen`, penalty và audit; không cấp role `admin` qua Admin Web |
-| Active registration | Registration có `status=ACTIVE` và chưa có serving; nếu đã có serving thì vẫn là row `ACTIVE` nhưng được project thành `SERVED` |
-| Serving window | Khoảng `10:30–13:30` của meal date, theo `Asia/Ho_Chi_Minh` |
+| Thuật ngữ           | Định nghĩa                                                                                                                         |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Meal date           | Ngày sử dụng suất ăn theo `Asia/Ho_Chi_Minh`, `YYYY-MM-DD`                                                                         |
+| Week                | Tuần hiển thị trên Staff/Kitchen để quản lý menu và registration                                                                   |
+| Daily menu          | Một món cố định cho một meal date                                                                                                  |
+| Meal choice         | Loại suất `REGULAR` hoặc `VEGETARIAN`; ngày bình thường chỉ `REGULAR`, ngày mùng 1/15 âm lịch (kể cả tháng nhuận) cho phép cả hai  |
+| Cutoff              | 14:00 ngày trước meal date; đúng `14:00:00` là đã khóa                                                                             |
+| Registration        | Quyền giữ một suất của một user trong một meal date, lưu menu revision cùng meal choice và immutable owner/location snapshots      |
+| Serving / Check-in  | Kitchen xác nhận suất đã thực sự được giao tại quầy; ghi một `meal_servings` immutable row                                         |
+| Served              | Registration có đúng một serving hợp lệ; `ACTIVE + mealServing` là projection canonical, `SERVED` chỉ giữ cho legacy compatibility |
+| No-show             | Đã đăng ký nhưng hết meal day vẫn chưa có serving hợp lệ                                                                           |
+| Delegation          | Ủy quyền một user khác nhận hộ một registration; delegate phải accept                                                              |
+| Owner               | Người sở hữu registration                                                                                                          |
+| Delegate            | Người được owner yêu cầu nhận hộ và đã chấp nhận                                                                                   |
+| Presenter           | Người đang cầm điện thoại và trình bày QR; chỉ presenter thu foreground GPS                                                        |
+| Kitchen             | Nhân sự canteen quản lý weekly menu và serving/check-in; không tự có quyền Staff                                                   |
+| Admin               | Quản trị location/allowlist/roster, role `staff`/`kitchen`, penalty và audit; không cấp role `admin` qua Admin Web                 |
+| Active registration | Registration có `status=ACTIVE` và chưa có serving; nếu đã có serving thì vẫn là row `ACTIVE` nhưng được project thành `SERVED`    |
+| Serving window      | Khoảng `10:30–13:30` của meal date, theo `Asia/Ho_Chi_Minh`                                                                        |
 
 ## Nguồn sự thật và thứ tự ưu tiên
 

@@ -1,225 +1,433 @@
-# Staging readiness: backup and restore rehearsal
+# Staging readiness and release qualification
 
-This runbook covers the staging backup and restore gates owned by the staging
-operations team. It is intentionally limited to the isolated staging target;
-never substitute a production database, bucket, credential, or endpoint.
+This runbook is for the isolated staging target only. It is an operator
+procedure, not proof that staging or production has been provisioned. Do not
+enter real credentials, OTP values, employee data, location data, GPS data,
+provider payloads, or real hostnames in this document or in evidence.
 
-## Ownership and cadence
+The current repository evidence is **CONDITIONAL / NO-GO**. Local tests prove
+only the checked-in tooling and disposable fixtures. The release manager must
+keep the gate closed until the external staging gates in this runbook have
+independent approval.
 
-| Responsibility                            | Owner                                   | Evidence                                                                        |
-| ----------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------- |
-| Backup execution and checksum review      | Staging operations on-call              | `backup-manifest.json`                                                          |
-| AGE recipient lifecycle and access review | Platform security                       | recipient-environment ownership record (the value is never written to evidence) |
-| Private object-storage retention          | Data platform                           | storage reference and retention review                                          |
-| Restore rehearsal and RPO/RTO sign-off    | Release manager with staging operations | `restore-rehearsal.json`                                                        |
-| Abort decision and incident handoff       | Release manager                         | redacted failure report and incident link                                       |
+## Ownership, prerequisites, and decision authority
 
-Run an encrypted backup at least daily during pilot operation and before every
-Phase 0 backfill or release gate. Perform a restore rehearsal weekly and after
-any change to PostgreSQL, object storage, encryption tooling, or the staging
-network. Retain the manifest, checksum, and restore report for the release
-retention period (the wrapper records 35 days by default).
+| Responsibility                                               | Owner                                     | Required evidence                                                                                                                                        |
+| ------------------------------------------------------------ | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Release identity, candidate commit, image digest review      | Release manager                           | `release-manifest.json`                                                                                                                                  |
+| Target fingerprint, migration status, preflight and backfill | Database/platform operator                | `target-fingerprint.json`, `migration-status.txt`, `preflight-before.json`, `backfill-result.json`, `preflight-after.json`, `constraint-validation.json` |
+| Encrypted backup, restore rehearsal, RPO/RTO                 | Staging operations and data platform      | `backup-manifest.json`, `restore-rehearsal.json`                                                                                                         |
+| Security, image and dependency review                        | Platform security                         | CI checks, SBOM references, immutable image references                                                                                                   |
+| OTP, identity, roster and location approval                  | Product operations and identity owner     | `smoke-auth-rbac.json`, approval record, UAT sign-off                                                                                                    |
+| WAF, rate limiting, TLS and alert delivery                   | Network/observability owner               | `observability-alert-test.json`, edge and alert approval                                                                                                 |
+| Final go/no-go and rollback authority                        | Release manager with independent reviewer | `signoff.json`, incident or decision record                                                                                                              |
 
-Targets are measured, not assumed:
+Before starting, the release manager records a release ID, reviewed commit,
+rollback decision window, and target database/schema in the restricted
+release evidence directory. The target must be disposable or an approved
+staging representative; it must not be production or a shared developer
+resource.
 
-- **RPO target:** no more than 24 hours for the daily backup cadence. The
-  restore wrapper records the elapsed time from the backup completion timestamp
-  to restore start as `rpoSeconds`.
-- **RTO target:** no more than 60 minutes for a rehearsal. The wrapper records
-  restore start through readiness and smoke completion as `rtoSeconds`.
-- A measured value over target is a failed readiness gate even when all commands
-  return success.
+The protected staging environment uses these manifest names. Values are
+injected out of band and must never be copied into this runbook or printed:
 
-## Preconditions and isolation
+- GitHub secret `STAGING_ENV_FILE`: complete staging Compose environment file;
+- GitHub secret `STAGING_SMOKE_SESSION_TOKEN`: short-lived smoke session token;
+- GitHub variables `STAGING_API_ORIGIN`, `STAGING_WORKER_ORIGIN`, and
+  `STAGING_ADMIN_ORIGIN`: approved HTTPS origins;
+- GitHub variable `STAGING_IMAGE_DIGESTS_JSON`: exactly `api`, `worker`, and
+  `adminWeb` immutable image references;
+- GitHub variable `STAGING_ROLLBACK_ARTIFACT`: prior-release rollback artifact
+  reference;
+- operator environment `TARGET_DATABASE_URL`: direct target connection used
+  only through the staging tooling;
+- operator environment `AGE_RECIPIENT`: public AGE recipient; the private
+  identity is kept out of commands and evidence;
+- operator environment `STAGING_OBJECT_ENDPOINT`, `STAGING_OBJECT_BUCKET`, and
+  `STAGING_OBJECT_DESTINATION`: private backup destination values.
 
-1. Use a dedicated staging PostgreSQL database and credentials. The source
-   target must not have a production, primary, live, or similarly named host or
-   database.
-2. Use a private object-storage bucket and an isolated destination prefix. Do
-   not use public buckets or a destination shared with production.
-3. Set the AGE public recipient through the required environment variable, for
-   example `AGE_RECIPIENT`. Never put the recipient's private key, database URL,
-   object-storage credentials, OTP, bearer token, provider payload, raw GPS, or
-   unredacted PII in a command line, manifest, or report.
-4. Ensure `pg_dump`, `pg_restore`, `createdb`, `age`, and the selected
-   S3-compatible client are installed and their versions are captured by the
-   wrapper.
-5. Create a release evidence directory with access control appropriate for
-   staging operational evidence. The wrappers write files atomically.
+Install the checked-in toolchain before operator work: Node, Corepack/Yarn,
+Docker Compose, PostgreSQL client tools, AGE, and the selected private
+S3-compatible client. Capture versions in the operator record. The runbook
+commands use `shell:false` wrappers where a staging script is involved.
 
-## Create an encrypted staging backup
+## Local implementation evidence and current blockers
 
-Use the checked-in wrapper and pass the database URL through an environment
-variable. The object endpoint, bucket, and destination are staging-only values.
-The command runner uses `shell:false`; it does not evaluate shell fragments.
+The following commands exercise repository tooling without staging credentials:
+
+```bash
+yarn test:staging-tools
+node --test scripts/staging/compose-config.test.mjs
+```
+
+These checks do not establish external staging readiness. Current blockers
+that MUST remain visible in the release decision are:
+
+- the application has no actual hardening `/metrics` collectors/endpoints, so
+  protected runtime integration fails closed rather than creating evidence;
+- the approved edge WAF/rate-limit control and the alert delivery route are not
+  provisioned;
+- no real staging environment, DNS, TLS certificate, OTP provider path,
+  backup/restore rehearsal, alert delivery, UAT, identity approval, or
+  location/roster approval has been observed;
+- no production data, credentials, or real operational domains are present in
+  this repository.
+
+The workflow is the only protected path for runtime integration and smoke
+qualification. It uses `.github/workflows/staging-readiness.yml`, the
+immutable image references from `STAGING_IMAGE_DIGESTS_JSON`, and
+`STAGING_SMOKE_SESSION_TOKEN` through `--session-token-env`. A missing runtime
+collector or endpoint is a failed gate, not a reason to mark PASS manually.
+
+## 1. Candidate, fingerprint, and migration status
+
+Create a restricted evidence directory and set only non-secret identifiers in
+the shell. These are synthetic examples; replace them with the approved
+release record without exposing secrets:
+
+```bash
+export EVIDENCE_DIR=artifacts/imeal-20260928-001/staging
+export RELEASE_ID=imeal-20260928-001
+export TARGET_SCHEMA=phase0_staging_20260928
+export TARGET_DATABASE_NAME=imeal_staging_20260928
+export RESTORE_DATABASE=imeal_restore_20260928
+export RESTORE_BUCKET=imeal-restore-20260928
+```
+
+Inject the direct target connection as `TARGET_DATABASE_URL`; do not place its
+value in a command line or report. Check migration status before any write:
+
+```bash
+DATABASE_URL="$TARGET_DATABASE_URL" \
+  yarn workspace @imeal/core exec prisma migrate status \
+  > "$EVIDENCE_DIR/migration-status.txt"
+```
+
+A clean migration status is required. A missing, failed, pending, unexpected,
+or target-mismatched migration is an abort. The staging Compose migration gate
+also requires `MIGRATION_TARGET_SCHEMA`, `MIGRATION_TARGET_IDENTITY`,
+`MIGRATION_APPROVAL_ID`, `RELEASE_VERSION`, and
+`MIGRATION_EVIDENCE_PATH`; the API and worker consume its read-only gate
+marker only after the gate succeeds.
+
+Run the read-only preflight against the exact target. It records the target
+fingerprint, migration rows, SQL hash, seven named checks, status counts, and a
+PASS/FAIL result without running the backfill:
+
+```bash
+node scripts/staging/phase0-preflight.mjs \
+  --database-url-env TARGET_DATABASE_URL \
+  --schema "$TARGET_SCHEMA" \
+  --release-id "$RELEASE_ID" \
+  --expected-database "$TARGET_DATABASE_NAME" \
+  --output "$EVIDENCE_DIR/preflight-before.json"
+```
+
+Review the `targetFingerprint` in `preflight-before.json` against the intended
+staging target. Write the reviewed fingerprint as
+`target-fingerprint.json` using the controlled extraction below; it copies no
+secrets and does not query or mutate the database:
+
+```bash
+node --input-type=module - \
+  "$EVIDENCE_DIR/preflight-before.json" \
+  "$EVIDENCE_DIR/target-fingerprint.json" <<'NODE'
+import { readFile, writeFile } from 'node:fs/promises';
+const [inputPath, outputPath] = process.argv.slice(2);
+const report = JSON.parse(await readFile(inputPath, 'utf8'));
+if (report.result !== 'PASS' || !report.targetFingerprint) {
+  throw new Error('preflight target fingerprint is not a PASS record');
+}
+await writeFile(
+  outputPath,
+  `${JSON.stringify(report.targetFingerprint, null, 2)}\n`,
+  { encoding: 'utf8', mode: 0o440 },
+);
+NODE
+```
+
+The operator records the target database, schema, server version, migration
+rows, release ID, and the SHA-256 of every input/report in the decision record.
+No row payloads are copied into evidence.
+
+## 2. Encrypted backup and restore prerequisite
+
+Complete the encrypted backup before approval or backfill. The endpoint,
+bucket, and destination must be private staging-only references. The database
+URL and AGE recipient are read from environment variables:
 
 ```bash
 node scripts/staging/backup-staging.mjs \
   --database-url-env TARGET_DATABASE_URL \
-  --schema phase0_staging_20260928 \
-  --release-id imeal-20260928-001 \
-  --object-endpoint https://<private-staging-object-endpoint> \
-  --object-bucket imeal-staging-private \
-  --object-destination backups/imeal-20260928-001 \
-  --output artifacts/imeal-20260928-001/staging
+  --schema "$TARGET_SCHEMA" \
+  --release-id "$RELEASE_ID" \
+  --object-endpoint "$STAGING_OBJECT_ENDPOINT" \
+  --object-bucket "$STAGING_OBJECT_BUCKET" \
+  --object-destination "$STAGING_OBJECT_DESTINATION" \
+  --output "$EVIDENCE_DIR"
 ```
 
-The wrapper performs these gates in order:
+The command writes `backup-manifest.json` only after the target fingerprint,
+custom-format dump, AGE encryption, private copy, byte count, and SHA-256
+checksum pass. The plaintext dump must be removed. Review the manifest for
+redaction, target identity, retention ownership, and measured timestamps.
 
-1. validates the source and destination isolation rules and requires the named
-   AGE recipient environment variable;
-2. runs a bounded read-only target fingerprint and requires its database/schema
-   to match the requested source;
-3. captures a PostgreSQL custom-format dump with `--no-owner` and
-   `--no-privileges`. The database password is passed through the command
-   environment, never as a `pg_dump` argument;
-4. encrypts the dump with AGE before any object-storage copy;
-5. computes the encrypted artifact size and SHA-256 checksum;
-6. copies only the encrypted artifact to the private destination; and
-7. writes `backup-manifest.json` atomically after every preceding step passes.
-
-A failed encryption or copy is an abort. The wrapper removes the plaintext
-intermediate dump and does not write a PASS manifest. Do not manually copy an
-unencrypted dump as a workaround.
-
-The manifest contains only the release ID, full read-only target fingerprint
-(database, schema, server version, and migration rows), UTC timestamps, artifact
-and object summaries, checksums, tool versions, non-secret storage references,
-and retention ownership. Review that it contains no URL credentials, OTP, token,
-provider payload, raw GPS, or unredacted PII before attaching it to release
-evidence.
-
-## Restore rehearsal
-
-Restore only into a fresh, isolated database and private bucket whose names
-identify the rehearsal. They must differ from the source target and must not be
-production or public names.
+Schedule and retain a restore rehearsal for the same target class. Restore
+only to fresh isolated names containing a restore/rehearsal identifier:
 
 ```bash
 node scripts/staging/restore-rehearsal.mjs \
-  --manifest artifacts/imeal-20260928-001/staging/backup-manifest.json \
-  --restore-database imeal_restore_20260928 \
-  --restore-bucket imeal-restore-20260928 \
-  --output artifacts/imeal-20260928-001/staging/restore-rehearsal.json
+  --manifest "$EVIDENCE_DIR/backup-manifest.json" \
+  --restore-database "$RESTORE_DATABASE" \
+  --restore-bucket "$RESTORE_BUCKET" \
+  --output "$EVIDENCE_DIR/restore-rehearsal.json"
 ```
 
-Before any restore command, the wrapper verifies the manifest, resolves the
-artifact beneath the manifest directory, and recomputes its byte count and
-SHA-256 checksum. It then decrypts the AGE artifact to a temporary local dump
-(using the operator's configured AGE identity) and performs, in order:
+The rehearsal verifies the encrypted artifact checksum and bytes before AGE
+decryption, restores PostgreSQL and object data to separate targets, checks the
+`User` row count and migration status, runs readiness and smoke callbacks, and
+records RPO/RTO. A missing or failed restore, checksum mismatch, RPO/RTO breach,
+or leftover plaintext is an abort. Do not restore over the source target.
 
-1. AGE decryption to a temporary plaintext dump;
-2. `createdb` for the fresh restore database;
-3. `pg_restore --exit-on-error --no-owner --no-privileges` into that database;
-4. an exact bounded row-count verification of the restored `"User"` table;
-5. `aws s3api create-bucket` for the fresh private restore bucket. Existing
-   buckets or any creation failure abort the rehearsal;
-6. an object copy from the private source reference to the fresh restore
-   bucket, followed by destination byte/checksum verification; and
-7. readiness, migration-status, and smoke checks, supplied as callbacks by
-   automation or run by the default command checks.
+## 3. Phase 0 approval, backfill, and validation
 
-The temporary decrypted dump is removed after `pg_restore`, including when a
-restore command fails. Never retain or upload that plaintext file.
+Do not proceed when any preflight check or migration status is nonzero. An
+independent approver creates `approval.json` after reviewing both the preflight
+and backup manifest hashes. The approval is bound to this exact release and
+target and contains `APPROVED_FOR_EXACT_BACKFILL`, a distinct rollback
+authority, and an active rollback decision window. It is not generated by the
+repository tooling.
 
-The report records PASS/FAIL, checksum status, verified database row count,
-verified object byte/checksum status, database/object restore status, readiness
-and smoke results, UTC timestamps, and measured RPO/RTO. A failure
-writes a redacted `result: FAIL` report atomically and propagates the failure;
-no source database or source bucket is ever used as a restore destination.
-
-## Abort and recovery rules
-
-Abort immediately, without a manual override, for any of the following:
-
-- source or destination resembles production, or restore names are not fresh
-  isolated rehearsal targets;
-- AGE recipient is missing or an object destination is public;
-- `pg_dump`, encryption, private copy, `createdb`, `pg_restore`, object restore,
-  readiness, or smoke returns nonzero;
-- manifest, artifact checksum, or artifact byte count does not match;
-- a plaintext intermediate remains after an encryption failure;
-- measured RPO/RTO exceeds its target; or
-- any evidence contains a credential, OTP, bearer/session token, provider
-  payload, raw GPS, or unredacted PII.
-
-Do not retry against a different target after an isolation failure. Preserve the
-redacted failure report, command exit diagnostics, and release ID; notify the
-release manager and platform security. If a restore database or bucket was
-created before a later check failed, quarantine it as a rehearsal artifact and
-record cleanup ownership. Never drop or overwrite a production resource as
-part of recovery.
-
-## Evidence checklist
-
-Store these artifacts under the release evidence directory with restricted
-access:
-
-- `backup-manifest.json` — PASS backup target, timestamps, encrypted artifact
-  checksum, object summary, storage reference, and tool versions;
-- encrypted artifact checksum and private object-storage reference;
-- `restore-rehearsal.json` — PASS or redacted FAIL report with checksum,
-  readiness, smoke, RPO, and RTO results; and
-- the release sign-off that records the operator, reviewer, measured values,
-  abort decisions, and incident link when applicable.
-
-Do not store raw `pg_dump` output, plaintext intermediate dumps, database URLs,
-object-storage credentials, AGE private keys, OTPs, bearer tokens, or provider
-payloads in the evidence directory.
-
-## Staging smoke and evidence
-
-Run the public smoke only against the approved staging HTTPS origins. The
-session token is read from the named environment variable and is never placed
-in the command line or report:
+Run the exact transactional backfill only after the backup and approval exist:
 
 ```bash
-node scripts/staging/smoke-staging.mjs \
+node scripts/staging/phase0-backfill.mjs \
+  --database-url-env TARGET_DATABASE_URL \
+  --schema "$TARGET_SCHEMA" \
+  --approval "$EVIDENCE_DIR/approval.json" \
+  --preflight "$EVIDENCE_DIR/preflight-before.json" \
+  --backup-manifest "$EVIDENCE_DIR/backup-manifest.json" \
+  --release-id "$RELEASE_ID" \
+  --output "$EVIDENCE_DIR/backfill-result.json"
+```
+
+The backfill is safe to rerun only when its exact approval, target, and
+preflight bindings still match. It is not a destructive down migration. If
+writers, dirty checks, target identity, approval, or checksum validation fail,
+stop and quarantine/remediate the target under the named authority.
+
+Run post-backfill preflight and validate the two named constraints:
+
+```bash
+node scripts/staging/phase0-validate.mjs \
+  --database-url-env TARGET_DATABASE_URL \
+  --schema "$TARGET_SCHEMA" \
+  --release-id "$RELEASE_ID" \
+  --preflight-after-output "$EVIDENCE_DIR/preflight-after.json" \
+  --output "$EVIDENCE_DIR/constraint-validation.json"
+```
+
+The command must produce PASS records for all seven checks, all four status
+counts, the exact target fingerprint, and both named constraints. Keep the
+before/after artifacts even on failure; never overwrite a failed record.
+
+## 4. Protected staging Compose and deployment gate
+
+The protected staging environment supplies a complete environment file at a
+local path referred to here as `STAGING_ENV_FILE_PATH`. The file must contain
+the approved immutable `API_IMAGE`, `WORKER_IMAGE`, and `ADMIN_WEB_IMAGE`
+values matching `STAGING_IMAGE_DIGESTS_JSON`; other `_IMAGE` values must also
+be digest-pinned. Do not print the file or its values.
+
+Render the exact checked-in Compose pair before starting services:
+
+```bash
+docker compose --env-file "$STAGING_ENV_FILE_PATH" \
+  -f docker-compose.yml \
+  -f docker-compose.staging.yml \
+  config --quiet
+```
+
+Deploy only after the release manager confirms the migration, backup, Phase 0,
+security, and external network gates. The protected workflow performs an exact
+pull and pinned Trivy scan of each `api`, `worker`, and `admin-web` digest before
+this invocation:
+
+```bash
+docker compose --env-file "$STAGING_ENV_FILE_PATH" \
+  -f docker-compose.yml \
+  -f docker-compose.staging.yml \
+  up --detach --wait --remove-orphans
+
+docker compose --env-file "$STAGING_ENV_FILE_PATH" \
+  -f docker-compose.yml \
+  -f docker-compose.staging.yml \
+  ps --all
+```
+
+Require `migrate` to complete successfully, API and worker readiness to pass,
+Admin Web health to pass, and Caddy to expose only the approved HTTPS edge.
+The staging overlay keeps database, PgBouncer, MinIO, and worker internals off
+the public edge and forces application authentication on. Capture the workflow
+artifact bundle named `staging-release-<release-id>`; its deployed-image SBOM
+index is `deployed-image-sbom-index.json`.
+
+## 5. Smoke, runtime integration, WAF, and alert delivery
+
+The package command invokes the checked-in `scripts/staging/smoke-staging.mjs`
+CLI:
+
+```text
+scripts/staging/smoke-staging.mjs
+```
+
+Run network smoke only against the approved HTTPS origins. The token is read by
+name from the protected environment and never placed in the command line,
+report, or logs:
+
+```bash
+yarn staging:smoke \
   --api-origin "$STAGING_API_ORIGIN" \
   --admin-origin "$STAGING_ADMIN_ORIGIN" \
   --session-token-env STAGING_SMOKE_SESSION_TOKEN \
-  --output artifacts/imeal-20260928-001/staging/smoke-infrastructure.json
+  --output "$EVIDENCE_DIR/smoke-infrastructure.json"
 ```
 
-The runner uses bounded abort timeouts, checks the HTTP-to-HTTPS redirect,
-API liveness/readiness, Admin `/health`, response `X-Request-Id`, an optional
-authenticated `/auth/me`, and a safe error envelope. It records business
-workflow status as `NOT_RUN`; execute the existing API/domain/worker suites
-separately and retain their command/results as `smoke-business.json`. Do not
-use local test mode as staging evidence.
+This runner checks HTTP-to-HTTPS redirect, API liveness/readiness, Admin
+`/health`, safe error envelopes, request IDs, and optional authenticated
+`/auth/me`; its business workflow field remains `NOT_RUN`. Operators must
+provide separately reviewed, target-bound PASS artifacts named
+`smoke-auth-rbac.json`, `smoke-business.json`, `smoke-mobile-admin.json`, and
+`smoke-worker.json` for the corresponding identity, business, client, and
+worker paths. Do not turn local test mode into staging evidence.
 
-Build the complete evidence manifest only after every required artifact,
-including an operator-provided `signoff.json`, exists. Every required `.json`
-artifact—including the release manifest, target fingerprint, backup/preflight
-records, approvals, and smoke/observability records—must identify this exact
-release and target database/schema; no JSON artifact is exempt. Smoke and
-observability artifacts must have `result: "PASS"`; `smoke-business.json` is
-the separate operator-provided suite record, not the network runner's `NOT_RUN`
-workflow field. Approval must be exact for this release/target, and sign-off
-must be `PASS` with distinct operator/reviewer identities and review metadata.
+The protected workflow invokes `runRuntimeIntegration` from
+`scripts/staging/runtime-integration.mjs` after deployment and before it records
+`runtimeIntegration: PASS`. It must observe the expected release marker,
+health/readiness behavior, and the actual hardening endpoints. Because this
+repository currently has no real hardening `/metrics` collectors/endpoints,
+that gate fails closed and MUST remain FAIL until the deployed implementation
+and its collector evidence exist.
+
+Before sign-off, the network owner must prove the approved edge WAF and
+rate-limit policy, trusted-proxy/client-IP handling, TLS certificate and
+redirect, and an alert route that reaches the named on-call destination. Record
+only redacted results in `observability-alert-test.json`; the alert route is an
+external prerequisite and there is no repository command that can manufacture
+this evidence. Missing WAF/rate-limit approval or missing alert delivery is a
+NO-GO.
+
+## 6. Evidence bundle, checksums, and sign-off
+
+The release evidence directory must contain exactly the target-bound,
+redacted artifacts consumed by `scripts/staging/evidence.mjs`:
+
+```text
+release-manifest.json
+target-fingerprint.json
+migration-status.txt
+preflight-before.json
+backup-manifest.json
+approval.json
+backfill-result.json
+preflight-after.json
+constraint-validation.json
+restore-rehearsal.json
+smoke-infrastructure.json
+smoke-auth-rbac.json
+smoke-business.json
+smoke-mobile-admin.json
+smoke-worker.json
+observability-alert-test.json
+checksums.txt
+signoff.json
+```
+
+The protected workflow also retains its immutable release artifact names,
+including `runtime-integration.json`, `staging-smoke.json`,
+`deployed-image-sbom-index.json`, and the per-service deployed-image SBOMs.
+The evidence bundle uses `release-manifest.json` references to the approved
+SBOM and smoke artifacts; do not copy secrets from those workflow artifacts.
+
+The command is implemented by the checked-in
+`scripts/staging/release-manifest.mjs` CLI.
+
+The release manifest is generated only after all required checks are PASS and
+its image/migration/lockfile references have been reviewed:
+
+```bash
+yarn staging:manifest \
+  --release-id "$RELEASE_ID" \
+  --commit "$GITHUB_SHA" \
+  --images-json "$EVIDENCE_DIR/images.json" \
+  --checks-json "$EVIDENCE_DIR/check-results.json" \
+  --rollback-artifact rollback/previous-release.tar \
+  --output "$EVIDENCE_DIR/release-manifest.json"
+```
+
+`images.json` must contain the exact immutable `api`, `worker`, and `adminWeb`
+references. `check-results.json` must contain PASS for typecheck, lint, unit,
+Prisma, database, Compose, staging tools, security, runtime integration, and
+staging smoke; `sbom` and the smoke reference remain artifact references. The
+manifest command rejects mutable references and secret-like values.
+
+After an independent reviewer confirms the complete bundle, create checksums
+with the repository evidence command. It refuses an incomplete bundle, failed
+status, target mismatch, missing rollback artifact, or mismatched checksum:
 
 ```bash
 node scripts/staging/evidence.mjs \
-  --release-id imeal-20260928-001 \
-  --target phase0_staging_20260928 \
-  --artifacts artifacts/imeal-20260928-001/staging
-```
-
-The evidence command never creates an approval or sign-off. Checksums can be
-created only by an explicit operator action, after the sign-off artifact is
-reviewed. `--write-checksums` performs the same release, target, rollback-file,
-status, approval, and sign-off gates before creating `checksums.txt`; it cannot
-be used to checksum an incomplete or failed bundle:
-
-```bash
-node scripts/staging/evidence.mjs \
-  --release-id imeal-20260928-001 \
-  --target phase0_staging_20260928 \
-  --artifacts artifacts/imeal-20260928-001/staging \
+  --release-id "$RELEASE_ID" \
+  --target "$TARGET_SCHEMA" \
+  --artifacts "$EVIDENCE_DIR" \
   --write-checksums
 ```
 
-Reject the release for a missing artifact, failed status/readiness/smoke,
-mutable image tag, missing or unscoped rollback file, rollback checksum
-mismatch, any release/target mismatch, or any secret-bearing report. Preserve
-failed reports; never overwrite an evidence artifact.
+The operator then writes `signoff.json` with `result: "PASS"`,
+`decision: "REVIEWED"`, distinct non-secret `operator` and `reviewer` names,
+`releaseId`, exact target, and an ISO `signedAt`. `approval.json` and
+`signoff.json` are separate records; approval grants the exact backfill, while
+sign-off reviews the complete release evidence. A missing or duplicate identity
+is a failure.
+
+## 7. Abort, restore, and rollback
+
+Abort without manual override for a target mismatch, dirty preflight check,
+unclean migration, missing approval, backup or restore failure, image scan
+finding, failed readiness/smoke/runtime integration, WAF or alert prerequisite
+failure, secret-bearing evidence, checksum mismatch, or any UAT/identity/
+location approval gap. Preserve redacted logs and reports and notify the release
+manager and platform security.
+
+Before deployment, no application writer may run after an abort. After a
+failed deployment, keep the failed evidence bundle, stop the isolated Compose
+services without deleting retained evidence, and quarantine the target. The
+rollback authority chooses one of these reviewed actions:
+
+1. restore the approved backup into the isolated restore target using
+   `scripts/staging/restore-rehearsal.mjs`, then re-run migration/readiness and
+   smoke checks; or
+2. redeploy the prior immutable image digest and matching reviewed migration
+   state from the rollback artifact, followed by readiness and smoke checks.
+
+Never perform a down migration, overwrite an unknown target, or substitute a
+legacy data provider for a PostgreSQL restore. A rollback is not complete until
+its target fingerprint, image references, measured RPO/RTO, readiness/smoke
+results, checksums, decision window, and independent reviewer are recorded.
+
+## 8. Canonical CI entry point and closeout
+
+The checked-in protected workflow is
+`.github/workflows/staging-readiness.yml`. It runs immutable source checks,
+database checks, Compose boundary validation, dependency and image security
+checks, source secret scanning, SBOM generation, exact protected deployment
+digest scanning, runtime integration, token-backed smoke, release manifest
+creation, artifact upload, and disposable service teardown. CI PASS is not a
+substitute for the external staging approvals listed above.
+
+The release manager closes the gate only when all required artifacts and
+checksums are present, the independent approval and sign-off are distinct and
+valid, WAF/rate-limit and alert delivery are observed, runtime integration is
+PASS on a deployed implementation, backup restore is rehearsed, and UAT,
+identity, roster, location, DNS, TLS, and OTP owners have signed. Until then,
+record **CONDITIONAL / NO-GO** and keep the rollback decision window open.

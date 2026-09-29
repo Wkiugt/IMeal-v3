@@ -28,19 +28,19 @@
 
 ## 1. Delivery strategy
 
-| Phase | Deliverable | Priority |
-| ----- | ----------- | -------- |
-| 0 | Verify canonical policy + organization/OTP/provider/network ownership | P0 |
-| 1 | Repository/tooling + Linux dev/staging foundation | P0 |
-| 2 | PostgreSQL schema + domain/test safety net | P0 |
-| 3 | Allowlist-A email OTP + opaque sessions/RBAC | P0 |
-| 4 | Weekly menu + weekly registration | P0 |
-| 5 | Delegation + notifications | P0 |
-| 6 | Dynamic QR + Kitchen serving + realtime dashboard | P0 |
-| 7 | No-show/penalty/admin/audit/jobs | P0/P1 |
-| 8 | Clean-slate qualification + security/load/UAT | P0 release gate |
-| 9 | Production rollout + mobile distribution + operations | P0 release gate |
-Phases should be independently reviewable. No production rollout before Phase 8 exit criteria.
+| Phase                                                                                          | Deliverable                                                           | Priority        |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | --------------- |
+| 0                                                                                              | Verify canonical policy + organization/OTP/provider/network ownership | P0              |
+| 1                                                                                              | Repository/tooling + Linux dev/staging foundation                     | P0              |
+| 2                                                                                              | PostgreSQL schema + domain/test safety net                            | P0              |
+| 3                                                                                              | Allowlist-A email OTP + opaque sessions/RBAC                          | P0              |
+| 4                                                                                              | Weekly menu + weekly registration                                     | P0              |
+| 5                                                                                              | Delegation + notifications                                            | P0              |
+| 6                                                                                              | Dynamic QR + Kitchen serving + realtime dashboard                     | P0              |
+| 7                                                                                              | No-show/penalty/admin/audit/jobs                                      | P0/P1           |
+| 8                                                                                              | Clean-slate qualification + security/load/UAT                         | P0 release gate |
+| 9                                                                                              | Production rollout + mobile distribution + operations                 | P0 release gate |
+| Phases should be independently reviewable. No production rollout before Phase 8 exit criteria. |
 
 ---
 
@@ -51,8 +51,8 @@ Phases should be independently reviewable. No production rollout before Phase 8 
 - [ ] Product/API/backend/UX docs agree on Monday week, cutoff, 10:30–13:30 serving and 13:45 no-show.
 - [ ] QR 5s/skew 2s/pickup session 30s represented in contracts/tests.
 - [ ] Staff-side pickup intent, Kitchen scan→final-confirm flow, no manual-code
-  recovery/bypass and all-or-nothing batch serving represented consistently; no
-  Kitchen item-edit or reversal flow remains.
+      recovery/bypass and all-or-nothing batch serving represented consistently; no
+      Kitchen item-edit or reversal flow remains.
 - [ ] Persisted inbox + Expo Push, 50,000 VND penalty, 1-year history retention and permission model represented consistently.
 - [ ] Firebase removal-at-redevelopment-start/no-migration policy appears in technical/backend/rollout sections.
 
@@ -64,17 +64,16 @@ registration or local production login is part of the current contract:
 
 - [ ] Approve the source and owner for exactly the active allowlist-A emails.
 - [ ] Configure an HTTPS OTP provider URL, API key and sender identity outside
-  source control.
+      source control.
 - [ ] Confirm provider delivery, rate limits, expiry and support ownership.
 - [ ] Record synthetic test addresses and role assignments without storing
-  secrets or real employee data in docs.
+      secrets or real employee data in docs.
 - [ ] Approve the one-shot server-side first-Admin provisioning operation and
-  its audit owner.
+      its audit owner.
 
 **Exit:** allowlist-A data, provider settings, role assignments and opaque
 session behavior are provisioned and documented without secrets; staging OTP
 request/verify is exercised at the authentication exit.
-
 
 ## Task 0.3 — Network/DNS/TLS topology
 
@@ -82,7 +81,7 @@ request/verify is exercised at the authentication exit.
 - [ ] Configure HTTPS certificate trusted by target iOS/Android devices.
 - [ ] Deny public/general LAN access to PostgreSQL port.
 - [ ] Allow API outbound HTTPS to the approved OTP provider and chosen
-  push/image providers.
+      push/image providers.
 
 **Exit:** HTTPS API reachability, authentication/permission boundaries and PostgreSQL isolation are documented and testable.
 
@@ -102,37 +101,37 @@ evidence only and does not close the staging, production, mobile-release,
 security, backup/restore or realtime client gates.
 
 - [x] Fresh Step 2 expand at HEAD `75a9d719deb511503dfc55a11b52a81ab6d049a6`:
-  `DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal?schema=phase0_step2_20260928131738' yarn workspace @imeal/core exec prisma migrate deploy`
-  applied all eight checked-in migrations. `prisma generate` and
-  `prisma validate` passed; post-expand registrations, daily menu revisions,
-  meal days, meal servings and penalties were all zero.
+      `DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal?schema=phase0_step2_20260928131738' yarn workspace @imeal/core exec prisma migrate deploy`
+      applied all eight checked-in migrations. `prisma generate` and
+      `prisma validate` passed; post-expand registrations, daily menu revisions,
+      meal days, meal servings and penalties were all zero.
 - [x] Read-only preflight (clean result; approval not evidenced): the
-  target-safe wrapper asserted `current_schema()` for
-  `phase0_step2_20260928131738`, passed `-v ON_ERROR_STOP=1`, and ran current
-  `preflight.sql`. All seven named checks and all four status counts were zero.
+      target-safe wrapper asserted `current_schema()` for
+      `phase0_step2_20260928131738`, passed `-v ON_ERROR_STOP=1`, and ran current
+      `preflight.sql`. All seven named checks and all four status counts were zero.
 - [x] Exact backfill after the clean local preflight (no independent approval
-  evidence): the target-safe current `backfill.sql` wrapper ran twice; both
-  runs returned `UPDATE 0`, `DO`, `UPDATE 0`, `UPDATE 0`, `COMMIT`.
+      evidence): the target-safe current `backfill.sql` wrapper ran twice; both
+      runs returned `UPDATE 0`, `DO`, `UPDATE 0`, `UPDATE 0`, `COMMIT`.
 - [x] Post-backfill validation: target-safe preflight remained all-zero; both
-  `registration_lifecycle_snapshot_complete` and
-  `registration_serving_consistency` returned `convalidated=true`.
+      `registration_lifecycle_snapshot_complete` and
+      `registration_serving_consistency` returned `convalidated=true`.
 - [x] Classification evidence: disposable schema
-  `phase0_step2_classification_20260928131738` returned
-  `roster_assignment_ambiguous=1` for
-  `registration-step2-invalid-location` and
-  `future_active_snapshot_incomplete=1` for
-  `registration-step2-stale-menu`; the other five checks were zero. No
-  backfill or validation was run because named checks were nonzero.
+      `phase0_step2_classification_20260928131738` returned
+      `roster_assignment_ambiguous=1` for
+      `registration-step2-invalid-location` and
+      `future_active_snapshot_incomplete=1` for
+      `registration-step2-stale-menu`; the other five checks were zero. No
+      backfill or validation was run because named checks were nonzero.
 - [x] Fresh disposable sequence is GREEN; release status remains
-  **CONDITIONAL / NO-GO** because no approved staging/representative target,
-  independent approval, backup/restore rehearsal or production evidence exists.
+      **CONDITIONAL / NO-GO** because no approved staging/representative target,
+      independent approval, backup/restore rehearsal or production evidence exists.
 - [x] Fresh Step 1 verification at HEAD `75a9d71` supersedes the historical
-  pre-75 failures: core focused 42/42; core full 93/93 with the intentional
-  serial `--maxWorkers 1` caveat; API e2e 45/45 plus production concurrency
-  12/12; worker e2e 5/5; `yarn typecheck` and mobile tsc passed after
-  `yarn install --immutable`.
+      pre-75 failures: core focused 42/42; core full 93/93 with the intentional
+      serial `--maxWorkers 1` caveat; API e2e 45/45 plus production concurrency
+      12/12; worker e2e 5/5; `yarn typecheck` and mobile tsc passed after
+      `yarn install --immutable`.
 - [x] Historical pre-75 failure and blocked-typecheck results remain retained
-  in the Task 9 report for audit history and are not current status.
+      in the Task 9 report for audit history and are not current status.
 - [ ] Staging approval: no staging target or ambient `DATABASE_URL` was available. Previously observed local public evidence (not rerun or modified during fresh Step 2) remains dirty (132 incomplete snapshots under the conservative operational scope, 6 ambiguous/effectively invalid roster assignments, 132 incomplete menu revisions, 40 incomplete future ACTIVE rows); no backfill or validation was run there.
 
 **Cutover order:** expand additive schema → target-safe read-only preflight →
@@ -277,11 +276,11 @@ Add constraints:
 ## Task 3.1 — Mobile email OTP flow
 
 - [ ] Request OTP with generic non-disclosure response for allowlisted,
-  unknown and disabled addresses.
+      unknown and disabled addresses.
 - [ ] Show OTP verification, expiry, attempt-limit, resend and provider-error
-  states without revealing account existence.
+      states without revealing account existence.
 - [ ] Store only the opaque session token in platform secure storage; never
-  store an OTP or provider secret in the client.
+      store an OTP or provider secret in the client.
 - [ ] Handle logout, expiry, account disable, revocation and cold deep links.
 
 ## Task 3.2 — API OTP/session validation
@@ -296,7 +295,7 @@ Add constraints:
 
 - [ ] Do not auto-provision accounts or privileged roles from login.
 - [ ] Provision allowlist records, account status, roles and roster/location
-  assignments through audited server-side/Admin operations.
+      assignments through audited server-side/Admin operations.
 - [ ] Disabled users receive `ACCOUNT_DISABLED`; active sessions are revoked.
 - [ ] Keep role claims server-side; client requests never choose a role.
 
@@ -307,24 +306,24 @@ Add constraints:
 - [ ] Audit actor/time.
 - [ ] Protect against unauthorized escalation.
 - [ ] Admin-role lifecycle remains a separate audited server-side operation, not
-  an Admin Web capability.
+      an Admin Web capability.
 - [ ] Assign/revoke `penalty.read`, `penalty.resolve`.
 - [ ] Seed canonical Admin role permissions; authorization still checks
-  permission, never Admin bypass.
+      permission, never Admin bypass.
 - [ ] Admin role alone does not grant Kitchen serving.
 - [ ] Kitchen role does not grant Staff registration/QR/delegation; dual-role
-  users require explicit `staff + kitchen`.
+      users require explicit `staff + kitchen`.
 
 ## Task 3.5 — Admin bootstrap / server-side Admin lifecycle
 
 - [ ] First Admin provisioning accepts an approved allowlist record and explicit
-  server-side ownership; no email-domain matching.
+      server-side ownership; no email-domain matching.
 - [ ] Admin-role creation/removal is unavailable from Admin Web.
 - [ ] Refuses unsafe reuse unless an approved server-side recovery procedure is
-  invoked.
+      invoked.
 - [ ] Records actor/time/request evidence without secrets.
 - [ ] Exact IEC approval/ownership process may be filled after the responsible
-  administrators are identified; do not hard-code an unverified two-person rule.
+      administrators are identified; do not hard-code an unverified two-person rule.
 
 **Exit Phase 3:** synthetic staging addresses complete request/verify/logout
 against the OTP provider; opaque sessions and PostgreSQL RBAC answer
@@ -459,7 +458,7 @@ Authenticated Kitchen role/permission required.
 - [ ] No per-item checkbox or item-edit action; Kitchen verifies the Staff-selected set and uses one big final-confirm CTA.
 - [ ] Big confirm CTA includes count.
 - [ ] Expired pickup session recovery requires scanning a fresh QR and resolving
-  the exact presenter-selected set again.
+      the exact presenter-selected set again.
 - [ ] Duplicate serving warning includes receiver/time.
 
 ## Task 6.5 — Realtime dashboard
@@ -553,9 +552,16 @@ Authenticated Kitchen role/permission required.
 - [ ] Create fresh database solely from checked-in migrations.
 - [ ] Run audited first-Admin bootstrap.
 - [ ] Provision synthetic allowlist-A test users and assign
-  Kitchen/permissions explicitly; do not auto-provision from login.
+      Kitchen/permissions explicitly; do not auto-provision from login.
 - [ ] Prove Firebase has been absent from the v2 runtime/data path since re-development kickoff; no export/import/mapping/dual-write dependency exists.
 - [ ] Restore a fresh environment from PostgreSQL backup.
+- [ ] Follow the [staging readiness runbook](runbooks/staging-readiness.md) for
+      target fingerprint, migration status, encrypted backup, approval, Phase 0
+      validation, protected Compose, smoke, evidence, and rollback.
+
+The repository's local staging-tool and Compose tests are implementation
+evidence only. They do not close the staging target, restore, identity,
+location, DNS/TLS, OTP, WAF/rate-limit, alert-delivery, or UAT gates.
 
 ## Task 8.2 — Synthetic staging dataset/load
 
@@ -567,8 +573,9 @@ Authenticated Kitchen role/permission required.
 - [ ] Tag synthetic accounts/data so production-safe cleanup is deterministic and audited.
 
 ## Task 8.3 — Security gate
+
 - [ ] Unknown/disabled allowlist addresses receive the same generic response
-  and cannot create a session.
+      and cannot create a session.
 - [ ] Staff cannot self-grant Kitchen/Admin.
 - [ ] Staff cannot call Kitchen serving mutation.
 - [ ] Kitchen serving requires authenticated Kitchen role/permission and all server-side pickup invariants.
@@ -578,8 +585,19 @@ Authenticated Kitchen role/permission required.
 - [ ] API rate/input validation tested.
 - [ ] Disabled account denied across the API authorization matrix.
 - [ ] Permission boundaries for Admin, independent Staff/Kitchen roles and penalties tested; no reversal endpoint exists.
+- [ ] Approved edge WAF/rate-limit policy, TLS/DNS and trusted-proxy behavior
+      verified on the real staging edge.
+- [ ] Runtime integration observes actual hardening `/metrics` collectors and
+      endpoints; absent collectors must fail closed and cannot be replaced by
+      synthetic evidence.
+- [ ] Alert route delivers to the named on-call destination and the result is
+      retained as `observability-alert-test.json`.
 
 ## Task 8.4 — UAT
+
+UAT remains an external gate. No native-device, approved identity/roster,
+location, real OTP-provider, alert-delivery, or real staging evidence is
+claimed by local tests.
 
 Staff:
 
@@ -600,7 +618,7 @@ Kitchen:
 - [ ] One stale intended item rolls back entire multi-item batch.
 - [ ] 20 consecutive self/proxy/duplicate scans retain scanner context and use the scan→confirm happy path.
 - [ ] Unselected eligible registrations are never served; any pre-confirm
-  change requires refreshed presenter intent and QR re-resolve.
+      change requires refreshed presenter intent and QR re-resolve.
 - [ ] Duplicate scan.
 - [ ] Two-device realtime dashboard.
 - [ ] Serving resolve/confirm works for valid Kitchen callers regardless of client network location.
@@ -630,6 +648,15 @@ Traceability gate:
 
 # Phase 9 — Production rollout
 
+The operator sequence for staging qualification is the
+[staging readiness runbook](runbooks/staging-readiness.md). It is the source
+of truth for exact commands, protected secret manifest names, artifact
+checksums, sign-off, abort, restore, and rollback. Current local checks do not
+claim external staging or production evidence; Phase 9 remains blocked by the
+missing hardening `/metrics` collectors/endpoints, approved WAF/rate-limit and
+alert route, real staging DNS/TLS/OTP, backup restore, UAT, identity, and
+location approvals.
+
 ## Task 9.1 — Production Linux provisioning
 
 Recommended:
@@ -648,6 +675,12 @@ Linux LTS
 - [ ] PostgreSQL not exposed publicly.
 - [ ] Centralized server logging, health monitoring and alerting for API, worker/jobs and PostgreSQL.
 - [ ] Finalize log retention and alert destination before rollout.
+- [ ] Render both `docker-compose.yml` and `docker-compose.staging.yml` with
+      the protected environment file and immutable image digest manifest.
+- [ ] Run the pre-deploy exact digest security scan and retain deployed-image
+      SBOM references before recording a security PASS.
+- [ ] Keep runtime integration fail closed until actual hardening collectors and
+      endpoints are deployed and observed.
 
 ## Task 9.2 — Backup/restore
 
@@ -657,6 +690,9 @@ Linux LTS
 - [ ] Document RPO/RTO and owner.
 - [ ] Document rollback authority, decision window and application/schema rollback procedure.
 - [ ] Prove database migrations remain backward-compatible for the rollback window.
+- [ ] Retain `backup-manifest.json`, `restore-rehearsal.json`, checksums, and
+      independent sign-off from the runbook evidence directory.
+- [ ] No backup/restore PASS may be inferred from unit tests or a local volume.
 
 ## Task 9.3 — Mobile distribution (TBD before production release)
 
@@ -664,7 +700,7 @@ The project has not yet selected package/bundle IDs, signing ownership, minimum 
 
 - [ ] Configure Android signing/package ID.
 - [ ] OTP provider HTTPS URL/sender settings and opaque-session behavior match
-  release configuration.
+      release configuration.
 - [ ] Decide organization distribution channel (managed/internal store/public private listing as approved).
 - [ ] Test upgrade path and deep links/push on release build.
 - [ ] Define API/mobile compatibility matrix, minimum supported app version and pilot cohort.
@@ -677,12 +713,18 @@ The project has not yet selected package/bundle IDs, signing ownership, minimum 
 - [ ] Run audited server-side Admin bootstrap/lifecycle operation and assign Kitchen/permissions.
 - [ ] Release mobile to pilot cohort, then staged organization rollout.
 - [ ] Verify allowlist-A OTP request/verify, opaque-session restore/logout and
-  current server-side role/status enforcement.
+      current server-side role/status enforcement.
 - [ ] Verify one tagged synthetic weekly registration.
 - [ ] Verify tagged synthetic self/proxy final serving and audited synthetic cleanup.
 - [ ] Verify realtime dashboard.
 - [ ] Verify no-show job on controlled staging/production-safe target.
 - [ ] Monitor first complete meal lifecycle.
+
+The rollout is not authorized while any external prerequisite is absent.
+Specifically, missing hardening collectors/endpoints, edge WAF/rate-limit
+approval, alert delivery, real staging DNS/TLS/OTP, restore rehearsal, UAT,
+identity, location, or roster approval keeps the release **CONDITIONAL /
+NO-GO**.
 
 **Production exit:** first complete weekly registration + daily serving + no-show lifecycle reconciles in PostgreSQL with zero P0 defects; rollback hold point is formally released.
 
