@@ -237,9 +237,21 @@ test('does not inherit ambient PGPASSWORD for a passwordless backup URL', async 
   const directory = await makeDirectory();
   const commands = [];
   const previousRecipient = process.env.AGE_RECIPIENT;
-  const previousPassword = process.env.PGPASSWORD;
+  const previousEnvironment = new Map(
+    [
+      'PGPASSWORD',
+      'PGCONNECT_TIMEOUT',
+      'PGAPPNAME',
+      'PGTARGETSESSIONATTRS',
+      'PGSSLMINPROTOCOLVERSION',
+    ].map((variable) => [variable, process.env[variable]]),
+  );
   process.env.AGE_RECIPIENT = 'age1stagingrecipient';
   process.env.PGPASSWORD = 'ambient-secret';
+  process.env.PGCONNECT_TIMEOUT = '900';
+  process.env.PGAPPNAME = 'ambient-app';
+  process.env.PGTARGETSESSIONATTRS = 'any';
+  process.env.PGSSLMINPROTOCOLVERSION = 'TLSv1.1';
   try {
     await createBackup({
       databaseUrl: 'postgresql://backup_user@staging-db.example/imeal_staging',
@@ -259,12 +271,18 @@ test('does not inherit ambient PGPASSWORD for a passwordless backup URL', async 
         command === 'pg_dump' && args.includes('--format=custom'),
     );
     assert.equal(pgDump.options.env.PGPASSWORD, undefined);
+    assert.equal(pgDump.options.env.PGCONNECT_TIMEOUT, undefined);
+    assert.equal(pgDump.options.env.PGAPPNAME, undefined);
+    assert.equal(pgDump.options.env.PGTARGETSESSIONATTRS, undefined);
+    assert.equal(pgDump.options.env.PGSSLMINPROTOCOLVERSION, undefined);
     assertNoSensitiveText(JSON.stringify(pgDump.args));
   } finally {
     if (previousRecipient === undefined) delete process.env.AGE_RECIPIENT;
     else process.env.AGE_RECIPIENT = previousRecipient;
-    if (previousPassword === undefined) delete process.env.PGPASSWORD;
-    else process.env.PGPASSWORD = previousPassword;
+    for (const [variable, value] of previousEnvironment) {
+      if (value === undefined) delete process.env[variable];
+      else process.env[variable] = value;
+    }
   }
 });
 

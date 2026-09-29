@@ -13,6 +13,14 @@ import { dirname } from 'node:path';
 import { URL } from 'node:url';
 
 const SCHEMA_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const POSTGRES_ENVIRONMENT_KEY_PATTERN = /^PG[A-Z0-9_]*$/;
+export function filterPostgresEnvironment(environment) {
+  return Object.fromEntries(
+    Object.entries(environment).filter(
+      ([key]) => !POSTGRES_ENVIRONMENT_KEY_PATTERN.test(key),
+    ),
+  );
+}
 const SECRET_KEY_PATTERN = /(password|token|secret|apikey|otp)/i;
 const SENSITIVE_JSON_KEY_PATTERN =
   /^(?:[A-Za-z0-9_-]*(?:password|token|secret)|[A-Za-z0-9_-]*api[_-]?key|otp(?:[_-]?code)?|provider[\s_-]?payload)$/i;
@@ -30,6 +38,8 @@ const TRANSACTION_READ_ONLY_SETTING_PATTERN =
 const PRIVATE_KEY_PATTERN = /-----BEGIN [^-\n]*PRIVATE KEY-----/i;
 const PRIVATE_KEY_BLOCK_PATTERN =
   /-----BEGIN [^-\n]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-\n]*PRIVATE KEY-----|$)/gi;
+const SENSITIVE_DATABASE_URL_PARAMETER_PATTERN =
+  /^(?:password|passfile|sslpassword|sslkeypassword|token|secret)$/i;
 
 function normalizeSchemaDefinition(schema) {
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
@@ -143,10 +153,25 @@ export function redactDatabaseUrl(value) {
   } catch {
     return value;
   }
-  if (!parsed.username && !parsed.password) {
+  const redactedSearchParams = new URLSearchParams(parsed.searchParams);
+  let queryRedacted = false;
+  for (const parameter of redactedSearchParams.keys()) {
+    if (SENSITIVE_DATABASE_URL_PARAMETER_PATTERN.test(parameter)) {
+      redactedSearchParams.set(parameter, '<redacted>');
+      queryRedacted = true;
+    }
+  }
+  if (!parsed.username && !parsed.password && !queryRedacted) {
     return value;
   }
-  return `${parsed.protocol}//<redacted>@${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
+  const search = queryRedacted
+    ? `?${redactedSearchParams.toString()}`
+    : parsed.search;
+  const authority =
+    parsed.username || parsed.password
+      ? `<redacted>@${parsed.host}`
+      : parsed.host;
+  return `${parsed.protocol}//${authority}${parsed.pathname}${search}${parsed.hash}`;
 }
 
 function isRedactedAssignmentValue(value) {
@@ -379,26 +404,38 @@ function assertDatabaseUrl(value) {
   }
   return value;
 }
-const SSL_CONNECTION_PARAMETERS = {
+const LIBPQ_URL_ENVIRONMENT_PARAMETERS = {
   sslmode: 'PGSSLMODE',
+  sslnegotiation: 'PGSSLNEGOTIATION',
+  sslcompression: 'PGSSLCOMPRESSION',
+  sslsni: 'PGSSLSNI',
   sslcert: 'PGSSLCERT',
   sslkey: 'PGSSLKEY',
   sslrootcert: 'PGSSLROOTCERT',
   sslcrl: 'PGSSLCRL',
+  sslcrldir: 'PGSSLCRLDIR',
+  crldir: 'PGSSLCRLDIR',
+  ssl_min_protocol_version: 'PGSSLMINPROTOCOLVERSION',
+  ssl_max_protocol_version: 'PGSSLMAXPROTOCOLVERSION',
   channel_binding: 'PGCHANNELBINDING',
-  sslnegotiation: 'PGSSLNEGOTIATION',
+  gssencmode: 'PGGSSENCMODE',
+  krbsrvname: 'PGKRBSRVNAME',
+  gsslib: 'PGGSSLIB',
+  connect_timeout: 'PGCONNECT_TIMEOUT',
+  application_name: 'PGAPPNAME',
+  fallback_application_name: 'PGFALLBACKAPPNAME',
+  target_session_attrs: 'PGTARGETSESSIONATTRS',
+  load_balance_hosts: 'PGLOADBALANCEHOSTS',
+  client_encoding: 'PGCLIENTENCODING',
+  keepalives: 'PGKEEPALIVES',
+  keepalives_idle: 'PGKEEPALIVES_IDLE',
+  keepalives_interval: 'PGKEEPALIVES_INTERVAL',
+  keepalives_count: 'PGKEEPALIVES_COUNT',
+  tcp_user_timeout: 'PGTCP_USER_TIMEOUT',
+  requirepeer: 'PGREQUIREPEER',
+  replication: 'PGREPLICATION',
 };
-const CONTROLLED_CONNECTION_ENVIRONMENT = [
-  'PGHOST',
-  'PGPORT',
-  'PGUSER',
-  'PGDATABASE',
-  'PGSERVICE',
-  'PGSERVICEFILE',
-  'PGPASSWORD',
-  'PGPASSFILE',
-  ...Object.values(SSL_CONNECTION_PARAMETERS),
-];
+const IGNORED_DATABASE_URL_PARAMETERS = new Set(['schema', 'pgbouncer']);
 
 function parseDatabaseConnection(databaseUrl) {
   const parsed = new URL(databaseUrl);
@@ -420,11 +457,14 @@ function parseDatabaseConnection(databaseUrl) {
     throw new Error('database URL database name is required');
   }
   const environment = {};
-  for (const [parameter, variable] of Object.entries(
-    SSL_CONNECTION_PARAMETERS,
-  )) {
-    const value = parsed.searchParams.get(parameter);
-    if (value !== null) environment[variable] = value;
+  for (const [parameter, value] of parsed.searchParams) {
+    const variable = LIBPQ_URL_ENVIRONMENT_PARAMETERS[parameter];
+    if (variable !== undefined) {
+      environment[variable] = value;
+      continue;
+    }
+    if (IGNORED_DATABASE_URL_PARAMETERS.has(parameter)) continue;
+    throw new Error(`unsupported database URL parameter: ${parameter}`);
   }
   return {
     host: parsed.hostname.replace(/^\[(.*)\]$/, '$1'),
@@ -822,10 +862,7 @@ export async function runPsql(options) {
   if (options.readOnly) {
     pgOptions.push('-c default_transaction_read_only=on');
   }
-  const environment = { ...process.env };
-  for (const variable of CONTROLLED_CONNECTION_ENVIRONMENT) {
-    delete environment[variable];
-  }
+  const environment = filterPostgresEnvironment(process.env);
   Object.assign(environment, connection.environment);
   environment.PGOPTIONS = pgOptions.join(' ');
   if (connection.password !== undefined) {

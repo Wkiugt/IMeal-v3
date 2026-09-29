@@ -47,6 +47,12 @@ test('redacts credentials from database URLs without changing public URLs', () =
     'postgresql://db.example/imeal?schema=phase0_staging',
   );
   assert.equal(redactDatabaseUrl('not-a-url'), 'not-a-url');
+  assert.equal(
+    redactDatabaseUrl(
+      'postgresql://db.example/imeal?schema=public&sslpassword=private-key-secret',
+    ),
+    'postgresql://db.example/imeal?schema=public&sslpassword=%3Credacted%3E',
+  );
 });
 
 test('parses typed long options and rejects unknown or malformed values', () => {
@@ -211,7 +217,7 @@ test('runs psql with shell disabled, validated target search path, timeout and r
   try {
     const result = await runPsql({
       databaseUrl:
-        'postgresql://admin:password@db.example:5432/imeal?schema=ignored&pgbouncer=true&sslmode=require&sslrootcert=%2Fetc%2Froot.crt',
+        'postgresql://admin:password@db.example:5432/imeal?schema=ignored&pgbouncer=true&sslmode=require&sslrootcert=%2Fetc%2Froot.crt&sslcompression=1&sslsni=true&ssl_min_protocol_version=TLSv1.3&ssl_max_protocol_version=TLSv1.3&channel_binding=require&gssencmode=disable&krbsrvname=postgres&gsslib=gssapi&connect_timeout=5&application_name=staging&target_session_attrs=read-write&load_balance_hosts=disable',
       schema: 'phase0_staging',
       sql: 'select 1',
       readOnly: true,
@@ -246,6 +252,18 @@ test('runs psql with shell disabled, validated target search path, timeout and r
     assert.equal(invocation.options.env.PGPASSWORD, 'password');
     assert.equal(invocation.options.env.PGSSLMODE, 'require');
     assert.equal(invocation.options.env.PGSSLROOTCERT, '/etc/root.crt');
+    assert.equal(invocation.options.env.PGSSLCOMPRESSION, '1');
+    assert.equal(invocation.options.env.PGSSLSNI, 'true');
+    assert.equal(invocation.options.env.PGSSLMINPROTOCOLVERSION, 'TLSv1.3');
+    assert.equal(invocation.options.env.PGSSLMAXPROTOCOLVERSION, 'TLSv1.3');
+    assert.equal(invocation.options.env.PGCHANNELBINDING, 'require');
+    assert.equal(invocation.options.env.PGGSSENCMODE, 'disable');
+    assert.equal(invocation.options.env.PGKRBSRVNAME, 'postgres');
+    assert.equal(invocation.options.env.PGGSSLIB, 'gssapi');
+    assert.equal(invocation.options.env.PGCONNECT_TIMEOUT, '5');
+    assert.equal(invocation.options.env.PGAPPNAME, 'staging');
+    assert.equal(invocation.options.env.PGTARGETSESSIONATTRS, 'read-write');
+    assert.equal(invocation.options.env.PGLOADBALANCEHOSTS, 'disable');
     assert.doesNotMatch(
       invocation.argv.join('\u0000'),
       /postgres(?:ql)?:\/\/|password/i,
@@ -258,6 +276,30 @@ test('runs psql with shell disabled, validated target search path, timeout and r
     childProcess.spawn = originalSpawn;
   }
 });
+test('rejects unsupported database URL parameters without exposing values', async () => {
+  await assert.rejects(
+    runPsql({
+      databaseUrl:
+        'postgresql://db.example/imeal?schema=ignored&pgbouncer=true&sslpassword=private-key-secret',
+      schema: 'phase0_staging',
+      sql: 'select 1',
+      readOnly: false,
+      statementTimeoutSeconds: 3,
+      commandRunner: async () => {
+        throw new Error('command runner must not be called');
+      },
+    }),
+    (error) => {
+      assert.match(
+        error.message,
+        /unsupported database URL parameter: sslpassword/,
+      );
+      assert.doesNotMatch(error.message, /private-key-secret/);
+      return true;
+    },
+  );
+});
+
 test('does not inherit ambient connection credentials without URL credentials', async () => {
   const variables = [
     'PGPASSWORD',
@@ -269,6 +311,10 @@ test('does not inherit ambient connection credentials without URL credentials', 
     'PGSERVICE',
     'PGSERVICEFILE',
     'PGSSLMODE',
+    'PGCONNECT_TIMEOUT',
+    'PGAPPNAME',
+    'PGTARGETSESSIONATTRS',
+    'PGSSLMINPROTOCOLVERSION',
   ];
   const previous = new Map(
     variables.map((variable) => [variable, process.env[variable]]),
@@ -284,6 +330,10 @@ test('does not inherit ambient connection credentials without URL credentials', 
     process.env.PGSERVICE = 'ambient-service';
     process.env.PGSERVICEFILE = '/tmp/ambient-service';
     process.env.PGSSLMODE = 'verify-full';
+    process.env.PGCONNECT_TIMEOUT = '900';
+    process.env.PGAPPNAME = 'ambient-app';
+    process.env.PGTARGETSESSIONATTRS = 'any';
+    process.env.PGSSLMINPROTOCOLVERSION = 'TLSv1.1';
     await runPsql({
       databaseUrl: 'postgresql://db.example/imeal?sslmode=require',
       schema: 'phase0_staging',
@@ -306,6 +356,10 @@ test('does not inherit ambient connection credentials without URL credentials', 
     assert.equal(invocation.options.env.PGSERVICE, undefined);
     assert.equal(invocation.options.env.PGSERVICEFILE, undefined);
     assert.equal(invocation.options.env.PGSSLMODE, 'require');
+    assert.equal(invocation.options.env.PGCONNECT_TIMEOUT, undefined);
+    assert.equal(invocation.options.env.PGAPPNAME, undefined);
+    assert.equal(invocation.options.env.PGTARGETSESSIONATTRS, undefined);
+    assert.equal(invocation.options.env.PGSSLMINPROTOCOLVERSION, undefined);
   } finally {
     for (const [variable, value] of previous) {
       if (value === undefined) delete process.env[variable];

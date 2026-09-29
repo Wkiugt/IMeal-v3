@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 
 import {
+  filterPostgresEnvironment,
   parseArgs,
   requireSafeSchemaName,
   safeDiagnostic,
@@ -255,8 +256,7 @@ export async function createBackup({
     age: await toolVersion(run, 'age', ['--version']),
     objectStorage: await toolVersion(run, 'aws', ['--version']),
   };
-  const pgDumpEnvironment = { ...process.env };
-  delete pgDumpEnvironment.PGPASSWORD;
+  const pgDumpEnvironment = filterPostgresEnvironment(process.env);
   if (source.password !== undefined) {
     pgDumpEnvironment.PGPASSWORD = source.password;
   }
