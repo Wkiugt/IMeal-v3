@@ -26,7 +26,7 @@ jobs:
     name: Immutable checks and release inputs
     runs-on: ubuntu-latest
     outputs:
-      release-id: ${{ steps.release.outputs.release-id }}
+      release_id: ${{ steps.release.outputs.release_id }}
     services:
       postgres:
         image: postgres:16.4
@@ -66,7 +66,7 @@ jobs:
         id: release
         run: |
           release_id="imeal-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          printf 'release-id=%s\n' "$release_id" >> "$GITHUB_OUTPUT"
+          printf 'release_id=%s\n' "$release_id" >> "$GITHUB_OUTPUT"
           printf 'commit=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Typecheck contracts, domain, API, worker, mobile and Admin Web
@@ -160,7 +160,7 @@ jobs:
       - name: Upload checked source evidence
         uses: actions/upload-artifact@v4
         with:
-          name: staging-readiness-inputs-${{ steps.release.outputs.release-id }}
+          name: staging-readiness-inputs-${{ steps.release.outputs.release_id }}
           path: ${{ runner.temp }}/staging-artifacts
           if-no-files-found: error
           retention-days: 14
@@ -202,7 +202,7 @@ jobs:
       - name: Download verified source evidence
         uses: actions/download-artifact@v4
         with:
-          name: staging-readiness-inputs-${{ needs.checks.outputs.release-id }}
+          name: staging-readiness-inputs-${{ needs.checks.outputs.release_id }}
           path: ${{ runner.temp }}/staging-artifacts
 
       - name: Require protected staging deployment inputs
@@ -258,7 +258,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/staging-artifacts"
           yarn staging:manifest \
-            --release-id "${{ needs.checks.outputs.release-id }}" \
+            --release-id "${{ needs.checks.outputs.release_id }}" \
             --commit "${GITHUB_SHA}" \
             --images-json "$RUNNER_TEMP/images.json" \
             --checks-json "$RUNNER_TEMP/staging-artifacts/check-results.json" \
@@ -269,7 +269,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: staging-release-${{ needs.checks.outputs.release-id }}
+          name: staging-release-${{ needs.checks.outputs.release_id }}
           path: ${{ runner.temp }}/staging-artifacts
           if-no-files-found: error
           retention-days: 30

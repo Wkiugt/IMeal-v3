@@ -266,7 +266,8 @@ async function assertCleanRepository(repositoryPath, commit) {
     throw new Error('git worktree must be clean');
   }
   const head = await runGit(repositoryPath, ['rev-parse', 'HEAD']);
-  if (assertCommit(commit) !== head) {
+  const requestedCommit = assertCommit(commit);
+  if (!head.startsWith(requestedCommit)) {
     throw new Error('manifest commit must match HEAD');
   }
 }
