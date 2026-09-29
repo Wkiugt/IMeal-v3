@@ -43,6 +43,11 @@ function createCommandRunner(commands, { failCommand } = {}) {
       }
       return commandResult({ stdout: '1\n' });
     }
+    if (command === 'aws' && args[0] === 's3api' && args[1] === 'head-object') {
+      return commandResult({
+        stdout: JSON.stringify({ ContentLength: 21 }),
+      });
+    }
     if (failCommand === command) {
       return commandResult({ stderr: `${command} failed`, exitCode: 42 });
     }
@@ -62,10 +67,52 @@ function createCommandRunner(commands, { failCommand } = {}) {
     }
     if (command === 'age') {
       await writeFile(outputPath, 'encrypted dump bytes\n');
+
       return commandResult({ stdout: 'age 1.2.0\n' });
     }
     return commandResult({ stdout: `${command} 1.0\n` });
   };
+}
+async function writeRestoreFixture(
+  directory,
+  { bytes = 21, omitBytes = false } = {},
+) {
+  const artifactPath = join(directory, 'encrypted.age');
+  const artifactContents = 'encrypted dump bytes\n';
+  await writeFile(artifactPath, artifactContents, 'utf8');
+  const manifestPath = join(directory, 'backup-manifest.json');
+  const artifact = {
+    encryptedFile: 'encrypted.age',
+    sha256: await sha256File(artifactPath),
+  };
+  if (!omitBytes) artifact.bytes = bytes;
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      result: 'PASS',
+      encryption: { algorithm: 'age' },
+      releaseId,
+      target: { database: 'imeal_staging', schema },
+      targetFingerprint: {
+        database: 'imeal_staging',
+        schema,
+        serverVersion: 'PostgreSQL 16.4',
+        migrationRows: [],
+      },
+      artifact,
+      storage: {
+        endpoint: 'https://minio.staging.example',
+        bucket: 'imeal-staging-private',
+        key: 'backups/x',
+      },
+      timestamps: {
+        startedAt: new Date(Date.now() - 60_000).toISOString(),
+        completedAt: new Date().toISOString(),
+      },
+    }),
+    'utf8',
+  );
+  return manifestPath;
 }
 
 function assertNoSensitiveText(value) {
@@ -401,6 +448,9 @@ test('restores into isolated fresh targets and records checksum, readiness, smok
   assert.equal(report.readiness.result, 'PASS');
   assert.equal(report.migration.result, 'PASS');
   assert.equal(report.smoke.result, 'PASS');
+  assert.equal(report.objects.result, 'PASS');
+  assert.equal(report.objects.bytes, 21);
+  assert.equal(report.objects.checksumVerified, 'NOT_RETURNED');
   assert.ok(Number.isFinite(report.rpoSeconds));
   assert.ok(Number.isFinite(report.rtoSeconds));
   const decryptIndex = restoreCommands.findIndex(
@@ -418,6 +468,9 @@ test('restores into isolated fresh targets and records checksum, readiness, smok
   const objectIndex = restoreCommands.findIndex(
     ({ command, args }) => command === 'aws' && args.includes('cp'),
   );
+  const objectVerificationIndex = restoreCommands.findIndex(
+    ({ command, args }) => command === 'aws' && args.includes('head-object'),
+  );
   const migrationIndex = restoreCommands.findIndex(
     ({ command, args }) =>
       command === 'psql' &&
@@ -429,7 +482,8 @@ test('restores into isolated fresh targets and records checksum, readiness, smok
       restoreIndex > createdbIndex &&
       bucketCreateIndex > restoreIndex &&
       objectIndex > bucketCreateIndex &&
-      migrationIndex > objectIndex,
+      objectVerificationIndex > objectIndex &&
+      migrationIndex > objectVerificationIndex,
   );
   assert.ok(restoreCommands[restoreIndex].args.includes('--exit-on-error'));
   for (const invocation of restoreCommands)
@@ -443,6 +497,153 @@ test('restores into isolated fresh targets and records checksum, readiness, smok
   assertNoSensitiveText(JSON.stringify(report));
   assert.equal(report.restoreDatabase, 'imeal_restore_20260928');
   assert.equal(manifest.result, 'PASS');
+});
+test('fails before migration checks when restored object size mismatches', async () => {
+  const directory = await makeDirectory();
+  const manifestPath = await writeRestoreFixture(directory);
+  const commands = [];
+  const baseRunner = createCommandRunner(commands);
+  const failingRunner = async (command, args, options) => {
+    if (command === 'aws' && args.includes('head-object')) {
+      commands.push({ command, args, options });
+      return commandResult({
+        stdout: JSON.stringify({ ContentLength: 20 }),
+      });
+    }
+    return baseRunner(command, args, options);
+  };
+  let readinessCalled = false;
+  const outputPath = join(directory, 'object-size-failure.json');
+  await assert.rejects(
+    restoreRehearsal({
+      backupManifestPath: manifestPath,
+      restoreDatabase: 'imeal_restore_20260928',
+      restoreBucket: 'imeal-restore-20260928',
+      outputPath,
+      commandRunner: failingRunner,
+      readinessCheck: async () => {
+        readinessCalled = true;
+        return { result: 'PASS' };
+      },
+      smokeCheck: async () => ({ result: 'PASS' }),
+    }),
+    /restore object byte count mismatch/i,
+  );
+  assert.equal(readinessCalled, false);
+  assert.equal(
+    commands.some(
+      ({ command, args }) =>
+        command === 'psql' &&
+        args.some((arg) => arg.includes('_prisma_migrations')),
+    ),
+    false,
+  );
+  const failure = JSON.parse(await readFile(outputPath, 'utf8'));
+  assert.equal(failure.result, 'FAIL');
+  assert.deepEqual(failure.objects, { result: 'FAIL' });
+});
+test('fails before migration checks when restored object checksum mismatches', async () => {
+  const directory = await makeDirectory();
+  const manifestPath = await writeRestoreFixture(directory);
+  const commands = [];
+  const baseRunner = createCommandRunner(commands);
+  const failingRunner = async (command, args, options) => {
+    if (command === 'aws' && args.includes('head-object')) {
+      commands.push({ command, args, options });
+      return commandResult({
+        stdout: JSON.stringify({
+          ContentLength: 21,
+          ChecksumSHA256: 'invalid-checksum',
+        }),
+      });
+    }
+    return baseRunner(command, args, options);
+  };
+  const outputPath = join(directory, 'object-checksum-failure.json');
+  await assert.rejects(
+    restoreRehearsal({
+      backupManifestPath: manifestPath,
+      restoreDatabase: 'imeal_restore_20260928',
+      restoreBucket: 'imeal-restore-20260928',
+      outputPath,
+      commandRunner: failingRunner,
+    }),
+    /restore object checksum mismatch/i,
+  );
+  assert.equal(
+    commands.some(
+      ({ command, args }) =>
+        command === 'psql' &&
+        args.some((arg) => arg.includes('_prisma_migrations')),
+    ),
+    false,
+  );
+});
+
+test('fails the RTO gate after checks before writing PASS', async () => {
+  const directory = await makeDirectory();
+  const manifestPath = await writeRestoreFixture(directory);
+  const commands = [];
+  let now = Date.now();
+  let smokeCalled = false;
+  const outputPath = join(directory, 'rto-failure.json');
+  await assert.rejects(
+    restoreRehearsal({
+      backupManifestPath: manifestPath,
+      restoreDatabase: 'imeal_restore_20260928',
+      restoreBucket: 'imeal-restore-20260928',
+      outputPath,
+      commandRunner: createCommandRunner(commands),
+      clock: () => new Date(now),
+      readinessCheck: async () => ({ result: 'PASS' }),
+      smokeCheck: async () => {
+        smokeCalled = true;
+        now += 3_600_001 * 1000;
+        return { result: 'PASS' };
+      },
+    }),
+    /RTO exceeds/i,
+  );
+  assert.equal(smokeCalled, true);
+  const failure = JSON.parse(await readFile(outputPath, 'utf8'));
+  assert.equal(failure.result, 'FAIL');
+  assert.ok(failure.rtoSeconds > 3_600);
+});
+
+test('rejects a restore manifest with missing artifact bytes before commands', async () => {
+  const directory = await makeDirectory();
+  const manifestPath = await writeRestoreFixture(directory, {
+    omitBytes: true,
+  });
+  const commands = [];
+  const outputPath = join(directory, 'missing-bytes-failure.json');
+  await assert.rejects(
+    restoreRehearsal({
+      backupManifestPath: manifestPath,
+      restoreDatabase: 'imeal_restore_20260928',
+      restoreBucket: 'imeal-restore-20260928',
+      outputPath,
+      commandRunner: createCommandRunner(commands),
+    }),
+    /artifact byte count is invalid/i,
+  );
+  assert.equal(commands.length, 0);
+  assert.equal(JSON.parse(await readFile(outputPath, 'utf8')).result, 'FAIL');
+});
+test('surfaces failure report write errors with the original failure', async () => {
+  const directory = await makeDirectory();
+  await assert.rejects(
+    restoreRehearsal({
+      backupManifestPath: join(directory, 'missing-manifest.json'),
+      restoreDatabase: 'imeal_restore_20260928',
+      restoreBucket: 'imeal-restore-20260928',
+      outputPath: directory,
+      commandRunner: createCommandRunner([]),
+    }),
+    (error) =>
+      /failure report write failed/i.test(error.message) &&
+      /backup manifest cannot be read/i.test(error.message),
+  );
 });
 
 test('aborts before object copy when the fresh restore bucket cannot be created', async () => {

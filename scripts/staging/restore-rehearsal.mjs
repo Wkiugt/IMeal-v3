@@ -121,6 +121,9 @@ function assertArtifact(manifest, manifestPath) {
   if (!artifact || typeof artifact !== 'object') {
     throw new Error('backup artifact metadata is missing');
   }
+  if (!Number.isInteger(artifact.bytes) || artifact.bytes < 0) {
+    throw new Error('backup artifact byte count is invalid');
+  }
   if (
     typeof artifact.encryptedFile !== 'string' ||
     artifact.encryptedFile.length === 0 ||
@@ -164,6 +167,49 @@ function assertRecordedTargetFingerprint(value, target) {
     schema: value.schema,
     serverVersion: value.serverVersion,
     migrationRows: [...value.migrationRows],
+  };
+}
+function parseObjectVerification(stdout, artifact) {
+  let head;
+  try {
+    head = JSON.parse(stdout);
+  } catch {
+    throw new Error('restore object verification response is invalid');
+  }
+  if (!head || typeof head !== 'object' || Array.isArray(head)) {
+    throw new Error('restore object verification response is invalid');
+  }
+  const rawBytes = head.ContentLength;
+  const validRawBytes =
+    (typeof rawBytes === 'number' &&
+      Number.isSafeInteger(rawBytes) &&
+      rawBytes >= 0) ||
+    (typeof rawBytes === 'string' && /^\d+$/.test(rawBytes));
+  if (!validRawBytes) {
+    throw new Error('restore object byte count is invalid');
+  }
+  const bytes = Number(rawBytes);
+  if (!Number.isSafeInteger(bytes) || bytes !== artifact.bytes) {
+    throw new Error('restore object byte count mismatch');
+  }
+  let checksum;
+  if (Object.hasOwn(head, 'ChecksumSHA256') && head.ChecksumSHA256 !== null) {
+    if (typeof head.ChecksumSHA256 !== 'string') {
+      throw new Error('restore object checksum is invalid');
+    }
+    const expectedChecksum = Buffer.from(artifact.sha256, 'hex').toString(
+      'base64',
+    );
+    if (head.ChecksumSHA256 !== expectedChecksum) {
+      throw new Error('restore object checksum mismatch');
+    }
+    checksum = head.ChecksumSHA256;
+  }
+  return {
+    result: 'PASS',
+    bytes,
+    checksum: checksum ?? 'UNAVAILABLE',
+    checksumVerified: checksum ? 'PASS' : 'NOT_RETURNED',
   };
 }
 
@@ -221,6 +267,7 @@ export async function restoreRehearsal({
   migrationCheck,
   readinessCheck,
   smokeCheck,
+  clock = () => new Date(),
 }) {
   assertOutputPath(outputPath);
   if (
@@ -229,7 +276,7 @@ export async function restoreRehearsal({
   ) {
     throw new Error('backup manifest path is required');
   }
-  const startedAt = new Date().toISOString();
+  const startedAt = clock().toISOString();
   let manifest;
   let safeRestoreDatabase;
   let safeRestoreBucket;
@@ -238,6 +285,7 @@ export async function restoreRehearsal({
   let measuredRtoSeconds = null;
   let recordedTargetFingerprint;
   let migrationStatus;
+  let objectVerification;
   try {
     manifest = await readManifest(backupManifestPath);
     if (manifest.encryption?.algorithm !== 'age') {
@@ -287,10 +335,7 @@ export async function restoreRehearsal({
       throw new Error('backup artifact checksum mismatch');
     }
     const artifactStats = await stat(artifact.path);
-    if (
-      Number.isInteger(artifact.bytes) &&
-      artifactStats.size !== artifact.bytes
-    ) {
+    if (artifactStats.size !== artifact.bytes) {
       throw new Error('backup artifact byte count mismatch');
     }
     restoreDumpPath = join(
@@ -355,6 +400,24 @@ export async function restoreRehearsal({
       ],
       'isolated object restore',
     );
+    const objectHead = await runCommand(
+      commandRunner,
+      'aws',
+      [
+        's3api',
+        'head-object',
+        '--bucket',
+        safeRestoreBucket,
+        '--key',
+        storage.key,
+        '--endpoint-url',
+        storage.endpoint,
+        '--output',
+        'json',
+      ],
+      'restored object verification',
+    );
+    objectVerification = parseObjectVerification(objectHead.stdout, artifact);
     const migration = migrationCheck
       ? await migrationCheck({
           database: safeRestoreDatabase,
@@ -425,7 +488,7 @@ export async function restoreRehearsal({
         'restore smoke check',
       );
     }
-    const completedAt = new Date().toISOString();
+    const completedAt = clock().toISOString();
     measuredRtoSeconds = Math.max(
       0,
       (Date.parse(completedAt) - Date.parse(startedAt)) / 1000,
@@ -447,7 +510,11 @@ export async function restoreRehearsal({
       targetFingerprint: recordedTargetFingerprint,
       checksums: { artifact: 'PASS', sha256: artifact.sha256 },
       database: { restored: 'PASS' },
-      objects: { restored: 'PASS', count: manifest.objects?.count ?? 1 },
+      objects: {
+        restored: 'PASS',
+        ...objectVerification,
+        count: manifest.objects?.count ?? 1,
+      },
       migration: migrationStatus,
       readiness,
       smoke,
@@ -463,7 +530,7 @@ export async function restoreRehearsal({
         `${safeDiagnostic(error)}; ${safeDiagnostic(cleanupError)}`,
       );
     }
-    const completedAt = new Date().toISOString();
+    const completedAt = clock().toISOString();
     const failureReport = {
       result: 'FAIL',
       kind: 'restore-rehearsal',
@@ -478,11 +545,24 @@ export async function restoreRehearsal({
       rtoSeconds: measuredRtoSeconds,
       targetFingerprint: recordedTargetFingerprint,
       migration: migrationStatus ?? { result: 'FAIL' },
+      objects: objectVerification ?? { result: 'FAIL' },
       failure: safeDiagnostic(
         finalError instanceof Error ? finalError.message : finalError,
       ),
     };
-    await writeEvidence(outputPath, failureReport).catch(() => {});
+    try {
+      await writeEvidence(outputPath, failureReport);
+    } catch (reportError) {
+      const originalDiagnostic = safeDiagnostic(
+        finalError instanceof Error ? finalError.message : finalError,
+      );
+      const reportDiagnostic = safeDiagnostic(
+        reportError instanceof Error ? reportError.message : reportError,
+      );
+      throw new Error(
+        `restore failure: ${originalDiagnostic}; failure report write failed: ${reportDiagnostic}`,
+      );
+    }
     throw finalError;
   }
 }
