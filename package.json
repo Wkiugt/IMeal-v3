@@ -18,6 +18,8 @@
     "verify:production-boundary": "node scripts/verify-production-boundary.mjs",
     "test:production-boundary": "node --test scripts/verify-production-boundary.test.mjs",
     "test:staging-tools": "node --test scripts/staging/*.test.mjs",
+    "staging:manifest": "node scripts/staging/release-manifest.mjs",
+    "staging:smoke": "node scripts/staging/smoke-staging.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,md,html,css,json}\""
   },
   "devDependencies": {

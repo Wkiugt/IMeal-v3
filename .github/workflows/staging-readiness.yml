@@ -1,0 +1,282 @@
+name: staging-readiness
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - 'imeal-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20.x'
+  YARN_VERSION: '4.18.0'
+  CI: 'true'
+
+jobs:
+  checks:
+    name: Immutable checks and release inputs
+    runs-on: ubuntu-latest
+    outputs:
+      release-id: ${{ steps.release.outputs.release-id }}
+    services:
+      postgres:
+        image: postgres:16.4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: imeal_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d imeal_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Check out the exact source commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+
+      - name: Enable Corepack and select Yarn 4.18
+        run: |
+          corepack enable
+          corepack prepare "yarn@${YARN_VERSION}" --activate
+          test "$(yarn --version)" = "${YARN_VERSION}"
+
+      - name: Install dependencies immutably
+        run: yarn install --immutable
+
+      - name: Record release identity
+        id: release
+        run: |
+          release_id="imeal-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf 'release-id=%s\n' "$release_id" >> "$GITHUB_OUTPUT"
+          printf 'commit=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Typecheck contracts, domain, API, worker, mobile and Admin Web
+        run: yarn typecheck
+
+      - name: Lint the workspace
+        run: yarn lint
+
+      - name: Run unit and contract tests
+        run: yarn test:unit
+
+      - name: Validate and generate Prisma client
+        run: |
+          yarn workspace @imeal/core exec prisma validate --schema prisma/schema.prisma
+          yarn workspace @imeal/core exec prisma generate --schema prisma/schema.prisma
+
+      - name: Apply migrations to disposable PostgreSQL
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public
+        run: yarn workspace @imeal/core exec prisma migrate deploy --schema prisma/schema.prisma
+
+      - name: Run disposable domain database checks
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public
+        run: yarn workspace @imeal/core test
+
+      - name: Run disposable API database checks
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public
+        run: yarn workspace @imeal/api test:e2e
+
+      - name: Run disposable worker database checks
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public
+        run: yarn workspace @imeal/worker test:e2e
+
+      - name: Run staging tooling and manifest contract tests
+        run: yarn test:staging-tools
+      - name: Validate staging Compose boundary
+        run: node --test scripts/staging/compose-config.test.mjs
+
+      - name: Build API, worker and Admin Web images
+        run: |
+          docker build --file apps/api/Dockerfile --tag imeal/api:${GITHUB_SHA} .
+          docker build --file apps/worker/Dockerfile --tag imeal/worker:${GITHUB_SHA} .
+          docker build --file apps/admin-web/Dockerfile --tag imeal/admin-web:${GITHUB_SHA} .
+
+      - name: Audit dependencies
+        run: yarn npm audit --all --recursive
+
+      - name: Scan source for secrets with redacted output
+        run: >-
+          docker run --rm
+          --volume "${GITHUB_WORKSPACE}:/repo:ro"
+          zricethezav/gitleaks:v8.18.4
+          detect --source=/repo --redact --no-banner --exit-code=1
+
+      - name: Scan built images for high and critical vulnerabilities
+        run: |
+          for image in \
+            "imeal/api:${GITHUB_SHA}" \
+            "imeal/worker:${GITHUB_SHA}" \
+            "imeal/admin-web:${GITHUB_SHA}"; do
+            docker run --rm \
+              --volume /var/run/docker.sock:/var/run/docker.sock \
+              aquasec/trivy:0.56.1 \
+              image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$image"
+          done
+
+      - name: Generate source SBOM
+        run: |
+          mkdir -p "$RUNNER_TEMP/staging-artifacts"
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}:/repo:ro" \
+            --volume "$RUNNER_TEMP/staging-artifacts:/out" \
+            anchore/syft:v1.18.1 \
+            dir:/repo --output spdx-json=/out/sbom.spdx.json
+
+      - name: Write verified check results
+        run: |
+          cat > "$RUNNER_TEMP/staging-artifacts/check-results.json" <<'JSON'
+          {
+            "typecheck": "PASS",
+            "unit": "PASS",
+            "db": "PASS",
+            "security": "PASS",
+            "sbom": "artifacts/sbom.spdx.json"
+          }
+          JSON
+
+      - name: Upload checked source evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-readiness-inputs-${{ steps.release.outputs.release-id }}
+          path: ${{ runner.temp }}/staging-artifacts
+          if-no-files-found: error
+          retention-days: 14
+
+  staging-deploy:
+    name: Protected staging deploy and smoke
+    needs: checks
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/tags/imeal-')
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the exact source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+
+      - name: Enable Corepack and select Yarn 4.18
+        run: |
+          corepack enable
+          corepack prepare "yarn@${YARN_VERSION}" --activate
+          test "$(yarn --version)" = "${YARN_VERSION}"
+
+      - name: Install dependencies immutably
+        run: yarn install --immutable
+
+      - name: Download verified source evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-readiness-inputs-${{ needs.checks.outputs.release-id }}
+          path: ${{ runner.temp }}/staging-artifacts
+
+      - name: Require protected staging deployment inputs
+        env:
+          STAGING_ENV_FILE: ${{ secrets.STAGING_ENV_FILE }}
+          STAGING_API_ORIGIN: ${{ vars.STAGING_API_ORIGIN }}
+          STAGING_ADMIN_ORIGIN: ${{ vars.STAGING_ADMIN_ORIGIN }}
+          STAGING_IMAGE_DIGESTS_JSON: ${{ vars.STAGING_IMAGE_DIGESTS_JSON }}
+          STAGING_ROLLBACK_ARTIFACT: ${{ vars.STAGING_ROLLBACK_ARTIFACT }}
+        run: |
+          test -n "$STAGING_ENV_FILE" || { echo 'STAGING_ENV_FILE is required in the protected staging environment'; exit 1; }
+          test -n "$STAGING_API_ORIGIN" || { echo 'STAGING_API_ORIGIN is required in the protected staging environment'; exit 1; }
+          test -n "$STAGING_ADMIN_ORIGIN" || { echo 'STAGING_ADMIN_ORIGIN is required in the protected staging environment'; exit 1; }
+          test -n "$STAGING_IMAGE_DIGESTS_JSON" || { echo 'STAGING_IMAGE_DIGESTS_JSON is required in the protected staging environment'; exit 1; }
+          test -n "$STAGING_ROLLBACK_ARTIFACT" || { echo 'STAGING_ROLLBACK_ARTIFACT is required in the protected staging environment'; exit 1; }
+          umask 077
+          printf '%s\n' "$STAGING_ENV_FILE" > "$RUNNER_TEMP/staging.env"
+          printf '%s\n' "$STAGING_IMAGE_DIGESTS_JSON" > "$RUNNER_TEMP/images.json"
+          printf '%s\n' "$STAGING_ROLLBACK_ARTIFACT" > "$RUNNER_TEMP/rollback-artifact.txt"
+          printf '%s\n' "$STAGING_API_ORIGIN" > "$RUNNER_TEMP/api-origin.txt"
+          printf '%s\n' "$STAGING_ADMIN_ORIGIN" > "$RUNNER_TEMP/admin-origin.txt"
+
+      - name: Render protected staging Compose configuration
+        run: >-
+          docker compose --env-file "$RUNNER_TEMP/staging.env"
+          -f docker-compose.yml -f docker-compose.staging.yml config --quiet
+
+      - name: Deploy the approved immutable staging release
+        run: >-
+          docker compose --env-file "$RUNNER_TEMP/staging.env"
+          -f docker-compose.yml -f docker-compose.staging.yml up
+          --detach --wait --remove-orphans
+
+      - name: Run protected staging smoke
+        run: |
+          mkdir -p "$RUNNER_TEMP/staging-artifacts"
+          yarn staging:smoke \
+            --api-origin "$(cat "$RUNNER_TEMP/api-origin.txt")" \
+            --admin-origin "$(cat "$RUNNER_TEMP/admin-origin.txt")" \
+            --output "$RUNNER_TEMP/staging-artifacts/staging-smoke.json"
+
+      - name: Add the observed smoke artifact to verified checks
+        run: |
+          node --input-type=module - "$RUNNER_TEMP/staging-artifacts/check-results.json" <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises';
+          const path = process.argv[2];
+          const checks = JSON.parse(await readFile(path, 'utf8'));
+          checks.stagingSmoke = 'artifacts/staging-smoke.json';
+          await writeFile(path, `${JSON.stringify(checks, null, 2)}\n`, 'utf8');
+          NODE
+
+      - name: Generate the immutable release manifest
+        run: |
+          mkdir -p "$RUNNER_TEMP/staging-artifacts"
+          yarn staging:manifest \
+            --release-id "${{ needs.checks.outputs.release-id }}" \
+            --commit "${GITHUB_SHA}" \
+            --images-json "$RUNNER_TEMP/images.json" \
+            --checks-json "$RUNNER_TEMP/staging-artifacts/check-results.json" \
+            --rollback-artifact "$(cat "$RUNNER_TEMP/rollback-artifact.txt")" \
+            --output "$RUNNER_TEMP/staging-artifacts/release-manifest.json"
+
+      - name: Upload protected staging evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-release-${{ needs.checks.outputs.release-id }}
+          path: ${{ runner.temp }}/staging-artifacts
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Tear down disposable staging services
+        if: always()
+        run: >-
+          docker compose --env-file "$RUNNER_TEMP/staging.env"
+          -f docker-compose.yml -f docker-compose.staging.yml down
+          --volumes --remove-orphans
