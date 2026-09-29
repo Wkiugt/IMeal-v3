@@ -75,8 +75,12 @@ function options(fixtureData, overrides = {}) {
     migrationsDirectory: fixtureData.migrationsDirectory,
     checkResults: {
       typecheck: 'PASS',
+      lint: 'PASS',
       unit: 'PASS',
+      prisma: 'PASS',
       db: 'PASS',
+      compose: 'PASS',
+      stagingTools: 'PASS',
       security: 'PASS',
       sbom: 'artifacts/sbom.spdx.json',
       stagingSmoke: 'artifacts/staging-smoke.json',
@@ -105,8 +109,12 @@ test('creates a deterministic immutable release manifest', async () => {
     migrations: ['20260924000000_first', '20260928000000_latest'],
     checks: {
       typecheck: 'PASS',
+      lint: 'PASS',
       unit: 'PASS',
+      prisma: 'PASS',
       db: 'PASS',
+      compose: 'PASS',
+      stagingTools: 'PASS',
       security: 'PASS',
     },
     sbom: 'artifacts/sbom.spdx.json',
@@ -165,6 +173,17 @@ test('rejects mutable image references and missing or failed checks', async () =
       }),
     ),
     /security.*PASS/i,
+  );
+  await assert.rejects(
+    createReleaseManifest(
+      options(fixtureData, {
+        checkResults: {
+          ...options(fixtureData).checkResults,
+          lint: undefined,
+        },
+      }),
+    ),
+    /lint.*PASS/i,
   );
 });
 

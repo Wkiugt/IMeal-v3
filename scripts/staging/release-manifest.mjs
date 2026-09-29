@@ -12,7 +12,16 @@ const COMMIT_PATTERN = /^[a-f0-9]{7,64}$/i;
 const IMAGE_DIGEST_PATTERN = /^[^\s@]+@sha256:[a-f0-9]{64}$/i;
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const REFERENCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/@:+-]*$/;
-const REQUIRED_CHECKS = ['typecheck', 'unit', 'db', 'security'];
+const REQUIRED_CHECKS = [
+  'typecheck',
+  'lint',
+  'unit',
+  'prisma',
+  'db',
+  'compose',
+  'stagingTools',
+  'security',
+];
 const REQUIRED_MANIFEST_KEYS = [
   'releaseId',
   'commit',

@@ -136,24 +136,38 @@ jobs:
               image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$image"
           done
 
-      - name: Generate source SBOM
+      - name: Generate SBOMs for built images
         run: |
           mkdir -p "$RUNNER_TEMP/staging-artifacts"
-          docker run --rm \
-            --volume "${GITHUB_WORKSPACE}:/repo:ro" \
-            --volume "$RUNNER_TEMP/staging-artifacts:/out" \
-            anchore/syft:v1.18.1 \
-            dir:/repo --output spdx-json=/out/sbom.spdx.json
+          for service in api worker admin-web; do
+            docker run --rm \
+              --volume /var/run/docker.sock:/var/run/docker.sock \
+              --volume "$RUNNER_TEMP/staging-artifacts:/out" \
+              anchore/syft:v1.18.1 \
+              "docker://imeal/${service}:${GITHUB_SHA}" \
+              --output "spdx-json=/out/build-image-sbom-${service}.spdx.json"
+          done
+          cat > "$RUNNER_TEMP/staging-artifacts/build-image-sbom-index.json" <<'JSON'
+          {
+            "api": "artifacts/build-image-sbom-api.spdx.json",
+            "worker": "artifacts/build-image-sbom-worker.spdx.json",
+            "adminWeb": "artifacts/build-image-sbom-admin-web.spdx.json"
+          }
+          JSON
 
       - name: Write verified check results
         run: |
           cat > "$RUNNER_TEMP/staging-artifacts/check-results.json" <<'JSON'
           {
             "typecheck": "PASS",
+            "lint": "PASS",
             "unit": "PASS",
+            "prisma": "PASS",
             "db": "PASS",
+            "compose": "PASS",
+            "stagingTools": "PASS",
             "security": "PASS",
-            "sbom": "artifacts/sbom.spdx.json"
+            "sbom": "artifacts/build-image-sbom-index.json"
           }
           JSON
 
@@ -208,13 +222,17 @@ jobs:
       - name: Require protected staging deployment inputs
         env:
           STAGING_ENV_FILE: ${{ secrets.STAGING_ENV_FILE }}
+          STAGING_SMOKE_SESSION_TOKEN: ${{ secrets.STAGING_SMOKE_SESSION_TOKEN }}
           STAGING_API_ORIGIN: ${{ vars.STAGING_API_ORIGIN }}
+          STAGING_WORKER_ORIGIN: ${{ vars.STAGING_WORKER_ORIGIN }}
           STAGING_ADMIN_ORIGIN: ${{ vars.STAGING_ADMIN_ORIGIN }}
           STAGING_IMAGE_DIGESTS_JSON: ${{ vars.STAGING_IMAGE_DIGESTS_JSON }}
           STAGING_ROLLBACK_ARTIFACT: ${{ vars.STAGING_ROLLBACK_ARTIFACT }}
         run: |
           test -n "$STAGING_ENV_FILE" || { echo 'STAGING_ENV_FILE is required in the protected staging environment'; exit 1; }
+          test -n "$STAGING_SMOKE_SESSION_TOKEN" || { echo 'STAGING_SMOKE_SESSION_TOKEN is required in the protected staging environment'; exit 1; }
           test -n "$STAGING_API_ORIGIN" || { echo 'STAGING_API_ORIGIN is required in the protected staging environment'; exit 1; }
+          test -n "$STAGING_WORKER_ORIGIN" || { echo 'STAGING_WORKER_ORIGIN is required in the protected staging environment'; exit 1; }
           test -n "$STAGING_ADMIN_ORIGIN" || { echo 'STAGING_ADMIN_ORIGIN is required in the protected staging environment'; exit 1; }
           test -n "$STAGING_IMAGE_DIGESTS_JSON" || { echo 'STAGING_IMAGE_DIGESTS_JSON is required in the protected staging environment'; exit 1; }
           test -n "$STAGING_ROLLBACK_ARTIFACT" || { echo 'STAGING_ROLLBACK_ARTIFACT is required in the protected staging environment'; exit 1; }
@@ -223,7 +241,76 @@ jobs:
           printf '%s\n' "$STAGING_IMAGE_DIGESTS_JSON" > "$RUNNER_TEMP/images.json"
           printf '%s\n' "$STAGING_ROLLBACK_ARTIFACT" > "$RUNNER_TEMP/rollback-artifact.txt"
           printf '%s\n' "$STAGING_API_ORIGIN" > "$RUNNER_TEMP/api-origin.txt"
+          printf '%s\n' "$STAGING_WORKER_ORIGIN" > "$RUNNER_TEMP/worker-origin.txt"
           printf '%s\n' "$STAGING_ADMIN_ORIGIN" > "$RUNNER_TEMP/admin-origin.txt"
+          node --input-type=module - \
+            "$RUNNER_TEMP/staging.env" \
+            "$RUNNER_TEMP/images.json" \
+            "$RUNNER_TEMP/release-version.txt" <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises';
+
+          const [envPath, imagePath, releasePath] = process.argv.slice(2);
+          const digestPattern = /^[^\s@]+@sha256:[a-f0-9]{64}$/i;
+          const imageKeys = ['API_IMAGE', 'WORKER_IMAGE', 'ADMIN_WEB_IMAGE'];
+          const imageJson = JSON.parse(await readFile(imagePath, 'utf8'));
+          const expectedImages = {
+            API_IMAGE: imageJson.api,
+            WORKER_IMAGE: imageJson.worker,
+            ADMIN_WEB_IMAGE: imageJson.adminWeb,
+          };
+          if (
+            Object.keys(imageJson).sort().join(',') !==
+            ['adminWeb', 'api', 'worker'].join(',')
+          ) {
+            throw new Error('protected image digest input has unsupported fields');
+          }
+          for (const [key, value] of Object.entries(expectedImages)) {
+            if (typeof value !== 'string' || !digestPattern.test(value)) {
+              throw new Error('protected image digest input is not immutable');
+            }
+          }
+
+          const lines = (await readFile(envPath, 'utf8')).split(/\r?\n/);
+          const seen = new Set();
+          const output = [];
+          let releaseVersion;
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) {
+              output.push(line);
+              continue;
+            }
+            const match = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
+            if (!match) throw new Error('protected staging env has an invalid assignment');
+            const [, key, rawValue] = match;
+            if (seen.has(key)) throw new Error('protected staging env has duplicate keys');
+            seen.add(key);
+            let value = rawValue.trim();
+            if (
+              value.length >= 2 &&
+              ((value.startsWith('"') && value.endsWith('"')) ||
+                (value.startsWith("'") && value.endsWith("'")))
+            ) {
+              value = value.slice(1, -1);
+            }
+            if (key.endsWith('_IMAGE')) {
+              if (!digestPattern.test(value)) {
+                throw new Error('every protected image env value must be digest-pinned');
+              }
+              if (Object.hasOwn(expectedImages, key) && value !== expectedImages[key]) {
+                throw new Error('protected image env does not match image digest input');
+              }
+            }
+            if (key === 'RELEASE_VERSION') releaseVersion = value;
+            output.push(line);
+          }
+          for (const key of imageKeys) {
+            if (!seen.has(key)) output.push(`${key}=${expectedImages[key]}`);
+          }
+          if (!releaseVersion) throw new Error('RELEASE_VERSION is required');
+          await writeFile(envPath, `${output.join('\n').replace(/\n+$/, '')}\n`);
+          await writeFile(releasePath, releaseVersion);
+          NODE
 
       - name: Render protected staging Compose configuration
         run: >-
@@ -236,22 +323,97 @@ jobs:
           -f docker-compose.yml -f docker-compose.staging.yml up
           --detach --wait --remove-orphans
 
+      - name: Generate SBOMs for deployed image digests
+        run: |
+          for service in api worker admin-web; do
+            image="$(
+              node --input-type=module - \
+                "$RUNNER_TEMP/images.json" "$service" <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          const [path, service] = process.argv.slice(2);
+          const images = JSON.parse(await readFile(path, 'utf8'));
+          const key = service === 'admin-web' ? 'adminWeb' : service;
+          process.stdout.write(images[key]);
+          NODE
+            )"
+            docker run --rm \
+              --volume /var/run/docker.sock:/var/run/docker.sock \
+              --volume "$RUNNER_TEMP/staging-artifacts:/out" \
+              anchore/syft:v1.18.1 \
+              "docker://${image}" \
+              --output "spdx-json=/out/deployed-image-sbom-${service}.spdx.json"
+          done
+          cat > "$RUNNER_TEMP/staging-artifacts/deployed-image-sbom-index.json" <<'JSON'
+          {
+            "api": "artifacts/deployed-image-sbom-api.spdx.json",
+            "worker": "artifacts/deployed-image-sbom-worker.spdx.json",
+            "adminWeb": "artifacts/deployed-image-sbom-admin-web.spdx.json"
+          }
+          JSON
+
+      - name: Run protected production-hardening runtime integration
+        env:
+          STAGING_API_ORIGIN: ${{ vars.STAGING_API_ORIGIN }}
+          STAGING_WORKER_ORIGIN: ${{ vars.STAGING_WORKER_ORIGIN }}
+        run: |
+          node --input-type=module - \
+            "$RUNNER_TEMP/staging-artifacts/runtime-integration.json" \
+            "$(cat "$RUNNER_TEMP/release-version.txt")" <<'NODE'
+          import { writeFile } from 'node:fs/promises';
+          import { assertNoSecrets } from './scripts/staging/staging-lib.mjs';
+          import { runRuntimeIntegration } from './scripts/staging/runtime-integration.mjs';
+
+          const [outputPath, expectedRelease] = process.argv.slice(2);
+          let report;
+          let passed = true;
+          try {
+            report = {
+              result: 'PASS',
+              evidence: await runRuntimeIntegration({
+                apiOrigin: process.env.STAGING_API_ORIGIN,
+                workerOrigin: process.env.STAGING_WORKER_ORIGIN,
+                expectedRelease,
+              }),
+            };
+          } catch {
+            passed = false;
+            report = {
+              result: 'FAIL',
+              reason: 'production hardening runtime integration failed',
+            };
+          }
+          assertNoSecrets(report);
+          await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, {
+            encoding: 'utf8',
+            mode: 0o440,
+          });
+          if (!passed) process.exitCode = 1;
+          NODE
+
       - name: Run protected staging smoke
+        env:
+          STAGING_SMOKE_SESSION_TOKEN: ${{ secrets.STAGING_SMOKE_SESSION_TOKEN }}
         run: |
           mkdir -p "$RUNNER_TEMP/staging-artifacts"
           yarn staging:smoke \
             --api-origin "$(cat "$RUNNER_TEMP/api-origin.txt")" \
             --admin-origin "$(cat "$RUNNER_TEMP/admin-origin.txt")" \
+            --session-token-env STAGING_SMOKE_SESSION_TOKEN \
             --output "$RUNNER_TEMP/staging-artifacts/staging-smoke.json"
 
-      - name: Add the observed smoke artifact to verified checks
+      - name: Record observed runtime and smoke evidence
         run: |
-          node --input-type=module - "$RUNNER_TEMP/staging-artifacts/check-results.json" <<'NODE'
+          node --input-type=module - \
+            "$RUNNER_TEMP/staging-artifacts/check-results.json" \
+            "$RUNNER_TEMP/staging-artifacts/runtime-integration.json" <<'NODE'
           import { readFile, writeFile } from 'node:fs/promises';
-          const path = process.argv[2];
-          const checks = JSON.parse(await readFile(path, 'utf8'));
+          const [checksPath, runtimePath] = process.argv.slice(2);
+          const runtime = JSON.parse(await readFile(runtimePath, 'utf8'));
+          if (runtime.result !== 'PASS') throw new Error('runtime integration did not PASS');
+          const checks = JSON.parse(await readFile(checksPath, 'utf8'));
+          checks.sbom = 'artifacts/deployed-image-sbom-index.json';
           checks.stagingSmoke = 'artifacts/staging-smoke.json';
-          await writeFile(path, `${JSON.stringify(checks, null, 2)}\n`, 'utf8');
+          await writeFile(checksPath, `${JSON.stringify(checks, null, 2)}\n`, 'utf8');
           NODE
 
       - name: Generate the immutable release manifest
