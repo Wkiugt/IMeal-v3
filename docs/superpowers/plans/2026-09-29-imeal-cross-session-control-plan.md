@@ -142,7 +142,7 @@ This handoff records only observed values; re-check branch, HEAD, and worktree s
 | Last completed task | Phase 0 domain-correctness Tasks 1–8; production-hardening Tasks 1–9; staging-readiness repository surface present. Phase 0 Task 9 is not complete. |
 | Blockers | External staging target/approval, backup/restore and rollback evidence, representative data remediation, `/metrics`, edge/alert provisioning, identity/provider/location approval, and UAT. |
 | Next safe task | Complete staging prerequisites and collect target-safe evidence in the ordered sequence above; do not run backfill without independent approval. |
-| Files touched in this session | `docs/superpowers/plans/plan.md` only. |
+| Files touched in this session | `docs/superpowers/plans/2026-09-29-imeal-cross-session-control-plan.md` only. |
 | Pre-existing worktree state preserved | `apps/worker/tsconfig.build.tsbuildinfo` modified; dated production-hardening and staging-readiness plans untracked. These were observed and must not be overwritten, staged, or deleted by this control plan. |
 
 ## Maintenance rules
