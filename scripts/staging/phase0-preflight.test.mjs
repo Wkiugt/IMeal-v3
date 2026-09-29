@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { sha256Text } from './staging-lib.mjs';
 import { readFile, mkdtemp, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -151,6 +151,24 @@ test('rejects malformed or incomplete preflight output', () => {
   );
 });
 
+test('parses quoted multi-ID sample arrays and rejects malformed arrays', async () => {
+  const clean = await readFixture('preflight-clean.txt');
+  const multiId = clean.replace(
+    ' future_active_snapshot_incomplete     |              0 | {}',
+    ' future_active_snapshot_incomplete     |              2 | {"registration-1","registration-2"}',
+  );
+  const report = parsePreflightOutput(multiId);
+  assert.deepEqual(report.checks.at(-1).sampleIds, [
+    'registration-1',
+    'registration-2',
+  ]);
+  const malformed = clean.replace(
+    ' future_active_snapshot_incomplete     |              0 | {}',
+    ' future_active_snapshot_incomplete     |              1 | {registration-1',
+  );
+  assert.throws(() => parsePreflightOutput(malformed), /sample_ids/i);
+});
+
 test('fingerprints the target through bounded read-only psql calls', async () => {
   const invocations = [];
   const restore = installSpawn(
@@ -213,10 +231,7 @@ test('runs clean preflight read-only, hashes SQL and writes atomic evidence', as
       ),
       'utf8',
     );
-    assert.equal(
-      result.preflightSha256,
-      createHash('sha256').update(sql, 'utf8').digest('hex'),
-    );
+    assert.equal(result.preflightSha256, sha256Text(sql));
     assert.equal(result.result, 'PASS');
     assert.deepEqual(result.target, target);
     assert.equal(result.targetFingerprint.serverVersion, 'PostgreSQL 16.4');
@@ -227,6 +242,15 @@ test('runs clean preflight read-only, hashes SQL and writes atomic evidence', as
     const preflightInvocation = invocations[2];
     assert.equal(preflightInvocation.argv.includes('--file'), false);
     assert.equal(preflightInvocation.argv.includes('--command'), true);
+    assert.equal(
+      preflightInvocation.argv[5].includes(
+        sql.slice(
+          sql.indexOf('SELECT check_name'),
+          sql.indexOf('SELECT check_name') + 40,
+        ),
+      ),
+      true,
+    );
     assert.match(
       preflightInvocation.argv[5],
       /future_active_snapshot_incomplete/,
@@ -304,6 +328,27 @@ test('does not write evidence for dirty checks, target mismatch or SQL failure',
   }
 });
 
+test('CLI rejects credentialed expected database values and preserves valid names', async () => {
+  const outputPath = await makeOutputPath();
+  const args = [
+    '--database-url-env',
+    'TARGET_DATABASE_URL',
+    '--schema',
+    schema,
+    '--release-id',
+    'imeal-20260928-001',
+    '--expected-database',
+    'postgresql://admin:super-secret@db.example/imeal',
+    '--output',
+    outputPath,
+  ];
+  await assert.rejects(
+    main(args, { TARGET_DATABASE_URL: databaseUrl }),
+    /invalid expected database/i,
+  );
+  await assert.rejects(access(outputPath));
+});
+
 test('CLI fails closed for missing environment, invalid release and schema', async () => {
   const args = [
     '--database-url-env',
@@ -334,4 +379,39 @@ test('CLI fails closed for missing environment, invalid release and schema', asy
     ),
     /schema/i,
   );
+});
+
+test('redacts credentialed values from target mismatch diagnostics', async () => {
+  const outputPath = await makeOutputPath();
+  const restore = installSpawn([
+    {
+      stdout: targetOutput({
+        database: 'postgresql://attacker:super-secret@db.example/imeal',
+      }),
+    },
+    { stdout: migrationsOutput },
+  ]);
+  try {
+    let failure;
+    try {
+      await runPreflight({
+        databaseUrl,
+        schema,
+        expectedTarget: target,
+        releaseId: 'imeal-20260928-001',
+        outputPath,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    assert.match(
+      failure?.message ?? '',
+      /target fingerprint mismatch.*database/i,
+    );
+    assert.doesNotMatch(failure?.message ?? '', /super-secret/i);
+    assert.match(failure?.message ?? '', /<redacted>/i);
+    await assert.rejects(access(outputPath));
+  } finally {
+    restore();
+  }
 });

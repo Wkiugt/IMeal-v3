@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
@@ -6,7 +7,7 @@ import {
   parseArgs,
   requireSafeSchemaName,
   runPsql,
-  sha256File,
+  sha256Text,
   writeEvidence,
 } from './staging-lib.mjs';
 
@@ -17,6 +18,8 @@ const PRE_FLIGHT_SQL_PATH = fileURLToPath(
   ),
 );
 const STATEMENT_TIMEOUT_SECONDS = 30;
+// Controlled staging databases use the same simple identifier contract as schemas.
+const DATABASE_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const TARGET_MARKER = 'phase0-target:';
@@ -40,12 +43,10 @@ function assertReleaseId(value) {
 }
 
 function assertExpectedDatabase(value) {
-  if (
-    typeof value !== 'string' ||
-    value.length === 0 ||
-    value.trim() !== value
-  ) {
-    throw new Error('invalid expected database');
+  if (typeof value !== 'string' || !DATABASE_PATTERN.test(value)) {
+    throw new Error(
+      'invalid expected database: must match /^[A-Za-z_][A-Za-z0-9_]*$/',
+    );
   }
   return value;
 }
@@ -383,7 +384,8 @@ export async function runPreflight({
   if (typeof outputPath !== 'string' || outputPath.length === 0) {
     throw new Error('output path is required');
   }
-  const preflightSha256 = await sha256File(PRE_FLIGHT_SQL_PATH);
+  const preflightSql = await readFile(PRE_FLIGHT_SQL_PATH, 'utf8');
+  const preflightSha256 = sha256Text(preflightSql);
   const targetFingerprint = await fingerprintTarget({
     databaseUrl,
     schema: safeSchema,
@@ -395,7 +397,7 @@ export async function runPreflight({
   const preflightResult = await runPsql({
     databaseUrl,
     schema: safeSchema,
-    sqlFile: PRE_FLIGHT_SQL_PATH,
+    sql: preflightSql,
     readOnly: true,
     statementTimeoutSeconds: STATEMENT_TIMEOUT_SECONDS,
   });

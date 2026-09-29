@@ -376,11 +376,8 @@ function assertDatabaseUrl(value) {
 function comparableValue(value) {
   if (value === undefined) return '<missing>';
   if (value === null) return '<null>';
-  if (
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  ) {
+  if (typeof value === 'string') return redactDatabaseUrl(value);
+  if (typeof value === 'number' || typeof value === 'boolean') {
     return String(value);
   }
   return JSON.stringify(value);
