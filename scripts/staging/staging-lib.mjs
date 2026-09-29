@@ -483,21 +483,190 @@ export async function writeEvidence(filePath, payload) {
     throw error;
   }
 }
+function sqlDollarQuoteAt(value, index) {
+  const match = value.slice(index).match(/^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/);
+  return match?.[0];
+}
+
+function stripSqlComments(sql) {
+  let output = '';
+  let index = 0;
+  let quote;
+  let dollarQuote;
+  while (index < sql.length) {
+    if (dollarQuote) {
+      if (sql.startsWith(dollarQuote, index)) {
+        output += dollarQuote;
+        index += dollarQuote.length;
+        dollarQuote = undefined;
+      } else {
+        output += sql[index];
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      const character = sql[index];
+      output += character;
+      index += 1;
+      if (character === '\\' && index < sql.length) {
+        output += sql[index];
+        index += 1;
+      } else if (character === quote) {
+        if (sql[index] === quote) {
+          output += sql[index];
+          index += 1;
+        } else {
+          quote = undefined;
+        }
+      }
+      continue;
+    }
+    if (sql.startsWith('--', index)) {
+      output += '  ';
+      index += 2;
+      while (index < sql.length && sql[index] !== '\n') {
+        output += ' ';
+        index += 1;
+      }
+      continue;
+    }
+    if (sql.startsWith('/*', index)) {
+      let depth = 1;
+      output += '  ';
+      index += 2;
+      while (index < sql.length && depth > 0) {
+        if (sql.startsWith('/*', index)) {
+          output += '  ';
+          index += 2;
+          depth += 1;
+        } else if (sql.startsWith('*/', index)) {
+          output += '  ';
+          index += 2;
+          depth -= 1;
+        } else {
+          output += sql[index] === '\n' ? '\n' : ' ';
+          index += 1;
+        }
+      }
+      continue;
+    }
+    const character = sql[index];
+    if (character === "'" || character === '"') {
+      quote = character;
+      output += character;
+      index += 1;
+      continue;
+    }
+    const delimiter =
+      character === '$' ? sqlDollarQuoteAt(sql, index) : undefined;
+    if (delimiter) {
+      dollarQuote = delimiter;
+      output += delimiter;
+      index += delimiter.length;
+      continue;
+    }
+    output += character;
+    index += 1;
+  }
+  return output;
+}
+
+function maskSqlLiterals(sql) {
+  let output = '';
+  let index = 0;
+  let quote;
+  let dollarQuote;
+  const mask = (character) => (character === '\n' ? '\n' : ' ');
+  while (index < sql.length) {
+    if (dollarQuote) {
+      if (sql.startsWith(dollarQuote, index)) {
+        output += ' '.repeat(dollarQuote.length);
+        index += dollarQuote.length;
+        dollarQuote = undefined;
+      } else {
+        output += mask(sql[index]);
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      const character = sql[index];
+      output += mask(character);
+      index += 1;
+      if (character === '\\' && index < sql.length) {
+        output += mask(sql[index]);
+        index += 1;
+      } else if (character === quote) {
+        if (sql[index] === quote) {
+          output += mask(sql[index]);
+          index += 1;
+        } else {
+          quote = undefined;
+        }
+      }
+      continue;
+    }
+    const character = sql[index];
+    if (character === "'" || character === '"') {
+      quote = character;
+      output += ' ';
+      index += 1;
+      continue;
+    }
+    const delimiter =
+      character === '$' ? sqlDollarQuoteAt(sql, index) : undefined;
+    if (delimiter) {
+      dollarQuote = delimiter;
+      output += ' '.repeat(delimiter.length);
+      index += delimiter.length;
+      continue;
+    }
+    output += character;
+    index += 1;
+  }
+  return output;
+}
+
+function removeSafeReadOnlyStatement(body) {
+  const visible = maskSqlLiterals(body);
+  const safeStatement = /(^|[;\n])\s*SET\s+TRANSACTION\s+READ\s+ONLY\s*;\s*/gi;
+  let output = '';
+  let cursor = 0;
+  let match;
+  while ((match = safeStatement.exec(visible)) !== null) {
+    const removeStart = match.index + match[1].length;
+    const removeEnd = match.index + match[0].length;
+    output += body.slice(cursor, removeStart);
+    cursor = removeEnd;
+  }
+  return `${output}${body.slice(cursor)}`;
+}
+
 function normalizeReadOnlySql(sql) {
-  const source = sql.trim();
-  const outerTransaction = /^BEGIN\s*;\s*([\s\S]*?)\s*COMMIT\s*;?\s*$/i.exec(
-    source,
-  );
-  const body = outerTransaction ? outerTransaction[1].trim() : source;
-  const withoutSafeReadOnly = body.replace(
-    /(^|[;\n])\s*SET TRANSACTION READ ONLY\s*;\s*/gi,
-    '$1',
-  );
+  const source = stripSqlComments(sql).trim();
+  const visible = maskSqlLiterals(source);
+  const beginPrefix = /^BEGIN\s*;\s*/i.exec(visible);
+  let body = source;
+  if (beginPrefix) {
+    const afterBegin = visible.slice(beginPrefix[0].length);
+    const commitSuffix = /\s*COMMIT\s*;?\s*$/i.exec(afterBegin);
+    if (commitSuffix) {
+      body = source
+        .slice(
+          beginPrefix[0].length,
+          beginPrefix[0].length + commitSuffix.index,
+        )
+        .trim();
+    }
+  }
+  const withoutSafeReadOnly = removeSafeReadOnlyStatement(body);
+  const visibleBody = maskSqlLiterals(withoutSafeReadOnly);
   if (
-    TRANSACTION_SETTING_PATTERN.test(withoutSafeReadOnly) ||
-    /\bREAD\s+WRITE\b/i.test(withoutSafeReadOnly) ||
-    TRANSACTION_READ_ONLY_OFF_PATTERN.test(withoutSafeReadOnly) ||
-    /\b(?:BEGIN|COMMIT|ROLLBACK)\b/i.test(withoutSafeReadOnly)
+    TRANSACTION_SETTING_PATTERN.test(visibleBody) ||
+    /\bREAD\s+WRITE\b/i.test(visibleBody) ||
+    TRANSACTION_READ_ONLY_OFF_PATTERN.test(visibleBody) ||
+    /\b(?:BEGIN|COMMIT|ROLLBACK)\b/i.test(visibleBody)
   ) {
     throw new Error('read-only transaction control is not allowed');
   }

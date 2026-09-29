@@ -367,9 +367,18 @@ test('loads read-only SQL files into one command and rejects transaction overrid
         'COMMIT;',
       ].join('\n'),
     );
+    await runPsql({
+      databaseUrl: 'postgresql://admin:password@db.example/imeal',
+      schema: 'phase0_staging',
+      sql: "SET/*x*/TRANSACTION/*y*/READ/*z*/ONLY; SELECT 'SET/*x*/TRANSACTION READ WRITE'; SELECT $$READ WRITE$$;",
+      readOnly: true,
+      statementTimeoutSeconds: 5,
+    });
+    assert.equal(invocations.length, 2);
 
     for (const sql of [
       'SET TRANSACTION READ WRITE;',
+      'SET/*x*/TRANSACTION/*y*/ISOLATION LEVEL SERIALIZABLE, READ/*z*/WRITE;',
       'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ WRITE;',
       'SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE;',
       'SET SESSION transaction_read_only = off;',
@@ -400,7 +409,7 @@ test('loads read-only SQL files into one command and rejects transaction overrid
       statementTimeoutSeconds: 5,
     });
     assert.equal(readWriteResult.exitCode, 0);
-    const readWriteArgs = invocations[1].argv;
+    const readWriteArgs = invocations[2].argv;
     assert.equal(readWriteArgs.includes('--file'), true);
     assert.equal(readWriteArgs.includes(sqlFile), true);
     assert.equal(readWriteArgs.includes('--command'), false);
