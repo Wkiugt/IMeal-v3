@@ -356,8 +356,10 @@ worker paths. Do not turn local test mode into staging evidence.
 
 The protected workflow invokes `runRuntimeIntegration` from
 `scripts/staging/runtime-integration.mjs` after deployment and before it records
-`runtimeIntegration: PASS`. It must observe the expected release marker,
-health/readiness behavior, and the actual hardening endpoints. This repository
+`runtimeIntegration: PASS`. A qualification PASS requires API and worker live
+and readiness endpoints to return HTTP 200 with body `status: "ok"` and the
+expected release marker; HTTP 503 readiness is a failed gate, not a diagnostic
+PASS. It must also observe the actual hardening endpoints. This repository
 contains the worker `/metrics` endpoint and private Compose isolation, but no
 real PostgreSQL/storage/backup/security collectors or target bindings are
 provisioned; that gate MUST remain FAIL until the deployed sources and their
@@ -405,9 +407,11 @@ signoff.json
 ```
 
 `runtime-integration.json` and `staging-smoke.json` are required PASS phase
-artifacts whenever the protected workflow declares them. They are checksum
-inputs; if their schema carries release/target fields, those fields must match
-the exact release and target. A missing or mismatched field, failed/unknown result,
+artifacts in every evidence bundle. They are checksum inputs and must carry
+the exact release and target bindings. Runtime evidence must show API and worker
+live/readiness HTTP 200 plus internal-only metrics. Staging smoke evidence must
+carry HTTPS origin fields, at least one named PASS check, and a `NOT_RUN`
+business workflow marker. A missing or mismatched field, failed/unknown result,
 missing migration clean marker, or malformed target fingerprint fails closed. The
 protected workflow emits references named
 `deployed-image-sbom-index.json` and the per-service deployed-image SBOMs.

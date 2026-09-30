@@ -4,8 +4,10 @@
 
 Task 7 hardens the exact 23-name staging metrics contract, bounded Prometheus
 labels/status selectors, worker job completeness, fail-closed runtime parsing,
-required phase evidence, and target-bound observability alert evidence. The
-verifier never creates an alert acknowledgement.
+strict phase-specific PASS evidence, required runtime/smoke evidence, and
+target-bound observability alert evidence. The verifier requires the alert
+snapshot digest to equal the SHA-256 of a supplied PASS evidence artifact and
+never creates an alert acknowledgement.
 
 ## Focused verification
 
@@ -18,8 +20,11 @@ node --test apps/worker/src/metrics/metrics.service.spec.ts
 ```
 
 These tests use disposable fixtures and injected fetch/command implementations.
-They do not connect to staging, query a real metrics collector, exercise a real
-alert transport, use credentials, or prove an external target/source.
+The qualification path now fails on API or worker readiness HTTP 503 and only
+returns PASS when both readiness responses are HTTP 200 with body
+`status: "ok"` and the expected release marker. They do not connect to staging,
+query a real metrics collector, exercise a real alert transport, use
+credentials, or prove an external target/source.
 
 ## Evidence and decision
 

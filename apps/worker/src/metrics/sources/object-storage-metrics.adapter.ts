@@ -53,6 +53,14 @@ export class ObjectStorageMetricsAdapter {
       if (input.freshness === 'unknown' || input.freshness === 'collector_failure') {
         return authoritativeFailure(SOURCE, input.freshness, 'source_unavailable');
       }
+      const suppliedOperationErrors = input.operationErrors!;
+      const operationErrors =
+        suppliedOperationErrors.length === 0
+          ? (['health', 'read', 'write'] as const).map((operation) => ({
+              operation,
+              count: 0,
+            }))
+          : suppliedOperationErrors;
       const samples = [
         createAuthoritativeSample({
           metricName: 'imeal_object_storage_capacity_bytes',
@@ -63,7 +71,7 @@ export class ObjectStorageMetricsAdapter {
           freshness: input.freshness,
           evidence: input.evidence,
         }),
-        ...(input.operationErrors ?? []).map((record) =>
+        ...operationErrors.map((record) =>
           createAuthoritativeSample({
             metricName: 'imeal_object_storage_errors_total',
             labels: { operation: record.operation },
@@ -122,7 +130,6 @@ export class ObjectStorageMetricsAdapter {
       !isFiniteNonnegative(input.usableCapacityBytes) ||
       !Number.isInteger(input.usableCapacityBytes) ||
       !Array.isArray(input.operationErrors) ||
-      input.operationErrors.length === 0 ||
       input.operationErrors.length > 3 ||
       !input.operationErrors.every((record) =>
         hasOnlyKeys(record, ['operation', 'count']) &&

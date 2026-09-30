@@ -75,6 +75,46 @@ describe('ObjectStorageMetricsAdapter', () => {
       ]),
     );
   });
+  it('emits bounded zero operation series for an explicit fresh empty observation', () => {
+    const result = new ObjectStorageMetricsAdapter(config).collect(
+      input({ operationErrors: [] }),
+    );
+
+    expect(result).toMatchObject({
+      source: 'object_storage_authoritative',
+      freshness: 'fresh',
+    });
+    expect(result.snapshot?.samples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metricName: 'imeal_object_storage_errors_total',
+          labels: { operation: 'health' },
+          value: 0,
+        }),
+        expect.objectContaining({
+          metricName: 'imeal_object_storage_errors_total',
+          labels: { operation: 'read' },
+          value: 0,
+        }),
+        expect.objectContaining({
+          metricName: 'imeal_object_storage_errors_total',
+          labels: { operation: 'write' },
+          value: 0,
+        }),
+      ]),
+    );
+  });
+  it('does not infer zeroes when operation error observations are missing', () => {
+    const result = new ObjectStorageMetricsAdapter(config).collect(
+      input({ operationErrors: undefined }),
+    );
+
+    expect(result).toMatchObject({
+      freshness: 'collector_failure',
+      reason: 'source_malformed',
+    });
+  });
+
 
   it('returns collector_failure for missing configuration or source records', () => {
     expect(new ObjectStorageMetricsAdapter().collect(input())).toEqual({

@@ -57,10 +57,6 @@ const REQUIRED_PASS_ARTIFACTS = [
   'runtime-integration.json',
   'staging-smoke.json',
 ];
-const OPTIONAL_BINDING_ARTIFACTS = new Set([
-  'runtime-integration.json',
-  'staging-smoke.json',
-]);
 const SAFE_SOURCE_IDENTITIES = new Set([
   'api',
   'worker',
@@ -80,6 +76,20 @@ const SAFE_FRESHNESS_STATES = new Set([
   'collector_failure',
 ]);
 const SAFE_REFERENCE_PATTERN = /^\/?[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+const PREFLIGHT_CHECK_NAMES = [
+  'registration_snapshot_incomplete',
+  'registration_serving_mismatch',
+  'roster_assignment_ambiguous',
+  'menu_revision_incomplete',
+  'penalty_registration_mapping_ambiguous',
+  'penalty_registration_duplicate_candidate',
+  'future_active_snapshot_incomplete',
+];
+const PREFLIGHT_STATUS_NAMES = ['ACTIVE', 'CANCELLED', 'SERVED', 'NO_SHOW'];
+const CONSTRAINT_NAMES = [
+  'registration_lifecycle_snapshot_complete',
+  'registration_serving_consistency',
+];
 
 function assertNonEmptyString(value, label) {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -314,9 +324,6 @@ function assertArtifactTargets(artifacts, target, releaseId) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error(`evidence JSON binding is required: ${artifact.name}`);
     }
-    if (OPTIONAL_BINDING_ARTIFACTS.has(artifact.name) && parsed.releaseId === undefined && parsed.target === undefined) {
-      continue;
-    }
     if (parsed.releaseId !== releaseId) {
       if (
         typeof parsed.releaseId !== 'string' ||
@@ -363,18 +370,253 @@ function assertBoundArtifact(artifact, name, releaseId, target) {
   }
 }
 
-function assertOptionalBoundArtifact(artifact, name, releaseId, target) {
+function assertTimestamp(value, label) {
   if (
-    OPTIONAL_BINDING_ARTIFACTS.has(name) &&
-    artifact.releaseId === undefined &&
-    artifact.target === undefined
+    typeof value !== 'string' ||
+    !Number.isFinite(Date.parse(value)) ||
+    new Date(value).toISOString() !== value
   ) {
-    return;
+    throw new Error(`${label} is invalid`);
   }
-  assertBoundArtifact(artifact, name, releaseId, target);
 }
 
-function assertObservabilityAlertEvidence(artifact, releaseId, target) {
+function assertDigest(value, label) {
+  if (typeof value !== 'string' || !SHA256_PATTERN.test(value)) {
+    throw new Error(`${label} is invalid`);
+  }
+}
+
+function assertTargetFingerprintShape(fingerprint, target) {
+  if (
+    !fingerprint ||
+    typeof fingerprint !== 'object' ||
+    Array.isArray(fingerprint) ||
+    fingerprint.database !== target.database ||
+    fingerprint.schema !== target.schema ||
+    typeof fingerprint.serverVersion !== 'string' ||
+    fingerprint.serverVersion.trim() === '' ||
+    !Array.isArray(fingerprint.migrationRows)
+  ) {
+    throw new Error('target fingerprint structure is invalid');
+  }
+}
+
+function assertPreflightSchema(artifact, name) {
+  assertDigest(artifact.preflightSha256, `${name} preflightSha256`);
+  if (
+    !Array.isArray(artifact.checks) ||
+    artifact.checks.length !== PREFLIGHT_CHECK_NAMES.length ||
+    !Array.isArray(artifact.statusCounts) ||
+    artifact.statusCounts.length !== PREFLIGHT_STATUS_NAMES.length
+  ) {
+    throw new Error(`${name} checks are incomplete`);
+  }
+  const checkNames = new Set();
+  for (const check of artifact.checks) {
+    if (
+      !check ||
+      !PREFLIGHT_CHECK_NAMES.includes(check.name) ||
+      checkNames.has(check.name) ||
+      !Number.isSafeInteger(check.affectedCount) ||
+      check.affectedCount !== 0 ||
+      !Array.isArray(check.sampleIds)
+    ) {
+      throw new Error(`${name} checks are invalid`);
+    }
+    checkNames.add(check.name);
+  }
+  const statuses = new Set();
+  for (const row of artifact.statusCounts) {
+    if (
+      !row ||
+      !PREFLIGHT_STATUS_NAMES.includes(row.status) ||
+      statuses.has(row.status) ||
+      !Number.isSafeInteger(row.count) ||
+      row.count < 0
+    ) {
+      throw new Error(`${name} status counts are invalid`);
+    }
+    statuses.add(row.status);
+  }
+}
+
+function assertBackupSchema(artifact) {
+  if (artifact.kind !== 'staging-backup') {
+    throw new Error('backup-manifest.json kind is invalid');
+  }
+  assertTargetFingerprintShape(artifact.targetFingerprint, artifact.target);
+  assertTimestamp(artifact.timestamps?.startedAt, 'backup start timestamp');
+  assertTimestamp(artifact.timestamps?.completedAt, 'backup completion timestamp');
+  const encrypted = artifact.artifact;
+  if (
+    !encrypted ||
+    encrypted.format !== 'age-wrapped-postgresql-custom' ||
+    !Number.isSafeInteger(encrypted.bytes) ||
+    encrypted.bytes < 0
+  ) {
+    throw new Error('backup-manifest.json artifact is invalid');
+  }
+  assertDigest(encrypted.sha256, 'backup artifact digest');
+  if (
+    !artifact.encryption ||
+    artifact.encryption.algorithm !== 'age' ||
+    artifact.storage?.provider !== 's3-compatible-private'
+  ) {
+    throw new Error('backup-manifest.json storage evidence is invalid');
+  }
+}
+
+function assertBackfillSchema(artifact) {
+  for (const [field, label] of [
+    ['preflightSha256', 'backfill preflight digest'],
+    ['backupManifestSha256', 'backfill backup digest'],
+    ['backfillSha256', 'backfill script digest'],
+  ]) {
+    assertDigest(artifact[field], label);
+  }
+  if (
+    typeof artifact.approvalId !== 'string' ||
+    artifact.approvalId.trim() === '' ||
+    !artifact.transaction
+  ) {
+    throw new Error('backfill-result.json transaction evidence is invalid');
+  }
+  assertTimestamp(artifact.transaction.startedAt, 'backfill start timestamp');
+  assertTimestamp(
+    artifact.transaction.completedAt,
+    'backfill completion timestamp',
+  );
+}
+
+function assertConstraintSchema(artifact) {
+  assertTargetFingerprintShape(artifact.targetFingerprint, artifact.target);
+  assertDigest(artifact.preflightAfterSha256, 'post-preflight digest');
+  assertDigest(artifact.migrationSha256, 'migration digest');
+  if (
+    !Array.isArray(artifact.constraints) ||
+    artifact.constraints.length !== CONSTRAINT_NAMES.length ||
+    artifact.constraints.some(
+      (constraint) =>
+        !constraint ||
+        !CONSTRAINT_NAMES.includes(constraint.name) ||
+        constraint.validated !== true,
+    )
+  ) {
+    throw new Error('constraint-validation.json constraints are invalid');
+  }
+}
+
+function assertRestoreSchema(artifact) {
+  if (artifact.kind !== 'restore-rehearsal') {
+    throw new Error('restore-rehearsal.json kind is invalid');
+  }
+  assertTargetFingerprintShape(artifact.targetFingerprint, artifact.target);
+  assertTimestamp(artifact.timestamps?.startedAt, 'restore start timestamp');
+  assertTimestamp(artifact.timestamps?.completedAt, 'restore completion timestamp');
+  if (
+    artifact.checksums?.artifact !== 'PASS' ||
+    artifact.database?.restored !== 'PASS' ||
+    artifact.objects?.restored !== 'PASS' ||
+    artifact.migration?.result !== 'PASS' ||
+    artifact.readiness?.result !== 'PASS' ||
+    artifact.smoke?.result !== 'PASS'
+  ) {
+    throw new Error('restore-rehearsal.json contains a failed phase');
+  }
+  assertDigest(artifact.checksums.sha256, 'restore artifact digest');
+}
+
+function assertObservationMetadata(artifact, name) {
+  if (
+    typeof artifact.source !== 'string' ||
+    !SAFE_REFERENCE_PATTERN.test(artifact.source) ||
+    !SAFE_FRESHNESS_STATES.has(artifact.freshness) ||
+    artifact.freshness !== 'fresh'
+  ) {
+    throw new Error(`${name} source or freshness is invalid`);
+  }
+  assertTimestamp(artifact.observedAt, `${name} observedAt`);
+}
+function assertEvidenceOrigin(value, label) {
+  let origin;
+  try {
+    const parsed = new URL(value);
+    if (
+      parsed.protocol !== 'https:' ||
+      parsed.pathname !== '/' ||
+      parsed.search ||
+      parsed.hash ||
+      parsed.username ||
+      parsed.password
+    ) {
+      throw new Error('unsafe origin');
+    }
+    origin = parsed.origin;
+  } catch {
+    throw new Error(`${label} origin is invalid`);
+  }
+  return origin;
+}
+
+function assertSmokeCheck(check, name) {
+  if (
+    !check ||
+    typeof check.name !== 'string' ||
+    check.name.trim() === '' ||
+    check.result !== 'PASS'
+  ) {
+    throw new Error(`${name} checks are invalid`);
+  }
+}
+
+
+function assertRuntimeSchema(artifact) {
+  const evidence = artifact.evidence;
+  if (
+    !evidence ||
+    evidence.api?.live !== 200 ||
+    evidence.api?.ready !== 200 ||
+    evidence.worker?.live !== 200 ||
+    evidence.worker?.ready !== 200 ||
+    evidence.metricsInternalOnly !== true
+  ) {
+    throw new Error('runtime-integration.json runtime evidence is not PASS');
+  }
+  if (Object.hasOwn(artifact, 'source') || Object.hasOwn(artifact, 'freshness')) {
+    assertObservationMetadata(artifact, 'runtime-integration');
+  }
+}
+
+function assertSmokeSchema(artifact, name) {
+  if (name === 'staging-smoke.json') {
+    if (
+      typeof artifact.apiOrigin !== 'string' ||
+      typeof artifact.adminOrigin !== 'string' ||
+      !Array.isArray(artifact.checks) ||
+      artifact.checks.length === 0 ||
+      artifact.businessWorkflow?.result !== 'NOT_RUN'
+    ) {
+      throw new Error('staging-smoke.json runtime evidence is not PASS');
+    }
+    assertEvidenceOrigin(artifact.apiOrigin, 'staging smoke API');
+    assertEvidenceOrigin(artifact.adminOrigin, 'staging smoke admin');
+    for (const check of artifact.checks) {
+      assertSmokeCheck(check, 'staging-smoke.json');
+    }
+  } else {
+    assertNonEmptyString(artifact.command, `${name} command`);
+    assertNonEmptyString(artifact.operator, `${name} operator`);
+    assertObservationMetadata(artifact, name);
+  }
+}
+
+
+function assertObservabilityAlertEvidence(
+  artifact,
+  artifacts,
+  releaseId,
+  target,
+) {
   assertBoundArtifact(artifact, 'observability-alert-test', releaseId, target);
   if (artifact.result !== 'PASS') {
     throw new Error('observability-alert-test.json must contain an explicit PASS');
@@ -384,7 +626,8 @@ function assertObservabilityAlertEvidence(artifact, releaseId, target) {
     !source ||
     typeof source !== 'object' ||
     Array.isArray(source) ||
-    Object.keys(source).sort().join(',') !== 'freshness,identity,snapshotDigest'
+    Object.keys(source).sort().join(',') !==
+      'freshness,identity,snapshotArtifact,snapshotDigest'
   ) {
     throw new Error('observability source evidence is required');
   }
@@ -399,9 +642,13 @@ function assertObservabilityAlertEvidence(artifact, releaseId, target) {
   }
   if (
     typeof source.snapshotDigest !== 'string' ||
-    !SHA256_PATTERN.test(source.snapshotDigest)
+    !SHA256_PATTERN.test(source.snapshotDigest) ||
+    typeof source.snapshotArtifact !== 'string' ||
+    !artifacts[source.snapshotArtifact] ||
+    artifacts[source.snapshotArtifact].sha256 !== source.snapshotDigest ||
+    artifacts[source.snapshotArtifact].parsed?.result !== 'PASS'
   ) {
-    throw new Error('observability snapshot digest is invalid');
+    throw new Error('observability snapshot digest does not match evidence');
   }
   const acknowledgement = artifact.acknowledgement;
   if (
@@ -476,10 +723,29 @@ function assertCompletionArtifacts(artifacts, releaseId, target) {
     if (!artifact || artifact.result !== 'PASS') {
       throw new Error(`${name} must have result PASS`);
     }
-    assertOptionalBoundArtifact(artifact, name, releaseId, target);
+    assertBoundArtifact(artifact, name, releaseId, target);
+    if (name === 'preflight-before.json' || name === 'preflight-after.json') {
+      assertTargetFingerprintShape(artifact.targetFingerprint, target);
+      assertPreflightSchema(artifact, name);
+    } else if (name === 'backup-manifest.json') {
+      assertBackupSchema(artifact);
+    } else if (name === 'backfill-result.json') {
+      assertBackfillSchema(artifact);
+    } else if (name === 'constraint-validation.json') {
+      assertConstraintSchema(artifact);
+    } else if (name === 'restore-rehearsal.json') {
+      assertRestoreSchema(artifact);
+    } else if (name === 'runtime-integration.json') {
+      assertRuntimeSchema(artifact);
+    } else if (name === 'staging-smoke.json') {
+      assertSmokeSchema(artifact, name);
+    } else if (name.startsWith('smoke-')) {
+      assertSmokeSchema(artifact, name);
+    }
   }
   assertObservabilityAlertEvidence(
     artifacts['observability-alert-test.json'].parsed,
+    artifacts,
     releaseId,
     target,
   );

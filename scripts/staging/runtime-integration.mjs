@@ -249,7 +249,17 @@ export function validateMetricsText(text) {
     if (!ALLOWED_METRIC_SERIES.has(name)) {
       throw new Error(`metric name is not approved: ${name}`);
     }
-    if (!NUMBER_PATTERN.test(rawValue) || !Number.isFinite(Number(rawValue)) || Number(rawValue) < 0) {
+    const family = metricFamilyFor(name);
+    const value = Number(rawValue);
+    if (
+      !NUMBER_PATTERN.test(rawValue) ||
+      !Number.isFinite(value) ||
+      value < 0 ||
+      ((METRIC_TYPES.get(name) === 'counter' ||
+        family.kind === 'bucket' ||
+        family.kind === 'count') &&
+        !Number.isSafeInteger(value))
+    ) {
       throw new Error(`metric value is invalid: ${name}`);
     }
     const labels = parseMetricLabels(rawLabels, name);
@@ -258,8 +268,7 @@ export function validateMetricsText(text) {
       throw new Error(`metric sample is duplicated: ${name}`);
     }
     sampleKeys.add(sampleKey);
-    const family = metricFamilyFor(name);
-    const sample = { labels, value: Number(rawValue) };
+    const sample = { labels, value };
     const samples = samplesByName.get(name) ?? [];
     samples.push(sample);
     samplesByName.set(name, samples);
@@ -270,15 +279,21 @@ export function validateMetricsText(text) {
         histogram.labels.map((label) => [label, labels[label]]),
       );
       const groupKey = JSON.stringify(groupLabels);
-      const group = histogramGroups.get(`${name}:${groupKey}`) ?? new Set();
-      if (group.has(bucket)) throw new Error(`metric bucket is duplicated: ${name}`);
-      group.add(bucket);
+      const group = histogramGroups.get(`${name}:${groupKey}`) ?? new Map();
+      if (group.has(bucket)) {
+        throw new Error(`metric bucket is duplicated: ${name}`);
+      }
+      group.set(bucket, value);
       histogramGroups.set(`${name}:${groupKey}`, group);
     }
   }
   for (const name of HARDENING_METRIC_NAMES) {
     if (!(samplesByName.get(name)?.length > 0)) {
       throw new Error(`required metric has no numeric sample: ${name}`);
+    }
+    const declarationName = HISTOGRAMS[name]?.base ?? name;
+    if (!typeDeclarations.has(declarationName)) {
+      throw new Error(`required metric type declaration is missing: ${declarationName}`);
     }
   }
   for (const [bucketName, histogram] of Object.entries(HISTOGRAMS)) {
@@ -298,19 +313,36 @@ export function validateMetricsText(text) {
       ) {
         throw new Error(`histogram buckets are incomplete: ${bucketName}`);
       }
+      let previous = 0;
+      for (const bucket of HISTOGRAM_BUCKETS) {
+        const value = buckets.get(bucket);
+        if (value < previous) {
+          throw new Error(`histogram buckets are not cumulative: ${bucketName}`);
+        }
+        previous = value;
+      }
     }
     for (const suffix of ['_sum', '_count']) {
       const auxiliaryName = `${histogram.base}${suffix}`;
       const auxiliarySamples = samplesByName.get(auxiliaryName) ?? [];
-      if (auxiliarySamples.length === 0) {
-        throw new Error(`histogram auxiliary series is missing: ${auxiliaryName}`);
+      if (auxiliarySamples.length !== groups.length) {
+        throw new Error(`histogram auxiliary series is incomplete: ${auxiliaryName}`);
       }
+      const auxiliaryGroupKeys = new Set();
       for (const sample of auxiliarySamples) {
         const labels = Object.fromEntries(
           histogram.labels.map((label) => [label, sample.labels[label]]),
         );
-        if (!groupKeys.has(`${bucketName}:${JSON.stringify(labels)}`)) {
+        const groupKey = `${bucketName}:${JSON.stringify(labels)}`;
+        if (!groupKeys.has(groupKey) || auxiliaryGroupKeys.has(groupKey)) {
           throw new Error(`histogram auxiliary labels are unmatched: ${auxiliaryName}`);
+        }
+        auxiliaryGroupKeys.add(groupKey);
+        if (suffix === '_count') {
+          const buckets = histogramGroups.get(groupKey);
+          if (buckets.get('+Inf') !== sample.value) {
+            throw new Error(`histogram +Inf count is inconsistent: ${bucketName}`);
+          }
         }
       }
     }
@@ -472,14 +504,12 @@ async function readHealth({
   if (check === 'live' && response.status !== 200) {
     throw new Error(`${service} live must return HTTP 200`);
   }
-  if (check === 'ready' && response.status !== 200 && response.status !== 503) {
-    throw new Error(`${service} ready must return HTTP 200 or 503`);
+  if (check === 'ready' && response.status !== 200) {
+    throw new Error(`${service} ready must return HTTP 200`);
   }
   if (
     (check === 'live' && body.status !== 'ok') ||
-    (check === 'ready' &&
-      ((response.status === 200 && body.status !== 'ok') ||
-        (response.status === 503 && body.status !== 'error')))
+    (check === 'ready' && body.status !== 'ok')
   ) {
     throw new Error(`${service} ${check} response status is inconsistent`);
   }
@@ -656,6 +686,12 @@ export function assertAlertRules({ rulesText, requiredMetrics }) {
       throw new Error(`missing required metric: ${metric}`);
     }
   }
+  const approvedMetrics = new Set(requiredMetrics);
+  for (const metric of new Set(rulesText.match(/\bimeal_[a-z0-9_]+\b/g) ?? [])) {
+    if (!approvedMetrics.has(metric)) {
+      throw new Error(`alert rules reference an unapproved metric: ${metric}`);
+    }
+  }
   if (!/owner:\s*\S+/.test(rulesText) || !/action:\s*\S/.test(rulesText)) {
     throw new Error('alert rules require bounded owner and action metadata');
   }
@@ -677,5 +713,11 @@ export function assertAlertRules({ rulesText, requiredMetrics }) {
   );
   if (authResult?.[1] !== 'failure|dependency_failure') {
     throw new Error('alert rules contain an unapproved auth result selector');
+  }
+  const servingResult = rulesText.match(
+    /imeal_serving_confirm_total\{result=~"([^"]+)"/,
+  );
+  if (servingResult?.[1] !== 'error|failure') {
+    throw new Error('alert rules contain an unapproved serving result selector');
   }
 }

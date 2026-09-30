@@ -51,8 +51,28 @@ test('uses exact bounded status and result label selectors with absence coverage
   const text = await rulesText();
   assert.match(text, /status=~"500\|502\|503\|504"/);
   assert.doesNotMatch(text, /status=~"5\.\."/);
-  assert.match(text, /result=~"failure\|dependency_failure"/);
-  assert.doesNotMatch(text, /result=~"failure\|error"/);
+  assert.match(
+    text,
+    /imeal_auth_attempts_total\{result=~"failure\|dependency_failure"\}/,
+  );
+  assert.match(
+    text,
+    /imeal_serving_confirm_total\{result=~"error\|failure"\}/,
+  );
+  assert.doesNotMatch(
+    text,
+    /imeal_auth_attempts_total\{result=~"(?:failure\|error|success)"/,
+  );
+  for (const metric of [
+    'imeal_http_requests_total',
+    'imeal_http_request_duration_seconds_bucket',
+    'imeal_auth_attempts_total',
+    'imeal_serving_confirm_total',
+    'imeal_serving_confirm_duration_seconds_bucket',
+    'imeal_idempotency_conflicts_total',
+  ]) {
+    assert.match(text, new RegExp(`absent\\(${metric}(?:\\{|\\))`));
+  }
   for (const job of [
     'otp_delivery',
     'notification_dispatch',
@@ -64,11 +84,44 @@ test('uses exact bounded status and result label selectors with absence coverage
   ]) {
     assert.match(
       text,
-      new RegExp(`absent\\(imeal_worker_job_(?:last_success_timestamp_seconds|lag_seconds)\\{job="${job}"\\}\\)`),
+      new RegExp(
+        `absent\\(imeal_worker_job_(?:last_success_timestamp_seconds|lag_seconds)\\{job="${job}"\\}\\)`,
+      ),
     );
   }
 });
 
+
+test('assertAlertRules rejects unapproved selectors and metric names', async () => {
+  const text = await rulesText();
+  assert.throws(
+    () =>
+      assertAlertRules({
+        rulesText: text.replace('status=~"500|502|503|504"', 'status=~"501|599"'),
+        requiredMetrics: HARDENING_METRIC_NAMES,
+      }),
+    /unapproved HTTP status selector/,
+  );
+  assert.throws(
+    () =>
+      assertAlertRules({
+        rulesText: text.replace(
+          'result=~"failure|dependency_failure"',
+          'result=~"failure|unknown"',
+        ),
+        requiredMetrics: HARDENING_METRIC_NAMES,
+      }),
+    /unapproved auth result selector/,
+  );
+  assert.throws(
+    () =>
+      assertAlertRules({
+        rulesText: `${text}\nimeal_unapproved_metric`,
+        requiredMetrics: HARDENING_METRIC_NAMES,
+      }),
+    /unapproved metric/,
+  );
+});
 
 test('rejects missing metrics, unsafe labels and unsupported stock directives', () => {
   assert.throws(

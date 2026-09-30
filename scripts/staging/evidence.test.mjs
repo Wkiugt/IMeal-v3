@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +16,30 @@ import {
 const releaseId = 'imeal-20260928-001';
 const target = { database: 'imeal_staging', schema: 'phase0_staging_20260928' };
 const digest = 'a'.repeat(64);
+const phaseDigest = 'c'.repeat(64);
+const targetFingerprint = {
+  database: target.database,
+  schema: target.schema,
+  serverVersion: 'PostgreSQL 16.4',
+  migrationRows: [],
+};
+const preflightChecks = [
+  'registration_snapshot_incomplete',
+  'registration_serving_mismatch',
+  'roster_assignment_ambiguous',
+  'menu_revision_incomplete',
+  'penalty_registration_mapping_ambiguous',
+  'penalty_registration_duplicate_candidate',
+  'future_active_snapshot_incomplete',
+].map((name) => ({ name, affectedCount: 0, sampleIds: [] }));
+const preflightStatusCounts = ['ACTIVE', 'CANCELLED', 'SERVED', 'NO_SHOW'].map(
+  (status) => ({ status, count: 0 }),
+);
+const observation = {
+  source: 'smoke-fixture',
+  freshness: 'fresh',
+  observedAt: '2026-09-28T12:00:00.000Z',
+};
 
 async function makeEvidenceDirectory({
   rollback = true,
@@ -44,69 +69,163 @@ async function makeEvidenceDirectory({
   );
   await writeFile(
     join(directory, 'target-fingerprint.json'),
-    `${JSON.stringify({
-      releaseId,
-      target,
-      targetFingerprint: {
-        database: target.database,
-        schema: target.schema,
-        serverVersion: 'PostgreSQL 16.4',
-        migrationRows: [],
-      },
-    })}\n`,
+    `${JSON.stringify({ result: 'PASS', releaseId, target, targetFingerprint })}\n`,
   );
   for (const name of jsonNames) {
     const payload =
       name === 'target-fingerprint.json'
-        ? {
-            releaseId,
-            target,
-            targetFingerprint: {
-              database: target.database,
-              schema: target.schema,
-              serverVersion: 'PostgreSQL 16.4',
-              migrationRows: [],
-            },
-          }
-        : name === 'approval.json'
+        ? { result: 'PASS', releaseId, target, targetFingerprint }
+        : name === 'preflight-before.json' || name === 'preflight-after.json'
           ? {
               result: 'PASS',
               releaseId,
               target,
-              approvalId: 'approval-20260928-001',
-              decision: 'APPROVED_FOR_EXACT_BACKFILL',
-              approver: 'data-owner',
-              rollbackAuthority: 'release-manager',
-              rollbackDecisionWindow: '24h',
+              targetFingerprint,
+              preflightSha256: phaseDigest,
+              checks: preflightChecks,
+              statusCounts: preflightStatusCounts,
             }
-          : name === 'smoke-business.json'
+          : name === 'backup-manifest.json'
             ? {
                 result: 'PASS',
+                kind: 'staging-backup',
                 releaseId,
                 target,
-                command: 'yarn test:unit',
-                operator: 'qa-operator',
+                targetFingerprint,
+                timestamps: {
+                  startedAt: observation.observedAt,
+                  completedAt: observation.observedAt,
+                },
+                artifact: {
+                  encryptedFile: 'release.dump.age',
+                  format: 'age-wrapped-postgresql-custom',
+                  bytes: 128,
+                  sha256: phaseDigest,
+                },
+                encryption: { algorithm: 'age' },
+                storage: { provider: 's3-compatible-private' },
               }
-            : name === 'observability-alert-test.json'
+            : name === 'backfill-result.json'
               ? {
                   result: 'PASS',
                   releaseId,
                   target,
-                  source: {
-                    identity: 'prometheus',
-                    freshness: 'fresh',
-                    snapshotDigest: digest,
-                  },
-                  acknowledgement: {
-                    acknowledged: true,
-                    route: 'alert-test-route',
-                    destination: 'staging-on-call',
-                    observedAt: '2026-09-28T12:00:00.000Z',
+                  approvalId: 'approval-20260928-001',
+                  preflightSha256: phaseDigest,
+                  backupManifestSha256: phaseDigest,
+                  backfillSha256: phaseDigest,
+                  transaction: {
+                    startedAt: observation.observedAt,
+                    completedAt: observation.observedAt,
                   },
                 }
-              : { result: 'PASS', releaseId, target };
+              : name === 'constraint-validation.json'
+                ? {
+                    result: 'PASS',
+                    releaseId,
+                    target,
+                    targetFingerprint,
+                    preflightAfterSha256: phaseDigest,
+                    migrationSha256: phaseDigest,
+                    constraints: [
+                      {
+                        name: 'registration_lifecycle_snapshot_complete',
+                        validated: true,
+                      },
+                      {
+                        name: 'registration_serving_consistency',
+                        validated: true,
+                      },
+                    ],
+                  }
+                : name === 'restore-rehearsal.json'
+                  ? {
+                      result: 'PASS',
+                      kind: 'restore-rehearsal',
+                      releaseId,
+                      target,
+                      targetFingerprint,
+                      timestamps: {
+                        startedAt: observation.observedAt,
+                        completedAt: observation.observedAt,
+                      },
+                      checksums: { artifact: 'PASS', sha256: phaseDigest },
+                      database: { restored: 'PASS' },
+                      objects: { restored: 'PASS' },
+                      migration: { result: 'PASS' },
+                      readiness: { result: 'PASS' },
+                      smoke: { result: 'PASS' },
+                    }
+                  : name === 'runtime-integration.json'
+                    ? {
+                        result: 'PASS',
+                        releaseId,
+                        target,
+                        evidence: {
+                          api: { live: 200, ready: 200 },
+                          worker: { live: 200, ready: 200 },
+                          metricsInternalOnly: true,
+                        },
+                      }
+                    : name === 'staging-smoke.json'
+                      ? {
+                          result: 'PASS',
+                          releaseId,
+                          target,
+                          apiOrigin: 'https://staging.example.test',
+                          adminOrigin: 'https://admin.staging.example.test',
+                          checks: [{ name: 'health', result: 'PASS' }],
+                          businessWorkflow: { result: 'NOT_RUN' },
+                        }
+                      : name.startsWith('smoke-')
+                        ? {
+                            result: 'PASS',
+                            releaseId,
+                            target,
+                            command: 'yarn test:unit',
+                            operator: 'qa-operator',
+                            ...observation,
+                          }
+                        : name === 'approval.json'
+                          ? {
+                              result: 'PASS',
+                              releaseId,
+                              target,
+                              approvalId: 'approval-20260928-001',
+                              decision: 'APPROVED_FOR_EXACT_BACKFILL',
+                              approver: 'data-owner',
+                              rollbackAuthority: 'release-manager',
+                              rollbackDecisionWindow: '24h',
+                            }
+                          : name === 'observability-alert-test.json'
+                            ? {
+                                result: 'PASS',
+                                releaseId,
+                                target,
+                                source: {
+                                  identity: 'prometheus',
+                                  freshness: 'fresh',
+                                  snapshotArtifact: 'runtime-integration.json',
+                                  snapshotDigest: phaseDigest,
+                                },
+                                acknowledgement: {
+                                  acknowledged: true,
+                                  route: 'alert-test-route',
+                                  destination: 'staging-on-call',
+                                  observedAt: observation.observedAt,
+                                },
+                              }
+                            : { result: 'PASS', releaseId, target };
     await writeFile(join(directory, name), `${JSON.stringify(payload)}\n`);
   }
+  const runtimeBytes = await readFile(
+    join(directory, 'runtime-integration.json'),
+  );
+  const runtimeDigest = createHash('sha256').update(runtimeBytes).digest('hex');
+  const alertPath = join(directory, 'observability-alert-test.json');
+  const alertEvidence = JSON.parse(await readFile(alertPath, 'utf8'));
+  alertEvidence.source.snapshotDigest = runtimeDigest;
+  await writeFile(alertPath, `${JSON.stringify(alertEvidence)}\n`);
   await writeFile(
     join(directory, 'migration-status.txt'),
     'migrations=clean\n',
@@ -370,6 +489,27 @@ test('requires fresh target-bound alert evidence without manufacturing acknowled
     createEvidenceManifest({ releaseId, target, artifactDirectory: conflicting }),
     /source evidence is required/,
   );
+  const mismatchedSnapshot = await makeEvidenceDirectory();
+  const mismatchedSnapshotPath = join(
+    mismatchedSnapshot,
+    'observability-alert-test.json',
+  );
+  const mismatchedSnapshotEvidence = JSON.parse(
+    await readFile(mismatchedSnapshotPath, 'utf8'),
+  );
+  mismatchedSnapshotEvidence.source.snapshotDigest = 'b'.repeat(64);
+  await writeFile(
+    mismatchedSnapshotPath,
+    JSON.stringify(mismatchedSnapshotEvidence),
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: mismatchedSnapshot,
+    }),
+    /snapshot digest does not match evidence/,
+  );
 });
 
 test('binds runtime and smoke artifacts and rejects incomplete phase evidence', async () => {
@@ -472,6 +612,84 @@ test('binds runtime and smoke artifacts and rejects incomplete phase evidence', 
     }),
     /target fingerprint structure or digest is invalid/,
   );
+});
+test('rejects failed or unbound phase-specific and smoke schemas', async () => {
+  const cases = [
+    {
+      name: 'preflight-before.json',
+      mutate: (artifact) => {
+        delete artifact.checks;
+      },
+      error: /preflight-before\.json checks are incomplete/,
+    },
+    {
+      name: 'backup-manifest.json',
+      mutate: (artifact) => {
+        artifact.kind = 'unknown';
+      },
+      error: /backup-manifest\.json kind is invalid/,
+    },
+    {
+      name: 'backfill-result.json',
+      mutate: (artifact) => {
+        delete artifact.backfillSha256;
+      },
+      error: /backfill script digest is invalid/,
+    },
+    {
+      name: 'constraint-validation.json',
+      mutate: (artifact) => {
+        artifact.constraints[0].validated = false;
+      },
+      error: /constraint-validation\.json constraints are invalid/,
+    },
+    {
+      name: 'restore-rehearsal.json',
+      mutate: (artifact) => {
+        artifact.readiness.result = 'FAIL';
+      },
+      error: /restore-rehearsal\.json contains a failed phase/,
+    },
+    {
+      name: 'smoke-worker.json',
+      mutate: (artifact) => {
+        delete artifact.source;
+      },
+      error: /smoke-worker\.json source or freshness is invalid/,
+    },
+    {
+      name: 'runtime-integration.json',
+      mutate: (artifact) => {
+        artifact.evidence.worker.ready = 503;
+      },
+      error: /runtime-integration\.json runtime evidence is not PASS/,
+    },
+    {
+      name: 'staging-smoke.json',
+      mutate: (artifact) => {
+        artifact.checks[0].result = 'FAIL';
+      },
+      error: /staging-smoke\.json checks are invalid/,
+    },
+    {
+      name: 'staging-smoke.json',
+      mutate: (artifact) => {
+        artifact.apiOrigin = 'https://staging.example.test/private/path';
+      },
+      error: /staging smoke API origin is invalid/,
+    },
+  ];
+  for (const { name, mutate, error } of cases) {
+    const directory = await makeEvidenceDirectory();
+    const path = join(directory, name);
+    const artifact = JSON.parse(await readFile(path, 'utf8'));
+    mutate(artifact);
+    await writeFile(path, JSON.stringify(artifact));
+    await assert.rejects(
+      createEvidenceManifest({ releaseId, target, artifactDirectory: directory }),
+      error,
+    );
+  }
 });
 
 test('requires exact approval and independent signoff metadata', async () => {

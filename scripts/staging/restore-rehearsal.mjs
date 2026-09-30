@@ -620,6 +620,10 @@ export async function restoreRehearsal({
       result: 'PASS',
       kind: 'restore-rehearsal',
       releaseId,
+      target: {
+        database: recordedTargetFingerprint.database,
+        schema: recordedTargetFingerprint.schema,
+      },
       restoreDatabase: safeRestoreDatabase,
       restoreBucket: safeRestoreBucket,
       timestamps: { startedAt, completedAt },

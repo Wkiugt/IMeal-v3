@@ -141,17 +141,44 @@ test('consumes the hardening health, request-ID and internal metrics contracts',
   });
 });
 
-test('reports API and worker readiness dependency failures without weakening live checks', async () => {
-  const result = await runRuntimeIntegration({
-    apiOrigin: API_ORIGIN,
-    workerOrigin: WORKER_ORIGIN,
-    expectedRelease: RELEASE,
-    fetchImpl: fetchFixture({ apiReadyStatus: 503, workerReadyStatus: 503 }),
-  });
-  assert.equal(result.api.live, 200);
-  assert.equal(result.api.ready, 503);
-  assert.equal(result.worker.live, 200);
-  assert.equal(result.worker.ready, 503);
+test('rejects API and worker readiness dependency failures for qualification', async () => {
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchFixture({ apiReadyStatus: 503 }),
+    }),
+    /api ready must return HTTP 200/,
+  );
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchFixture({ workerReadyStatus: 503 }),
+    }),
+    /worker ready must return HTTP 200/,
+  );
+});
+test('rejects an HTTP 200 readiness response whose body is not ok', async () => {
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: async (url) => {
+        if (
+          url.endsWith('/health/ready') &&
+          url.startsWith(API_ORIGIN)
+        ) {
+          return response(200, healthBody('api', 'error'));
+        }
+        return fetchFixture()(url);
+      },
+    }),
+    /api ready response status is inconsistent/,
+  );
 });
 
 test('rejects a live response whose body status is not healthy', async () => {
@@ -293,6 +320,90 @@ test('rejects malformed histogram buckets and every successful public metrics re
       fetchImpl: fetchWithWorkerMetrics(invalidType),
     }),
     /metric type is invalid/,
+  );
+
+  const decreasing = METRICS.replace(
+    'imeal_http_request_duration_seconds_bucket{route="api",method="GET",status="200",le="0.01"} 1',
+    'imeal_http_request_duration_seconds_bucket{route="api",method="GET",status="200",le="0.01"} 0',
+  );
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchWithWorkerMetrics(decreasing),
+    }),
+    /histogram buckets are not cumulative/,
+  );
+
+  const mismatchedCount = METRICS.replace(
+    'imeal_http_request_duration_seconds_count{route="api",method="GET",status="200"} 1',
+    'imeal_http_request_duration_seconds_count{route="api",method="GET",status="200"} 2',
+  );
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchWithWorkerMetrics(mismatchedCount),
+    }),
+    /histogram \+Inf count is inconsistent/,
+  );
+
+  const mismatchedSumLabels = METRICS.replace(
+    'imeal_http_request_duration_seconds_sum{route="api",method="GET",status="200"} 1',
+    'imeal_http_request_duration_seconds_sum{route="other",method="GET",status="200"} 1',
+  );
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchWithWorkerMetrics(mismatchedSumLabels),
+    }),
+    /histogram auxiliary labels are unmatched/,
+  );
+
+  const missingType = METRICS.replace(
+    '# TYPE imeal_auth_attempts_total counter\n',
+    '',
+  );
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchWithWorkerMetrics(missingType),
+    }),
+    /required metric type declaration is missing/,
+  );
+
+  const fractionalCounter = METRICS.replace(
+    'imeal_auth_attempts_total{result="success"} 1',
+    'imeal_auth_attempts_total{result="success"} 1.5',
+  );
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchWithWorkerMetrics(fractionalCounter),
+    }),
+    /metric value is invalid/,
+  );
+
+  const negativeGauge = METRICS.replace(
+    'imeal_otp_outbox_oldest_age_seconds 1',
+    'imeal_otp_outbox_oldest_age_seconds -1',
+  );
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchWithWorkerMetrics(negativeGauge),
+    }),
+    /metric value is invalid/,
   );
 
 

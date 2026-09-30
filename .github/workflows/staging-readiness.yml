@@ -387,17 +387,37 @@ jobs:
         run: |
           node --input-type=module - \
             "$RUNNER_TEMP/staging-artifacts/runtime-integration.json" \
-            "$(cat "$RUNNER_TEMP/release-version.txt")" <<'NODE'
-          import { writeFile } from 'node:fs/promises';
+            "$(cat "$RUNNER_TEMP/release-version.txt")" \
+            "$RUNNER_TEMP/staging.env" <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises';
           import { assertNoSecrets } from './scripts/staging/staging-lib.mjs';
           import { runRuntimeIntegration } from './scripts/staging/runtime-integration.mjs';
 
-          const [outputPath, expectedRelease] = process.argv.slice(2);
+          const [outputPath, expectedRelease, envPath] = process.argv.slice(2);
+          const env = Object.fromEntries(
+            (await readFile(envPath, 'utf8'))
+              .split(/\r?\n/)
+              .map((line) => line.match(/^(POSTGRES_DB|MIGRATION_TARGET_SCHEMA)=(.*)$/))
+              .filter(Boolean)
+              .map(([, key, value]) => [key, value.replace(/^(['"])(.*)\1$/, '$2')]),
+          );
+          const target = {
+            database: env.POSTGRES_DB,
+            schema: env.MIGRATION_TARGET_SCHEMA,
+          };
+          if (
+            !/^[A-Za-z_][A-Za-z0-9_]*$/.test(target.database ?? '') ||
+            !/^[A-Za-z_][A-Za-z0-9_]*$/.test(target.schema ?? '')
+          ) {
+            throw new Error('protected runtime target binding is invalid');
+          }
           let report;
           let passed = true;
           try {
             report = {
               result: 'PASS',
+              releaseId: expectedRelease,
+              target,
               evidence: await runRuntimeIntegration({
                 apiOrigin: process.env.STAGING_API_ORIGIN,
                 workerOrigin: process.env.STAGING_WORKER_ORIGIN,
@@ -434,11 +454,31 @@ jobs:
         run: |
           node --input-type=module - \
             "$RUNNER_TEMP/staging-artifacts/check-results.json" \
-            "$RUNNER_TEMP/staging-artifacts/runtime-integration.json" <<'NODE'
+            "$RUNNER_TEMP/staging-artifacts/runtime-integration.json" \
+            "$RUNNER_TEMP/staging-artifacts/staging-smoke.json" \
+            "$RUNNER_TEMP/staging.env" \
+            "$(cat "$RUNNER_TEMP/release-version.txt")" <<'NODE'
           import { readFile, writeFile } from 'node:fs/promises';
-          const [checksPath, runtimePath] = process.argv.slice(2);
+          const [checksPath, runtimePath, smokePath, envPath, releaseId] =
+            process.argv.slice(2);
+          const env = Object.fromEntries(
+            (await readFile(envPath, 'utf8'))
+              .split(/\r?\n/)
+              .map((line) => line.match(/^(POSTGRES_DB|MIGRATION_TARGET_SCHEMA)=(.*)$/))
+              .filter(Boolean)
+              .map(([, key, value]) => [key, value.replace(/^(['"])(.*)\1$/, '$2')]),
+          );
+          const target = {
+            database: env.POSTGRES_DB,
+            schema: env.MIGRATION_TARGET_SCHEMA,
+          };
           const runtime = JSON.parse(await readFile(runtimePath, 'utf8'));
           if (runtime.result !== 'PASS') throw new Error('runtime integration did not PASS');
+          const smoke = JSON.parse(await readFile(smokePath, 'utf8'));
+          if (smoke.result !== 'PASS') throw new Error('staging smoke did not PASS');
+          smoke.releaseId = releaseId;
+          smoke.target = target;
+          await writeFile(smokePath, `${JSON.stringify(smoke, null, 2)}\n`, 'utf8');
           const checks = JSON.parse(await readFile(checksPath, 'utf8'));
           checks.runtimeIntegration = 'PASS';
           checks.stagingSmoke = 'PASS';

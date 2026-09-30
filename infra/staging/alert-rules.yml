@@ -7,7 +7,7 @@ groups:
   - name: imeal-staging-hardening
     rules:
       - alert: ImealApiReadinessFailure
-        expr: sum(increase(imeal_http_requests_total{route="/health/ready",status=~"500|502|503|504"}[1m])) >= 2
+        expr: sum(increase(imeal_http_requests_total{route="/health/ready",status=~"500|502|503|504"}[1m])) >= 2 or absent(imeal_http_requests_total{route="/health/ready"})
         for: 1m
         labels:
           severity: critical
@@ -19,7 +19,7 @@ groups:
           alert_test_route: /internal/observability/alert-test
 
       - alert: ImealApiErrorRateHigh
-        expr: sum(rate(imeal_http_requests_total{status=~"500|502|503|504"}[5m])) / clamp_min(sum(rate(imeal_http_requests_total[5m])), 1) > 0.05
+        expr: sum(rate(imeal_http_requests_total{status=~"500|502|503|504"}[5m])) / clamp_min(sum(rate(imeal_http_requests_total[5m])), 1) > 0.05 or absent(imeal_http_requests_total)
         for: 5m
         labels:
           severity: critical
@@ -31,7 +31,7 @@ groups:
           alert_test_route: /internal/observability/alert-test
 
       - alert: ImealApiLatencyHigh
-        expr: histogram_quantile(0.95, sum by (le) (rate(imeal_http_request_duration_seconds_bucket[10m]))) > 1
+        expr: histogram_quantile(0.95, sum by (le) (rate(imeal_http_request_duration_seconds_bucket[10m]))) > 1 or absent(imeal_http_request_duration_seconds_bucket)
         for: 10m
         labels:
           severity: warning
@@ -115,7 +115,7 @@ groups:
           alert_test_route: /internal/observability/alert-test
 
       - alert: ImealApplicationErrorSpike
-        expr: rate(imeal_auth_attempts_total{result=~"failure|dependency_failure"}[5m]) > 0 or rate(imeal_serving_confirm_total{result=~"error|failure"}[5m]) > 0 or rate(imeal_idempotency_conflicts_total[5m]) > 0
+        expr: rate(imeal_auth_attempts_total{result=~"failure|dependency_failure"}[5m]) > 0 or rate(imeal_serving_confirm_total{result=~"error|failure"}[5m]) > 0 or rate(imeal_idempotency_conflicts_total[5m]) > 0 or absent(imeal_auth_attempts_total) or absent(imeal_serving_confirm_total) or absent(imeal_idempotency_conflicts_total)
         for: 5m
         labels:
           severity: warning
@@ -127,7 +127,7 @@ groups:
           alert_test_route: /internal/observability/alert-test
 
       - alert: ImealServingConfirmLatencyHigh
-        expr: histogram_quantile(0.95, sum by (le) (rate(imeal_serving_confirm_duration_seconds_bucket[10m]))) > 1
+        expr: histogram_quantile(0.95, sum by (le) (rate(imeal_serving_confirm_duration_seconds_bucket[10m]))) > 1 or absent(imeal_serving_confirm_duration_seconds_bucket)
         for: 10m
         labels:
           severity: warning
