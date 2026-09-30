@@ -29,13 +29,22 @@ Task 3 instruments the API's existing request, OTP verification, and pickup conf
 - API `/metrics` remains excluded and no API controller or public endpoint was
   added. Commit `22e5b25` adds only a private structured API-to-worker
   `MetricSourceSnapshot` transport; it is not a broker or public protocol.
-- API automatic periodic flush and the metadata caller remain unimplemented:
-  there is no approved API metadata-caller contract defining when/how snapshots
-  are created and flushed.
-- Route, method, status, auth, serving, and idempotency labels are bounded by the shared contract; sensitive request, OTP, identity, provider, and exception values are not labels.
-- Metric failures are non-throwing and cannot alter API responses or transactions. A post-commit kitchen-event failure cannot turn a committed pickup confirmation into a failed response.
-- No `ApiExceptionFilter` metric duplication was introduced; the existing request interceptor owns request finalization metrics.
-
+- Commit `84edd67` adds the API publisher/metadata caller. It validates the
+  protected `API_METRICS_EVIDENCE_DIGEST` and release metadata before each
+  attempt, starts an initial non-blocking flush, and runs another flush every
+  30 seconds. Each attempt has a 5-second abort timeout.
+- Publisher attempts are single-flight: a timed-out attempt remains in flight
+  until its underlying operation settles, so a later interval cannot overlap
+  it. Each attempt is registered with shutdown drain; draining skips new
+  attempts and waits for the in-flight operation to settle.
+- Route, method, status, auth, serving, and idempotency labels are bounded by
+  the shared contract; sensitive request, OTP, identity, provider, and
+  exception values are not labels.
+- Metric failures are non-throwing and cannot alter API responses or
+  transactions. A post-commit kitchen-event failure cannot turn a committed
+  pickup confirmation into a failed response.
+- No `ApiExceptionFilter` metric duplication was introduced; the existing
+  request interceptor owns request finalization metrics.
 ## Review remediation
 
 - HTTP metrics now fail closed when method or status is outside the exact contract enums. Unsupported values produce no metric and are never relabeled as `OPTIONS`, `200`, `400`, or `500`; missing response status is also skipped. Approved statuses, including shutdown `503`, retain exactly-once count and duration behavior.
@@ -52,20 +61,31 @@ Task 3 instruments the API's existing request, OTP verification, and pickup conf
 - Nest module smoke check — **PASS**; `ApiMetricsService` resolves as one shared instance in `AuthController`, `OtpService`, and `PickupService`.
 
 The structured transport has no broker, public endpoint, authoritative metric
-producer, credentials, backfill, or fallback-zero path. It remains an explicit
-sink boundary until an approved API metadata caller is provided.
+producer, credentials, backfill, or fallback-zero path. Commit `84edd67`
+provides the approved API publisher/metadata caller; its protected evidence
+digest and release metadata remain required for each attempt.
+
 
 ## Runtime wiring update
 
 - `22e5b25` records the private structured API-to-worker transport and worker
-  snapshot acceptance. The worker application snapshot is published on its
-  30-second interval; this does not imply that API snapshots are automatically
-  flushed.
+  snapshot acceptance.
+- `84edd67` adds the API publisher: it creates metadata with the explicit
+  `API_METRICS_EVIDENCE_DIGEST`, performs an initial flush without blocking
+  module bootstrap, and flushes at the fixed 30-second interval. A 5-second
+  timeout aborts the transport signal; single-flight state is retained until
+  the underlying call settles, and shutdown drain registration prevents
+  overlapping or post-drain attempts.
+- `fd4d0aa` binds production API transport URL/token and API evidence digest,
+  plus worker transport token and worker evidence digest, through required
+  protected Compose variables with no repository values.
 - `85bdf01` and `199eab2` add the worker-side authoritative collector
   orchestrator and lifecycle registration, including its fixed 60-second
-  schedule. They do not add an API metadata caller or real source providers.
-- No real staging target, source binding, credentials, or complete 23-metric
-  runtime qualification is claimed by this report.
+  schedule. They do not add real source providers.
+- The four authoritative provider contracts remain intentionally
+  unimplemented pending external source contracts. No real staging target,
+  source binding, credentials, or complete 23-metric runtime qualification is
+  claimed by this report.
 
 ## Final review remediation
 

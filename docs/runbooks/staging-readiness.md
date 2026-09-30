@@ -70,13 +70,13 @@ that MUST remain visible in the release decision are:
   `APPLICATION_SNAPSHOT_TRANSPORT_PATH` (`/metrics/application-snapshot`).
   The staging API and worker MUST share the protected
   `WORKER_METRICS_TRANSPORT_TOKEN`; the API also requires the private
-  `WORKER_METRICS_TRANSPORT_URL`, and the worker requires
-  `WORKER_METRICS_EVIDENCE_DIGEST` plus `RELEASE_VERSION`. Values MUST remain
-  in the protected deployment secret/configuration store and MUST NOT appear
-  in logs, metric output, or this repository;
-- missing URL, transport token, release metadata, or evidence digest leaves the
-  API sink unavailable or the worker snapshot incomplete, so `/metrics`
-  remains non-success;
+  `WORKER_METRICS_TRANSPORT_URL` and `API_METRICS_EVIDENCE_DIGEST`, while the
+  worker requires `WORKER_METRICS_EVIDENCE_DIGEST` plus `RELEASE_VERSION`.
+  Values MUST remain in the protected deployment secret/configuration store and
+  MUST NOT appear in logs, metric output, or this repository;
+- missing URL, transport token, API evidence digest, release metadata, or
+  worker evidence digest leaves the API publisher unavailable or the worker
+  snapshot incomplete, so `/metrics` remains non-success;
 - API and worker share only the existing private `data` network for this
   transport. The worker declares no public ports and Caddy MUST NOT proxy the
   worker or either metrics route;
@@ -88,9 +88,14 @@ that MUST remain visible in the release decision are:
   optional and undefined in this repository, so incomplete configuration
   fails closed and no real provider is started;
 - the worker publishes its local application snapshot on the 30-second
-  `APPLICATION_OBSERVATION_INTERVAL_SECONDS` interval. API automatic periodic
-  flush and its metadata caller remain unimplemented because no approved API
-  metadata-caller contract exists;
+  `APPLICATION_OBSERVATION_INTERVAL_SECONDS` interval. Commit `84edd67` adds
+  the API publisher's initial non-blocking flush and fixed 30-second interval;
+  each attempt has a 5-second timeout, single-flight state is retained until
+  the underlying call settles after timeout, and shutdown drain registration
+  waits for in-flight work while skipping new attempts;
+- production binding hardening is recorded in commit `fd4d0aa`; it requires
+  opaque API transport URL/token and API evidence digest plus worker transport
+  token/evidence digest values without repository defaults;
 - the collector lifecycle registration is implementation evidence only: no real
   PostgreSQL/storage/backup/security providers or target fingerprint binding
   are available for bootstrap, so the worker MUST NOT start with fake providers
@@ -98,7 +103,7 @@ that MUST remain visible in the release decision are:
 - Staging and production Compose require the four opaque worker source-reference
   names plus the target-bound `WORKER_METRICS_TARGET_FINGERPRINT`; the protected
   staging environment must supply approved reference IDs and fingerprint. This
-  repository supplies no values, credentials, targets, or source payloads.
+  repository supplies no values, credentials, targets, or source payloads;
 - the approved edge WAF/rate-limit control and the alert delivery route are not
   provisioned;
 - no real staging environment, DNS, TLS certificate, OTP provider path,

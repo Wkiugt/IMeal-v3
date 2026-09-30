@@ -2,25 +2,30 @@
 
 ## Scope and safety boundary
 
-Task 8 records repository-only verification. No staging or production credentials,
-targets, backfill, alert delivery, or live collector calls were used. Commits
-`22e5b25`, `85bdf01`, and `199eab2` add repository runtime wiring only; they do
-not constitute external source evidence or release approval.
+Task 8 records repository-only verification. No staging or production
+credentials, targets, backfill, alert delivery, or live collector calls were
+used. Commits `22e5b25`, `84edd67`, `85bdf01`, `199eab2`, and `fd4d0aa` add
+repository runtime wiring and protected configuration only; they do not
+constitute external source evidence or release approval.
 
 The worker has a private `/metrics` endpoint, a private structured
 API-to-worker snapshot transport, worker application snapshot publication, and
-an authoritative collector lifecycle. The API transport accepts snapshots at
-the private worker route with protected token configuration; the worker
-application snapshot interval is 30 seconds. The authoritative collector
-runtime is registered in the worker module, performs an initial collection,
-then schedules a fixed 60-second collection and stops on module shutdown.
+an authoritative collector lifecycle. The API publisher now creates
+`api_application` metadata with the explicit `API_METRICS_EVIDENCE_DIGEST`,
+performs an initial non-blocking flush, and publishes at the fixed 30-second
+interval. Each attempt has a 5-second timeout and abort signal.
 
-The API automatic periodic flush and metadata caller remain unimplemented:
-there is no approved API metadata-caller contract that defines when and how
-the API may create and flush snapshots. The four authoritative source-provider
-tokens remain optional and undefined, so missing providers or protected
-configuration fail closed without zeroes, Prisma/application substitutions, or
-synthetic data.
+Publisher attempts are single-flight: after timeout, the in-flight marker is
+retained until the underlying operation settles, preventing overlap at a later
+tick. Attempts register with shutdown drain; draining skips new attempts and
+waits for the underlying operation. Production Compose commit `fd4d0aa`
+requires the API transport URL/token and API evidence digest, plus the worker
+transport token and worker evidence digest, using opaque fail-closed bindings.
+
+The four authoritative source-provider contracts remain intentionally
+unimplemented pending external source contracts. Their provider tokens remain
+optional and undefined, so missing providers or protected configuration fail
+closed without zeroes, Prisma/application substitutions, or synthetic data.
 
 These are implementation boundaries only. No real PostgreSQL/PgBouncer,
 object-storage, backup/restore, or security-boundary provider implementations,
@@ -31,6 +36,13 @@ runtime evidence, or controlled alert acknowledgement are present.
 
 - `22e5b25`: private structured API-to-worker transport and worker-side
   application snapshot acceptance; no public API `/metrics` route or broker.
+- `84edd67`: API publisher/metadata caller with explicit
+  `API_METRICS_EVIDENCE_DIGEST`, initial non-blocking flush, fixed 30-second
+  interval, 5-second abort timeout, single-flight retention until underlying
+  settlement, and shutdown drain registration.
+- `fd4d0aa`: production Compose requires opaque API transport URL/token and API
+  evidence digest plus worker transport token/evidence digest; no repository
+  values are supplied.
 - `85bdf01`: four strict authoritative adapter orchestration with source
   provider ports, fixed 60-second schedule, and failure forwarding.
 - `199eab2`: worker lifecycle registration, initial collection, module-destroy
@@ -89,13 +101,17 @@ Repository evidence demonstrates:
 
 The following remain blockers:
 
-- The private API-to-worker transport is implemented, but the API automatic
-  periodic flush and metadata caller remain unimplemented because no approved
-  API metadata-caller contract exists.
+- The private API-to-worker transport and API periodic publisher are
+  implemented. Commit `84edd67` supplies the approved metadata caller with
+  protected digest validation, 30-second initial/interval scheduling, 5-second
+  timeout, single-flight retention through underlying settlement, and
+  shutdown draining; commit `fd4d0aa` supplies the required production
+  bindings. These remain repository wiring, not external qualification.
 - The collector lifecycle and four optional provider tokens are registered, but
   no real PostgreSQL/PgBouncer, private object-storage, backup/restore, or
-  security-boundary provider implementations exist; missing providers and
-  configuration remain `collector_failure`.
+  security-boundary provider implementations exist; the four authoritative
+  providers remain intentionally unimplemented pending external source
+  contracts, and missing providers/configuration remain `collector_failure`.
 - Protected source bindings, target fingerprint/evidence digest and release
   values, deployed target identity, redacted runtime/smoke evidence, and
   independent release signoff are absent.
@@ -103,6 +119,8 @@ The following remain blockers:
   absent.
 
 No repository-only result can substitute for those external observations.
+All release gates and qualification decisions remain unchanged: this phase
+does not clear `STG-METRICS-01`, `P0-DOM-09`, or `STG-EXT-01`.
 
 ## Qualification decision
 
