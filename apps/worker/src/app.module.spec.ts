@@ -11,6 +11,7 @@ import {
 describe('worker metrics source wiring', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
   it('registers concrete providers that fail closed when the protected registry is absent', async () => {
     vi.stubEnv('NODE_ENV', 'test');
@@ -24,6 +25,41 @@ describe('worker metrics source wiring', () => {
       postgres.collect('source-ref', '2026-09-30T00:00:00.000Z'),
     ).resolves.toBeUndefined();
 
+    await module.close();
+  });
+
+  it('wires a valid registry URL containing a path to the source transport', async () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    vi.stubEnv('WORKER_METRICS_POSTGRES_SOURCE', 'source-ref');
+    vi.stubEnv(
+      'WORKER_METRICS_SOURCE_REGISTRY_URL',
+      'https://metrics-registry.internal/feed',
+    );
+    vi.stubEnv('WORKER_METRICS_TARGET_FINGERPRINT', `sha256:${'a'.repeat(64)}`);
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'application/json' },
+      json: async () => ({}),
+    } as unknown as Response);
+
+    const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const postgres = module.get<{
+      collect: (reference: string, observedAt: string) => Promise<unknown>;
+    }>(WORKER_METRICS_POSTGRES_SOURCE_PROVIDER);
+    await expect(
+      postgres.collect('source-ref', '2026-09-30T00:00:00.000Z'),
+    ).resolves.toBeUndefined();
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://metrics-registry.internal/feed',
+      expect.objectContaining({
+        body: JSON.stringify({
+          reference: 'source-ref',
+          observedAt: '2026-09-30T00:00:00.000Z',
+        }),
+      }),
+    );
     await module.close();
   });
 

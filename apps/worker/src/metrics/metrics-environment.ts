@@ -36,12 +36,19 @@ const SOURCE_BEARER_TOKEN = AUTHORITATIVE_METRICS_ENV.sourceBearerToken;
  */
 const SOURCE_REFERENCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
-function sourceReference(
+function rawTrimmedValue(
   env: NodeJS.ProcessEnv,
   name: string,
 ): string | null {
   const value = env[name]?.trim();
   return value || null;
+}
+
+function sourceReference(
+  env: NodeJS.ProcessEnv,
+  name: string,
+): string | null {
+  return rawTrimmedValue(env, name);
 }
 
 function isSafeSourceReference(value: string): boolean {
@@ -93,8 +100,8 @@ export function readMetricsSourceRegistryConfiguration(
   env: NodeJS.ProcessEnv = process.env,
 ): WorkerMetricsSourceRegistryConfiguration {
   return {
-    registryUrl: sourceReference(env, SOURCE_REGISTRY_URL),
-    bearerToken: sourceReference(env, SOURCE_BEARER_TOKEN),
+    registryUrl: rawTrimmedValue(env, SOURCE_REGISTRY_URL),
+    bearerToken: rawTrimmedValue(env, SOURCE_BEARER_TOKEN),
   };
 }
 

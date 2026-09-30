@@ -112,7 +112,11 @@ export function createAuthoritativeSourceTransport(
   resolver: AuthoritativeSourceResolver | undefined,
   options: AuthoritativeSourceTransportOptions = {},
 ): AuthoritativeSourceTransport {
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const fetchImpl =
+    options.fetchImpl ??
+    (typeof globalThis.fetch === 'function'
+      ? globalThis.fetch.bind(globalThis)
+      : undefined);
   const timeoutMs = boundedTimeout(options.timeoutMs);
 
   return {
@@ -121,7 +125,7 @@ export function createAuthoritativeSourceTransport(
       request: AuthoritativeSourceRequest,
       schema: AuthoritativeSourceSchema<T>,
     ): Promise<T | undefined> {
-      if (!resolver || !SOURCE_REFERENCE_PATTERN.test(reference)) return undefined;
+      if (!resolver || !fetchImpl || !SOURCE_REFERENCE_PATTERN.test(reference)) return undefined;
       if (!isCanonicalObservedAt(request.observedAt)) return undefined;
 
       let endpoint: AuthoritativeSourceEndpointConfig | undefined;
@@ -151,7 +155,12 @@ export function createAuthoritativeSourceTransport(
           endpoint.endpoint as string,
           options.decorateRequest?.(endpoint, requestInit) ?? requestInit,
         );
-        if (!response.ok || response.status < 200 || response.status >= 300) {
+        if (
+          !response.ok ||
+          !Number.isInteger(response.status) ||
+          response.status < 200 ||
+          response.status >= 300
+        ) {
           return undefined;
         }
         const contentType = response.headers?.get?.('content-type');
@@ -195,6 +204,7 @@ function isApprovedEndpoint(
     parsed.protocol !== 'https:' ||
     parsed.username.length > 0 ||
     parsed.password.length > 0 ||
+    parsed.search.length > 0 ||
     parsed.hash.length > 0 ||
     parsed.hostname.length === 0
   ) {
