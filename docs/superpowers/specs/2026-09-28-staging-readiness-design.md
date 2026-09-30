@@ -106,9 +106,10 @@ The worker's authoritative metric source bindings are opaque deployment referenc
 `WORKER_METRICS_POSTGRES_SOURCE`,
 `WORKER_METRICS_OBJECT_STORAGE_SOURCE`,
 `WORKER_METRICS_BACKUP_EVIDENCE_SOURCE`, and
-`WORKER_METRICS_SECURITY_BOUNDARY_SOURCE`. Production Compose requires each
-reference; staging remains fail-closed when bindings are absent. The references
-must never contain credentials, URLs, targets, or source payloads.
+`WORKER_METRICS_SECURITY_BOUNDARY_SOURCE`. Staging and production Compose
+require each reference; protected deployment environments must supply approved
+opaque reference IDs. This repository supplies no values, credentials, URLs,
+targets, or source payloads, and absent bindings remain fail-closed.
 
 **API required:** `DATABASE_URL`, `AUTH_MODE`, `REQUIRE_AUTH`, `QR_SIGNING_SECRET`, `OTP_HASH_SECRET`, `OTP_DELIVERY_ENCRYPTION_KEY`, `OTP_PROVIDER_URL`, `OTP_PROVIDER_API_KEY`, `OTP_PROVIDER_FROM`, all `OTP_*` expiry/rate values, `SESSION_HASH_SECRET`, both session timeout values, all `GPS_DEFAULT_*` values, and the fixed `SERVING_*`, `NO_SHOW_PROCESSING_TIME`, `QR_*`, `PICKUP_SESSION_TTL_SECONDS` values.
 

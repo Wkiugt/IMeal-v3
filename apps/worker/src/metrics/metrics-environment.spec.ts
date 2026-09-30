@@ -50,7 +50,7 @@ describe('authoritative metrics environment', () => {
     });
   });
 
-  it('rejects source references that contain credentials or unsafe whitespace', () => {
+  it('rejects URL, target, credential, and whitespace-shaped source references without echoing values', () => {
     const base = {
       NODE_ENV: 'production',
       WORKER_METRICS_POSTGRES_SOURCE: 'postgres-exporter-private',
@@ -58,19 +58,26 @@ describe('authoritative metrics environment', () => {
       WORKER_METRICS_BACKUP_EVIDENCE_SOURCE: 'backup-evidence-private',
       WORKER_METRICS_SECURITY_BOUNDARY_SOURCE: 'security-feed-private',
     };
+    const invalidReferences = [
+      ['WORKER_METRICS_POSTGRES_SOURCE', 'https://collector'],
+      ['WORKER_METRICS_POSTGRES_SOURCE', 'postgres://db'],
+      ['WORKER_METRICS_OBJECT_STORAGE_SOURCE', 'collector.internal:9090'],
+      ['WORKER_METRICS_BACKUP_EVIDENCE_SOURCE', 'collector/internal/path'],
+      ['WORKER_METRICS_SECURITY_BOUNDARY_SOURCE', 'postgres://user:password@db'],
+      ['WORKER_METRICS_SECURITY_BOUNDARY_SOURCE', 'security feed private'],
+    ] as const;
 
-    expect(() =>
-      validateMetricsEnvironment({
-        ...base,
-        WORKER_METRICS_POSTGRES_SOURCE: 'postgres://user:password@db',
-      }),
-    ).toThrow(/source configuration/i);
-    expect(() =>
-      validateMetricsEnvironment({
-        ...base,
-        WORKER_METRICS_SECURITY_BOUNDARY_SOURCE: 'security feed private',
-      }),
-    ).toThrow(/source configuration/i);
+    for (const [name, value] of invalidReferences) {
+      let thrown: unknown;
+      try {
+        validateMetricsEnvironment({ ...base, [name]: value });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect(String(thrown)).toMatch(/source configuration/i);
+      expect(String(thrown)).not.toContain(value);
+    }
   });
   it('reads absent optional source bindings as null without mutating process environment', () => {
     expect(readMetricsEnvironment({ NODE_ENV: 'test' })).toEqual({

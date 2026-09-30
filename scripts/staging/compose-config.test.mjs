@@ -15,6 +15,10 @@ const composeFiles = [
 const composeText = composeFiles
   .map((file) => readFileSync(resolve(root, file), 'utf8'))
   .join('\n');
+const stagingComposeText = readFileSync(
+  resolve(root, 'docker-compose.staging.yml'),
+  'utf8',
+);
 const caddyText = readFileSync(
   resolve(root, 'infra/staging/Caddyfile'),
   'utf8',
@@ -28,6 +32,12 @@ const productionCaddyText = readFileSync(
   'utf8',
 );
 const envExampleText = readFileSync(resolve(root, '.env.example'), 'utf8');
+const workerSourceNames = [
+  'WORKER_METRICS_POSTGRES_SOURCE',
+  'WORKER_METRICS_OBJECT_STORAGE_SOURCE',
+  'WORKER_METRICS_BACKUP_EVIDENCE_SOURCE',
+  'WORKER_METRICS_SECURITY_BOUNDARY_SOURCE',
+];
 const alertRulesText = readFileSync(
   resolve(root, 'infra/staging/alert-rules.yml'),
   'utf8',
@@ -151,7 +161,8 @@ function environment(service) {
 }
 
 test('renders an isolated immutable staging boundary', () => {
-  const config = renderCompose(fixtureValues());
+  const values = fixtureValues();
+  const config = renderCompose(values);
   const services = config.services;
   assert.ok(
     services['admin-web'].build === undefined ||
@@ -201,6 +212,17 @@ test('renders an isolated immutable staging boundary', () => {
   assert.equal(environment(services.worker).NODE_ENV, 'production');
   assert.equal(environment(services.api).REQUIRE_AUTH, 'true');
   assert.equal(environment(services.worker).REQUIRE_AUTH, 'true');
+  const stagingWorkerBlock = stagingComposeText.match(
+    /\n  worker:\n([\s\S]*?)\n  admin-web:/,
+  )?.[1];
+  assert.ok(stagingWorkerBlock, 'staging worker service must be present');
+  for (const name of workerSourceNames) {
+    assert.equal(environment(services.worker)[name], values[name]);
+    assert.match(
+      stagingWorkerBlock,
+      new RegExp(`${name}: \\$\\{${name}:\\?${name} is required\\}`),
+    );
+  }
   assert.equal(
     services.api.depends_on.migrate.condition,
     'service_completed_successfully',
@@ -283,12 +305,6 @@ test('production worker metrics stay private and source references remain opaque
   assert.match(workerBlock, /networks:\s*(?:!override\s*)?\n\s+- data\b/);
   assert.doesNotMatch(workerBlock, /^\s+- app\b/m);
 
-  const sourceNames = [
-    'WORKER_METRICS_POSTGRES_SOURCE',
-    'WORKER_METRICS_OBJECT_STORAGE_SOURCE',
-    'WORKER_METRICS_BACKUP_EVIDENCE_SOURCE',
-    'WORKER_METRICS_SECURITY_BOUNDARY_SOURCE',
-  ];
   const productionValues = fixtureValues();
   const productionConfig = renderCompose(productionValues, [
     'docker-compose.yml',
@@ -302,7 +318,7 @@ test('production worker metrics stay private and source references remain opaque
       )
     : Object.keys(productionWorker.networks ?? {});
   assert.deepEqual(productionWorkerNetworks, ['data']);
-  for (const name of sourceNames) {
+  for (const name of workerSourceNames) {
     assert.equal(environment(productionWorker)[name], productionValues[name]);
     assert.match(
       workerBlock,
@@ -313,8 +329,8 @@ test('production worker metrics stay private and source references remain opaque
 
   const sourceLines = workerBlock
     .split('\n')
-    .filter((line) => sourceNames.some((name) => line.includes(name)));
-  assert.equal(sourceLines.length, sourceNames.length);
+    .filter((line) => workerSourceNames.some((name) => line.includes(name)));
+  assert.equal(sourceLines.length, workerSourceNames.length);
   assert.doesNotMatch(
     sourceLines.join('\n'),
     /(?:postgres(?:ql)?:\/\/|https?:\/\/|password|token|secret|api[_-]?key)/i,

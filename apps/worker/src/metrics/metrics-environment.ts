@@ -13,7 +13,14 @@ export interface WorkerMetricsEnvironment {
 }
 
 const SOURCE_NAMES = Object.values(AUTHORITATIVE_METRICS_ENV);
-const CREDENTIAL_PATTERN = /(?:password|secret|token|api[_-]?key)\s*[:=]|:\S+@/i;
+
+/**
+ * Opaque deployment reference grammar: one ASCII alphanumeric start character,
+ * followed by at most 127 ASCII alphanumerics, dots, underscores, or hyphens.
+ * URI schemes, host/port forms, paths, queries, credentials, and payload text
+ * are intentionally outside this grammar.
+ */
+const SOURCE_REFERENCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function sourceReference(
   env: NodeJS.ProcessEnv,
@@ -24,11 +31,7 @@ function sourceReference(
 }
 
 function isSafeSourceReference(value: string): boolean {
-  return (
-    value.length <= 256 &&
-    !/\s/.test(value) &&
-    !CREDENTIAL_PATTERN.test(value)
-  );
+  return SOURCE_REFERENCE_PATTERN.test(value);
 }
 
 export function readMetricsEnvironment(
