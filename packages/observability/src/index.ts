@@ -337,3 +337,14 @@ export function readMigrationEvidence(
 
   return { ok: true, evidence: parsed };
 }
+
+export * from './metrics-contract.js';
+export {
+  MetricRegistry,
+  createMetricRegistry,
+  escapeMetricLabelValue,
+  serializeMetrics,
+  serializeOpenMetrics,
+  type MetricLabelValues,
+  type MetricSourceSnapshot,
+} from './metrics.js';

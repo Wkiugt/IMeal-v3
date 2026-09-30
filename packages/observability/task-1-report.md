@@ -51,3 +51,15 @@ Fresh verification after the test-scope correction:
 
 - `yarn workspace @imeal/observability test` — **PASS**; 2 test files, 59 tests.
 - `yarn workspace @imeal/observability build` — **PASS**; TypeScript exited 0 with no output.
+
+## Task 2 bounded registry report
+
+- Added `packages/observability/src/metrics.ts` with a contract-registered in-process `MetricRegistry` for explicit counter increments, gauge replacement, and fixed-bucket histogram observations. State is process-local by construction; no persistence or cross-restart inference exists.
+- Added deterministic OpenMetrics/Prometheus serialization with contract `HELP`/`TYPE`, stable label ordering and escaping, exact histogram family names, fixed `_bucket`/`_sum`/`_count` rows, and no untouched zero-value fallback.
+- Enforced the Task 1 contract for names, units, metric kinds, bounded labels/cardinality, finite/value semantics, sensitive text, and authoritative-sample separation. Added validated source snapshot merge/replace operations that preserve `fresh`, `stale`, `unknown`, and `collector_failure`, reject conflicting duplicates, and refuse non-fresh-to-zero replacement.
+- Exported the approved contract and registry APIs/types through `packages/observability/src/index.ts`. No API/worker endpoint, producer, external collector, synthetic infrastructure value, or arbitrary emit escape hatch was added; public `/metrics` rejection remains unchanged.
+
+Fresh verification after Task 2:
+
+- `yarn workspace @imeal/observability test` — **PASS**; 3 test files, 66 tests.
+- `yarn workspace @imeal/observability build` — **PASS**; TypeScript exited 0 with no output.
