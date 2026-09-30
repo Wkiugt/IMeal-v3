@@ -126,8 +126,27 @@ describe('AppController (e2e)', () => {
     return request(app.getHttpServer()).get('/metrics').expect(503);
   });
   it('/metrics (GET) returns all approved series for a complete bound snapshot', async () => {
+    const observedAt = new Date().toISOString();
     const metrics = app.get(WorkerMetricsService);
-    for (const snapshot of completeSnapshots(new Date().toISOString())) {
+    metrics.setWorkerApplicationMetadata({
+      source: 'worker_application',
+      observedAt,
+      freshness: 'fresh',
+      evidence: {
+        release: 'release-test',
+        source: 'worker_application',
+        observedAt,
+        contractRevision: '2026-09-30',
+        freshness: 'fresh',
+        sha256Digest: DIGEST,
+        retryPolicyRevision: 'retry-policy-v1',
+        failureTaxonomyRevision: 'failure-taxonomy-v1',
+        jobTaxonomyRevision: 'job-taxonomy-v1',
+        querySchemaRevision: 'query-schema-v1',
+        scheduleRevision: 'schedule-v1',
+      },
+    });
+    for (const snapshot of completeSnapshots(observedAt)) {
       if (snapshot.source === 'api_application') {
         metrics.acceptApiApplicationSnapshot(snapshot);
       } else if (snapshot.source === 'worker_application') {

@@ -1,4 +1,13 @@
 export const METRIC_REDACTION_TOKEN = '[REDACTED]';
+/** Private API-to-worker structured snapshot route; never exposed by the API. */
+export const APPLICATION_SNAPSHOT_TRANSPORT_PATH =
+  '/metrics/application-snapshot' as const;
+export const WORKER_METRICS_TRANSPORT_URL_ENV =
+  'WORKER_METRICS_TRANSPORT_URL' as const;
+export const WORKER_METRICS_TRANSPORT_TOKEN_ENV =
+  'WORKER_METRICS_TRANSPORT_TOKEN' as const;
+export const WORKER_METRICS_EVIDENCE_DIGEST_ENV =
+  'WORKER_METRICS_EVIDENCE_DIGEST' as const;
 
 export const APPLICATION_OBSERVATION_INTERVAL_SECONDS = 30;
 export const APPLICATION_STALE_AFTER_SECONDS = 60;

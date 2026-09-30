@@ -1,11 +1,15 @@
 import { Injectable, Optional } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
 import {
+  APPLICATION_OBSERVATION_INTERVAL_SECONDS,
   METRIC_CONTRACT,
   MetricRegistry,
   type MetricFreshness,
   type MetricSampleEnvelope,
   type MetricSnapshotMetadata,
   type MetricSourceSnapshot,
+  validateMetricSnapshotMetadata,
+  WORKER_METRICS_EVIDENCE_DIGEST_ENV,
 } from '@imeal/observability';
 import type {
   AuthoritativeMetricsFailureReason,
@@ -224,11 +228,14 @@ export class WorkerMetricsService {
     if (metadata.source !== 'worker_application') {
       throw new Error('Worker application metadata has an invalid source');
     }
-    this.workerMetadata = metadata;
+    this.workerMetadata = validateMetricSnapshotMetadata(
+      metadata,
+      'worker_application',
+    );
   }
   configureWorkerApplicationMetadataFromEnvironment(): boolean {
     const release = process.env.RELEASE_VERSION?.trim();
-    const digest = process.env.WORKER_METRICS_EVIDENCE_DIGEST?.trim();
+    const digest = process.env[WORKER_METRICS_EVIDENCE_DIGEST_ENV]?.trim();
     if (!release || !digest || !/^sha256:[a-f0-9]{64}$/.test(digest)) {
       return false;
     }
@@ -323,6 +330,22 @@ export class WorkerMetricsService {
     return snapshot;
   }
 
+  /**
+   * Nest owns this interval and cancels it during application shutdown.
+   * Missing protected metadata leaves the worker source unpublished.
+   */
+  @Interval(APPLICATION_OBSERVATION_INTERVAL_SECONDS * 1000)
+  async publishPeriodicWorkerApplicationSnapshot(): Promise<MetricSourceSnapshot | null> {
+    if (!this.workerMetadata) return null;
+    try {
+      if (this.prisma) await this.refreshOutboxAge();
+      await this.refreshJobHistory();
+      return this.publishWorkerApplicationSnapshot();
+    } catch {
+      return null;
+    }
+  }
+
   serializeApplicationMetrics(): string {
     return this.application.serialize();
   }
@@ -332,15 +355,7 @@ export class WorkerMetricsService {
   }
 
   async getCompleteSnapshot(): Promise<string | null> {
-    if (this.prisma) await this.refreshOutboxAge();
-    await this.refreshJobHistory();
-    if (this.workerMetadata) {
-      try {
-        this.publishWorkerApplicationSnapshot();
-      } catch {
-        return null;
-      }
-    }
+    if (!this.workerMetadata) return null;
     const observedNow = Date.now();
     let agedSource = false;
     const sourceSamples = this.aggregate

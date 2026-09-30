@@ -3,6 +3,7 @@ import type { ApplicationSnapshotMetadata } from '@imeal/observability';
 import { ApiMetricsService } from './metrics.service.js';
 import {
   ApiMetricsSourceAdapter,
+  WorkerMetricsHttpAggregator,
   type WorkerMetricsAggregator,
 } from './api-metrics-source.js';
 
@@ -184,6 +185,74 @@ describe('ApiMetricsSourceAdapter', () => {
       source: 'api_application',
       freshness: 'collector_failure',
       reason: 'snapshot_empty',
+    });
+  });
+  it('delivers a structured snapshot to the protected worker transport', async () => {
+    const metrics = new ApiMetricsService();
+    metrics.recordAuthAttempt('success');
+    const request = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+    const transport = new WorkerMetricsHttpAggregator(
+      'http://worker:3001/metrics/application-snapshot',
+      'transport-secret',
+      request,
+    );
+    const result = await new ApiMetricsSourceAdapter(transport).flush(
+      metrics,
+      metadata,
+    );
+
+    expect(result.freshness).toBe('fresh');
+    expect(request).toHaveBeenCalledWith(
+      'http://worker:3001/metrics/application-snapshot',
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          authorization: 'Bearer transport-secret',
+          'content-type': 'application/json',
+        },
+      }),
+    );
+    const init = request.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      source: 'api_application',
+    });
+    expect(String(init.body)).not.toContain('# HELP');
+  });
+
+  it.each([
+    ['missing URL', undefined, 'transport-secret'],
+    ['missing token', 'http://worker:3001/metrics/application-snapshot', undefined],
+  ])('fails closed for %s transport configuration', async (_name, url, token) => {
+    const metrics = new ApiMetricsService();
+    metrics.recordAuthAttempt('success');
+    const transport = new WorkerMetricsHttpAggregator(url, token, vi.fn());
+    await expect(
+      new ApiMetricsSourceAdapter(transport).flush(metrics, metadata),
+    ).resolves.toMatchObject({
+      freshness: 'collector_failure',
+      reason: 'sink_unavailable',
+    });
+  });
+
+  it('reports a protected transport rejection without logging or forwarding the token', async () => {
+    const request = vi.fn().mockResolvedValue({ ok: false, status: 401 });
+    const transport = new WorkerMetricsHttpAggregator(
+      'http://worker:3001/metrics/application-snapshot',
+      'transport-secret',
+      request,
+    );
+    const metrics = new ApiMetricsService();
+    metrics.recordAuthAttempt('success');
+
+    await expect(
+      new ApiMetricsSourceAdapter(transport).flush(metrics, metadata),
+    ).resolves.toMatchObject({
+      freshness: 'collector_failure',
+      reason: 'sink_rejected',
+    });
+    expect(request.mock.calls[0]?.[1]).not.toMatchObject({
+      body: expect.stringContaining('transport-secret'),
     });
   });
 });

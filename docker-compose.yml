@@ -105,6 +105,8 @@ services:
     environment:
       PORT: 3000
       NODE_ENV: ${NODE_ENV:-development}
+      WORKER_METRICS_TRANSPORT_URL: ${WORKER_METRICS_TRANSPORT_URL:-http://worker:3001/metrics/application-snapshot}
+      WORKER_METRICS_TRANSPORT_TOKEN: ${WORKER_METRICS_TRANSPORT_TOKEN:-}
       DATABASE_URL: postgresql://${POSTGRES_USER:-CHANGE_ME_LOCAL}:${POSTGRES_PASSWORD:-CHANGE_ME_LOCAL}@pgbouncer:5432/${POSTGRES_DB:-imeal}?schema=public&pgbouncer=true
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
@@ -165,6 +167,8 @@ services:
     environment:
       PORT: 3001
       NODE_ENV: ${NODE_ENV:-development}
+      WORKER_METRICS_TRANSPORT_TOKEN: ${WORKER_METRICS_TRANSPORT_TOKEN:-}
+      WORKER_METRICS_EVIDENCE_DIGEST: ${WORKER_METRICS_EVIDENCE_DIGEST:-}
       DATABASE_URL: postgresql://${POSTGRES_USER:-CHANGE_ME_LOCAL}:${POSTGRES_PASSWORD:-CHANGE_ME_LOCAL}@pgbouncer:5432/${POSTGRES_DB:-imeal}?schema=public&pgbouncer=true
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000

@@ -65,14 +65,27 @@ node --test scripts/staging/compose-config.test.mjs
 These checks do not establish external staging readiness. Current blockers
 that MUST remain visible in the release decision are:
 
-- the worker now owns an internal `/metrics` endpoint, but the checked-in
-  Compose boundary only declares required opaque source references; protected
-  deployment values and external source evidence are absent, so runtime
-  integration fails closed until those sources and evidence exist;
-- API application snapshots have no repository API-to-worker transport or flush
-  path, and the worker authoritative adapters have no protected runtime callers
-  for PostgreSQL, object storage, backup/restore, or security-boundary sources;
-  local adapters and the private worker endpoint are not external observations.
+- the worker owns an internal `/metrics` endpoint and the API-to-worker
+  application snapshot route is a private structured JSON `POST` on the worker:
+  `APPLICATION_SNAPSHOT_TRANSPORT_PATH` (`/metrics/application-snapshot`).
+  The staging API and worker MUST share the protected
+  `WORKER_METRICS_TRANSPORT_TOKEN`; the API also requires the private
+  `WORKER_METRICS_TRANSPORT_URL`, and the worker requires
+  `WORKER_METRICS_EVIDENCE_DIGEST` plus `RELEASE_VERSION`. Values MUST remain
+  in the protected deployment secret/configuration store and MUST NOT appear
+  in logs, metric output, or this repository;
+- missing URL, transport token, release metadata, or evidence digest leaves the
+  API sink unavailable or the worker snapshot incomplete, so `/metrics`
+  remains non-success;
+- API and worker share only the existing private `data` network for this
+  transport. The worker declares no public ports and Caddy MUST NOT proxy the
+  worker or either metrics route;
+- the worker authoritative adapters have no protected runtime callers for
+  PostgreSQL, object storage, backup/restore, or security-boundary sources;
+- authoritative collector orchestration remains a checked-in DI contract only:
+  no real PostgreSQL/storage/backup/security providers or target fingerprint
+  binding are available for bootstrap, so the worker MUST NOT start it with
+  fake providers or inferred target values;
 - Staging and production Compose require the four opaque worker source-reference
   names. The protected staging environment must supply approved reference IDs;
   this repository supplies no values, credentials, targets, or source payloads.

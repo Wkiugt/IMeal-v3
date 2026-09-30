@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { WorkerMetricsService } from './metrics.service.js';
 import { METRIC_CONTRACT, validateMetricSampleEnvelope } from '@imeal/observability';
-import type { MetricSourceSnapshot } from '@imeal/observability';
+import type {
+  MetricSnapshotMetadata,
+  MetricSourceSnapshot,
+} from '@imeal/observability';
 
 function metricValue(text: string, name: string): string | undefined {
   return text
@@ -26,6 +29,27 @@ const SOURCE_BINDINGS: Record<string, string> = {
   backup_restore_evidence: 'approved_backup_restore_evidence',
   security_boundary_evidence: 'approved_security_boundary_source',
 };
+
+function workerMetadata(observedAt: string): MetricSnapshotMetadata {
+  return {
+    source: 'worker_application',
+    observedAt,
+    freshness: 'fresh',
+    evidence: {
+      release: 'release-test',
+      source: 'worker_application',
+      observedAt,
+      contractRevision: '2026-09-30',
+      freshness: 'fresh',
+      sha256Digest: DIGEST,
+      retryPolicyRevision: 'retry-policy-v1',
+      failureTaxonomyRevision: 'failure-taxonomy-v1',
+      jobTaxonomyRevision: 'job-taxonomy-v1',
+      querySchemaRevision: 'query-schema-v1',
+      scheduleRevision: 'schedule-v1',
+    },
+  };
+}
 
 function sampleFor(
   row: (typeof METRIC_CONTRACT)[number],
@@ -199,6 +223,7 @@ describe('WorkerMetricsService', () => {
       otpDeliveryOutbox: { findFirst: vi.fn().mockResolvedValue(null) },
       jobRun: { findFirst: vi.fn().mockResolvedValue({ completedAt: now }) },
     } as never);
+    service.setWorkerApplicationMetadata(workerMetadata(now.toISOString()));
     for (const snapshot of completeSnapshots(now.toISOString())) {
       if (snapshot.source === 'api_application') {
         service.acceptApiApplicationSnapshot(snapshot);
@@ -222,6 +247,7 @@ describe('WorkerMetricsService', () => {
       otpDeliveryOutbox: { findFirst: vi.fn().mockResolvedValue(null) },
       jobRun: { findFirst: vi.fn().mockResolvedValue({ completedAt: now }) },
     } as never);
+    service.setWorkerApplicationMetadata(workerMetadata(now.toISOString()));
     for (const snapshot of completeSnapshots(now.toISOString())) {
       const reduced =
         snapshot.source === 'worker_application'
@@ -254,6 +280,7 @@ describe('WorkerMetricsService', () => {
       otpDeliveryOutbox: { findFirst: vi.fn().mockResolvedValue(null) },
       jobRun: { findFirst: vi.fn().mockResolvedValue({ completedAt: now }) },
     } as never);
+    service.setWorkerApplicationMetadata(workerMetadata(now.toISOString()));
     for (const snapshot of completeSnapshots(now.toISOString())) {
       if (snapshot.source === 'api_application') {
         service.acceptApiApplicationSnapshot(snapshot);
@@ -278,6 +305,7 @@ describe('WorkerMetricsService', () => {
       otpDeliveryOutbox: { findFirst: vi.fn().mockResolvedValue(null) },
       jobRun: { findFirst: vi.fn().mockResolvedValue({ completedAt: now }) },
     } as never);
+    service.setWorkerApplicationMetadata(workerMetadata(now.toISOString()));
     for (const snapshot of completeSnapshots(
       now.toISOString(),
       'imeal_postgres_disk_usage_ratio',
@@ -292,5 +320,49 @@ describe('WorkerMetricsService', () => {
     }
 
     await expect(service.getCompleteSnapshot()).resolves.toBeNull();
+  });
+
+  it('does not publish worker application snapshots when protected metadata is absent', async () => {
+    const service = new WorkerMetricsService();
+    service.recordOtpDeliveryAttempt();
+
+    await expect(
+      service.publishPeriodicWorkerApplicationSnapshot(),
+    ).resolves.toBeNull();
+    expect(service.getSourceSnapshots()).not.toContainEqual(
+      expect.objectContaining({ source: 'worker_application' }),
+    );
+  });
+
+  it('publishes worker application snapshots on the periodic lifecycle after digest configuration', async () => {
+    vi.stubEnv('RELEASE_VERSION', 'release-test');
+    vi.stubEnv('WORKER_METRICS_EVIDENCE_DIGEST', DIGEST);
+    const service = new WorkerMetricsService();
+    service.recordOtpDeliveryAttempt();
+
+    expect(service.configureWorkerApplicationMetadataFromEnvironment()).toBe(true);
+    const snapshot = await service.publishPeriodicWorkerApplicationSnapshot();
+
+    expect(snapshot?.source).toBe('worker_application');
+    expect(service.getSourceSnapshots()).toContainEqual(
+      expect.objectContaining({ source: 'worker_application' }),
+    );
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['malformed', 'sha256:not-a-digest'],
+  ])('rejects %s evidence digest at worker configuration', (_name, digest) => {
+    vi.stubEnv('RELEASE_VERSION', 'release-test');
+    if (digest === undefined) {
+      delete process.env.WORKER_METRICS_EVIDENCE_DIGEST;
+    } else {
+      vi.stubEnv('WORKER_METRICS_EVIDENCE_DIGEST', digest);
+    }
+    const service = new WorkerMetricsService();
+
+    expect(service.configureWorkerApplicationMetadataFromEnvironment()).toBe(false);
+    vi.unstubAllEnvs();
   });
 });

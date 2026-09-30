@@ -14,20 +14,24 @@ import {
   WorkerConfiguredOtpProvider,
   WorkerOtpOutboxService,
 } from './otp-delivery-worker.service.js';
-import { PrismaService } from './common/prisma.service.js';
-import { HealthController } from './health.controller.js';
-import { MetricsController } from './metrics/metrics.controller.js';
+import {
+  WORKER_METRICS_TRANSPORT_TOKEN,
+  MetricsController,
+} from './metrics/metrics.controller.js';
 import { WorkerMetricsService } from './metrics/metrics.service.js';
 import {
   HealthService,
   WORKER_HEALTH_ENVIRONMENT_VALIDATED,
   WORKER_HEALTH_SHUTDOWN_COORDINATOR,
 } from './health.service.js';
+import { PrismaService } from './common/prisma.service.js';
+import { HealthController } from './health.controller.js';
 import { ShutdownCoordinator } from './shutdown-coordinator.js';
 import {
   createWorkerStructuredLogger,
   WORKER_STRUCTURED_LOGGER,
 } from './common/structured-logger.js';
+import { WORKER_METRICS_TRANSPORT_TOKEN_ENV } from '@imeal/observability';
 
 @Module({
   imports: [ScheduleModule.forRoot()],
@@ -35,6 +39,10 @@ import {
   providers: [
     PrismaService,
     WorkerMetricsService,
+    {
+      provide: WORKER_METRICS_TRANSPORT_TOKEN,
+      useFactory: () => process.env[WORKER_METRICS_TRANSPORT_TOKEN_ENV],
+    },
     HealthService,
     ShutdownCoordinator,
     {

@@ -23,6 +23,10 @@ describe('AppController (e2e)', () => {
       .expect('Hello World!');
   });
 
+  it('/metrics (GET) is not exposed by the API application', () => {
+    return request(app.getHttpServer()).get('/metrics').expect(404);
+  });
+
   afterEach(async () => {
     await app.close();
   });

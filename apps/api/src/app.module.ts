@@ -18,8 +18,11 @@ import {
   createApiStructuredLogger,
 } from './common/structured-logger.js';
 import { ApiExceptionFilter } from './common/api-exception.filter.js';
+import {
+  ApiMetricsSourceAdapter,
+  createWorkerMetricsHttpAggregator,
+} from './common/api-metrics-source.js';
 import { ApiMetricsService } from './common/metrics.service.js';
-import { ApiMetricsSourceAdapter } from './common/api-metrics-source.js';
 import { HttpLoggingInterceptor } from './common/http-logging.interceptor.js';
 import { RequestIdInterceptor } from './common/request-id.interceptor.js';
 import { ShutdownCoordinator } from './common/shutdown-coordinator.js';
@@ -53,7 +56,8 @@ import { PrismaService } from './common/prisma.service.js';
     ApiMetricsService,
     {
       provide: ApiMetricsSourceAdapter,
-      useFactory: () => new ApiMetricsSourceAdapter(),
+      useFactory: () =>
+        new ApiMetricsSourceAdapter(createWorkerMetricsHttpAggregator()),
     },
     ShutdownCoordinator,
     {
