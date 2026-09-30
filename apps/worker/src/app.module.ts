@@ -40,7 +40,45 @@ import {
   WORKER_METRICS_POSTGRES_SOURCE_PROVIDER,
   WORKER_METRICS_RUNTIME_ENVIRONMENT,
   WORKER_METRICS_SECURITY_BOUNDARY_SOURCE_PROVIDER,
+  WORKER_METRICS_SOURCE_TRANSPORT,
 } from './metrics/authoritative-metrics-runtime.service.js';
+import {
+  validateMetricsSourceRegistryConfiguration,
+  type WorkerMetricsSourceRegistryConfiguration,
+} from './metrics/metrics-environment.js';
+import {
+  createAuthoritativeSourceResolver,
+  createAuthoritativeSourceTransport,
+  type AuthoritativeSourceTransport,
+} from './metrics/sources/authoritative-source-transport.js';
+import { createPostgresAuthoritativeSourceProvider } from './metrics/sources/postgres-authoritative-source.provider.js';
+import { createObjectStorageAuthoritativeSourceProvider } from './metrics/sources/object-storage-authoritative-source.provider.js';
+import { createBackupRestoreAuthoritativeSourceProvider } from './metrics/sources/backup-restore-authoritative-source.provider.js';
+import { createSecurityBoundaryAuthoritativeSourceProvider } from './metrics/sources/security-boundary-authoritative-source.provider.js';
+
+function createWorkerMetricsSourceTransport(
+  environment: NodeJS.ProcessEnv,
+): AuthoritativeSourceTransport {
+  let registry: WorkerMetricsSourceRegistryConfiguration;
+  try {
+    registry = validateMetricsSourceRegistryConfiguration(environment);
+  } catch {
+    return createAuthoritativeSourceTransport(undefined);
+  }
+  if (!registry.registryUrl) {
+    return createAuthoritativeSourceTransport(undefined);
+  }
+
+  return createAuthoritativeSourceTransport(
+    createAuthoritativeSourceResolver({
+      registryUrl: registry.registryUrl,
+      ...(registry.bearerToken
+        ? { accessToken: registry.bearerToken }
+        : {}),
+      privateSource: true,
+    }),
+  );
+}
 
 @Module({
   imports: [ScheduleModule.forRoot()],
@@ -48,28 +86,73 @@ import {
   providers: [
     AuthoritativeMetricsRuntimeService,
     {
+      provide: WORKER_METRICS_RUNTIME_ENVIRONMENT,
+      useFactory: () => process.env,
+    },
+    {
+      provide: WORKER_METRICS_SOURCE_TRANSPORT,
+      useFactory: (environment: NodeJS.ProcessEnv) =>
+        createWorkerMetricsSourceTransport(environment),
+      inject: [WORKER_METRICS_RUNTIME_ENVIRONMENT],
+    },
+    {
       provide: WORKER_METRICS_POSTGRES_SOURCE_PROVIDER,
-      useFactory: () => undefined,
+      useFactory: (
+        transport: AuthoritativeSourceTransport,
+        environment: NodeJS.ProcessEnv,
+      ) =>
+        createPostgresAuthoritativeSourceProvider({
+          transport,
+          targetFingerprint:
+            environment.WORKER_METRICS_TARGET_FINGERPRINT?.trim() ?? '',
+        }),
+      inject: [
+        WORKER_METRICS_SOURCE_TRANSPORT,
+        WORKER_METRICS_RUNTIME_ENVIRONMENT,
+      ],
     },
     {
       provide: WORKER_METRICS_OBJECT_STORAGE_SOURCE_PROVIDER,
-      useFactory: () => undefined,
+      useFactory: (
+        transport: AuthoritativeSourceTransport,
+        environment: NodeJS.ProcessEnv,
+      ) =>
+        createObjectStorageAuthoritativeSourceProvider({
+          transport,
+          targetFingerprint:
+            environment.WORKER_METRICS_TARGET_FINGERPRINT?.trim() ?? '',
+        }),
+      inject: [
+        WORKER_METRICS_SOURCE_TRANSPORT,
+        WORKER_METRICS_RUNTIME_ENVIRONMENT,
+      ],
     },
     {
       provide: WORKER_METRICS_BACKUP_RESTORE_SOURCE_PROVIDER,
-      useFactory: () => undefined,
+      useFactory: (
+        transport: AuthoritativeSourceTransport,
+        environment: NodeJS.ProcessEnv,
+      ) =>
+        createBackupRestoreAuthoritativeSourceProvider({
+          transport,
+          targetFingerprint:
+            environment.WORKER_METRICS_TARGET_FINGERPRINT?.trim() ?? '',
+          release: environment.RELEASE_VERSION?.trim() ?? '',
+        }),
+      inject: [
+        WORKER_METRICS_SOURCE_TRANSPORT,
+        WORKER_METRICS_RUNTIME_ENVIRONMENT,
+      ],
     },
     {
       provide: WORKER_METRICS_SECURITY_BOUNDARY_SOURCE_PROVIDER,
-      useFactory: () => undefined,
+      useFactory: (transport: AuthoritativeSourceTransport) =>
+        createSecurityBoundaryAuthoritativeSourceProvider({ transport }),
+      inject: [WORKER_METRICS_SOURCE_TRANSPORT],
     },
     {
       provide: WORKER_METRICS_COLLECTOR_SCHEDULER,
       useFactory: () => undefined,
-    },
-    {
-      provide: WORKER_METRICS_RUNTIME_ENVIRONMENT,
-      useFactory: () => process.env,
     },
     PrismaService,
     WorkerMetricsService,

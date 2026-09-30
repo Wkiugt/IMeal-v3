@@ -33,7 +33,9 @@ export const WORKER_METRICS_COLLECTOR_SCHEDULER = Symbol(
 export const WORKER_METRICS_RUNTIME_ENVIRONMENT = Symbol(
   'WORKER_METRICS_RUNTIME_ENVIRONMENT',
 );
-
+export const WORKER_METRICS_SOURCE_TRANSPORT = Symbol(
+  'WORKER_METRICS_SOURCE_TRANSPORT',
+);
 export type AuthoritativeMetricsRuntimeScheduler = AuthoritativeMetricsCollectorScheduler;
 
 type RuntimeConfiguration = {
