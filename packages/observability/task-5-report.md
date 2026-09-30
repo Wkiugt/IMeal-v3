@@ -23,5 +23,18 @@ No adapter performs network access, credential lookup, backfill, synthetic zero 
 
 ## External status
 
+- The authoritative collector orchestrator and worker lifecycle caller are
+  registered by commits `85bdf01` and `199eab2`, but all four provider tokens
+  are optional and currently undefined. This wiring fails closed; it is not a
+  real source-provider implementation or external observation.
 - Production source-binding omission is intentional and remains a Task 8/external qualification prerequisite: Task 5 validates the fail-closed configuration contract but does not provision runtime bindings or claim production startup/readiness.
 - Repository implementation evidence is local only. No PostgreSQL/PgBouncer exporter, private MinIO/storage target, encrypted backup/restore evidence pipeline, independent Caddy/WAF/TLS/scanner feed, staging credentials, staging target, controlled alert delivery, or independent approval was provisioned or observed. `STG-METRICS-01` remains **BLOCKED / CONDITIONAL / NO-GO**; this report does not claim staging or production approval.
+
+## Runtime wiring update
+
+- `22e5b25` supplies the private structured API-to-worker transport, while
+  `199eab2` registers the worker runtime service that collects initially and
+  then schedules the orchestrator every 60 seconds.
+- Missing source references, target fingerprint, release metadata, or optional
+  provider implementations remain fail-closed. No real source observation or
+  complete 23-metric runtime qualification is claimed.

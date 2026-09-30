@@ -82,13 +82,23 @@ that MUST remain visible in the release decision are:
   worker or either metrics route;
 - the worker authoritative adapters have no protected runtime callers for
   PostgreSQL, object storage, backup/restore, or security-boundary sources;
-- authoritative collector orchestration remains a checked-in DI contract only:
-  no real PostgreSQL/storage/backup/security providers or target fingerprint
-  binding are available for bootstrap, so the worker MUST NOT start it with
-  fake providers or inferred target values;
+- the authoritative collector orchestrator is registered in the worker
+  lifecycle, performs an initial collection, then schedules a fixed 60-second
+  collection and stops on shutdown. The four source-provider tokens remain
+  optional and undefined in this repository, so incomplete configuration
+  fails closed and no real provider is started;
+- the worker publishes its local application snapshot on the 30-second
+  `APPLICATION_OBSERVATION_INTERVAL_SECONDS` interval. API automatic periodic
+  flush and its metadata caller remain unimplemented because no approved API
+  metadata-caller contract exists;
+- the collector lifecycle registration is implementation evidence only: no real
+  PostgreSQL/storage/backup/security providers or target fingerprint binding
+  are available for bootstrap, so the worker MUST NOT start with fake providers
+  or inferred target values;
 - Staging and production Compose require the four opaque worker source-reference
-  names. The protected staging environment must supply approved reference IDs;
-  this repository supplies no values, credentials, targets, or source payloads.
+  names plus the target-bound `WORKER_METRICS_TARGET_FINGERPRINT`; the protected
+  staging environment must supply approved reference IDs and fingerprint. This
+  repository supplies no values, credentials, targets, or source payloads.
 - the approved edge WAF/rate-limit control and the alert delivery route are not
   provisioned;
 - no real staging environment, DNS, TLS certificate, OTP provider path,

@@ -235,7 +235,7 @@ The operator procedure is the
 is documentation/tooling evidence only; it does not claim a staging target,
 external approval, or production qualification.
 
-- **Current hard blocker:** private worker `/metrics` endpoint and verifier exist, but no runtime API-to-worker transport/flush, authoritative collector callers, protected bindings, target-bound evidence, or external alert delivery; protected runtime integration remains fail-closed and release **NO-GO**.
+- **Current hard blocker:** private worker `/metrics`, structured API-to-worker transport, worker 30-second application snapshot interval, and collector lifecycle registration (initial collection plus fixed 60-second schedule) exist as repository wiring. The API automatic periodic flush/metadata caller remains unimplemented; optional authoritative providers and protected source/target/evidence bindings remain unavailable, so release stays **NO-GO**.
 - **Current external blockers:** the approved edge WAF/rate-limit control and
   alert route are not provisioned; real staging env/DNS/TLS/OTP, backup
   restore, alert delivery, UAT, identity approval, and location/roster

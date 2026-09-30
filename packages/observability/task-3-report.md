@@ -26,8 +26,12 @@ Task 3 instruments the API's existing request, OTP verification, and pickup conf
 
 ## Boundary and safety
 
-- API `/metrics` remains excluded and no API controller, public endpoint, broker, or protocol transport was added.
-- Unavailable or rejected API-to-worker sinks produce `collector_failure` snapshots rather than zeros.
+- API `/metrics` remains excluded and no API controller or public endpoint was
+  added. Commit `22e5b25` adds only a private structured API-to-worker
+  `MetricSourceSnapshot` transport; it is not a broker or public protocol.
+- API automatic periodic flush and the metadata caller remain unimplemented:
+  there is no approved API metadata-caller contract defining when/how snapshots
+  are created and flushed.
 - Route, method, status, auth, serving, and idempotency labels are bounded by the shared contract; sensitive request, OTP, identity, provider, and exception values are not labels.
 - Metric failures are non-throwing and cannot alter API responses or transactions. A post-commit kitchen-event failure cannot turn a committed pickup confirmation into a failed response.
 - No `ApiExceptionFilter` metric duplication was introduced; the existing request interceptor owns request finalization metrics.
@@ -47,7 +51,21 @@ Task 3 instruments the API's existing request, OTP verification, and pickup conf
 - `yarn workspace @imeal/api test --run src/common/http-logging.interceptor.spec.ts src/auth/otp.service.spec.ts src/pickup/pickup.service.spec.ts` — **PASS**; 3 files, 71 tests (final planned-command rerun).
 - Nest module smoke check — **PASS**; `ApiMetricsService` resolves as one shared instance in `AuthController`, `OtpService`, and `PickupService`.
 
-The structured transport has no broker, public endpoint, authoritative metric producer, credentials, backfill, or fallback-zero path.
+The structured transport has no broker, public endpoint, authoritative metric
+producer, credentials, backfill, or fallback-zero path. It remains an explicit
+sink boundary until an approved API metadata caller is provided.
+
+## Runtime wiring update
+
+- `22e5b25` records the private structured API-to-worker transport and worker
+  snapshot acceptance. The worker application snapshot is published on its
+  30-second interval; this does not imply that API snapshots are automatically
+  flushed.
+- `85bdf01` and `199eab2` add the worker-side authoritative collector
+  orchestrator and lifecycle registration, including its fixed 60-second
+  schedule. They do not add an API metadata caller or real source providers.
+- No real staging target, source binding, credentials, or complete 23-metric
+  runtime qualification is claimed by this report.
 
 ## Final review remediation
 
