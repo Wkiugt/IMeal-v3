@@ -4,7 +4,7 @@
 
 Task 4 adds the worker-owned application metrics registry and the worker-origin `GET /metrics` controller. Worker lifecycle seams record OTP delivery outcomes and scheduled-job terminal statuses. The endpoint fails closed unless every contract metric has a fresh, validated source series.
 
-## Focused verification
+## Earlier focused verification
 
 - `yarn workspace @imeal/observability test --run test/metrics.test.ts` — 1 file, 16 tests passed.
 - `yarn workspace @imeal/observability build` — passed.
@@ -23,3 +23,12 @@ Task 4 adds the worker-owned application metrics registry and the worker-origin 
 - Worker bootstrap publishes local application snapshots only when real runtime release/evidence-digest metadata is configured; no sample or credential is fabricated. `/metrics` is registered only on the worker application. No API controller, Caddy/public route, auth bypass, credential, provider endpoint, broker, or synthetic external metric source is added.
 
 These checks do not claim staging approval.
+
+## Task8 latest verification note
+
+The repository-only rerun `yarn workspace @imeal/worker test:e2e --run
+test/app.e2e-spec.ts` observed 4 of 5 tests passing: the complete bound
+`/metrics` fixture returned HTTP 503 where the test expects HTTP 200. The prior
+5-test result above is historical; this failure is recorded rather than
+bypassed. It is not staging evidence and does not establish all 23 metrics as
+real runtime observations.

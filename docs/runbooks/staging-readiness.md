@@ -69,6 +69,10 @@ that MUST remain visible in the release decision are:
   Compose boundary only declares required opaque source references; protected
   deployment values and external source evidence are absent, so runtime
   integration fails closed until those sources and evidence exist;
+- API application snapshots have no repository API-to-worker transport or flush
+  path, and the worker authoritative adapters have no protected runtime callers
+  for PostgreSQL, object storage, backup/restore, or security-boundary sources;
+  local adapters and the private worker endpoint are not external observations.
 - Staging and production Compose require the four opaque worker source-reference
   names. The protected staging environment must supply approved reference IDs;
   this repository supplies no values, credentials, targets, or source payloads.
@@ -352,7 +356,9 @@ test mode), `api-live`, `api-ready`, `admin-health`, and
 Every required check must PASS; arbitrary check names and omitted required
 checks are invalid. Its business workflow field remains `NOT_RUN`. Operators
 must provide separately reviewed, target-bound PASS artifacts named
-
+`smoke-auth-rbac.json`, `smoke-business.json`, `smoke-mobile-admin.json`, and
+`smoke-worker.json` for the corresponding identity, business, client, and
+worker paths. Do not turn local test mode into staging evidence.
 The protected workflow invokes `runRuntimeIntegration` from
 `scripts/staging/runtime-integration.mjs` after deployment and before it records
 `runtimeIntegration: PASS`. A qualification PASS requires API and worker live
@@ -374,9 +380,9 @@ snapshot artifact, record that artifact's SHA-256 provenance, and carry a
 computed from the fetched worker metrics body. It must also name an approved source identity
 with `fresh` freshness and include an explicit acknowledgement, route,
 destination, and canonical `observedAt`.
-The snapshot digest must equal the worker metrics body hash; the verifier never creates an acknowledgement;
-Stale, unknown, `collector_failure`, missing, conflicting, or unsafe fields fail closed.
-alert route is an external prerequisite and there is no repository command
+The snapshot digest must equal the worker metrics body hash; the verifier never creates an acknowledgement. Stale, unknown, `collector_failure`, missing,
+conflicting, or unsafe fields fail closed. The alert route is an external
+prerequisite and there is no repository command
 that can manufacture this evidence. Missing WAF/rate-limit approval or
 missing alert delivery is a NO-GO.
 
