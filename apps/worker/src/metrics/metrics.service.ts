@@ -2,10 +2,15 @@ import { Injectable, Optional } from '@nestjs/common';
 import {
   METRIC_CONTRACT,
   MetricRegistry,
+  type MetricFreshness,
   type MetricSampleEnvelope,
   type MetricSnapshotMetadata,
   type MetricSourceSnapshot,
 } from '@imeal/observability';
+import type {
+  AuthoritativeMetricsFailureReason,
+  AuthoritativeSourceIdentity,
+} from './authoritative-metrics.js';
 import { PrismaService } from '../common/prisma.service.js';
 
 export const WORKER_METRIC_JOBS = [
@@ -278,6 +283,22 @@ export class WorkerMetricsService {
       throw new Error('Authoritative metric snapshot source is invalid');
     }
     this.replaceAggregateSnapshot(snapshot);
+    this.collectorFailures.delete(`authoritative:${snapshot.source}`);
+  }
+  acceptAuthoritativeFailure(
+    source: AuthoritativeSourceIdentity,
+    _freshness: MetricFreshness,
+    _reason: AuthoritativeMetricsFailureReason,
+  ): void {
+    if (
+      source !== 'postgres_authoritative' &&
+      source !== 'object_storage_authoritative' &&
+      source !== 'backup_restore_evidence' &&
+      source !== 'security_boundary_evidence'
+    ) {
+      throw new Error('Authoritative metric source is invalid');
+    }
+    this.collectorFailures.add(`authoritative:${source}`);
   }
 
   /** Publish local worker observations into the endpoint aggregate. */

@@ -196,6 +196,29 @@ describe('WorkerMetricsService', () => {
     }
     expect(text).not.toMatch(/password|authorization|Bearer|postgresql:/i);
   });
+  it('fails closed when an authoritative source reports collector failure', async () => {
+    const now = new Date();
+    const service = new WorkerMetricsService({
+      otpDeliveryOutbox: { findFirst: vi.fn().mockResolvedValue(null) },
+      jobRun: { findFirst: vi.fn().mockResolvedValue({ completedAt: now }) },
+    } as never);
+    for (const snapshot of completeSnapshots(now.toISOString())) {
+      if (snapshot.source === 'api_application') {
+        service.acceptApiApplicationSnapshot(snapshot);
+      } else if (snapshot.source === 'worker_application') {
+        service.acceptWorkerApplicationSnapshot(snapshot);
+      } else {
+        service.acceptAuthoritativeSnapshot(snapshot);
+      }
+    }
+
+    service.acceptAuthoritativeFailure(
+      'postgres_authoritative',
+      'collector_failure',
+      'source_unavailable',
+    );
+    await expect(service.getCompleteSnapshot()).resolves.toBeNull();
+  });
 
   it('fails closed when a previously fresh source sample ages past its contract window', async () => {
     const now = new Date();
