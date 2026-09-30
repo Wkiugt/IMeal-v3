@@ -20,11 +20,14 @@ node --test scripts/staging/alert-rules.test.mjs scripts/staging/evidence.test.m
 yarn workspace @imeal/worker test --run src/metrics/metrics.service.spec.ts src/metrics/metrics.controller.spec.ts src/metrics/authoritative-metrics.spec.ts src/metrics/metrics-environment.spec.ts src/otp-delivery-worker.service.spec.ts src/notification-dispatch.service.spec.ts src/cutoff-worker.service.spec.ts src/pickup-worker.service.spec.ts src/no-show-worker.service.spec.ts — 100 tests passed
 ```
 
-The worker app e2e command is a recorded local failure, not a staging result:
-`yarn workspace @imeal/worker test:e2e --run test/app.e2e-spec.ts` had 4/5 tests
-pass; the complete-bound `/metrics` fixture returned HTTP 503 where the test
-expects HTTP 200. No failure was bypassed and no staging/prod target was
-contacted.
+The worker app e2e command's 4/5 result below is a recorded pre-fix local
+observation, not a staging result:
+`yarn workspace @imeal/worker test:e2e --run test/app.e2e-spec.ts` observed 4/5
+tests passing; the complete-bound `/metrics` fixture returned HTTP 503 where the
+test expects HTTP 200. After c021e37, the current repository-only rerun passes
+5/5 tests and the complete-bound fixture returns HTTP 200. No failure was
+bypassed, no staging/prod target was contacted, and no credentials or backfill
+were used.
 
 These tests use disposable fixtures and injected fetch/command implementations.
 The qualification path now fails on API or worker readiness HTTP 503 and only

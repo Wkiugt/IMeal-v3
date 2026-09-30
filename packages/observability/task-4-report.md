@@ -26,9 +26,10 @@ These checks do not claim staging approval.
 
 ## Task8 latest verification note
 
-The repository-only rerun `yarn workspace @imeal/worker test:e2e --run
-test/app.e2e-spec.ts` observed 4 of 5 tests passing: the complete bound
-`/metrics` fixture returned HTTP 503 where the test expects HTTP 200. The prior
-5-test result above is historical; this failure is recorded rather than
-bypassed. It is not staging evidence and does not establish all 23 metrics as
-real runtime observations.
+An earlier repository-only rerun before c021e37 observed 4 of 5 tests passing:
+the complete-bound `/metrics` fixture returned HTTP 503 where the test expects
+HTTP 200. This pre-fix observation was recorded rather than bypassed; it was
+not staging evidence and did not establish all 23 metrics as real runtime
+observations. After c021e37, the current repository-only rerun passes 5/5
+tests; the complete-bound fixture returns HTTP 200. No credentials or backfill
+were used, and this does not establish staging qualification.
