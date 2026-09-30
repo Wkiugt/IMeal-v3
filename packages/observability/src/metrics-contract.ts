@@ -1,0 +1,831 @@
+export const METRIC_REDACTION_TOKEN = '[REDACTED]';
+
+export const APPLICATION_OBSERVATION_INTERVAL_SECONDS = 30;
+export const APPLICATION_STALE_AFTER_SECONDS = 60;
+export const AUTHORITATIVE_OBSERVATION_INTERVAL_SECONDS = 60;
+export const AUTHORITATIVE_STALE_AFTER_SECONDS = 120;
+export const METRIC_RETENTION_DAYS = 30;
+
+export const HISTOGRAM_BUCKETS = Object.freeze([
+  0.005,
+  0.01,
+  0.025,
+  0.05,
+  0.1,
+  0.25,
+  0.5,
+  1,
+  2.5,
+  5,
+  10,
+  Infinity,
+] as const);
+export const HISTOGRAM_SERIES_SUFFIXES = Object.freeze([
+  '_bucket',
+  '_sum',
+  '_count',
+] as const);
+
+export const SAMPLE_FRESHNESS_STATES = Object.freeze([
+  'fresh',
+  'stale',
+  'unknown',
+  'collector_failure',
+] as const);
+
+export type MetricFreshness = (typeof SAMPLE_FRESHNESS_STATES)[number];
+export type MetricType = 'counter' | 'gauge' | 'histogram';
+export type MetricSourceKind = 'application' | 'authoritative';
+
+export const METRIC_NAMES = Object.freeze([
+  'imeal_http_requests_total',
+  'imeal_http_request_duration_seconds_bucket',
+  'imeal_auth_attempts_total',
+  'imeal_otp_delivery_total',
+  'imeal_otp_delivery_retries_total',
+  'imeal_otp_delivery_failures_total',
+  'imeal_otp_outbox_oldest_age_seconds',
+  'imeal_serving_confirm_total',
+  'imeal_serving_confirm_duration_seconds_bucket',
+  'imeal_idempotency_conflicts_total',
+  'imeal_worker_runs_total',
+  'imeal_worker_job_last_success_timestamp_seconds',
+  'imeal_worker_job_lag_seconds',
+  'imeal_postgres_connection_usage_ratio',
+  'imeal_postgres_transaction_errors_total',
+  'imeal_postgres_lock_waits_total',
+  'imeal_postgres_disk_usage_ratio',
+  'imeal_object_storage_capacity_bytes',
+  'imeal_object_storage_errors_total',
+  'imeal_backup_age_seconds',
+  'imeal_backup_checksum_failures_total',
+  'imeal_restore_test_failures_total',
+  'imeal_security_boundary_violations_total',
+] as const);
+
+export type MetricName = (typeof METRIC_NAMES)[number];
+
+export type MetricUnit =
+  | 'requests'
+  | 'seconds'
+  | 'attempts'
+  | 'delivery_attempts'
+  | 'retries'
+  | 'terminal_failures'
+  | 'confirmations'
+  | 'conflicts'
+  | 'runs'
+  | 'unix_epoch_seconds'
+  | 'ratio'
+  | 'errors'
+  | 'lock_waits'
+  | 'bytes'
+  | 'checksum_failures'
+  | 'restore_test_failures'
+  | 'violations';
+
+export type MetricLabels = Readonly<Record<string, readonly string[]>>;
+
+export type MetricFailureMapping = Readonly<{
+  missing: MetricFreshness;
+  invalid: MetricFreshness;
+  unavailable: MetricFreshness;
+}>;
+
+export type MetricEvidenceBinding =
+  | 'release'
+  | 'source'
+  | 'observedAt'
+  | 'contractRevision'
+  | 'freshness'
+  | 'sha256Digest'
+  | 'routeTaxonomyRevision'
+  | 'bucketRevision'
+  | 'resultTaxonomyRevision'
+  | 'retryPolicyRevision'
+  | 'failureTaxonomyRevision'
+  | 'querySchemaRevision'
+  | 'scheduleRevision'
+  | 'sourceKind'
+  | 'targetFingerprint'
+  | 'operationTaxonomyRevision'
+  | 'manifestDigest'
+  | 'verificationResult'
+  | 'rehearsalDigest'
+  | 'securityTaxonomyRevision'
+  | 'deduplicationWindow';
+
+export interface MetricContractRow {
+  readonly id: `M-${number}`;
+  /** Exact name consumed by the staging runtime integration, including _bucket. */
+  readonly name: MetricName;
+  /** OpenMetrics family name; histogram rows intentionally remove the _bucket suffix. */
+  readonly familyName: string;
+  readonly type: MetricType;
+  readonly unit: MetricUnit;
+  readonly labels: MetricLabels;
+  /** Product of finite label enum sizes, or zero for an unlabelled metric. */
+  readonly cardinalityBudget: number;
+  readonly buckets: readonly number[];
+  readonly histogramSeriesSuffixes: readonly string[];
+  readonly sourceKind: MetricSourceKind;
+  readonly source: string;
+  readonly producer: string;
+  readonly observationIntervalSeconds: number;
+  readonly staleAfterSeconds: number;
+  readonly failureStates: readonly ['stale', 'unknown', 'collector_failure'];
+  readonly failureMapping: MetricFailureMapping;
+  readonly resetBehavior: string;
+  readonly retentionDays: number;
+  readonly evidence: readonly MetricEvidenceBinding[];
+}
+
+const DEFAULT_FAILURE_MAPPING: MetricFailureMapping = Object.freeze({
+  missing: 'collector_failure',
+  invalid: 'collector_failure',
+  unavailable: 'collector_failure',
+});
+
+const MISSING_EVIDENCE_FAILURE_MAPPING: MetricFailureMapping = Object.freeze({
+  // Missing backup/restore evidence means the source did not establish a value.
+  missing: 'unknown',
+  // Invalid, mismatched, unauthorized, or unreachable evidence is a collector failure.
+  invalid: 'collector_failure',
+  unavailable: 'collector_failure',
+});
+
+const FAILURE_STATES = Object.freeze([
+  'stale',
+  'unknown',
+  'collector_failure',
+] as const);
+
+const COMMON_EVIDENCE = [
+  'release',
+  'source',
+  'observedAt',
+  'contractRevision',
+  'freshness',
+  'sha256Digest',
+] as const;
+
+const HTTP_ROUTES = [
+  '/health/live',
+  '/health/ready',
+  'auth',
+  'api',
+  'serving',
+  'registrations',
+  'kitchen',
+  'notifications',
+  'delegations',
+  'admin',
+  'other',
+] as const;
+const HTTP_METHODS = [
+  'GET',
+  'POST',
+  'PUT',
+  'PATCH',
+  'DELETE',
+  'HEAD',
+  'OPTIONS',
+] as const;
+const HTTP_STATUSES = [
+  '200',
+  '201',
+  '202',
+  '204',
+  '400',
+  '401',
+  '403',
+  '404',
+  '409',
+  '422',
+  '429',
+  '500',
+  '502',
+  '503',
+  '504',
+] as const;
+const AUTH_RESULTS = ['success', 'failure', 'dependency_failure'] as const;
+const SERVING_RESULTS = ['success', 'error', 'failure'] as const;
+const WORKER_JOBS = [
+  'otp_delivery',
+  'notification_dispatch',
+  'registration_reminder',
+  'pickup_reminder',
+  'cutoff_lock',
+  'pickup_session_cleanup',
+  'no_show',
+] as const;
+const WORKER_STATUSES = ['success', 'failure', 'skipped'] as const;
+const SECURITY_CATEGORIES = [
+  'public_private_service_exposure',
+  'plaintext_bearer_transport',
+  'invalid_tls',
+  'unexpected_cors_origin',
+  'waf_or_rate_limit_violation',
+  'unexpected_public_internal_port',
+] as const;
+
+function labels(value: Record<string, readonly string[]>): MetricLabels {
+  const copy: Record<string, readonly string[]> = {};
+  for (const [key, enumValues] of Object.entries(value)) {
+    copy[key] = Object.freeze([...enumValues]);
+  }
+  return Object.freeze(copy);
+}
+
+function cardinalityBudget(value: MetricLabels): number {
+  const entries = Object.values(value);
+  if (entries.length === 0) return 0;
+  return entries.reduce(
+    (product, enumValues) => product * enumValues.length,
+    1,
+  );
+}
+
+function defineRow(
+  value: Omit<
+    MetricContractRow,
+    'familyName' | 'cardinalityBudget' | 'histogramSeriesSuffixes'
+  > & {
+    readonly familyName?: string;
+  },
+): MetricContractRow {
+  const rowLabels = labels(value.labels as Record<string, readonly string[]>);
+  const familyName =
+    value.familyName ??
+    (value.type === 'histogram' && value.name.endsWith('_bucket')
+      ? value.name.slice(0, -'_bucket'.length)
+      : value.name);
+  return Object.freeze({
+    ...value,
+    familyName,
+    labels: rowLabels,
+    cardinalityBudget: cardinalityBudget(rowLabels),
+    buckets: Object.freeze([...value.buckets]),
+    histogramSeriesSuffixes: Object.freeze(
+      value.type === 'histogram' ? [...HISTOGRAM_SERIES_SUFFIXES] : [],
+    ),
+  });
+}
+
+const APPLICATION_ROW_DEFAULTS = {
+  sourceKind: 'application' as const,
+  observationIntervalSeconds: APPLICATION_OBSERVATION_INTERVAL_SECONDS,
+  staleAfterSeconds: APPLICATION_STALE_AFTER_SECONDS,
+  failureStates: FAILURE_STATES,
+  failureMapping: DEFAULT_FAILURE_MAPPING,
+  retentionDays: METRIC_RETENTION_DAYS,
+};
+
+const AUTHORITATIVE_ROW_DEFAULTS = {
+  sourceKind: 'authoritative' as const,
+  observationIntervalSeconds: AUTHORITATIVE_OBSERVATION_INTERVAL_SECONDS,
+  staleAfterSeconds: AUTHORITATIVE_STALE_AFTER_SECONDS,
+  failureStates: FAILURE_STATES,
+  failureMapping: DEFAULT_FAILURE_MAPPING,
+  retentionDays: METRIC_RETENTION_DAYS,
+};
+
+export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
+  defineRow({
+    id: 'M-01',
+    name: 'imeal_http_requests_total',
+    type: 'counter',
+    unit: 'requests',
+    labels: { route: HTTP_ROUTES, method: HTTP_METHODS, status: HTTP_STATUSES },
+    buckets: [],
+    source: 'API request finalization and normalized route/status',
+    producer: 'ApiApplicationMetricsAdapter',
+    resetBehavior: 'Reset on API process restart; no persistence or rebasing.',
+    evidence: [...COMMON_EVIDENCE, 'routeTaxonomyRevision'],
+    ...APPLICATION_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-02',
+    name: 'imeal_http_request_duration_seconds_bucket',
+    type: 'histogram',
+    unit: 'seconds',
+    labels: { route: HTTP_ROUTES, method: HTTP_METHODS, status: HTTP_STATUSES },
+    buckets: HISTOGRAM_BUCKETS,
+    source: 'API request finalization elapsed duration',
+    producer: 'ApiApplicationMetricsAdapter',
+    resetBehavior:
+      'Reset on API process restart; bucket revision is contract-bound.',
+    evidence: [...COMMON_EVIDENCE, 'routeTaxonomyRevision', 'bucketRevision'],
+    ...APPLICATION_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-03',
+    name: 'imeal_auth_attempts_total',
+    type: 'counter',
+    unit: 'attempts',
+    labels: { result: AUTH_RESULTS },
+    buckets: [],
+    source: 'OTP authentication verification outcome',
+    producer: 'ApiApplicationMetricsAdapter',
+    resetBehavior:
+      'Reset on API process restart; count once per verification outcome.',
+    evidence: [...COMMON_EVIDENCE, 'resultTaxonomyRevision'],
+    ...APPLICATION_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-04',
+    name: 'imeal_otp_delivery_total',
+    type: 'counter',
+    unit: 'delivery_attempts',
+    labels: {},
+    buckets: [],
+    source: 'Claimed encrypted OTP outbox delivery provider-call boundary',
+    producer: 'WorkerApplicationMetricsAdapter',
+    resetBehavior:
+      'Reset on worker process restart; count each real provider send attempt.',
+    evidence: COMMON_EVIDENCE,
+    ...APPLICATION_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-05',
+    name: 'imeal_otp_delivery_retries_total',
+    type: 'counter',
+    unit: 'retries',
+    labels: {},
+    buckets: [],
+    source: 'OTP delivery retry decision after a transient provider outcome',
+    producer: 'WorkerApplicationMetricsAdapter',
+    resetBehavior:
+      'Reset on worker process restart; first send is not a retry.',
+    evidence: [...COMMON_EVIDENCE, 'retryPolicyRevision'],
+    ...APPLICATION_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-06',
+    name: 'imeal_otp_delivery_failures_total',
+    type: 'counter',
+    unit: 'terminal_failures',
+    labels: {},
+    buckets: [],
+    source: 'Persisted terminal OTP delivery outcome',
+    producer: 'WorkerApplicationMetricsAdapter',
+    resetBehavior:
+      'Reset on worker process restart; retryable intermediate outcomes are excluded.',
+    evidence: [...COMMON_EVIDENCE, 'failureTaxonomyRevision'],
+    ...APPLICATION_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-07',
+    name: 'imeal_otp_outbox_oldest_age_seconds',
+    type: 'gauge',
+    unit: 'seconds',
+    labels: {},
+    buckets: [],
+    source: 'Real pending OTP outbox oldest-created-at query',
+    producer: 'WorkerApplicationMetricsAdapter',
+    resetBehavior:
+      'Replace with each valid observation; no restart carry-over.',
+    evidence: [...COMMON_EVIDENCE, 'querySchemaRevision'],
+    ...APPLICATION_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-08',
+    name: 'imeal_serving_confirm_total',
+    type: 'counter',
+    unit: 'confirmations',
+    labels: { result: SERVING_RESULTS },
+    buckets: [],
+    source: 'Pickup confirmation transaction outcome and exact replay branch',
+    producer: 'ApiApplicationMetricsAdapter',
+    resetBehavior:
+      'Reset on API process restart; count once per confirmation outcome.',
+    evidence: [...COMMON_EVIDENCE, 'resultTaxonomyRevision'],
+    ...APPLICATION_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-09',
+    name: 'imeal_serving_confirm_duration_seconds_bucket',
+    type: 'histogram',
+    unit: 'seconds',
+    labels: { result: SERVING_RESULTS },
+    buckets: HISTOGRAM_BUCKETS,
+    source: 'Pickup confirmation transaction elapsed duration',
+    producer: 'ApiApplicationMetricsAdapter',
+    resetBehavior:
+      'Reset on API process restart; bucket revision is contract-bound.',
+    evidence: [...COMMON_EVIDENCE, 'resultTaxonomyRevision', 'bucketRevision'],
+    ...APPLICATION_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-10',
+    name: 'imeal_idempotency_conflicts_total',
+    type: 'counter',
+    unit: 'conflicts',
+    labels: {},
+    buckets: [],
+    source: 'Persisted idempotency body/intent conflict branch',
+    producer: 'ApiApplicationMetricsAdapter',
+    resetBehavior:
+      'Reset on API process restart; successful exact replay is excluded.',
+    evidence: [...COMMON_EVIDENCE, 'resultTaxonomyRevision'],
+    ...APPLICATION_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-11',
+    name: 'imeal_worker_runs_total',
+    type: 'counter',
+    unit: 'runs',
+    labels: { job: WORKER_JOBS, status: WORKER_STATUSES },
+    buckets: [],
+    source: 'Scheduled worker job start/end/failure lifecycle',
+    producer: 'WorkerApplicationMetricsAdapter',
+    resetBehavior:
+      'Reset on worker process restart; count one terminal status per invocation.',
+    evidence: [...COMMON_EVIDENCE, 'resultTaxonomyRevision'],
+    ...APPLICATION_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-12',
+    name: 'imeal_worker_job_last_success_timestamp_seconds',
+    type: 'gauge',
+    unit: 'unix_epoch_seconds',
+    labels: { job: WORKER_JOBS },
+    buckets: [],
+    source: 'Latest successful job-run record for each scheduler job',
+    producer: 'WorkerApplicationMetricsAdapter',
+    resetBehavior:
+      'Replace with latest real successful completion; no fabricated current time.',
+    evidence: [...COMMON_EVIDENCE, 'querySchemaRevision', 'scheduleRevision'],
+    ...APPLICATION_ROW_DEFAULTS,
+    failureMapping: {
+      missing: 'unknown',
+      invalid: 'collector_failure',
+      unavailable: 'collector_failure',
+    },
+  }),
+  defineRow({
+    id: 'M-13',
+    name: 'imeal_worker_job_lag_seconds',
+    type: 'gauge',
+    unit: 'seconds',
+    labels: { job: WORKER_JOBS },
+    buckets: [],
+    source: 'Real job-run completion combined with checked-in cron schedules',
+    producer: 'WorkerApplicationMetricsAdapter',
+    resetBehavior:
+      'Replace with each valid scheduler observation; no process-state carry-over.',
+    evidence: [...COMMON_EVIDENCE, 'querySchemaRevision', 'scheduleRevision'],
+    ...APPLICATION_ROW_DEFAULTS,
+    failureMapping: {
+      missing: 'unknown',
+      invalid: 'collector_failure',
+      unavailable: 'collector_failure',
+    },
+  }),
+  defineRow({
+    id: 'M-14',
+    name: 'imeal_postgres_connection_usage_ratio',
+    type: 'gauge',
+    unit: 'ratio',
+    labels: { pool: ['pgbouncer_client', 'postgres_backend'] },
+    buckets: [],
+    source:
+      'Authoritative PostgreSQL/PgBouncer exporter or least-privilege query',
+    producer: 'PostgresAuthoritativeMetricsAdapter',
+    resetBehavior:
+      'Replace with newest valid source value; source reset has no synthetic correction.',
+    evidence: [...COMMON_EVIDENCE, 'sourceKind', 'targetFingerprint'],
+    ...AUTHORITATIVE_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-15',
+    name: 'imeal_postgres_transaction_errors_total',
+    type: 'counter',
+    unit: 'errors',
+    labels: {},
+    buckets: [],
+    source: 'Authoritative IMeal PostgreSQL transaction-error statistics',
+    producer: 'PostgresAuthoritativeMetricsAdapter',
+    resetBehavior:
+      'Retain source counter; detected source reset is evidence-only.',
+    evidence: [
+      ...COMMON_EVIDENCE,
+      'sourceKind',
+      'targetFingerprint',
+      'querySchemaRevision',
+    ],
+    ...AUTHORITATIVE_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-16',
+    name: 'imeal_postgres_lock_waits_total',
+    type: 'counter',
+    unit: 'lock_waits',
+    labels: {},
+    buckets: [],
+    source: 'Authoritative PostgreSQL lock-wait statistics',
+    producer: 'PostgresAuthoritativeMetricsAdapter',
+    resetBehavior:
+      'Retain source counter; detected source reset is evidence-only.',
+    evidence: [
+      ...COMMON_EVIDENCE,
+      'sourceKind',
+      'targetFingerprint',
+      'querySchemaRevision',
+    ],
+    ...AUTHORITATIVE_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-17',
+    name: 'imeal_postgres_disk_usage_ratio',
+    type: 'gauge',
+    unit: 'ratio',
+    labels: {},
+    buckets: [],
+    source: 'Authoritative PostgreSQL data-volume/filesystem disk source',
+    producer: 'PostgresAuthoritativeMetricsAdapter',
+    resetBehavior:
+      'Replace with newest valid source value; stale values are not zeroed.',
+    evidence: [
+      ...COMMON_EVIDENCE,
+      'sourceKind',
+      'targetFingerprint',
+      'querySchemaRevision',
+    ],
+    ...AUTHORITATIVE_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-18',
+    name: 'imeal_object_storage_capacity_bytes',
+    type: 'gauge',
+    unit: 'bytes',
+    labels: {},
+    buckets: [],
+    source: 'Private MinIO/storage-platform usable remaining capacity source',
+    producer: 'ObjectStorageAuthoritativeMetricsAdapter',
+    resetBehavior:
+      'Replace with newest valid capacity; zero is a real observed value.',
+    evidence: [...COMMON_EVIDENCE, 'sourceKind', 'targetFingerprint'],
+    ...AUTHORITATIVE_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-19',
+    name: 'imeal_object_storage_errors_total',
+    type: 'counter',
+    unit: 'errors',
+    labels: { operation: ['health', 'read', 'write'] },
+    buckets: [],
+    source: 'Private MinIO/storage-platform operation error telemetry',
+    producer: 'ObjectStorageAuthoritativeMetricsAdapter',
+    resetBehavior:
+      'Retain source counter; detected source reset is evidence-only.',
+    evidence: [
+      ...COMMON_EVIDENCE,
+      'sourceKind',
+      'targetFingerprint',
+      'operationTaxonomyRevision',
+    ],
+    ...AUTHORITATIVE_ROW_DEFAULTS,
+  }),
+  defineRow({
+    id: 'M-20',
+    name: 'imeal_backup_age_seconds',
+    type: 'gauge',
+    unit: 'seconds',
+    labels: {},
+    buckets: [],
+    source: 'Encrypted approved recoverable-backup manifest evidence pipeline',
+    producer: 'BackupRestoreEvidenceAdapter',
+    resetBehavior:
+      'Replace with manifest-derived age; missing evidence is unknown, never zero.',
+    evidence: [...COMMON_EVIDENCE, 'manifestDigest', 'targetFingerprint'],
+    ...AUTHORITATIVE_ROW_DEFAULTS,
+    failureMapping: MISSING_EVIDENCE_FAILURE_MAPPING,
+  }),
+  defineRow({
+    id: 'M-21',
+    name: 'imeal_backup_checksum_failures_total',
+    type: 'counter',
+    unit: 'checksum_failures',
+    labels: {},
+    buckets: [],
+    source: 'Approved backup checksum verification evidence pipeline',
+    producer: 'BackupRestoreEvidenceAdapter',
+    resetBehavior:
+      'Retain source count; missing evidence is unknown, never zero.',
+    evidence: [
+      ...COMMON_EVIDENCE,
+      'manifestDigest',
+      'targetFingerprint',
+      'verificationResult',
+    ],
+    ...AUTHORITATIVE_ROW_DEFAULTS,
+    failureMapping: MISSING_EVIDENCE_FAILURE_MAPPING,
+  }),
+  defineRow({
+    id: 'M-22',
+    name: 'imeal_restore_test_failures_total',
+    type: 'counter',
+    unit: 'restore_test_failures',
+    labels: {},
+    buckets: [],
+    source: 'Approved isolated restore-rehearsal evidence pipeline',
+    producer: 'BackupRestoreEvidenceAdapter',
+    resetBehavior:
+      'Retain source count; missing rehearsal evidence is unknown, never zero.',
+    evidence: [
+      ...COMMON_EVIDENCE,
+      'rehearsalDigest',
+      'targetFingerprint',
+      'verificationResult',
+    ],
+    ...AUTHORITATIVE_ROW_DEFAULTS,
+    failureMapping: MISSING_EVIDENCE_FAILURE_MAPPING,
+  }),
+  defineRow({
+    id: 'M-23',
+    name: 'imeal_security_boundary_violations_total',
+    type: 'counter',
+    unit: 'violations',
+    labels: { category: SECURITY_CATEGORIES },
+    buckets: [],
+    source: 'Independent Caddy/WAF/TLS/scanner security observation feed',
+    producer: 'SecurityBoundaryEvidenceAdapter',
+    resetBehavior:
+      'Retain deduplicated source count; deduplication window is evidence-bound.',
+    evidence: [
+      ...COMMON_EVIDENCE,
+      'securityTaxonomyRevision',
+      'deduplicationWindow',
+    ],
+    ...AUTHORITATIVE_ROW_DEFAULTS,
+  }),
+]);
+
+const METRIC_BY_NAME: Record<string, MetricContractRow> = Object.create(null);
+for (const row of METRIC_CONTRACT) METRIC_BY_NAME[row.name] = row;
+
+export interface MetricEvidenceMetadata {
+  readonly release: string;
+  readonly source: string;
+  readonly observedAt: string;
+  readonly contractRevision: string;
+  readonly freshness: MetricFreshness;
+  readonly digest: string;
+  readonly reference?: string;
+  readonly [key: string]: string | undefined;
+}
+
+export interface MetricSampleEnvelope {
+  readonly metricName: MetricName;
+  readonly type: MetricType;
+  readonly unit: MetricUnit;
+  readonly labels: Readonly<Record<string, string>>;
+  readonly value: number;
+  readonly observedAt: string;
+  readonly source: string;
+  readonly freshness: MetricFreshness;
+  readonly evidence: MetricEvidenceMetadata;
+}
+
+const METRIC_SECRET_PATTERNS: readonly RegExp[] = [
+  /\bBearer\s+\S+/i,
+  /(?:authorization|bearer|session(?:[-_ ]?(?:token|id))?|client(?:[-_ ]?secret)|provider(?:[-_ ]?(?:secret|api[-_ ]?key))|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)\s*[:=]\s*\S+/i,
+  /\b(?:otp|one[- ]time|verification|auth(?:entication)?)(?:\s+(?:code|password))?\s*[:=]?\s*\d{6}\b/i,
+  /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?):\/\//i,
+  /\bhttps?:\/\/\S+/i,
+  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i,
+  /(?:lat(?:itude)?|lon(?:gitude)?|lng)\s*[:=]\s*-?\d+(?:\.\d+)?/i,
+  /\b-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+\b/,
+  /(?:request|user|employee|location|session|provider|payload|body|message|target)[-_ ]?(?:id|code|name|url)?\s*[:=]\s*\S+/i,
+];
+
+export function containsMetricSensitiveText(value: string): boolean {
+  return METRIC_SECRET_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+/** Redacts diagnostic text; envelope validation rejects the original text. */
+export function redactMetricText(value: string): string {
+  return containsMetricSensitiveText(value) ? METRIC_REDACTION_TOKEN : value;
+}
+
+function rejectSensitiveText(value: string, field: string): void {
+  if (containsMetricSensitiveText(value)) {
+    throw new Error(
+      `Metric sample ${field} contains forbidden secret or PII text`,
+    );
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requireCanonicalTimestamp(
+  value: unknown,
+  field: string,
+): asserts value is string {
+  if (typeof value !== 'string') {
+    throw new Error(`Metric sample ${field} must be a canonical timestamp`);
+  }
+  try {
+    if (new Date(value).toISOString() !== value)
+      throw new Error('not canonical');
+  } catch {
+    throw new Error(`Metric sample ${field} must be a canonical timestamp`);
+  }
+  rejectSensitiveText(value, field);
+}
+
+function requireSafeString(
+  value: unknown,
+  field: string,
+): asserts value is string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Metric sample ${field} must be a non-empty string`);
+  }
+  rejectSensitiveText(value, field);
+}
+
+function validateEvidence(
+  value: unknown,
+  sample: Omit<MetricSampleEnvelope, 'evidence'>,
+): MetricEvidenceMetadata {
+  if (!isRecord(value)) throw new Error('Metric sample evidence is required');
+  requireSafeString(value.release, 'evidence.release');
+  requireSafeString(value.source, 'evidence.source');
+  requireCanonicalTimestamp(value.observedAt, 'evidence.observedAt');
+  requireSafeString(value.contractRevision, 'evidence.contractRevision');
+  requireSafeString(value.freshness, 'evidence.freshness');
+  requireSafeString(value.digest, 'evidence.digest');
+  if (!/^sha256:[a-f0-9]{64}$/.test(value.digest)) {
+    throw new Error('Metric sample evidence.digest must be a SHA-256 digest');
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === 'string') requireSafeString(entry, `evidence.${key}`);
+    else if (entry !== undefined) {
+      throw new Error(`Metric sample evidence.${key} must be a string`);
+    }
+  }
+  if (
+    value.source !== sample.source ||
+    value.observedAt !== sample.observedAt
+  ) {
+    throw new Error(
+      'Metric sample evidence identity does not match the sample',
+    );
+  }
+  if (value.freshness !== sample.freshness) {
+    throw new Error(
+      'Metric sample evidence freshness does not match the sample',
+    );
+  }
+  return value as MetricEvidenceMetadata;
+}
+
+export function validateMetricSampleEnvelope(
+  value: unknown,
+): MetricSampleEnvelope {
+  if (!isRecord(value))
+    throw new Error('Metric sample envelope must be an object');
+  const row = METRIC_BY_NAME[String(value.metricName)];
+  if (!row)
+    throw new Error('Metric sample name is not in the approved contract');
+  if (value.type !== row.type || value.unit !== row.unit) {
+    throw new Error('Metric sample type or unit does not match the contract');
+  }
+  if (!isRecord(value.labels))
+    throw new Error('Metric sample labels must be an object');
+  const labelKeys = Object.keys(value.labels);
+  const allowedLabelKeys = Object.keys(row.labels);
+  if (
+    labelKeys.length !== allowedLabelKeys.length ||
+    labelKeys.some(
+      (key) => !Object.prototype.hasOwnProperty.call(row.labels, key),
+    )
+  ) {
+    throw new Error('Metric sample labels are not allowlisted');
+  }
+  for (const [key, labelValue] of Object.entries(value.labels)) {
+    if (
+      typeof labelValue !== 'string' ||
+      !row.labels[key].includes(labelValue)
+    ) {
+      throw new Error('Metric sample label value is not in its bounded enum');
+    }
+    rejectSensitiveText(labelValue, `labels.${key}`);
+  }
+  if (typeof value.value !== 'number' || !Number.isFinite(value.value)) {
+    throw new Error('Metric sample value must be a finite number');
+  }
+  requireCanonicalTimestamp(value.observedAt, 'observedAt');
+  requireSafeString(value.source, 'source');
+  if (!SAMPLE_FRESHNESS_STATES.includes(value.freshness as MetricFreshness)) {
+    throw new Error('Metric sample freshness state is not allowlisted');
+  }
+  const sample = value as Omit<MetricSampleEnvelope, 'evidence'>;
+  const evidence = validateEvidence(value.evidence, sample);
+  return { ...sample, evidence };
+}
+
+export const validateMetricSample = validateMetricSampleEnvelope;
