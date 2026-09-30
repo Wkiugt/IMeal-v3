@@ -14,7 +14,41 @@ const API_ORIGIN = 'https://staging.example.test';
 const WORKER_ORIGIN = 'http://worker.internal:3001';
 const RELEASE = 'imeal-staging-release';
 const REQUEST_ID = '550e8400-e29b-41d4-a716-446655440000';
-const METRICS = `${HARDENING_METRIC_NAMES.map((name) => `# HELP ${name} fixture\n${name} 1`).join('\n')}\n`;
+const HISTOGRAM_BUCKETS = ['0.005', '0.01', '0.025', '0.05', '0.1', '0.25', '0.5', '1', '2.5', '5', '10', '+Inf'];
+const HISTOGRAM_NAMES = new Map([
+  ['imeal_http_request_duration_seconds_bucket', ['route="api"', 'method="GET"', 'status="200"']],
+  ['imeal_serving_confirm_duration_seconds_bucket', ['result="success"']],
+]);
+const METRIC_LABELS = {
+  imeal_http_requests_total: ['route="api"', 'method="GET"', 'status="200"'],
+  imeal_auth_attempts_total: ['result="success"'],
+  imeal_serving_confirm_total: ['result="success"'],
+  imeal_worker_runs_total: ['job="otp_delivery"', 'status="success"'],
+  imeal_worker_job_last_success_timestamp_seconds: ['job="otp_delivery"'],
+  imeal_worker_job_lag_seconds: ['job="otp_delivery"'],
+  imeal_postgres_connection_usage_ratio: ['pool="postgres_backend"'],
+  imeal_object_storage_errors_total: ['operation="health"'],
+  imeal_security_boundary_violations_total: ['category="invalid_tls"'],
+};
+const METRICS = `${HARDENING_METRIC_NAMES.map((name) => {
+  const histogramLabels = HISTOGRAM_NAMES.get(name);
+  if (histogramLabels) {
+    const base = name.replace(/_bucket$/, '');
+    const buckets = HISTOGRAM_BUCKETS.map(
+      (le) => `${name}{${[...histogramLabels, `le="${le}"`].join(',')}} 1`,
+    );
+    return [
+      `# HELP ${base} fixture`,
+      `# TYPE ${base} histogram`,
+      ...buckets,
+      `${base}_sum{${histogramLabels.join(',')}} 1`,
+      `${base}_count{${histogramLabels.join(',')}} 1`,
+    ].join('\n');
+  }
+  const labels = METRIC_LABELS[name];
+  const suffix = labels ? `{${labels.join(',')}}` : '';
+  return `# HELP ${name} fixture\n# TYPE ${name} gauge\n${name}${suffix} 1`;
+}).join('\n')}\n`;
 
 function response(status, body, requestId = REQUEST_ID, extraHeaders = {}) {
   return {
@@ -81,6 +115,14 @@ function fetchFixture({ apiReadyStatus = 200, workerReadyStatus = 200 } = {}) {
       }
     }
     throw new Error(`unexpected fixture URL ${url}`);
+  };
+}
+function fetchWithWorkerMetrics(body) {
+  return async (url) => {
+    if (url.endsWith('/metrics') && url.startsWith(WORKER_ORIGIN)) {
+      return response(200, body, undefined, { 'content-type': 'text/plain' });
+    }
+    return fetchFixture()(url);
   };
 }
 
@@ -184,6 +226,104 @@ test('rejects a public metrics response and metrics with secret-bearing content'
     },
   );
 });
+test('rejects HELP/TYPE-only metrics and unsafe or unapproved series', async () => {
+  const helpOnly = METRICS
+    .split('\n')
+    .filter((line) => line.startsWith('#'))
+    .join('\n');
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchWithWorkerMetrics(helpOnly),
+    }),
+    /required metric has no numeric sample/,
+  );
+
+  const unsafeLabel = METRICS.replace(
+    'imeal_http_requests_total{route="api",method="GET",status="200"} 1',
+    'imeal_http_requests_total{route="api",method="GET",status="200",unsafe="x"} 1',
+  );
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchWithWorkerMetrics(unsafeLabel),
+    }),
+    /metric label is not approved/,
+  );
+
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchWithWorkerMetrics(`${METRICS}imeal_unapproved_series 1\n`),
+    }),
+    /metric name is not approved/,
+  );
+});
+
+test('rejects malformed histogram buckets and every successful public metrics response', async () => {
+  const missingBucket = METRICS.replace(
+    'imeal_http_request_duration_seconds_bucket{route="api",method="GET",status="200",le="0.005"} 1\n',
+    '',
+  );
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchWithWorkerMetrics(missingBucket),
+    }),
+    /histogram buckets are incomplete/,
+  );
+
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: async (url) => {
+        if (url.endsWith('/metrics') && url.startsWith(API_ORIGIN)) {
+          return response(204, '', undefined, { 'content-type': 'text/plain' });
+        }
+        return fetchFixture()(url);
+      },
+    }),
+    /metrics must remain internal/,
+  );
+});
+test('uses manual redirect handling while accepting only non-2xx public metrics probes', async () => {
+  let observedOptions;
+  await runRuntimeIntegration({
+    apiOrigin: API_ORIGIN,
+    workerOrigin: WORKER_ORIGIN,
+    expectedRelease: RELEASE,
+    fetchImpl: async (url, options) => {
+      observedOptions = options;
+      return fetchFixture()(url);
+    },
+  });
+  assert.equal(observedOptions.redirect, 'manual');
+
+  await assert.doesNotReject(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: async (url, options) => {
+        if (url.endsWith('/metrics') && url.startsWith(API_ORIGIN)) {
+          return response(301, '', undefined, { location: `${API_ORIGIN}/metrics` });
+        }
+        return fetchFixture()(url, options);
+      },
+    }),
+  );
+});
+
 
 test('declares the external edge control as an explicit qualification prerequisite', async () => {
   const rulesText = await readFile(

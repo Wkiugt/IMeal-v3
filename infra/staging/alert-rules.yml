@@ -1,10 +1,13 @@
 # Staging qualification prerequisite: approved edge WAF or rate-limit control must be provisioned and observed before promotion.
 # The stock Caddy image does not provide the required edge rate-limit policy; keep this gate external and explicit.
 groups:
+# The worker aggregator emits no numeric series when a required source is stale,
+# unknown, in collector failure, or missing. Existing category alerts therefore
+# use absent() on the approved metric names instead of inventing state metrics.
   - name: imeal-staging-hardening
     rules:
       - alert: ImealApiReadinessFailure
-        expr: sum(increase(imeal_http_requests_total{route="/health/ready",status=~"5.."}[1m])) >= 2
+        expr: sum(increase(imeal_http_requests_total{route="/health/ready",status=~"500|502|503|504"}[1m])) >= 2
         for: 1m
         labels:
           severity: critical
@@ -16,7 +19,7 @@ groups:
           alert_test_route: /internal/observability/alert-test
 
       - alert: ImealApiErrorRateHigh
-        expr: sum(rate(imeal_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(imeal_http_requests_total[5m])), 1) > 0.05
+        expr: sum(rate(imeal_http_requests_total{status=~"500|502|503|504"}[5m])) / clamp_min(sum(rate(imeal_http_requests_total[5m])), 1) > 0.05
         for: 5m
         labels:
           severity: critical
@@ -40,7 +43,7 @@ groups:
           alert_test_route: /internal/observability/alert-test
 
       - alert: ImealOtpBacklog
-        expr: imeal_otp_outbox_oldest_age_seconds > 300 or (rate(imeal_otp_delivery_failures_total[5m]) / clamp_min(rate(imeal_otp_delivery_total[5m]), 1) > 0.05) or rate(imeal_otp_delivery_retries_total[5m]) > 10
+        expr: imeal_otp_outbox_oldest_age_seconds > 300 or (rate(imeal_otp_delivery_failures_total[5m]) / clamp_min(rate(imeal_otp_delivery_total[5m]), 1) > 0.05) or rate(imeal_otp_delivery_retries_total[5m]) > 10 or absent(imeal_otp_delivery_total) or absent(imeal_otp_delivery_retries_total) or absent(imeal_otp_delivery_failures_total) or absent(imeal_otp_outbox_oldest_age_seconds)
         for: 5m
         labels:
           severity: critical
@@ -52,7 +55,7 @@ groups:
           alert_test_route: /internal/observability/alert-test
 
       - alert: ImealWorkerStale
-        expr: imeal_worker_job_last_success_timestamp_seconds < time() - 600 or imeal_worker_job_lag_seconds > 600 or sum(rate(imeal_worker_runs_total{status="success"}[10m])) == 0
+        expr: imeal_worker_job_last_success_timestamp_seconds < time() - 600 or imeal_worker_job_lag_seconds > 600 or sum(rate(imeal_worker_runs_total{status="success"}[10m])) == 0 or absent(imeal_worker_runs_total) or absent(imeal_worker_job_last_success_timestamp_seconds) or absent(imeal_worker_job_lag_seconds) or absent(imeal_worker_job_last_success_timestamp_seconds{job="otp_delivery"}) or absent(imeal_worker_job_last_success_timestamp_seconds{job="notification_dispatch"}) or absent(imeal_worker_job_last_success_timestamp_seconds{job="registration_reminder"}) or absent(imeal_worker_job_last_success_timestamp_seconds{job="pickup_reminder"}) or absent(imeal_worker_job_last_success_timestamp_seconds{job="cutoff_lock"}) or absent(imeal_worker_job_last_success_timestamp_seconds{job="pickup_session_cleanup"}) or absent(imeal_worker_job_last_success_timestamp_seconds{job="no_show"}) or absent(imeal_worker_job_lag_seconds{job="otp_delivery"}) or absent(imeal_worker_job_lag_seconds{job="notification_dispatch"}) or absent(imeal_worker_job_lag_seconds{job="registration_reminder"}) or absent(imeal_worker_job_lag_seconds{job="pickup_reminder"}) or absent(imeal_worker_job_lag_seconds{job="cutoff_lock"}) or absent(imeal_worker_job_lag_seconds{job="pickup_session_cleanup"}) or absent(imeal_worker_job_lag_seconds{job="no_show"})
         for: 10m
         labels:
           severity: critical
@@ -64,7 +67,7 @@ groups:
           alert_test_route: /internal/observability/alert-test
 
       - alert: ImealDatabaseCapacity
-        expr: imeal_postgres_disk_usage_ratio > 0.80 or imeal_postgres_connection_usage_ratio > 0.80 or rate(imeal_postgres_transaction_errors_total[5m]) > 0 or rate(imeal_postgres_lock_waits_total[5m]) > 0
+        expr: imeal_postgres_disk_usage_ratio > 0.80 or imeal_postgres_connection_usage_ratio > 0.80 or rate(imeal_postgres_transaction_errors_total[5m]) > 0 or rate(imeal_postgres_lock_waits_total[5m]) > 0 or absent(imeal_postgres_connection_usage_ratio) or absent(imeal_postgres_transaction_errors_total) or absent(imeal_postgres_lock_waits_total) or absent(imeal_postgres_disk_usage_ratio)
         for: 10m
         labels:
           severity: warning
@@ -76,7 +79,7 @@ groups:
           alert_test_route: /internal/observability/alert-test
 
       - alert: ImealObjectStorageUnavailable
-        expr: imeal_object_storage_capacity_bytes == 0 or rate(imeal_object_storage_errors_total[5m]) > 0
+        expr: imeal_object_storage_capacity_bytes == 0 or rate(imeal_object_storage_errors_total[5m]) > 0 or absent(imeal_object_storage_capacity_bytes) or absent(imeal_object_storage_errors_total)
         for: 5m
         labels:
           severity: critical
@@ -88,7 +91,7 @@ groups:
           alert_test_route: /internal/observability/alert-test
 
       - alert: ImealBackupStale
-        expr: imeal_backup_age_seconds > 93600 or imeal_backup_checksum_failures_total > 0 or imeal_restore_test_failures_total > 0
+        expr: imeal_backup_age_seconds > 93600 or imeal_backup_checksum_failures_total > 0 or imeal_restore_test_failures_total > 0 or absent(imeal_backup_age_seconds) or absent(imeal_backup_checksum_failures_total) or absent(imeal_restore_test_failures_total)
         for: 5m
         labels:
           severity: critical
@@ -100,7 +103,7 @@ groups:
           alert_test_route: /internal/observability/alert-test
 
       - alert: ImealSecurityBoundaryViolation
-        expr: imeal_security_boundary_violations_total > 0
+        expr: imeal_security_boundary_violations_total > 0 or absent(imeal_security_boundary_violations_total)
         for: 1m
         labels:
           severity: critical
@@ -112,7 +115,7 @@ groups:
           alert_test_route: /internal/observability/alert-test
 
       - alert: ImealApplicationErrorSpike
-        expr: rate(imeal_auth_attempts_total{result="failure"}[5m]) > 0 or rate(imeal_serving_confirm_total{result=~"error|failure"}[5m]) > 0 or rate(imeal_idempotency_conflicts_total[5m]) > 0
+        expr: rate(imeal_auth_attempts_total{result=~"failure|dependency_failure"}[5m]) > 0 or rate(imeal_serving_confirm_total{result=~"error|failure"}[5m]) > 0 or rate(imeal_idempotency_conflicts_total[5m]) > 0
         for: 5m
         labels:
           severity: warning

@@ -9,6 +9,15 @@ function metricValue(text: string, name: string): string | undefined {
     .find((line) => line.startsWith(`${name} `) || line.startsWith(`${name}{`));
 }
 const DIGEST = 'sha256:' + 'a'.repeat(64);
+const WORKER_JOBS = [
+  'otp_delivery',
+  'notification_dispatch',
+  'registration_reminder',
+  'pickup_reminder',
+  'cutoff_lock',
+  'pickup_session_cleanup',
+  'no_show',
+] as const;
 const SOURCE_BINDINGS: Record<string, string> = {
   api_application: 'approved_api_application_source',
   worker_application: 'approved_worker_application_source',
@@ -21,6 +30,7 @@ const SOURCE_BINDINGS: Record<string, string> = {
 function sampleFor(
   row: (typeof METRIC_CONTRACT)[number],
   observedAt: string,
+  labelOverrides: Record<string, string> = {},
 ): ReturnType<typeof validateMetricSampleEnvelope> {
   const evidenceValues: Record<string, string> = {
     release: 'release-test',
@@ -57,7 +67,10 @@ function sampleFor(
     ['reference', evidenceValues.reference],
   ]);
   const labels = Object.fromEntries(
-    Object.entries(row.labels).map(([key, values]) => [key, values[0]]),
+    Object.entries(row.labels).map(([key, values]) => [
+      key,
+      labelOverrides[key] ?? values[0],
+    ]),
   );
   const value =
     row.type === 'histogram'
@@ -86,13 +99,20 @@ function completeSnapshots(
   >();
   for (const row of METRIC_CONTRACT) {
     const samples = grouped.get(row.sourceIdentity) ?? [];
-    const sample = sampleFor(
-      row,
+    const sampleObservedAt =
       staleMetric === row.name
         ? new Date(Date.now() - 10 * 60_000).toISOString()
-        : observedAt,
-    );
-    samples.push(sample);
+        : observedAt;
+    if (
+      row.name === 'imeal_worker_job_last_success_timestamp_seconds' ||
+      row.name === 'imeal_worker_job_lag_seconds'
+    ) {
+      for (const job of WORKER_JOBS) {
+        samples.push(sampleFor(row, sampleObservedAt, { job }));
+      }
+    } else {
+      samples.push(sampleFor(row, sampleObservedAt));
+    }
     grouped.set(row.sourceIdentity, samples);
   }
   return [...grouped.entries()].map(([source, samples]) => ({
@@ -195,6 +215,38 @@ describe('WorkerMetricsService', () => {
       expect(text).toContain(row.name);
     }
     expect(text).not.toMatch(/password|authorization|Bearer|postgresql:/i);
+  });
+  it('fails closed when one required worker job gauge series is missing', async () => {
+    const now = new Date();
+    const service = new WorkerMetricsService({
+      otpDeliveryOutbox: { findFirst: vi.fn().mockResolvedValue(null) },
+      jobRun: { findFirst: vi.fn().mockResolvedValue({ completedAt: now }) },
+    } as never);
+    for (const snapshot of completeSnapshots(now.toISOString())) {
+      const reduced =
+        snapshot.source === 'worker_application'
+          ? {
+              ...snapshot,
+              samples: snapshot.samples.filter(
+                (sample) =>
+                  !(
+                    sample.metricName ===
+                      'imeal_worker_job_last_success_timestamp_seconds' &&
+                    sample.labels.job === 'no_show'
+                  ),
+              ),
+            }
+          : snapshot;
+      if (reduced.source === 'api_application') {
+        service.acceptApiApplicationSnapshot(reduced);
+      } else if (reduced.source === 'worker_application') {
+        service.acceptWorkerApplicationSnapshot(reduced);
+      } else {
+        service.acceptAuthoritativeSnapshot(reduced);
+      }
+    }
+
+    await expect(service.getCompleteSnapshot()).resolves.toBeNull();
   });
   it('fails closed when an authoritative source reports collector failure', async () => {
     const now = new Date();

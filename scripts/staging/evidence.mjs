@@ -26,6 +26,8 @@ export const REQUIRED_EVIDENCE = [
   'smoke-mobile-admin.json',
   'smoke-worker.json',
   'observability-alert-test.json',
+  'runtime-integration.json',
+  'staging-smoke.json',
   'checksums.txt',
   'signoff.json',
 ];
@@ -40,13 +42,44 @@ const IMMUTABLE_IMAGE_PATTERN = /@sha256:[a-f0-9]{64}$/i;
 const SENSITIVE_TEXT_PATTERN =
   /(?:postgres(?:ql)?:\/\/[^\s<]+@|\bBearer\s+(?!<redacted>)[^\s]+|\b(?:password|token|secret|api[_-]?key|otp)\b\s*[:=]\s*(?!<redacted>|PASS\b)[^\s,}\]]+)/i;
 const REQUIRED_PASS_ARTIFACTS = [
+  'preflight-before.json',
+  'backup-manifest.json',
+  'backfill-result.json',
+  'preflight-after.json',
+  'constraint-validation.json',
+  'restore-rehearsal.json',
   'smoke-infrastructure.json',
   'smoke-auth-rbac.json',
   'smoke-business.json',
   'smoke-mobile-admin.json',
   'smoke-worker.json',
   'observability-alert-test.json',
+  'runtime-integration.json',
+  'staging-smoke.json',
 ];
+const OPTIONAL_BINDING_ARTIFACTS = new Set([
+  'runtime-integration.json',
+  'staging-smoke.json',
+]);
+const SAFE_SOURCE_IDENTITIES = new Set([
+  'api',
+  'worker',
+  'prometheus',
+  'grafana',
+  'alertmanager',
+  'edge-waf',
+  'external-alerting',
+  'observability-platform',
+  'staging-runtime',
+  'staging-smoke',
+]);
+const SAFE_FRESHNESS_STATES = new Set([
+  'fresh',
+  'stale',
+  'unknown',
+  'collector_failure',
+]);
+const SAFE_REFERENCE_PATTERN = /^\/?[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 
 function assertNonEmptyString(value, label) {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -281,6 +314,9 @@ function assertArtifactTargets(artifacts, target, releaseId) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error(`evidence JSON binding is required: ${artifact.name}`);
     }
+    if (OPTIONAL_BINDING_ARTIFACTS.has(artifact.name) && parsed.releaseId === undefined && parsed.target === undefined) {
+      continue;
+    }
     if (parsed.releaseId !== releaseId) {
       if (
         typeof parsed.releaseId !== 'string' ||
@@ -327,14 +363,126 @@ function assertBoundArtifact(artifact, name, releaseId, target) {
   }
 }
 
+function assertOptionalBoundArtifact(artifact, name, releaseId, target) {
+  if (
+    OPTIONAL_BINDING_ARTIFACTS.has(name) &&
+    artifact.releaseId === undefined &&
+    artifact.target === undefined
+  ) {
+    return;
+  }
+  assertBoundArtifact(artifact, name, releaseId, target);
+}
+
+function assertObservabilityAlertEvidence(artifact, releaseId, target) {
+  assertBoundArtifact(artifact, 'observability-alert-test', releaseId, target);
+  if (artifact.result !== 'PASS') {
+    throw new Error('observability-alert-test.json must contain an explicit PASS');
+  }
+  const source = artifact.source;
+  if (
+    !source ||
+    typeof source !== 'object' ||
+    Array.isArray(source) ||
+    Object.keys(source).sort().join(',') !== 'freshness,identity,snapshotDigest'
+  ) {
+    throw new Error('observability source evidence is required');
+  }
+  if (!SAFE_SOURCE_IDENTITIES.has(source.identity)) {
+    throw new Error('observability source identity is not approved');
+  }
+  if (
+    !SAFE_FRESHNESS_STATES.has(source.freshness) ||
+    source.freshness !== 'fresh'
+  ) {
+    throw new Error('observability source freshness is not fresh');
+  }
+  if (
+    typeof source.snapshotDigest !== 'string' ||
+    !SHA256_PATTERN.test(source.snapshotDigest)
+  ) {
+    throw new Error('observability snapshot digest is invalid');
+  }
+  const acknowledgement = artifact.acknowledgement;
+  if (
+    !acknowledgement ||
+    typeof acknowledgement !== 'object' ||
+    Array.isArray(acknowledgement) ||
+    Object.keys(acknowledgement).sort().join(',') !==
+      'acknowledged,destination,observedAt,route'
+  ) {
+    throw new Error('observability alert acknowledgement is required');
+  }
+  if (acknowledgement.acknowledged !== true) {
+    throw new Error('observability alert acknowledgement is not confirmed');
+  }
+  for (const [value, label] of [
+    [acknowledgement.route, 'observability alert route'],
+    [acknowledgement.destination, 'observability alert destination'],
+  ]) {
+    if (typeof value !== 'string' || !SAFE_REFERENCE_PATTERN.test(value)) {
+      throw new Error(`${label} is unsafe`);
+    }
+  }
+  if (
+    typeof acknowledgement.observedAt !== 'string' ||
+    !Number.isFinite(Date.parse(acknowledgement.observedAt)) ||
+    new Date(acknowledgement.observedAt).toISOString() !==
+      acknowledgement.observedAt
+  ) {
+    throw new Error('observability alert observedAt is invalid');
+  }
+}
+
+function assertMigrationStatus(text) {
+  if (!/^migrations=clean$/m.test(text)) {
+    throw new Error('migration-status.txt must report migrations=clean');
+  }
+  if (/\bmigrations=(?:pending|failed|unknown|dirty)\b/i.test(text)) {
+    throw new Error('migration-status.txt reports an unsafe migration state');
+  }
+}
+
+function assertTargetFingerprint(artifact, releaseId, target) {
+  assertBoundArtifact(artifact, 'target-fingerprint', releaseId, target);
+  const fingerprint = artifact.targetFingerprint;
+  const fingerprintDigest =
+    artifact.targetFingerprintDigest ??
+    artifact.digest ??
+    fingerprint?.sha256 ??
+    fingerprint?.digest;
+  if (
+    !fingerprint ||
+    typeof fingerprint !== 'object' ||
+    Array.isArray(fingerprint) ||
+    fingerprint.database !== target.database ||
+    fingerprint.schema !== target.schema ||
+    typeof fingerprint.serverVersion !== 'string' ||
+    fingerprint.serverVersion.trim() === '' ||
+    !Array.isArray(fingerprint.migrationRows) ||
+    (fingerprintDigest !== undefined &&
+      (typeof fingerprintDigest !== 'string' ||
+        !SHA256_PATTERN.test(fingerprintDigest)))
+  ) {
+    throw new Error('target fingerprint structure or digest is invalid');
+  }
+}
+
 function assertCompletionArtifacts(artifacts, releaseId, target) {
+  assertTargetFingerprint(artifacts['target-fingerprint.json'].parsed, releaseId, target);
+  assertMigrationStatus(artifacts['migration-status.txt'].text);
   for (const name of REQUIRED_PASS_ARTIFACTS) {
     const artifact = artifacts[name].parsed;
     if (!artifact || artifact.result !== 'PASS') {
       throw new Error(`${name} must have result PASS`);
     }
-    assertBoundArtifact(artifact, name, releaseId, target);
+    assertOptionalBoundArtifact(artifact, name, releaseId, target);
   }
+  assertObservabilityAlertEvidence(
+    artifacts['observability-alert-test.json'].parsed,
+    releaseId,
+    target,
+  );
   const business = artifacts['smoke-business.json'].parsed;
   assertNonEmptyString(business.command, 'smoke-business command');
   assertNonEmptyString(business.operator, 'smoke-business operator');

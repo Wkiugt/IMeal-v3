@@ -44,30 +44,67 @@ async function makeEvidenceDirectory({
   );
   await writeFile(
     join(directory, 'target-fingerprint.json'),
-    `${JSON.stringify({ releaseId, target })}\n`,
+    `${JSON.stringify({
+      releaseId,
+      target,
+      targetFingerprint: {
+        database: target.database,
+        schema: target.schema,
+        serverVersion: 'PostgreSQL 16.4',
+        migrationRows: [],
+      },
+    })}\n`,
   );
   for (const name of jsonNames) {
     const payload =
-      name === 'approval.json'
+      name === 'target-fingerprint.json'
         ? {
-            result: 'PASS',
             releaseId,
             target,
-            approvalId: 'approval-20260928-001',
-            decision: 'APPROVED_FOR_EXACT_BACKFILL',
-            approver: 'data-owner',
-            rollbackAuthority: 'release-manager',
-            rollbackDecisionWindow: '24h',
+            targetFingerprint: {
+              database: target.database,
+              schema: target.schema,
+              serverVersion: 'PostgreSQL 16.4',
+              migrationRows: [],
+            },
           }
-        : name === 'smoke-business.json'
+        : name === 'approval.json'
           ? {
               result: 'PASS',
               releaseId,
               target,
-              command: 'yarn test:unit',
-              operator: 'qa-operator',
+              approvalId: 'approval-20260928-001',
+              decision: 'APPROVED_FOR_EXACT_BACKFILL',
+              approver: 'data-owner',
+              rollbackAuthority: 'release-manager',
+              rollbackDecisionWindow: '24h',
             }
-          : { result: 'PASS', releaseId, target };
+          : name === 'smoke-business.json'
+            ? {
+                result: 'PASS',
+                releaseId,
+                target,
+                command: 'yarn test:unit',
+                operator: 'qa-operator',
+              }
+            : name === 'observability-alert-test.json'
+              ? {
+                  result: 'PASS',
+                  releaseId,
+                  target,
+                  source: {
+                    identity: 'prometheus',
+                    freshness: 'fresh',
+                    snapshotDigest: digest,
+                  },
+                  acknowledgement: {
+                    acknowledged: true,
+                    route: 'alert-test-route',
+                    destination: 'staging-on-call',
+                    observedAt: '2026-09-28T12:00:00.000Z',
+                  },
+                }
+              : { result: 'PASS', releaseId, target };
     await writeFile(join(directory, name), `${JSON.stringify(payload)}\n`);
   }
   await writeFile(
@@ -114,6 +151,8 @@ test('exposes the exact required evidence artifact list', () => {
     'smoke-mobile-admin.json',
     'smoke-worker.json',
     'observability-alert-test.json',
+    'runtime-integration.json',
+    'staging-smoke.json',
     'checksums.txt',
     'signoff.json',
   ]);
@@ -284,6 +323,154 @@ test('rejects failed smoke and observability artifacts', async () => {
   await assert.rejects(
     createEvidenceManifest({ releaseId, target, artifactDirectory: directory }),
     /smoke-worker\.json must have result PASS/,
+  );
+});
+
+test('requires fresh target-bound alert evidence without manufacturing acknowledgement', async () => {
+  const missingAck = await makeEvidenceDirectory();
+  const alertPath = join(missingAck, 'observability-alert-test.json');
+  const alert = JSON.parse(await readFile(alertPath, 'utf8'));
+  delete alert.acknowledgement;
+  await writeFile(alertPath, JSON.stringify(alert));
+  await assert.rejects(
+    createEvidenceManifest({ releaseId, target, artifactDirectory: missingAck }),
+    /acknowledgement is required/,
+  );
+
+  for (const freshness of ['stale', 'unknown', 'collector_failure']) {
+    const directory = await makeEvidenceDirectory();
+    const evidencePath = join(directory, 'observability-alert-test.json');
+    const evidence = JSON.parse(await readFile(evidencePath, 'utf8'));
+    evidence.source.freshness = freshness;
+    await writeFile(evidencePath, JSON.stringify(evidence));
+    await assert.rejects(
+      createEvidenceManifest({ releaseId, target, artifactDirectory: directory }),
+      /freshness is not fresh/,
+    );
+  }
+
+  const unsafeRoute = await makeEvidenceDirectory();
+  const unsafePath = join(unsafeRoute, 'observability-alert-test.json');
+  const unsafe = JSON.parse(await readFile(unsafePath, 'utf8'));
+  unsafe.acknowledgement.route = 'https://alerts.example.test/route';
+  await writeFile(unsafePath, JSON.stringify(unsafe));
+  await assert.rejects(
+    createEvidenceManifest({ releaseId, target, artifactDirectory: unsafeRoute }),
+    /route is unsafe/,
+  );
+
+  const conflicting = await makeEvidenceDirectory();
+  const conflictingPath = join(conflicting, 'observability-alert-test.json');
+  const conflictingEvidence = JSON.parse(
+    await readFile(conflictingPath, 'utf8'),
+  );
+  conflictingEvidence.source.conflict = { freshness: 'stale' };
+  await writeFile(conflictingPath, JSON.stringify(conflictingEvidence));
+  await assert.rejects(
+    createEvidenceManifest({ releaseId, target, artifactDirectory: conflicting }),
+    /source evidence is required/,
+  );
+});
+
+test('binds runtime and smoke artifacts and rejects incomplete phase evidence', async () => {
+  const missingRuntime = await makeEvidenceDirectory();
+  await unlink(join(missingRuntime, 'runtime-integration.json'));
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: missingRuntime,
+    }),
+    /missing required evidence artifact: runtime-integration\.json/,
+  );
+
+  const runtimeMismatch = await makeEvidenceDirectory();
+  await writeFile(
+    join(runtimeMismatch, 'runtime-integration.json'),
+    JSON.stringify({ result: 'PASS', releaseId: 'other-release', target }),
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: runtimeMismatch,
+    }),
+    /evidence release mismatch: runtime-integration\.json/,
+  );
+
+  const smokeMismatch = await makeEvidenceDirectory();
+  await writeFile(
+    join(smokeMismatch, 'staging-smoke.json'),
+    JSON.stringify({
+      result: 'PASS',
+      releaseId,
+      target: { database: 'other_staging', schema: target.schema },
+    }),
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: smokeMismatch,
+    }),
+    /evidence target mismatch: staging-smoke\.json/,
+  );
+
+  const failedPhase = await makeEvidenceDirectory();
+  await writeFile(
+    join(failedPhase, 'preflight-before.json'),
+    JSON.stringify({ result: 'UNKNOWN', releaseId, target }),
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: failedPhase,
+    }),
+    /preflight-before\.json must have result PASS/,
+  );
+
+  const dirtyMigrations = await makeEvidenceDirectory();
+  await writeFile(
+    join(dirtyMigrations, 'migration-status.txt'),
+    'migrations=pending\n',
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: dirtyMigrations,
+    }),
+    /migration-status\.txt must report migrations=clean/,
+  );
+
+  const badFingerprint = await makeEvidenceDirectory();
+  await writeFile(
+    join(badFingerprint, 'target-fingerprint.json'),
+    JSON.stringify({ releaseId, target }),
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: badFingerprint,
+    }),
+    /target fingerprint structure or digest is invalid/,
+  );
+  const badDigest = await makeEvidenceDirectory();
+  const fingerprintPath = join(badDigest, 'target-fingerprint.json');
+  const fingerprintEvidence = JSON.parse(
+    await readFile(fingerprintPath, 'utf8'),
+  );
+  fingerprintEvidence.targetFingerprint.digest = 'not-a-sha256';
+  await writeFile(fingerprintPath, JSON.stringify(fingerprintEvidence));
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: badDigest,
+    }),
+    /target fingerprint structure or digest is invalid/,
   );
 });
 

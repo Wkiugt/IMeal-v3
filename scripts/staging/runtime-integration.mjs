@@ -1,14 +1,5 @@
 import { assertNoSecrets } from './staging-lib.mjs';
 
-export const HARDENING_RUNTIME_CONTRACT = Object.freeze({
-  apiLivePath: '/health/live',
-  apiReadyPath: '/health/ready',
-  workerLivePath: '/health/live',
-  workerReadyPath: '/health/ready',
-  requestIdHeader: 'x-request-id',
-  metricsPath: '/metrics',
-});
-
 export const HARDENING_METRIC_NAMES = Object.freeze([
   'imeal_http_requests_total',
   'imeal_http_request_duration_seconds_bucket',
@@ -34,6 +25,295 @@ export const HARDENING_METRIC_NAMES = Object.freeze([
   'imeal_restore_test_failures_total',
   'imeal_security_boundary_violations_total',
 ]);
+const HISTOGRAM_BUCKETS = Object.freeze([
+  '0.005',
+  '0.01',
+  '0.025',
+  '0.05',
+  '0.1',
+  '0.25',
+  '0.5',
+  '1',
+  '2.5',
+  '5',
+  '10',
+  '+Inf',
+]);
+const HISTOGRAM_BUCKET_PATTERN = new RegExp(
+  `^(?:${HISTOGRAM_BUCKETS.map((value) =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+  ).join('|')})$`,
+);
+const METRIC_LABELS = Object.freeze({
+  imeal_http_requests_total: Object.freeze({
+    route: /^\/health\/(?:live|ready)$|^(?:auth|api|serving|registrations|kitchen|notifications|delegations|admin|other)$/,
+    method: /^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/,
+    status: /^(?:200|201|202|204|400|401|403|404|409|422|429|500|502|503|504)$/,
+  }),
+  imeal_http_request_duration_seconds_bucket: Object.freeze({
+    route: /^\/health\/(?:live|ready)$|^(?:auth|api|serving|registrations|kitchen|notifications|delegations|admin|other)$/,
+    method: /^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/,
+    status: /^(?:200|201|202|204|400|401|403|404|409|422|429|500|502|503|504)$/,
+    le: HISTOGRAM_BUCKET_PATTERN,
+  }),
+  imeal_auth_attempts_total: Object.freeze({
+    result: /^(?:success|failure|dependency_failure)$/,
+  }),
+  imeal_serving_confirm_total: Object.freeze({
+    result: /^(?:success|error|failure)$/,
+  }),
+  imeal_serving_confirm_duration_seconds_bucket: Object.freeze({
+    result: /^(?:success|error|failure)$/,
+    le: HISTOGRAM_BUCKET_PATTERN,
+  }),
+  imeal_worker_runs_total: Object.freeze({
+    job: /^(?:otp_delivery|notification_dispatch|registration_reminder|pickup_reminder|cutoff_lock|pickup_session_cleanup|no_show)$/,
+    status: /^(?:success|failure|skipped)$/,
+  }),
+  imeal_worker_job_last_success_timestamp_seconds: Object.freeze({
+    job: /^(?:otp_delivery|notification_dispatch|registration_reminder|pickup_reminder|cutoff_lock|pickup_session_cleanup|no_show)$/,
+  }),
+  imeal_worker_job_lag_seconds: Object.freeze({
+    job: /^(?:otp_delivery|notification_dispatch|registration_reminder|pickup_reminder|cutoff_lock|pickup_session_cleanup|no_show)$/,
+  }),
+  imeal_postgres_connection_usage_ratio: Object.freeze({
+    pool: /^(?:pgbouncer_client|postgres_backend)$/,
+  }),
+  imeal_object_storage_errors_total: Object.freeze({
+    operation: /^(?:health|read|write)$/,
+  }),
+  imeal_security_boundary_violations_total: Object.freeze({
+    category: /^(?:public_private_service_exposure|plaintext_bearer_transport|invalid_tls|unexpected_cors_origin|waf_or_rate_limit_violation|unexpected_public_internal_port)$/,
+  }),
+});
+const HISTOGRAMS = Object.freeze({
+  imeal_http_request_duration_seconds_bucket: Object.freeze({
+    base: 'imeal_http_request_duration_seconds',
+    labels: ['route', 'method', 'status'],
+  }),
+  imeal_serving_confirm_duration_seconds_bucket: Object.freeze({
+    base: 'imeal_serving_confirm_duration_seconds',
+    labels: ['result'],
+  }),
+});
+const HISTOGRAM_AUXILIARY = new Map(
+  Object.values(HISTOGRAMS).flatMap(({ base }) => [
+    [`${base}_sum`, base],
+    [`${base}_count`, base],
+  ]),
+);
+const ALLOWED_METRIC_SERIES = new Set([
+  ...HARDENING_METRIC_NAMES,
+  ...HISTOGRAM_AUXILIARY.keys(),
+]);
+const METRIC_NAME_PATTERN = /^[a-zA-Z_:][a-zA-Z0-9_:]*$/;
+const SAMPLE_PATTERN =
+  /^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{([^{}]*)\})?\s+([^\s]+)(?:\s+\d+)?$/;
+const NUMBER_PATTERN =
+  /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+const UNSAFE_METRIC_TEXT_PATTERN =
+  /(?:https?:\/\/|postgres(?:ql)?:\/\/|Bearer\s+\S+|\b(?:password|token|secret|api[_-]?key|otp)\b\s*[:=])/i;
+
+
+function parseMetricLabels(raw, metricName) {
+  const auxiliaryBase = HISTOGRAM_AUXILIARY.get(metricName);
+  const histogram = auxiliaryBase
+    ? Object.values(HISTOGRAMS).find(({ base }) => base === auxiliaryBase)
+    : undefined;
+  const expected =
+    METRIC_LABELS[metricName] ??
+    (histogram
+      ? Object.fromEntries(
+          histogram.labels.map((label) => [
+            label,
+            METRIC_LABELS[`${histogram.base}_bucket`][label],
+          ]),
+        )
+      : {});
+  if (!raw) {
+    if (Object.keys(expected).length > 0) {
+      throw new Error(`metric labels are missing: ${metricName}`);
+    }
+    return {};
+  }
+  const labels = {};
+  let cursor = 0;
+  while (cursor < raw.length) {
+    if (raw[cursor] === ',') cursor += 1;
+    while (raw[cursor] === ' ') cursor += 1;
+    const match = raw
+      .slice(cursor)
+      .match(/^([a-zA-Z_][a-zA-Z0-9_]*)="((?:\\.|[^"\\])*)"/);
+    if (!match) throw new Error(`metric labels are invalid: ${metricName}`);
+    const [, key, encoded] = match;
+    if (Object.hasOwn(labels, key)) {
+      throw new Error(`metric labels are duplicated: ${metricName}`);
+    }
+    if (!Object.hasOwn(expected, key)) {
+      throw new Error(`metric label is not approved: ${metricName}`);
+    }
+    let value;
+    try {
+      value = JSON.parse(`"${encoded}"`);
+    } catch {
+      throw new Error(`metric label value is invalid: ${metricName}`);
+    }
+    if (!expected[key].test(value)) {
+      throw new Error(`metric label value is not approved: ${metricName}`);
+    }
+    labels[key] = value;
+    cursor += match[0].length;
+    while (raw[cursor] === ' ') cursor += 1;
+    if (cursor < raw.length && raw[cursor] !== ',') {
+      throw new Error(`metric labels are invalid: ${metricName}`);
+    }
+  }
+  if (Object.keys(labels).length !== Object.keys(expected).length) {
+    throw new Error(`metric labels are incomplete: ${metricName}`);
+  }
+  return labels;
+}
+
+function metricFamilyFor(name) {
+  if (HISTOGRAMS[name]) return { kind: 'bucket', histogram: HISTOGRAMS[name] };
+  if (HISTOGRAM_AUXILIARY.has(name)) {
+    return { kind: name.endsWith('_sum') ? 'sum' : 'count', base: HISTOGRAM_AUXILIARY.get(name) };
+  }
+  return { kind: 'scalar' };
+}
+
+export function validateMetricsText(text) {
+  if (typeof text !== 'string' || text.trim() === '') {
+    throw new Error('metrics body is empty');
+  }
+  if (UNSAFE_METRIC_TEXT_PATTERN.test(text)) {
+    throw new Error('metrics body is unsafe');
+  }
+  try {
+    assertNoSecrets(text);
+  } catch {
+    throw new Error('metrics body is not redacted');
+  }
+  const samplesByName = new Map();
+  const sampleKeys = new Set();
+  const histogramGroups = new Map();
+  const typeDeclarations = new Map();
+  for (const line of text.split(/\r?\n/)) {
+    if (line.trim() === '') continue;
+    if (line.startsWith('#')) {
+      const type = line.match(/^# TYPE ([a-zA-Z_:][a-zA-Z0-9_:]*) (counter|gauge|histogram)$/);
+      const help = line.match(/^# HELP ([a-zA-Z_:][a-zA-Z0-9_:]*) /);
+      if (type) {
+        const [, name, declaredType] = type;
+        if (!METRIC_NAME_PATTERN.test(name) || !ALLOWED_METRIC_SERIES.has(name) && !Object.values(HISTOGRAMS).some(({ base: histogramBase }) => histogramBase === name)) {
+          throw new Error(`metric declaration is not approved: ${name}`);
+        }
+        if (typeDeclarations.has(name) && typeDeclarations.get(name) !== declaredType) {
+          throw new Error(`metric type is conflicting: ${name}`);
+        }
+        typeDeclarations.set(name, declaredType);
+        if (HISTOGRAMS[`${name}_bucket`] && declaredType !== 'histogram') {
+          throw new Error(`metric histogram type is invalid: ${name}`);
+        }
+      } else if (help) {
+        const [, name] = help;
+        if (!METRIC_NAME_PATTERN.test(name) || !ALLOWED_METRIC_SERIES.has(name) && !Object.values(HISTOGRAMS).some(({ base: histogramBase }) => histogramBase === name)) {
+          throw new Error(`metric declaration is not approved: ${name}`);
+        }
+      } else if (line !== '# EOF') {
+        throw new Error('metrics comment is not approved');
+      }
+      continue;
+    }
+    const match = line.match(SAMPLE_PATTERN);
+    if (!match) throw new Error('metric sample is invalid');
+    const [, name, rawLabels, rawValue] = match;
+    if (!ALLOWED_METRIC_SERIES.has(name)) {
+      throw new Error(`metric name is not approved: ${name}`);
+    }
+    if (!NUMBER_PATTERN.test(rawValue) || !Number.isFinite(Number(rawValue)) || Number(rawValue) < 0) {
+      throw new Error(`metric value is invalid: ${name}`);
+    }
+    const labels = parseMetricLabels(rawLabels, name);
+    const sampleKey = `${name}:${JSON.stringify(labels)}`;
+    if (sampleKeys.has(sampleKey)) {
+      throw new Error(`metric sample is duplicated: ${name}`);
+    }
+    sampleKeys.add(sampleKey);
+    const family = metricFamilyFor(name);
+    const sample = { labels, value: Number(rawValue) };
+    const samples = samplesByName.get(name) ?? [];
+    samples.push(sample);
+    samplesByName.set(name, samples);
+    if (family.kind === 'bucket') {
+      const histogram = family.histogram;
+      const bucket = labels.le;
+      const groupLabels = Object.fromEntries(
+        histogram.labels.map((label) => [label, labels[label]]),
+      );
+      const groupKey = JSON.stringify(groupLabels);
+      const group = histogramGroups.get(`${name}:${groupKey}`) ?? new Set();
+      if (group.has(bucket)) throw new Error(`metric bucket is duplicated: ${name}`);
+      group.add(bucket);
+      histogramGroups.set(`${name}:${groupKey}`, group);
+    }
+  }
+  for (const name of HARDENING_METRIC_NAMES) {
+    if (!(samplesByName.get(name)?.length > 0)) {
+      throw new Error(`required metric has no numeric sample: ${name}`);
+    }
+  }
+  for (const [bucketName, histogram] of Object.entries(HISTOGRAMS)) {
+    const bucketSamples = samplesByName.get(bucketName) ?? [];
+    const expectedBuckets = new Set(HISTOGRAM_BUCKETS);
+    const groups = [...histogramGroups.entries()].filter(([key]) =>
+      key.startsWith(`${bucketName}:`),
+    );
+    if (groups.length === 0) {
+      throw new Error(`histogram has no buckets: ${bucketName}`);
+    }
+    const groupKeys = new Set(groups.map(([key]) => key));
+    for (const [, buckets] of groups) {
+      if (
+        buckets.size !== expectedBuckets.size ||
+        [...expectedBuckets].some((value) => !buckets.has(value))
+      ) {
+        throw new Error(`histogram buckets are incomplete: ${bucketName}`);
+      }
+    }
+    for (const suffix of ['_sum', '_count']) {
+      const auxiliaryName = `${histogram.base}${suffix}`;
+      const auxiliarySamples = samplesByName.get(auxiliaryName) ?? [];
+      if (auxiliarySamples.length === 0) {
+        throw new Error(`histogram auxiliary series is missing: ${auxiliaryName}`);
+      }
+      for (const sample of auxiliarySamples) {
+        const labels = Object.fromEntries(
+          histogram.labels.map((label) => [label, sample.labels[label]]),
+        );
+        if (!groupKeys.has(`${bucketName}:${JSON.stringify(labels)}`)) {
+          throw new Error(`histogram auxiliary labels are unmatched: ${auxiliaryName}`);
+        }
+      }
+    }
+    if (bucketSamples.some(({ value }) => value < 0)) {
+      throw new Error(`histogram bucket value is negative: ${bucketName}`);
+    }
+  }
+  return {
+    sampleCount: [...samplesByName.values()].reduce((total, samples) => total + samples.length, 0),
+    metricNames: [...samplesByName.keys()],
+  };
+}
+export const HARDENING_RUNTIME_CONTRACT = Object.freeze({
+  apiLivePath: '/health/live',
+  apiReadyPath: '/health/ready',
+  workerLivePath: '/health/live',
+  workerReadyPath: '/health/ready',
+  requestIdHeader: 'x-request-id',
+  metricsPath: '/metrics',
+});
+
 
 export const STAGING_QUALIFICATION_PREREQUISITES = Object.freeze([
   'approved-edge-rate-limit-control',
@@ -237,6 +517,13 @@ async function readMetrics({
   if (SENSITIVE_TEXT_PATTERN.test(text)) {
     throw new Error(`${service} metrics body is not redacted`);
   }
+  try {
+    validateMetricsText(text);
+  } catch (error) {
+    throw new Error(
+      `${service} metrics contract is invalid: ${error instanceof Error ? error.message : 'unknown error'}`,
+    );
+  }
   for (const metric of HARDENING_METRIC_NAMES) {
     const metricPattern = new RegExp(
       `(?:^|\\n)(?:# (?:HELP|TYPE) )?${metric}(?:\\{|\\s|$)`,
@@ -361,5 +648,16 @@ export function assertAlertRules({ rulesText, requiredMetrics }) {
     throw new Error(
       'approved edge WAF or rate-limit control prerequisite is required',
     );
+  }
+  for (const [, statuses] of rulesText.matchAll(/status=~"([^"]+)"/g)) {
+    if (statuses !== '500|502|503|504') {
+      throw new Error('alert rules contain an unapproved HTTP status selector');
+    }
+  }
+  const authResult = rulesText.match(
+    /imeal_auth_attempts_total\{result=~"([^"]+)"/,
+  );
+  if (authResult?.[1] !== 'failure|dependency_failure') {
+    throw new Error('alert rules contain an unapproved auth result selector');
   }
 }

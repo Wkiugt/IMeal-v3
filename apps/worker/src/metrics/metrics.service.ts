@@ -364,7 +364,22 @@ export class WorkerMetricsService {
       });
     const presentNames = new Set(sourceSamples.map((sample) => sample.metricName));
     const missing = METRIC_CONTRACT.some((row) => !presentNames.has(row.name));
-    if (agedSource || missing || this.collectorFailures.size > 0) return null;
+    const missingWorkerJobSeries = WORKER_METRIC_JOBS.some((job) =>
+      ['imeal_worker_job_last_success_timestamp_seconds', 'imeal_worker_job_lag_seconds'].some(
+        (metricName) =>
+          !sourceSamples.some(
+            (sample) =>
+              sample.metricName === metricName && sample.labels.job === job,
+          ),
+      ),
+    );
+    if (
+      agedSource ||
+      missing ||
+      missingWorkerJobSeries ||
+      this.collectorFailures.size > 0
+    )
+      return null;
     try {
       return this.aggregate.serialize();
     } catch {

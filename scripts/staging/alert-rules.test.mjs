@@ -47,6 +47,28 @@ test('guards approved initial alert semantics, owners/actions and edge prerequis
   assert.match(text, /approved edge WAF or rate-limit control/i);
   assert.doesNotMatch(text, /password|token|secret|api[_-]?key/i);
 });
+test('uses exact bounded status and result label selectors with absence coverage', async () => {
+  const text = await rulesText();
+  assert.match(text, /status=~"500\|502\|503\|504"/);
+  assert.doesNotMatch(text, /status=~"5\.\."/);
+  assert.match(text, /result=~"failure\|dependency_failure"/);
+  assert.doesNotMatch(text, /result=~"failure\|error"/);
+  for (const job of [
+    'otp_delivery',
+    'notification_dispatch',
+    'registration_reminder',
+    'pickup_reminder',
+    'cutoff_lock',
+    'pickup_session_cleanup',
+    'no_show',
+  ]) {
+    assert.match(
+      text,
+      new RegExp(`absent\\(imeal_worker_job_(?:last_success_timestamp_seconds|lag_seconds)\\{job="${job}"\\}\\)`),
+    );
+  }
+});
+
 
 test('rejects missing metrics, unsafe labels and unsupported stock directives', () => {
   assert.throws(

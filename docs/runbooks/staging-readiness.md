@@ -176,12 +176,24 @@ node --input-type=module - \
 import { readFile, writeFile } from 'node:fs/promises';
 const [inputPath, outputPath] = process.argv.slice(2);
 const report = JSON.parse(await readFile(inputPath, 'utf8'));
-if (report.result !== 'PASS' || !report.targetFingerprint) {
+if (
+  report.result !== 'PASS' ||
+  typeof report.releaseId !== 'string' ||
+  !report.targetFingerprint ||
+  !report.target ||
+  typeof report.target.database !== 'string' ||
+  typeof report.target.schema !== 'string'
+) {
   throw new Error('preflight target fingerprint is not a PASS record');
 }
 await writeFile(
   outputPath,
-  `${JSON.stringify(report.targetFingerprint, null, 2)}\n`,
+  `${JSON.stringify({
+    result: 'PASS',
+    releaseId: report.releaseId,
+    target: report.target,
+    targetFingerprint: report.targetFingerprint,
+  }, null, 2)}\n`,
   { encoding: 'utf8', mode: 0o440 },
 );
 NODE
@@ -354,10 +366,15 @@ redacted evidence exist.
 Before sign-off, the network owner must prove the approved edge WAF and
 rate-limit policy, trusted-proxy/client-IP handling, TLS certificate and
 redirect, and an alert route that reaches the named on-call destination. Record
-only redacted results in `observability-alert-test.json`; the alert route is an
-external prerequisite and there is no repository command that can manufacture
-this evidence. Missing WAF/rate-limit approval or missing alert delivery is a
-NO-GO.
+only redacted results in `observability-alert-test.json`: it must bind the
+exact release and target, name an approved source identity with
+`fresh` freshness and a SHA-256 metric snapshot digest, and include an
+explicit acknowledgement, route, destination, and canonical `observedAt`.
+The verifier never creates an acknowledgement; stale, unknown,
+`collector_failure`, missing, conflicting, or unsafe fields fail closed. The
+alert route is an external prerequisite and there is no repository command
+that can manufacture this evidence. Missing WAF/rate-limit approval or
+missing alert delivery is a NO-GO.
 
 ## 6. Evidence bundle, checksums, and sign-off
 
@@ -381,16 +398,23 @@ smoke-business.json
 smoke-mobile-admin.json
 smoke-worker.json
 observability-alert-test.json
+runtime-integration.json
+staging-smoke.json
 checksums.txt
 signoff.json
 ```
 
-The protected workflow emits references named `runtime-integration.json`,
-`staging-smoke.json`, `deployed-image-sbom-index.json`, and the per-service
-deployed-image SBOMs. These are references, not local evidence files, until an
-approved artifact download/provisioning step places them under `$EVIDENCE_DIR`
-and verifies their release/target binding. Do not claim that a referenced file
-exists merely because its path appears in a manifest.
+`runtime-integration.json` and `staging-smoke.json` are required PASS phase
+artifacts whenever the protected workflow declares them. They are checksum
+inputs; if their schema carries release/target fields, those fields must match
+the exact release and target. A missing or mismatched field, failed/unknown result,
+missing migration clean marker, or malformed target fingerprint fails closed. The
+protected workflow emits references named
+`deployed-image-sbom-index.json` and the per-service deployed-image SBOMs.
+These are references, not local evidence files, until an approved artifact
+download/provisioning step places them under `$EVIDENCE_DIR` and verifies their
+release/target binding. Do not claim that a referenced file exists merely
+because its path appears in a manifest.
 
 The final protected workflow upload also includes `images.json` and
 `release-version.txt`; the operator must review both against the exact workflow

@@ -200,6 +200,21 @@ test('provisions protected manifest inputs before generating evidence', async ()
     /Only after all nine inputs are installed may the operator/u,
   );
 });
+test('documents required runtime/smoke evidence and alert acknowledgement schema', async () => {
+  const runbook = await readFile(runbookPath, 'utf8');
+  assert.match(
+    runbook,
+    /observability-alert-test\.json[\s\S]*?runtime-integration\.json[\s\S]*?staging-smoke\.json[\s\S]*?checksums\.txt/u,
+  );
+  assert.match(runbook, /approved source identity/u);
+  assert.match(runbook, /fresh` freshness/u);
+  assert.match(runbook, /snapshot digest/u);
+  assert.match(runbook, /explicit acknowledgement/u);
+  assert.match(runbook, /canonical `observedAt`/u);
+  assert.match(runbook, /verifier never creates an acknowledgement/u);
+  assert.match(runbook, /failed\/unknown result/u);
+});
+
 
 test('protected workflow uploads required operator inputs', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
