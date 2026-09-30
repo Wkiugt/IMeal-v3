@@ -35,7 +35,7 @@ production credentials or targets.
 - `yarn workspace @imeal/worker test --run src/metrics/authoritative-metrics.spec.ts src/metrics/metrics.service.spec.ts src/metrics/metrics.controller.spec.ts src/metrics/metrics-environment.spec.ts src/metrics/sources/postgres-metrics.adapter.spec.ts src/metrics/sources/object-storage-metrics.adapter.spec.ts src/metrics/sources/backup-restore-metrics.adapter.spec.ts src/metrics/sources/security-boundary-metrics.adapter.spec.ts` — **PASS**; 8 files, 47 tests.
 - `yarn workspace @imeal/worker build` — **PASS**.
 - `yarn workspace @imeal/worker exec tsc -p tsconfig.json --noEmit` — **PASS**.
-- `yarn workspace @imeal/worker test:e2e --run test/app.e2e-spec.ts` — **FAIL**; 4 of 5 tests passed. The complete bound `/metrics` fixture expected HTTP 200 but observed HTTP 503 (`test/app.e2e-spec.ts:135`). This local fixture failure prevents claiming a complete worker runtime contract; it is not evidence of a live staging result and was not bypassed.
+- `yarn workspace @imeal/worker test:e2e --run test/app.e2e-spec.ts` — **PASS**; 1 file, 5 tests. The complete-bound `/metrics` fixture emits all seven approved worker jobs for both M-12 and M-13 and returns HTTP 200.
 
 ### Focused staging tooling and scripts
 
@@ -55,8 +55,8 @@ Repository evidence demonstrates:
   by focused API/observability tests; the API `/metrics` route remains absent.
 - The worker private `/metrics` listener, metric contract, lifecycle services,
   authoritative adapter validation, and private Compose boundary have local
-  tests. The worker app e2e complete-bound fixture currently returns 503 instead
-  of the expected 200 and remains a recorded local failure.
+  tests. The worker app e2e complete-bound fixture now emits all seven approved
+  worker jobs for both M-12 and M-13 and returns HTTP 200.
 - Staging tooling validates strict metric text, alert selectors/absence rules,
   target-bound phase evidence, smoke check names, and restore/backup controls.
 
@@ -75,7 +75,7 @@ No repository-only result can substitute for those external observations.
 
 - `STG-METRICS-01`: **BLOCKED** — no protected deployment, real private source
   observations, target-bound runtime scrape, or external collector evidence was
-  observed; the local worker e2e fixture also has one failed `/metrics` case.
+  observed.
 - `P0-DOM-09`: **CONDITIONAL / NO-GO** — protected migration, target fingerprint,
   phase artifacts, runtime/smoke evidence, and independent review are absent.
 - `STG-EXT-01`: **CONDITIONAL / NO-GO** — approved edge WAF/rate-limit control,

@@ -58,27 +58,34 @@ function completeSnapshots(observedAt: string): readonly MetricSourceSnapshot[] 
       ...row.evidence.map((binding) => [binding, evidenceValues[binding]]),
       ['reference', evidenceValues.reference],
     ]);
-    const labels = Object.fromEntries(
+    const baseLabels = Object.fromEntries(
       Object.entries(row.labels).map(([key, values]) => [key, values[0]]),
     );
-    const value =
-      row.type === 'histogram'
-        ? { buckets: row.buckets.map(() => 1), sum: 1, count: 1 }
-        : 1;
-    const sample = validateMetricSampleEnvelope({
-      metricName: row.name,
-      type: row.type,
-      unit: row.unit,
-      labels,
-      value,
-      observedAt,
-      source: row.sourceIdentity,
-      freshness: 'fresh',
-      evidence,
-    });
-    const samples = grouped.get(row.sourceIdentity) ?? [];
-    samples.push(sample);
-    grouped.set(row.sourceIdentity, samples);
+    const labelSets =
+      row.name === 'imeal_worker_job_last_success_timestamp_seconds' ||
+      row.name === 'imeal_worker_job_lag_seconds'
+        ? row.labels.job.map((job) => ({ ...baseLabels, job }))
+        : [baseLabels];
+    for (const labels of labelSets) {
+      const value =
+        row.type === 'histogram'
+          ? { buckets: row.buckets.map(() => 1), sum: 1, count: 1 }
+          : 1;
+      const sample = validateMetricSampleEnvelope({
+        metricName: row.name,
+        type: row.type,
+        unit: row.unit,
+        labels,
+        value,
+        observedAt,
+        source: row.sourceIdentity,
+        freshness: 'fresh',
+        evidence,
+      });
+      const samples = grouped.get(row.sourceIdentity) ?? [];
+      samples.push(sample);
+      grouped.set(row.sourceIdentity, samples);
+    }
   }
   return [...grouped.entries()].map(([source, samples]) => ({
     source: source as MetricSourceSnapshot['source'],
