@@ -747,13 +747,13 @@ describe('metric contract', () => {
     expect(validateMetricSampleEnvelope(baseSample).source).toBe(
       'postgres_authoritative',
     );
+    expect(() =>
+      validateMetricSampleEnvelope({
+        ...baseSample,
+        evidence: { ...baseSample.evidence, source: 'unapproved_source' },
+      } as unknown),
+    ).toThrow();
   });
-  expect(() =>
-    validateMetricSampleEnvelope({
-      ...baseSample,
-      evidence: { ...baseSample.evidence, source: 'unapproved_source' },
-    } as unknown),
-  ).toThrow();
 
   it('rejects invalid digest, timestamp, and freshness/evidence mismatches', () => {
     const baseSample = sample('imeal_auth_attempts_total', {

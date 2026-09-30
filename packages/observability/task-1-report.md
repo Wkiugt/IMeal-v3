@@ -42,3 +42,12 @@ Fresh verification after this scoped fix:
 - `yarn workspace @imeal/observability build` — **PASS**; TypeScript exited 0 with no output.
 
 No producer, registry/serializer, endpoint, external collector, synthetic metric, or fallback zero was added.
+
+## Test-scope correction
+
+- Moved the evidence `source` rejection assertion inside its owning `rejects unbounded source and evidence metadata values` test so `baseSample` remains block-scoped and the test file compiles without out-of-scope references.
+
+Fresh verification after the test-scope correction:
+
+- `yarn workspace @imeal/observability test` — **PASS**; 2 test files, 59 tests.
+- `yarn workspace @imeal/observability build` — **PASS**; TypeScript exited 0 with no output.
