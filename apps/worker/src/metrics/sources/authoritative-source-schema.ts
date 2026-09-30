@@ -4,6 +4,7 @@ import type { MetricFreshness } from '@imeal/observability';
 export type JsonRecord = Record<string, unknown>;
 
 export const AUTHORITATIVE_CONTRACT_REVISION = '2026-09-30';
+const RELEASE_PATTERN = /^release-[a-z0-9][a-z0-9.-]{0,63}$/;
 
 export function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -47,7 +48,7 @@ export function isAuthoritativeEvidence(
   if (!hasExactKeys(value, required)) return false;
   return (
     typeof value.release === 'string' &&
-    value.release.length > 0 &&
+    RELEASE_PATTERN.test(value.release) &&
     value.source === expectedSource &&
     value.observedAt === observedAt &&
     value.contractRevision === AUTHORITATIVE_CONTRACT_REVISION &&

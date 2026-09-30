@@ -306,13 +306,18 @@ describe('authoritative source providers', () => {
       postgresPayload({ transactionErrors: 0, lockWaits: 0 }),
     );
   });
-
-  it('maps valid object-storage M18-M19 input without inventing missing errors', async () => {
-    const payload = objectStoragePayload({ operationErrors: [] });
+  it('rejects evidence with a release outside the protected release grammar', async () => {
+    const validPayload = objectStoragePayload();
+    const payload = objectStoragePayload({
+      evidence: {
+        ...(validPayload.evidence as SourcePayload),
+        release: 'staging-release',
+      },
+    });
     await expect(
       createObjectStorageAuthoritativeSourceProvider(objectStorageConfig(transportFor(payload)))
         .collect('opaque-storage-ref', observedAt),
-    ).resolves.toEqual(payload);
+    ).resolves.toBeUndefined();
   });
 
   it('maps valid backup/restore M20-M22 evidence and security M23 registry-bound input', async () => {
