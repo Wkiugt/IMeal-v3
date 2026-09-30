@@ -29,3 +29,16 @@ Fresh verification after the fixes:
 - `yarn workspace @imeal/observability build` — **PASS**; TypeScript exited 0 with no output.
 
 No producer, registry/serializer, API/worker endpoint, external collector, synthetic metric, or fallback zero was added.
+
+## Scoped re-review fix report
+
+- Removed `manifestCompletionTimestamp` from M-21 and M-22; only M-20 requires the manifest completion-time binding, with fixtures and assertions aligned.
+- Added strict source-identity and evidence-value vocabularies: approved application/authoritative identities, release/revision/date formats, SHA-256 digests, canonical timestamps, bounded source bindings, result enums, duration windows, fingerprints, and references. Arbitrary URLs, PII, exception text, secrets, and unapproved values are rejected.
+- Recorded the decision log reviewer exactly as `runtime/platform owner (user)` and the approval artifact exactly as the `2026-09-30 user approval message in this conversation`; the owner-review checklist is satisfied while real transport/source/target/evidence/alert prerequisites remain unchecked. `STG-METRICS-01` remains **BLOCKED**.
+
+Fresh verification after this scoped fix:
+
+- `yarn workspace @imeal/observability test` — **PASS**; 2 test files, 59 tests.
+- `yarn workspace @imeal/observability build` — **PASS**; TypeScript exited 0 with no output.
+
+No producer, registry/serializer, endpoint, external collector, synthetic metric, or fallback zero was added.

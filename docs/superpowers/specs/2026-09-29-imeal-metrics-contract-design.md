@@ -145,7 +145,7 @@ These are the resolved safety and cardinality constraints for the contract; they
 
 The implementation schema is resolved above. The following operational inputs remain external prerequisites before instrumentation or release qualification; they MUST be recorded outside this repository without inventing owners, URLs, credentials, target data, or approval IDs:
 
-- [x] Named runtime/platform owner review and acceptance of the 23-row contract and the private API-to-worker transport; Checkpoint A approval is recorded below (2026-09-30).
+- [x] Reviewer: runtime/platform owner (user) reviewed and accepted the 23-row contract and private API-to-worker transport; approval artifact is the 2026-09-30 user approval message in this conversation.
 - [ ] Provisioned private monitoring-network transport and worker-origin endpoint access policy; no public Caddy/API `/metrics` exposure.
 - [ ] Approved least-privilege PostgreSQL/PgBouncer source and target binding for M-14–M-17.
 - [ ] Approved private MinIO/storage-platform source and usable-capacity scope for M-18–M-19.
@@ -166,7 +166,7 @@ D1 and D9 already settle the prohibition on application-only constants/zeros for
 | 2026-09-29 | This document was a draft for user review only. | Superseded by the 2026-09-30 D1–D9 user approval; implementation and release gates remain unchanged. |
 | 2026-09-30 | D1–D9 architecture and authoritative source-boundary decisions were approved by the user. | **APPROVED BY USER FOR IMPLEMENTATION PLANNING**; the concrete Task 1 row-level schema is now recorded, while named runtime/platform owner review and external prerequisites remain required. `STG-METRICS-01` remains **BLOCKED**. |
 | 2026-09-30 | Task 1 resolved M-01–M-23 type/unit, bounded labels/enums, histogram buckets, freshness states, reset/retention rules, source boundaries, adapter boundaries, and evidence bindings using the checked-in consumer/alert rules and D1–D9. | Documentation-only contract decision; no production code, endpoint, credential, target, external approval, or release evidence was created. Owner review is still required before instrumentation. |
-| 2026-09-30 | Checkpoint A approval: the runtime/platform owner represented by the user approval accepted the concrete 23-row schema, private API-to-worker transport boundary, endpoint ownership, bounded labels/enums, histogram buckets, freshness/reset/retention rules, and authoritative source boundaries. | **APPROVED FOR TASK 1 IMPLEMENTATION**; artifact: the 2026-09-30 user approval message in this conversation. No personal name, approval ID, credentials, target, external artifact, producer, or endpoint was invented or created. `STG-METRICS-01` remains **BLOCKED**. |
+| 2026-09-30 | Checkpoint A approval. Reviewer: runtime/platform owner (user). The reviewer accepted the concrete 23-row schema, private API-to-worker transport boundary, endpoint ownership, bounded labels/enums, histogram buckets, freshness/reset/retention rules, and authoritative source boundaries. | **APPROVED FOR TASK 1 IMPLEMENTATION**. Approval artifact: 2026-09-30 user approval message in this conversation. No personal name, approval ID, credentials, target, external artifact, producer, or endpoint was invented or created. `STG-METRICS-01` remains **BLOCKED**. |
 
 ## 8. Scope boundary and next action
 

@@ -291,6 +291,63 @@ const expectedLabels: Record<string, Record<string, readonly string[]>> = {
     ],
   },
 };
+const testDigest = 'sha256:' + 'a'.repeat(64);
+const testRevisionValues: Record<string, string> = {
+  routeTaxonomyRevision: 'route-taxonomy-v1',
+  bucketRevision: 'bucket-v1',
+  resultTaxonomyRevision: 'result-taxonomy-v1',
+  idempotencyBranchRevision: 'idempotency-branch-v1',
+  retryPolicyRevision: 'retry-policy-v1',
+  failureTaxonomyRevision: 'failure-taxonomy-v1',
+  jobTaxonomyRevision: 'job-taxonomy-v1',
+  querySchemaRevision: 'query-schema-v1',
+  scheduleRevision: 'schedule-v1',
+  operationTaxonomyRevision: 'operation-taxonomy-v1',
+  securityTaxonomyRevision: 'security-taxonomy-v1',
+};
+
+function evidenceValue(
+  binding: string,
+  row: (typeof METRIC_CONTRACT)[number],
+  observedAt: string,
+): string {
+  if (binding === 'source') return row.sourceIdentity;
+  if (binding === 'observedAt') return observedAt;
+  if (binding === 'freshness') return 'fresh';
+  if (binding === 'sha256Digest') return testDigest;
+  if (
+    binding === 'targetFingerprint' ||
+    binding === 'manifestDigest' ||
+    binding === 'rehearsalDigest'
+  ) {
+    return testDigest;
+  }
+  if (binding === 'manifestCompletionTimestamp') return observedAt;
+  if (binding === 'sourceKind') return row.sourceKind;
+  if (binding === 'queryExporterBinding') {
+    return 'approved_postgres_query_or_exporter';
+  }
+  if (binding === 'sourceBinding') {
+    const sourceBindings: Record<string, string> = {
+      api_application: 'approved_api_application_source',
+      worker_application: 'approved_worker_application_source',
+      postgres_authoritative: 'approved_postgres_source',
+      object_storage_authoritative: 'approved_object_storage_source',
+      backup_restore_evidence: 'approved_backup_restore_evidence',
+      security_boundary_evidence: 'approved_security_boundary_source',
+    };
+    return sourceBindings[row.sourceIdentity];
+  }
+  if (binding === 'capacitySourceBinding') {
+    return 'approved_object_storage_capacity_source';
+  }
+  if (binding === 'verificationResult') return 'not_run';
+  if (binding === 'deduplicationWindow') return 'PT5M';
+  if (binding === 'release') return 'release-1';
+  if (binding === 'contractRevision') return '2026-09-30';
+  if (testRevisionValues[binding]) return testRevisionValues[binding];
+  throw new Error(`No bounded fixture for evidence binding ${binding}`);
+}
 
 function sample(
   name: (typeof expectedNames)[number],
@@ -300,21 +357,9 @@ function sample(
   const row = METRIC_CONTRACT.find((candidate) => candidate.name === name);
   if (!row) throw new Error(`Missing contract row for ${name}`);
   const observedAt = '2026-09-30T00:00:00.000Z';
-  const evidence: Record<string, string> = {
-    release: 'release-1',
-    source: row.source,
-    observedAt,
-    contractRevision: '2026-09-30',
-    freshness: 'fresh',
-    sha256Digest: 'sha256:' + 'a'.repeat(64),
-  };
+  const evidence: Record<string, string> = {};
   for (const binding of row.evidence) {
-    if (!(binding in evidence)) {
-      evidence[binding] =
-        binding === 'manifestCompletionTimestamp'
-          ? observedAt
-          : `${binding}-v1`;
-    }
+    evidence[binding] = evidenceValue(binding, row, observedAt);
   }
   return {
     metricName: name,
@@ -323,7 +368,7 @@ function sample(
     labels,
     value,
     observedAt,
-    source: row.source,
+    source: row.sourceIdentity,
     freshness: 'fresh',
     evidence: evidence as MetricEvidenceMetadata,
   };
@@ -430,6 +475,37 @@ describe('metric contract', () => {
       expect(row.observationIntervalSeconds).toBe(
         row.sourceKind === 'application' ? 30 : 60,
       );
+    }
+  });
+  it('uses only approved bounded source identities', () => {
+    const identityGroups = [
+      { names: expectedNames.slice(0, 3), identity: 'api_application' },
+      { names: expectedNames.slice(3, 7), identity: 'worker_application' },
+      { names: expectedNames.slice(7, 10), identity: 'api_application' },
+      { names: expectedNames.slice(10, 13), identity: 'worker_application' },
+      {
+        names: expectedNames.slice(13, 17),
+        identity: 'postgres_authoritative',
+      },
+      {
+        names: expectedNames.slice(17, 19),
+        identity: 'object_storage_authoritative',
+      },
+      {
+        names: expectedNames.slice(19, 22),
+        identity: 'backup_restore_evidence',
+      },
+      {
+        names: expectedNames.slice(22),
+        identity: 'security_boundary_evidence',
+      },
+    ] as const;
+    for (const { names, identity } of identityGroups) {
+      for (const name of names) {
+        expect(
+          METRIC_CONTRACT.find((row) => row.name === name)?.sourceIdentity,
+        ).toBe(identity);
+      }
     }
   });
 
@@ -543,10 +619,10 @@ describe('metric contract', () => {
     expect(row('imeal_backup_age_seconds')?.evidence).toEqual(
       expect.arrayContaining(['manifestCompletionTimestamp']),
     );
-    expect(row('imeal_backup_checksum_failures_total')?.evidence).toEqual(
-      expect.arrayContaining(['manifestCompletionTimestamp']),
+    expect(row('imeal_backup_checksum_failures_total')?.evidence).not.toContain(
+      'manifestCompletionTimestamp',
     );
-    expect(row('imeal_restore_test_failures_total')?.evidence).toContain(
+    expect(row('imeal_restore_test_failures_total')?.evidence).not.toContain(
       'manifestCompletionTimestamp',
     );
   });
@@ -635,11 +711,49 @@ describe('metric contract', () => {
     ).toThrow();
     const valid = validateMetricSampleEnvelope({
       ...baseSample,
-      evidence: { ...baseSample.evidence, reference: 'snapshot-20260930' },
+      evidence: { ...baseSample.evidence, reference: 'ref-snapshot-20260930' },
     });
-    expect(valid.evidence.reference).toBe('snapshot-20260930');
+    expect(valid.evidence.reference).toBe('ref-snapshot-20260930');
     expect(valid.evidence).not.toHaveProperty('unexpected');
   });
+  it('rejects unbounded source and evidence metadata values', () => {
+    const baseSample = sample('imeal_postgres_connection_usage_ratio', {
+      pool: 'pgbouncer_client',
+    });
+    const invalidMetadata = [
+      ['source', 'unapproved_source'],
+      ['release', 'release employee@example.com'],
+      ['contractRevision', 'exception stack trace'],
+      ['targetFingerprint', 'target-1'],
+      ['queryExporterBinding', 'database://internal'],
+      ['sourceBinding', 'employee-v1'],
+      ['reference', 'free-form exception text'],
+    ] as const;
+    for (const [key, invalidValue] of invalidMetadata) {
+      expect(() =>
+        validateMetricSampleEnvelope({
+          ...baseSample,
+          ...(key === 'source'
+            ? { source: invalidValue }
+            : {
+                evidence: {
+                  ...baseSample.evidence,
+                  [key]: invalidValue,
+                },
+              }),
+        } as unknown),
+      ).toThrow();
+    }
+    expect(validateMetricSampleEnvelope(baseSample).source).toBe(
+      'postgres_authoritative',
+    );
+  });
+  expect(() =>
+    validateMetricSampleEnvelope({
+      ...baseSample,
+      evidence: { ...baseSample.evidence, source: 'unapproved_source' },
+    } as unknown),
+  ).toThrow();
 
   it('rejects invalid digest, timestamp, and freshness/evidence mismatches', () => {
     const baseSample = sample('imeal_auth_attempts_total', {

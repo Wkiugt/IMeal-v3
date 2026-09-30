@@ -35,6 +35,13 @@ export const SAMPLE_FRESHNESS_STATES = Object.freeze([
 
 export type MetricFreshness = (typeof SAMPLE_FRESHNESS_STATES)[number];
 export type MetricType = 'counter' | 'gauge' | 'histogram';
+export type MetricSourceIdentity =
+  | 'api_application'
+  | 'worker_application'
+  | 'postgres_authoritative'
+  | 'object_storage_authoritative'
+  | 'backup_restore_evidence'
+  | 'security_boundary_evidence';
 export type MetricSourceKind = 'application' | 'authoritative';
 
 export const METRIC_NAMES = Object.freeze([
@@ -143,6 +150,7 @@ export interface MetricContractRow {
   readonly histogramSeriesSuffixes: readonly string[];
   readonly valueSemantics: MetricValueSemantics;
   readonly sourceKind: MetricSourceKind;
+  readonly sourceIdentity: MetricSourceIdentity;
   readonly source: string;
   readonly producer: string;
   readonly observationIntervalSeconds: number;
@@ -260,6 +268,15 @@ function cardinalityBudget(value: MetricLabels): number {
   );
 }
 
+const SOURCE_IDENTITY_BY_PRODUCER: Record<string, MetricSourceIdentity> = {
+  ApiApplicationMetricsAdapter: 'api_application',
+  WorkerApplicationMetricsAdapter: 'worker_application',
+  PostgresAuthoritativeMetricsAdapter: 'postgres_authoritative',
+  ObjectStorageAuthoritativeMetricsAdapter: 'object_storage_authoritative',
+  BackupRestoreEvidenceAdapter: 'backup_restore_evidence',
+  SecurityBoundaryEvidenceAdapter: 'security_boundary_evidence',
+};
+
 function defineRow(
   value: Omit<
     MetricContractRow,
@@ -267,6 +284,7 @@ function defineRow(
     | 'cardinalityBudget'
     | 'histogramSeriesSuffixes'
     | 'valueSemantics'
+    | 'sourceIdentity'
   > & {
     readonly familyName?: string;
     readonly valueSemantics?: MetricValueSemantics;
@@ -278,7 +296,12 @@ function defineRow(
     (value.type === 'histogram' && value.name.endsWith('_bucket')
       ? value.name.slice(0, -'_bucket'.length)
       : value.name);
+  const sourceIdentity = SOURCE_IDENTITY_BY_PRODUCER[value.producer];
+  if (!sourceIdentity) {
+    throw new Error(`Unapproved metric producer: ${value.producer}`);
+  }
   return Object.freeze({
+    sourceIdentity,
     ...value,
     familyName,
     labels: rowLabels,
@@ -678,7 +701,6 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
     evidence: [
       ...COMMON_EVIDENCE,
       'manifestDigest',
-      'manifestCompletionTimestamp',
       'targetFingerprint',
       'verificationResult',
     ],
@@ -699,7 +721,6 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
     evidence: [
       ...COMMON_EVIDENCE,
       'rehearsalDigest',
-      'manifestCompletionTimestamp',
       'targetFingerprint',
       'verificationResult',
     ],
@@ -827,7 +848,44 @@ const EVIDENCE_KEY_ALLOWLIST: Record<string, true> = {
   reference: true,
 };
 
-const REFERENCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
+const RELEASE_PATTERN = /^release-[a-z0-9][a-z0-9.-]{0,63}$/;
+const CONTRACT_REVISION_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const DEDUPLICATION_WINDOW_PATTERN = /^PT(?:(?:\d+H)?(?:\d+M)?(?:\d+S)?)$/;
+const APPROVED_SOURCE_BINDING_BY_IDENTITY: Record<
+  MetricSourceIdentity,
+  string
+> = {
+  api_application: 'approved_api_application_source',
+  worker_application: 'approved_worker_application_source',
+  postgres_authoritative: 'approved_postgres_source',
+  object_storage_authoritative: 'approved_object_storage_source',
+  backup_restore_evidence: 'approved_backup_restore_evidence',
+  security_boundary_evidence: 'approved_security_boundary_source',
+};
+const APPROVED_QUERY_EXPORTER_BINDING = 'approved_postgres_query_or_exporter';
+const APPROVED_CAPACITY_SOURCE_BINDING =
+  'approved_object_storage_capacity_source';
+const APPROVED_VERIFICATION_RESULTS: Record<string, true> = {
+  passed: true,
+  failed: true,
+  not_run: true,
+  unknown: true,
+};
+const APPROVED_REVISION_VALUES: Record<string, string> = {
+  routeTaxonomyRevision: 'route-taxonomy-v1',
+  bucketRevision: 'bucket-v1',
+  resultTaxonomyRevision: 'result-taxonomy-v1',
+  idempotencyBranchRevision: 'idempotency-branch-v1',
+  retryPolicyRevision: 'retry-policy-v1',
+  failureTaxonomyRevision: 'failure-taxonomy-v1',
+  jobTaxonomyRevision: 'job-taxonomy-v1',
+  querySchemaRevision: 'query-schema-v1',
+  scheduleRevision: 'schedule-v1',
+  operationTaxonomyRevision: 'operation-taxonomy-v1',
+  securityTaxonomyRevision: 'security-taxonomy-v1',
+};
+const REFERENCE_PATTERN = /^ref-[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 export function containsMetricSensitiveText(value: string): boolean {
   return METRIC_SECRET_PATTERNS.some((pattern) => pattern.test(value));
@@ -875,6 +933,95 @@ function requireSafeString(
   }
   rejectSensitiveText(value, field);
 }
+function requireEvidenceBindingValue(
+  binding: MetricEvidenceBinding,
+  value: string,
+  row: MetricContractRow,
+  field: string,
+): void {
+  switch (binding) {
+    case 'release':
+      if (!RELEASE_PATTERN.test(value)) {
+        throw new Error(`Metric sample ${field} has an invalid release`);
+      }
+      return;
+    case 'source':
+      if (value !== row.sourceIdentity) {
+        throw new Error(`Metric sample ${field} has an unapproved source`);
+      }
+      return;
+    case 'observedAt':
+    case 'manifestCompletionTimestamp':
+      requireCanonicalTimestamp(value, field);
+      return;
+    case 'contractRevision':
+      if (
+        !CONTRACT_REVISION_PATTERN.test(value) ||
+        new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) !== value
+      ) {
+        throw new Error(`Metric sample ${field} has an invalid revision`);
+      }
+      return;
+    case 'freshness':
+      if (!SAMPLE_FRESHNESS_STATES.includes(value as MetricFreshness)) {
+        throw new Error(`Metric sample ${field} has an invalid freshness`);
+      }
+      return;
+    case 'sha256Digest':
+    case 'targetFingerprint':
+    case 'manifestDigest':
+    case 'rehearsalDigest':
+      if (!DIGEST_PATTERN.test(value)) {
+        throw new Error(`Metric sample ${field} has an invalid digest`);
+      }
+      return;
+    case 'queryExporterBinding':
+      if (value !== APPROVED_QUERY_EXPORTER_BINDING) {
+        throw new Error(`Metric sample ${field} has an unapproved binding`);
+      }
+      return;
+    case 'sourceBinding':
+      if (value !== APPROVED_SOURCE_BINDING_BY_IDENTITY[row.sourceIdentity]) {
+        throw new Error(`Metric sample ${field} has an unapproved binding`);
+      }
+      return;
+    case 'capacitySourceBinding':
+      if (value !== APPROVED_CAPACITY_SOURCE_BINDING) {
+        throw new Error(`Metric sample ${field} has an unapproved binding`);
+      }
+      return;
+    case 'sourceKind':
+      if (value !== row.sourceKind) {
+        throw new Error(`Metric sample ${field} has an invalid source kind`);
+      }
+      return;
+    case 'verificationResult':
+      if (APPROVED_VERIFICATION_RESULTS[value] !== true) {
+        throw new Error(`Metric sample ${field} has an invalid result`);
+      }
+      return;
+    case 'deduplicationWindow':
+      if (value === 'PT' || !DEDUPLICATION_WINDOW_PATTERN.test(value)) {
+        throw new Error(`Metric sample ${field} has an invalid window`);
+      }
+      return;
+    case 'routeTaxonomyRevision':
+    case 'bucketRevision':
+    case 'resultTaxonomyRevision':
+    case 'idempotencyBranchRevision':
+    case 'retryPolicyRevision':
+    case 'failureTaxonomyRevision':
+    case 'jobTaxonomyRevision':
+    case 'querySchemaRevision':
+    case 'scheduleRevision':
+    case 'operationTaxonomyRevision':
+    case 'securityTaxonomyRevision':
+      if (value !== APPROVED_REVISION_VALUES[binding]) {
+        throw new Error(`Metric sample ${field} has an unapproved revision`);
+      }
+      return;
+  }
+}
 
 function validateEvidence(
   value: unknown,
@@ -895,11 +1042,8 @@ function validateEvidence(
 
   for (const binding of row.evidence) {
     const entry = value[binding];
-    if (binding === 'manifestCompletionTimestamp') {
-      requireCanonicalTimestamp(entry, `evidence.${binding}`);
-    } else {
-      requireSafeString(entry, `evidence.${binding}`);
-    }
+    requireSafeString(entry, `evidence.${binding}`);
+    requireEvidenceBindingValue(binding, entry, row, `evidence.${binding}`);
     sanitizedEvidence[binding] = entry;
   }
   if (value.reference !== undefined) {
@@ -1021,6 +1165,9 @@ export function validateMetricSampleEnvelope(
   }
   requireCanonicalTimestamp(value.observedAt, 'observedAt');
   requireSafeString(value.source, 'source');
+  if (value.source !== row.sourceIdentity) {
+    throw new Error('Metric sample source identity is not allowlisted');
+  }
   if (!SAMPLE_FRESHNESS_STATES.includes(value.freshness as MetricFreshness)) {
     throw new Error('Metric sample freshness state is not allowlisted');
   }
