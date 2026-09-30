@@ -47,7 +47,8 @@ const METRICS = `${HARDENING_METRIC_NAMES.map((name) => {
   }
   const labels = METRIC_LABELS[name];
   const suffix = labels ? `{${labels.join(',')}}` : '';
-  return `# HELP ${name} fixture\n# TYPE ${name} gauge\n${name}${suffix} 1`;
+  const type = name.endsWith('_total') ? 'counter' : 'gauge';
+  return `# HELP ${name} fixture\n# TYPE ${name} ${type}\n${name}${suffix} 1`;
 }).join('\n')}\n`;
 
 function response(status, body, requestId = REQUEST_ID, extraHeaders = {}) {
@@ -280,6 +281,20 @@ test('rejects malformed histogram buckets and every successful public metrics re
     }),
     /histogram buckets are incomplete/,
   );
+  const invalidType = METRICS.replace(
+    '# TYPE imeal_http_request_duration_seconds histogram',
+    '# TYPE imeal_http_request_duration_seconds gauge',
+  );
+  await assert.rejects(
+    runRuntimeIntegration({
+      apiOrigin: API_ORIGIN,
+      workerOrigin: WORKER_ORIGIN,
+      expectedRelease: RELEASE,
+      fetchImpl: fetchWithWorkerMetrics(invalidType),
+    }),
+    /metric type is invalid/,
+  );
+
 
   await assert.rejects(
     runRuntimeIntegration({

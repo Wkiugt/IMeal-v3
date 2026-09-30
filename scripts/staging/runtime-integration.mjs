@@ -106,6 +106,16 @@ const ALLOWED_METRIC_SERIES = new Set([
   ...HARDENING_METRIC_NAMES,
   ...HISTOGRAM_AUXILIARY.keys(),
 ]);
+const HISTOGRAM_BASE_NAMES = new Set(
+  Object.values(HISTOGRAMS).map(({ base }) => base),
+);
+const METRIC_TYPES = new Map(
+  HARDENING_METRIC_NAMES.map((name) => [
+    name,
+    name.endsWith('_total') ? 'counter' : 'gauge',
+  ]),
+);
+for (const name of HISTOGRAM_BASE_NAMES) METRIC_TYPES.set(name, 'histogram');
 const METRIC_NAME_PATTERN = /^[a-zA-Z_:][a-zA-Z0-9_:]*$/;
 const SAMPLE_PATTERN =
   /^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{([^{}]*)\})?\s+([^\s]+)(?:\s+\d+)?$/;
@@ -205,19 +215,27 @@ export function validateMetricsText(text) {
       const help = line.match(/^# HELP ([a-zA-Z_:][a-zA-Z0-9_:]*) /);
       if (type) {
         const [, name, declaredType] = type;
-        if (!METRIC_NAME_PATTERN.test(name) || !ALLOWED_METRIC_SERIES.has(name) && !Object.values(HISTOGRAMS).some(({ base: histogramBase }) => histogramBase === name)) {
+        if (
+          !METRIC_NAME_PATTERN.test(name) ||
+          !METRIC_TYPES.has(name) ||
+          HISTOGRAM_AUXILIARY.has(name) ||
+          name.endsWith('_bucket')
+        ) {
           throw new Error(`metric declaration is not approved: ${name}`);
         }
-        if (typeDeclarations.has(name) && typeDeclarations.get(name) !== declaredType) {
+        if (
+          typeDeclarations.has(name) &&
+          typeDeclarations.get(name) !== declaredType
+        ) {
           throw new Error(`metric type is conflicting: ${name}`);
         }
         typeDeclarations.set(name, declaredType);
-        if (HISTOGRAMS[`${name}_bucket`] && declaredType !== 'histogram') {
-          throw new Error(`metric histogram type is invalid: ${name}`);
+        if (declaredType !== METRIC_TYPES.get(name)) {
+          throw new Error(`metric type is invalid: ${name}`);
         }
       } else if (help) {
         const [, name] = help;
-        if (!METRIC_NAME_PATTERN.test(name) || !ALLOWED_METRIC_SERIES.has(name) && !Object.values(HISTOGRAMS).some(({ base: histogramBase }) => histogramBase === name)) {
+        if (!METRIC_NAME_PATTERN.test(name) || !METRIC_TYPES.has(name)) {
           throw new Error(`metric declaration is not approved: ${name}`);
         }
       } else if (line !== '# EOF') {
