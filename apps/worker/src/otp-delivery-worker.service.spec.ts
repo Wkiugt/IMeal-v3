@@ -11,6 +11,7 @@ import {
   type OtpProvider,
   validateWorkerEnvironment,
 } from './otp-delivery-worker.service.js';
+import { WorkerMetricsService } from './metrics/metrics.service.js';
 
 const NOW = new Date('2026-09-24T03:00:00.000Z');
 const SECRET = 'delivery-encryption-secret-that-is-at-least-32-bytes';
@@ -347,6 +348,55 @@ describe('OtpDeliveryWorker', () => {
     expect(cleanupSql).toContain(' <=');
     expect(cleanupSql).toContain('PROCESSING');
   });
+  it('counts max-attempt rows finalized by the claim cleanup prepass', async () => {
+    process.env.OTP_DELIVERY_MAX_ATTEMPTS = '3';
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValueOnce(2).mockResolvedValueOnce(0),
+      $queryRaw: vi.fn().mockResolvedValue([]),
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (value: typeof tx) => unknown) =>
+        callback(tx),
+      ),
+    };
+    const metrics = new WorkerMetricsService();
+
+    await new WorkerOtpOutboxService(
+      prisma as unknown as PrismaService,
+      metrics,
+    ).claimBatch(NOW, 10);
+
+    expect(metrics.serializeApplicationMetrics()).toContain(
+      'imeal_otp_delivery_failures_total 2',
+    );
+  });
+  it('passes metrics to the fallback outbox when no outbox port is injected', async () => {
+    process.env.OTP_DELIVERY_MAX_ATTEMPTS = '3';
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(0),
+      $queryRaw: vi.fn().mockResolvedValue([]),
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (value: typeof tx) => unknown) =>
+        callback(tx),
+      ),
+    };
+    const metrics = new WorkerMetricsService();
+
+    await new OtpDeliveryWorker(
+      prisma as unknown as PrismaService,
+      undefined,
+      undefined,
+      () => NOW,
+      undefined,
+      undefined,
+      metrics,
+    ).processOnce(NOW);
+
+    expect(metrics.serializeApplicationMetrics()).toContain(
+      'imeal_otp_delivery_failures_total 1',
+    );
+  });
   it('claims and sends only at the provider boundary without logging the code or message', async () => {
     process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
     const provider: OtpProvider = {
@@ -627,5 +677,39 @@ describe('OtpDeliveryWorker', () => {
         retryAt: null,
       },
     ]);
+  });
+  it('records provider attempts, retries, and terminal failures at persisted boundaries', async () => {
+    process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
+    process.env.OTP_DELIVERY_MAX_ATTEMPTS = '2';
+    const metrics = new WorkerMetricsService();
+    let sends = 0;
+    const provider: OtpProvider = {
+      send: vi.fn().mockImplementation(async () => {
+        sends += 1;
+        if (sends === 1) {
+          throw Object.assign(new Error('network'), { code: 'NETWORK' });
+        }
+        throw new Error('provider rejected');
+      }),
+    };
+    const outbox = fakeOutbox([
+      delivery({ id: 'retry-row' }),
+      delivery({ id: 'terminal-row' }),
+    ]);
+
+    await new OtpDeliveryWorker(
+      {} as PrismaService,
+      provider,
+      outbox,
+      () => NOW,
+      undefined,
+      undefined,
+      metrics,
+    ).processOnce(NOW);
+
+    const text = metrics.serializeApplicationMetrics();
+    expect(text).toContain('imeal_otp_delivery_total 2');
+    expect(text).toContain('imeal_otp_delivery_retries_total 1');
+    expect(text).toContain('imeal_otp_delivery_failures_total 1');
   });
 });

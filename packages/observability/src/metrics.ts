@@ -344,6 +344,22 @@ export class MetricRegistry {
     series.value = value;
   }
 
+  /**
+   * Removes an observed local series. Missing/unknown observations must not
+   * remain serialized after a source refresh.
+   */
+  removeSeries(metricName: string, labels?: MetricLabels): void {
+    const row = requireMetricName(metricName);
+    requireApplicationMetric(row);
+    const metric = this.metrics.get(metricName);
+    if (!metric) return;
+    if (labels === undefined) {
+      metric.series.clear();
+      return;
+    }
+    metric.series.delete(labelsKey(requireLabels(row, labels)));
+  }
+
   observeHistogram(
     metricName: string,
     labels?: MetricLabels,

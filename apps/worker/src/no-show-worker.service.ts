@@ -20,6 +20,7 @@ import {
   type WorkerShutdownCoordinatorLike,
 } from './health.service.js';
 
+import { WorkerMetricsService } from './metrics/metrics.service.js';
 export interface ProcessNoShowsOptions {
   force?: boolean;
   currentTime?: Date;
@@ -39,6 +40,7 @@ export class NoShowWorkerService {
     @Optional()
     @Inject(WORKER_HEALTH_SHUTDOWN_COORDINATOR)
     private readonly shutdown?: WorkerShutdownCoordinatorLike,
+    @Optional() private readonly metrics?: WorkerMetricsService,
   ) {
     this.logger = logger ?? createWorkerStructuredLogger();
     this.notificationPublisher =
@@ -69,6 +71,7 @@ export class NoShowWorkerService {
   async handleNoShowCron() {
     const release = this.shutdown?.registerInFlight?.();
     if (this.shutdown?.registerInFlight && !release) {
+      this.metrics?.recordWorkerRun('no_show', 'skipped');
       this.logger.info(
         'worker.no_show.skipped',
         workerLogFields('worker.no_show.skipped', {
@@ -82,8 +85,11 @@ export class NoShowWorkerService {
       workerLogFields('worker.no_show.started'),
     );
     try {
-      return await this.processNoShows();
+      const result = await this.processNoShows();
+      this.metrics?.recordWorkerRun('no_show', 'success');
+      return result;
     } catch (error: unknown) {
+      this.metrics?.recordWorkerRun('no_show', 'failure');
       this.logger.error(
         'worker.no_show.failed',
         workerLogFields('worker.no_show.failed', {

@@ -14,6 +14,7 @@ import {
   WORKER_HEALTH_SHUTDOWN_COORDINATOR,
   type WorkerShutdownCoordinatorLike,
 } from './health.service.js';
+import { WorkerMetricsService } from './metrics/metrics.service.js';
 
 export type OtpPurpose = 'SESSION_LOGIN';
 
@@ -524,7 +525,10 @@ type CurrentClaimRow = {
 
 @Injectable()
 export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly metrics?: WorkerMetricsService,
+  ) {}
 
   async claimBatch(now: Date, limit: number): Promise<ClaimedOtpDelivery[]> {
     const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
@@ -544,7 +548,7 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
     const claimToken = randomUUID();
     return this.prisma.$transaction(async (tx) => {
       if (typeof tx.$executeRaw === 'function') {
-        await tx.$executeRaw(Prisma.sql`
+        const finalizedMaxAttempts = await tx.$executeRaw(Prisma.sql`
           UPDATE "otp_delivery_outboxes"
           SET "status" = 'FAILED',
               "processed_at" = ${now},
@@ -559,9 +563,18 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
               OR ("status" = 'PROCESSING' AND "updated_at" <= ${staleAt})
             )
         `);
+        if (
+          this.metrics &&
+          typeof finalizedMaxAttempts === 'number' &&
+          finalizedMaxAttempts > 0
+        ) {
+          for (let index = 0; index < finalizedMaxAttempts; index += 1) {
+            this.metrics.recordOtpDeliveryFailure();
+          }
+        }
       }
       if (typeof tx.$executeRaw === 'function') {
-        await tx.$executeRaw(Prisma.sql`
+        const finalizedExpired = await tx.$executeRaw(Prisma.sql`
           UPDATE "otp_delivery_outboxes" AS o
           SET "status" = 'FAILED',
               "processed_at" = ${now},
@@ -575,6 +588,15 @@ export class WorkerOtpOutboxService implements OtpDeliveryOutboxPort {
             AND o."processed_at" IS NULL
             AND (c."expires_at" <= ${now} OR c."consumed_at" IS NOT NULL)
         `);
+        if (
+          this.metrics &&
+          typeof finalizedExpired === 'number' &&
+          finalizedExpired > 0
+        ) {
+          for (let index = 0; index < finalizedExpired; index += 1) {
+            this.metrics.recordOtpDeliveryFailure();
+          }
+        }
       }
       const rows = await tx.$queryRaw<ClaimedRow[]>(Prisma.sql`
         WITH due AS (
@@ -751,10 +773,11 @@ export class OtpDeliveryWorker {
     @Optional()
     @Inject(WORKER_HEALTH_SHUTDOWN_COORDINATOR)
     private readonly shutdown?: WorkerShutdownCoordinatorLike,
+    @Optional() private readonly metrics?: WorkerMetricsService,
   ) {
     this.logger = logger ?? createWorkerStructuredLogger();
     this.provider = provider ?? new WorkerConfiguredOtpProvider();
-    this.outbox = outbox ?? new WorkerOtpOutboxService(this.prisma);
+    this.outbox = outbox ?? new WorkerOtpOutboxService(this.prisma, this.metrics);
     this.clock = clock ?? (() => new Date());
   }
 
@@ -762,6 +785,7 @@ export class OtpDeliveryWorker {
   async handleOtpDeliveryCron(): Promise<DeliveryRunResult> {
     const release = this.shutdown?.registerInFlight?.();
     if (this.shutdown?.registerInFlight && !release) {
+      this.metrics?.recordWorkerRun('otp_delivery', 'skipped');
       this.logger.info(
         'worker.otp_delivery.skipped',
         workerLogFields('worker.otp_delivery.skipped', {
@@ -777,7 +801,13 @@ export class OtpDeliveryWorker {
       };
     }
     try {
-      return await this.processOnce(new Date());
+      const result = await this.processOnce(new Date());
+      this.metrics?.recordWorkerRun('otp_delivery', 'success');
+      await this.metrics?.refreshOutboxAge();
+      return result;
+    } catch (error) {
+      this.metrics?.recordWorkerRun('otp_delivery', 'failure');
+      throw error;
     } finally {
       release?.();
     }
@@ -819,10 +849,11 @@ export class OtpDeliveryWorker {
       const currentNow = this.clock();
       const attemptsBeforeClaim = row.attemptsBeforeClaim ?? row.attemptCount;
       if (attemptsBeforeClaim >= maxAttempts) {
-        await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
+        const marked = await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
           code: 'MAX_ATTEMPTS',
           retryAt: null,
         });
+        if (marked) this.metrics?.recordOtpDeliveryFailure();
         result.failed += 1;
         this.logger.warn(
           'worker.otp.failed',
@@ -852,10 +883,11 @@ export class OtpDeliveryWorker {
         }
         const code =
           validation.reason === 'CONSUMED' ? 'OTP_CONSUMED' : 'OTP_EXPIRED';
-        await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
+        const marked = await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
           code,
           retryAt: null,
         });
+        if (marked) this.metrics?.recordOtpDeliveryFailure();
         result.suppressed += 1;
         this.logger.warn(
           'worker.otp.suppressed',
@@ -874,10 +906,11 @@ export class OtpDeliveryWorker {
           encryptionSecret(env),
         );
       } catch {
-        await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
+        const marked = await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
           code: 'PAYLOAD_INVALID',
           retryAt: null,
         });
+        if (marked) this.metrics?.recordOtpDeliveryFailure();
         result.failed += 1;
         this.logger.error(
           'worker.otp.failed',
@@ -892,10 +925,11 @@ export class OtpDeliveryWorker {
         payload.destination !== validation.destination ||
         payload.purpose !== validation.purpose
       ) {
-        await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
+        const marked = await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
           code: 'PAYLOAD_MISMATCH',
           retryAt: null,
         });
+        if (marked) this.metrics?.recordOtpDeliveryFailure();
         result.failed += 1;
         this.logger.error(
           'worker.otp.failed',
@@ -928,10 +962,11 @@ export class OtpDeliveryWorker {
           finalValidation.reason === 'CONSUMED'
             ? 'OTP_CONSUMED'
             : 'OTP_EXPIRED';
-        await this.outbox.markFailed(row.id, row.claimToken, finalNow, {
+        const marked = await this.outbox.markFailed(row.id, row.claimToken, finalNow, {
           code,
           retryAt: null,
         });
+        if (marked) this.metrics?.recordOtpDeliveryFailure();
         result.suppressed += 1;
         this.logger.warn(
           'worker.otp.suppressed',
@@ -946,10 +981,11 @@ export class OtpDeliveryWorker {
         payload.destination !== finalValidation.destination ||
         payload.purpose !== finalValidation.purpose
       ) {
-        await this.outbox.markFailed(row.id, row.claimToken, finalNow, {
+        const marked = await this.outbox.markFailed(row.id, row.claimToken, finalNow, {
           code: 'PAYLOAD_MISMATCH',
           retryAt: null,
         });
+        if (marked) this.metrics?.recordOtpDeliveryFailure();
         result.failed += 1;
         this.logger.error(
           'worker.otp.failed',
@@ -962,6 +998,7 @@ export class OtpDeliveryWorker {
       }
 
       try {
+        this.metrics?.recordOtpDeliveryAttempt();
         await this.provider.send(payload);
         const marked = await this.outbox.markProcessed(
           row.id,
@@ -1000,8 +1037,14 @@ export class OtpDeliveryWorker {
             retryAt,
           },
         );
-        if (marked && canRetry) result.retried += 1;
-        if (marked && !canRetry) result.failed += 1;
+        if (marked && canRetry) {
+          this.metrics?.recordOtpDeliveryRetry();
+          result.retried += 1;
+        }
+        if (marked && !canRetry) {
+          this.metrics?.recordOtpDeliveryFailure();
+          result.failed += 1;
+        }
         this.logger.warn(
           'worker.otp.delivery_failed',
           workerLogFields('worker.otp.delivery_failed', {

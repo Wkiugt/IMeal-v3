@@ -127,6 +127,27 @@ describe('MetricRegistry', () => {
     expect(output).not.toContain('imeal_auth_attempts_total{result="invalid"}');
     expect(output).not.toContain('imeal_postgres_transaction_errors_total 0');
   });
+  it('removes a local series when its source observation becomes unknown', () => {
+    const registry = new MetricRegistry();
+    registry.setGauge(
+      'imeal_worker_job_last_success_timestamp_seconds',
+      { job: 'cutoff_lock' },
+      1_000,
+    );
+    registry.setGauge(
+      'imeal_worker_job_lag_seconds',
+      { job: 'cutoff_lock' },
+      5,
+    );
+
+    registry.removeSeries(
+      'imeal_worker_job_last_success_timestamp_seconds',
+      { job: 'cutoff_lock' },
+    );
+    registry.removeSeries('imeal_worker_job_lag_seconds', { job: 'cutoff_lock' });
+
+    expect(registry.serialize()).not.toContain('job="cutoff_lock"');
+  });
 
   it('serializes fixed histogram buckets, cumulative counts, sum, and count', () => {
     const registry = new MetricRegistry();

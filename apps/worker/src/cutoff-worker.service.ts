@@ -11,6 +11,7 @@ import {
   WORKER_HEALTH_SHUTDOWN_COORDINATOR,
   type WorkerShutdownCoordinatorLike,
 } from './health.service.js';
+import { WorkerMetricsService } from './metrics/metrics.service.js';
 
 @Injectable()
 export class CutoffWorkerService {
@@ -22,6 +23,7 @@ export class CutoffWorkerService {
     @Optional()
     @Inject(WORKER_HEALTH_SHUTDOWN_COORDINATOR)
     private readonly shutdown?: WorkerShutdownCoordinatorLike,
+    @Optional() private readonly metrics?: WorkerMetricsService,
   ) {
     this.logger = logger ?? createWorkerStructuredLogger();
   }
@@ -39,6 +41,7 @@ export class CutoffWorkerService {
     const jobName = `cutoff_lock_${targetDateStr}`;
     const release = this.shutdown?.registerInFlight?.();
     if (this.shutdown?.registerInFlight && !release) {
+      this.metrics?.recordWorkerRun('cutoff_lock', 'skipped');
       this.logger.info(
         'worker.cutoff.skipped',
         workerLogFields('worker.cutoff.skipped', {
@@ -48,6 +51,7 @@ export class CutoffWorkerService {
       );
       return;
     }
+    let status: 'success' | 'skipped' = 'success';
     try {
       this.logger.info(
         'worker.cutoff.started',
@@ -61,6 +65,7 @@ export class CutoffWorkerService {
         });
 
         if (existingJob) {
+          status = 'skipped';
           this.logger.info(
             'worker.cutoff.skipped',
             workerLogFields('worker.cutoff.skipped', { jobName }),
@@ -88,6 +93,10 @@ export class CutoffWorkerService {
           workerLogFields('worker.cutoff.completed', { jobName }),
         );
       });
+      this.metrics?.recordWorkerRun('cutoff_lock', status);
+    } catch (error) {
+      this.metrics?.recordWorkerRun('cutoff_lock', 'failure');
+      throw error;
     } finally {
       release?.();
     }

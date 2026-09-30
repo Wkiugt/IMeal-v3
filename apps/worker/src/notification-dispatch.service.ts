@@ -15,6 +15,7 @@ import {
   type WorkerShutdownCoordinatorLike,
 } from './health.service.js';
 
+import { WorkerMetricsService } from './metrics/metrics.service.js';
 const CLAIM_BATCH_SIZE = 100;
 const PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
 const RETRY_DELAYS_MINUTES = [1, 5, 15];
@@ -169,6 +170,7 @@ export class NotificationDispatchService {
     @Optional()
     @Inject(WORKER_HEALTH_SHUTDOWN_COORDINATOR)
     private readonly shutdown?: WorkerShutdownCoordinatorLike,
+    @Optional() private readonly metrics?: WorkerMetricsService,
   ) {
     this.logger = logger ?? createWorkerStructuredLogger();
     this.expo = expo ?? new Expo();
@@ -178,6 +180,7 @@ export class NotificationDispatchService {
   async handleNotificationDispatchCron() {
     const release = this.shutdown?.registerInFlight?.();
     if (this.shutdown?.registerInFlight && !release) {
+      this.metrics?.recordWorkerRun('notification_dispatch', 'skipped');
       this.logger.info(
         'worker.notification_dispatch.skipped',
         workerLogFields('worker.notification_dispatch.skipped', {
@@ -187,7 +190,12 @@ export class NotificationDispatchService {
       return;
     }
     try {
-      return await this.processNotificationDispatch();
+      const result = await this.processNotificationDispatch();
+      this.metrics?.recordWorkerRun('notification_dispatch', 'success');
+      return result;
+    } catch (error) {
+      this.metrics?.recordWorkerRun('notification_dispatch', 'failure');
+      throw error;
     } finally {
       release?.();
     }

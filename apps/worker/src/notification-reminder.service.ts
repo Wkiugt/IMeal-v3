@@ -14,6 +14,7 @@ import {
   WORKER_HEALTH_SHUTDOWN_COORDINATOR,
   type WorkerShutdownCoordinatorLike,
 } from './health.service.js';
+import { WorkerMetricsService } from './metrics/metrics.service.js';
 
 const TIME_ZONE = 'Asia/Ho_Chi_Minh';
 
@@ -66,6 +67,7 @@ export class NotificationReminderService {
     @Optional()
     @Inject(WORKER_HEALTH_SHUTDOWN_COORDINATOR)
     private readonly shutdown?: WorkerShutdownCoordinatorLike,
+    @Optional() private readonly metrics?: WorkerMetricsService,
   ) {
     this.logger = logger ?? createWorkerStructuredLogger();
     this.publisher = publisher ?? new WorkerNotificationPublisher();
@@ -75,6 +77,7 @@ export class NotificationReminderService {
   async handleRegistrationReminderCron() {
     const release = this.shutdown?.registerInFlight?.();
     if (this.shutdown?.registerInFlight && !release) {
+      this.metrics?.recordWorkerRun('registration_reminder', 'skipped');
       this.logger.info(
         'worker.registration_reminder.skipped',
         workerLogFields('worker.registration_reminder.skipped', {
@@ -84,7 +87,12 @@ export class NotificationReminderService {
       return;
     }
     try {
-      return await this.processRegistrationReminders();
+      const result = await this.processRegistrationReminders();
+      this.metrics?.recordWorkerRun('registration_reminder', 'success');
+      return result;
+    } catch (error) {
+      this.metrics?.recordWorkerRun('registration_reminder', 'failure');
+      throw error;
     } finally {
       release?.();
     }
@@ -94,6 +102,7 @@ export class NotificationReminderService {
   async handlePickupReminderCron() {
     const release = this.shutdown?.registerInFlight?.();
     if (this.shutdown?.registerInFlight && !release) {
+      this.metrics?.recordWorkerRun('pickup_reminder', 'skipped');
       this.logger.info(
         'worker.pickup_reminder.skipped',
         workerLogFields('worker.pickup_reminder.skipped', {
@@ -103,7 +112,12 @@ export class NotificationReminderService {
       return;
     }
     try {
-      return await this.processPickupReminders();
+      const result = await this.processPickupReminders();
+      this.metrics?.recordWorkerRun('pickup_reminder', 'success');
+      return result;
+    } catch (error) {
+      this.metrics?.recordWorkerRun('pickup_reminder', 'failure');
+      throw error;
     } finally {
       release?.();
     }

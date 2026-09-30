@@ -16,6 +16,8 @@ import {
 } from './otp-delivery-worker.service.js';
 import { PrismaService } from './common/prisma.service.js';
 import { HealthController } from './health.controller.js';
+import { MetricsController } from './metrics/metrics.controller.js';
+import { WorkerMetricsService } from './metrics/metrics.service.js';
 import {
   HealthService,
   WORKER_HEALTH_ENVIRONMENT_VALIDATED,
@@ -29,9 +31,10 @@ import {
 
 @Module({
   imports: [ScheduleModule.forRoot()],
-  controllers: [AppController, HealthController],
+  controllers: [AppController, HealthController, MetricsController],
   providers: [
     PrismaService,
+    WorkerMetricsService,
     HealthService,
     ShutdownCoordinator,
     {

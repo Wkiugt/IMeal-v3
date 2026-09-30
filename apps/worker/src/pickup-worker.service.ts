@@ -11,6 +11,7 @@ import {
   WORKER_HEALTH_SHUTDOWN_COORDINATOR,
   type WorkerShutdownCoordinatorLike,
 } from './health.service.js';
+import { WorkerMetricsService } from './metrics/metrics.service.js';
 
 @Injectable()
 export class PickupWorkerService {
@@ -22,6 +23,7 @@ export class PickupWorkerService {
     @Optional()
     @Inject(WORKER_HEALTH_SHUTDOWN_COORDINATOR)
     private readonly shutdown?: WorkerShutdownCoordinatorLike,
+    @Optional() private readonly metrics?: WorkerMetricsService,
   ) {
     this.logger = logger ?? createWorkerStructuredLogger();
   }
@@ -31,6 +33,7 @@ export class PickupWorkerService {
   async cleanupExpiredSessions() {
     const release = this.shutdown?.registerInFlight?.();
     if (this.shutdown?.registerInFlight && !release) {
+      this.metrics?.recordWorkerRun('pickup_session_cleanup', 'skipped');
       this.logger.debug(
         'worker.pickup.skipped',
         workerLogFields('worker.pickup.skipped', {
@@ -60,7 +63,9 @@ export class PickupWorkerService {
           }),
         );
       }
+      this.metrics?.recordWorkerRun('pickup_session_cleanup', 'success');
     } catch {
+      this.metrics?.recordWorkerRun('pickup_session_cleanup', 'failure');
       this.logger.error(
         'worker.pickup.cleanup_failed',
         workerLogFields('worker.pickup.cleanup_failed', {

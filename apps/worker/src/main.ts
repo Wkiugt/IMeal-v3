@@ -13,6 +13,7 @@ import {
 import type { StructuredLogger } from '@imeal/observability';
 import { HealthService } from './health.service.js';
 import { validateWorkerEnvironment } from './otp-delivery-worker.service.js';
+import { WorkerMetricsService } from './metrics/metrics.service.js';
 function nestLoggerAdapter(logger: StructuredLogger): LoggerService {
   const fields = (event: string) => ({
     service: 'worker' as const,
@@ -33,6 +34,10 @@ async function bootstrap() {
   validateWorkerEnvironment();
   const app = await NestFactory.create(AppModule);
   const logger = app.get<StructuredLogger>(WORKER_STRUCTURED_LOGGER);
+  const metrics = app.get(WorkerMetricsService);
+  if (metrics.configureWorkerApplicationMetadataFromEnvironment()) {
+    metrics.publishWorkerApplicationSnapshot();
+  }
   app.useLogger(nestLoggerAdapter(logger));
   const coordinator = app.get(ShutdownCoordinator);
   let resolveListenReady!: () => void;
