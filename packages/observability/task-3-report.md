@@ -35,7 +35,7 @@ Task 3 instruments the API's existing request, OTP verification, and pickup conf
 ## Review remediation
 
 - HTTP metrics now fail closed when method or status is outside the exact contract enums. Unsupported values produce no metric and are never relabeled as `OPTIONS`, `200`, `400`, or `500`; missing response status is also skipped. Approved statuses, including shutdown `503`, retain exactly-once count and duration behavior.
-- API application transport is a structured `MetricSourceSnapshot` boundary. `MetricSampleEnvelope.value` now models histograms as cumulative `buckets`, `sum`, and `count`; registry validation and serialization preserve the exact shape. `MetricRegistry.createApplicationSnapshot` emits only recorded `api_application` series with caller-supplied observed time, freshness, evidence, and digest metadata. Missing metadata, absent sinks, or rejected sinks return `collector_failure`; no OpenMetrics string is used as transport.
+- API application transport is a structured `MetricSourceSnapshot` boundary. `MetricSampleEnvelope.value` now models histograms as cumulative `buckets`, `sum`, and `count`; registry validation and serialization preserve the exact shape. `MetricRegistry.createApplicationSnapshot` emits only recorded series for the requested application source with caller-supplied observed time, freshness, evidence, and digest metadata. Missing metadata, empty registries, absent sinks, or rejected sinks return `collector_failure`; no OpenMetrics string is used as transport.
 - OTP verification records only business/dependency failures. `AuthController` records success only after session creation and records `dependency_failure` when session creation rejects; validation and request initiation are not counted.
 
 ## Fresh verification
@@ -48,3 +48,18 @@ Task 3 instruments the API's existing request, OTP verification, and pickup conf
 - Nest module smoke check — **PASS**; `ApiMetricsService` resolves as one shared instance in `AuthController`, `OtpService`, and `PickupService`.
 
 The structured transport has no broker, public endpoint, authoritative metric producer, credentials, backfill, or fallback-zero path.
+
+## Final review remediation
+
+- `MetricRegistry.createApplicationSnapshot(source, metadata)` now validates strict application metadata before selecting any local series, including empty registries. The shared validator enforces canonical timestamps, exact application source identity, release/contract revision/digest formats, common evidence, row-bound evidence keys, identity matching, freshness, and sensitive-text rejection.
+- Snapshot construction is source-generic for `api_application` and `worker_application`; the API adapter only owns its sink method and forwards the shared structured snapshot boundary.
+- Non-fresh zero replacement detection recognizes scalar zero and all-zero structured histograms (`count`, `sum`, and every cumulative bucket), while fresh zero histograms remain valid.
+- `auth.controller.spec.ts` now imports the `SessionService` type explicitly.
+
+## Final fresh verification
+
+- `yarn workspace @imeal/observability test` — **PASS**; 3 files, 75 tests.
+- `yarn workspace @imeal/observability build` — **PASS**.
+- `yarn workspace @imeal/api test --run src/common/http-logging.interceptor.spec.ts src/common/metrics.service.spec.ts src/common/api-metrics-source.spec.ts src/auth/otp.service.spec.ts src/auth/auth.controller.spec.ts src/pickup/pickup.service.spec.ts` — **PASS**; 6 files, 85 tests.
+- `yarn workspace @imeal/api test --run src/common/http-logging.interceptor.spec.ts src/auth/otp.service.spec.ts src/pickup/pickup.service.spec.ts` — **PASS**; 3 files, 71 tests.
+- `yarn workspace @imeal/api build` — **PASS**.

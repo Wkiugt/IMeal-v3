@@ -274,7 +274,8 @@ describe('MetricRegistry', () => {
       0.25,
     );
 
-    const snapshot = registry.createApplicationSnapshot({
+    const snapshot = registry.createApplicationSnapshot('api_application', {
+      source: 'api_application',
       observedAt,
       freshness: 'fresh',
       evidence: {
@@ -308,6 +309,36 @@ describe('MetricRegistry', () => {
       sum: 0.25,
       count: 1,
   });
+  });
+  it('constructs worker application snapshots through the same boundary', () => {
+    const registry = new MetricRegistry();
+    registry.increment('imeal_worker_runs_total', {
+      job: 'otp_delivery',
+      status: 'success',
+    });
+    const snapshot = registry.createApplicationSnapshot('worker_application', {
+      source: 'worker_application',
+      observedAt,
+      freshness: 'fresh',
+      evidence: {
+        release: 'release-test',
+        source: 'worker_application',
+        observedAt,
+        contractRevision: '2026-09-30',
+        freshness: 'fresh',
+        sha256Digest: digest,
+        jobTaxonomyRevision: 'job-taxonomy-v1',
+      },
+    });
+
+    expect(snapshot.source).toBe('worker_application');
+    expect(snapshot.samples).toEqual([
+      expect.objectContaining({
+        metricName: 'imeal_worker_runs_total',
+        source: 'worker_application',
+        value: 1,
+      }),
+    ]);
   });
 
   it('serializes structured histogram source buckets, sum, and count exactly', () => {
@@ -472,5 +503,50 @@ describe('MetricRegistry', () => {
         samples: [sample('imeal_postgres_disk_usage_ratio', 'stale', 0)],
       }),
     ).toThrow();
+    const histogramRegistry = new MetricRegistry();
+    const priorHistogram = sample(
+      'imeal_http_request_duration_seconds_bucket',
+      'fresh',
+      0.25,
+    );
+    histogramRegistry.replaceSourceSnapshot({
+      source: 'api_application',
+      samples: [priorHistogram],
+    });
+    const histogramValue = priorHistogram.value;
+    const histogramZero = {
+      ...priorHistogram,
+      freshness: 'stale' as const,
+      evidence: { ...priorHistogram.evidence, freshness: 'stale' as const },
+      value: {
+        buckets:
+          typeof histogramValue === 'number'
+            ? []
+            : histogramValue.buckets.map(() => 0),
+        sum: 0,
+        count: 0,
+      },
+    };
+    expect(() =>
+      histogramRegistry.replaceSourceSnapshot({
+        source: 'api_application',
+        samples: [histogramZero],
+      }),
+    ).toThrow();
+    expect(() =>
+      histogramRegistry.replaceSourceSnapshot({
+        source: 'api_application',
+        samples: [
+          {
+            ...histogramZero,
+            freshness: 'fresh' as const,
+            evidence: {
+              ...histogramZero.evidence,
+              freshness: 'fresh' as const,
+            },
+          },
+        ],
+      }),
+    ).not.toThrow();
   });
 });

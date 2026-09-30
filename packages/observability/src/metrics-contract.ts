@@ -780,6 +780,12 @@ export interface MetricEvidenceMetadata {
   readonly deduplicationWindow?: string;
   readonly reference?: string;
 }
+export interface MetricSnapshotMetadata {
+  readonly source: MetricSourceIdentity;
+  readonly observedAt: string;
+  readonly freshness: MetricFreshness;
+  readonly evidence: MetricEvidenceMetadata;
+}
 
 export interface MetricHistogramValue {
   readonly buckets: readonly number[];
@@ -1108,6 +1114,129 @@ function requireEvidenceBindingValue(
       }
       return;
   }
+}
+const SNAPSHOT_METADATA_KEYS: Record<string, true> = {
+  source: true,
+  observedAt: true,
+  freshness: true,
+  evidence: true,
+};
+
+const REQUIRED_SNAPSHOT_EVIDENCE: readonly MetricEvidenceBinding[] = [
+  'release',
+  'source',
+  'observedAt',
+  'contractRevision',
+  'freshness',
+  'sha256Digest',
+];
+
+export function validateMetricSnapshotMetadata(
+  value: unknown,
+  expectedSource?: MetricSourceIdentity,
+): MetricSnapshotMetadata {
+  if (!isRecord(value)) {
+    throw new Error('Metric snapshot metadata must be an object');
+  }
+  for (const key of Object.keys(value)) {
+    if (SNAPSHOT_METADATA_KEYS[key] !== true) {
+      throw new Error(`Metric snapshot metadata field ${key} is not allowlisted`);
+    }
+  }
+
+  const source = value.source;
+  requireSafeString(source, 'source');
+  if (
+    !METRIC_CONTRACT.some(
+      (row) =>
+        row.sourceKind === 'application' && row.sourceIdentity === source,
+    )
+  ) {
+    throw new Error('Metric snapshot source identity is not application-owned');
+  }
+  const sourceIdentity = source as MetricSourceIdentity;
+  if (
+    expectedSource !== undefined &&
+    sourceIdentity !== expectedSource
+  ) {
+    throw new Error('Metric snapshot source identity does not match request');
+  }
+
+  const observedAt = value.observedAt;
+  requireCanonicalTimestamp(observedAt, 'observedAt');
+  const freshness = value.freshness;
+  if (!SAMPLE_FRESHNESS_STATES.includes(freshness as MetricFreshness)) {
+    throw new Error('Metric snapshot freshness state is not allowlisted');
+  }
+  const evidenceValue = value.evidence;
+  if (!isRecord(evidenceValue)) {
+    throw new Error('Metric snapshot evidence is required');
+  }
+
+  const rows = METRIC_CONTRACT.filter(
+    (row) =>
+      row.sourceKind === 'application' && row.sourceIdentity === source,
+  );
+  const bindingRows = new Map<MetricEvidenceBinding, MetricContractRow>();
+  for (const row of rows) {
+    for (const binding of row.evidence) {
+      if (!bindingRows.has(binding)) bindingRows.set(binding, row);
+    }
+  }
+
+  for (const key of Object.keys(evidenceValue)) {
+    if (key === 'reference') continue;
+    const row = bindingRows.get(key as MetricEvidenceBinding);
+    if (!row) {
+      throw new Error(`Metric snapshot evidence.${key} is not allowlisted`);
+    }
+    const entry = evidenceValue[key];
+    requireSafeString(entry, `evidence.${key}`);
+    requireEvidenceBindingValue(
+      key as MetricEvidenceBinding,
+      entry,
+      row,
+      `evidence.${key}`,
+    );
+  }
+  for (const binding of REQUIRED_SNAPSHOT_EVIDENCE) {
+    const row = bindingRows.get(binding);
+    if (!row) {
+      throw new Error(`Metric snapshot binding ${binding} is not defined`);
+    }
+    const entry = evidenceValue[binding];
+    requireSafeString(entry, `evidence.${binding}`);
+    requireEvidenceBindingValue(
+      binding,
+      entry,
+      row,
+      `evidence.${binding}`,
+    );
+  }
+  if (evidenceValue.reference !== undefined) {
+    requireSafeString(evidenceValue.reference, 'evidence.reference');
+    if (!REFERENCE_PATTERN.test(evidenceValue.reference)) {
+      throw new Error('Metric snapshot evidence.reference is not constrained');
+    }
+  }
+
+  if (
+    evidenceValue.source !== source ||
+    evidenceValue.observedAt !== observedAt ||
+    evidenceValue.freshness !== freshness
+  ) {
+    throw new Error('Metric snapshot evidence identity does not match metadata');
+  }
+
+  const evidence = Object.freeze({
+    ...evidenceValue,
+  }) as unknown as MetricEvidenceMetadata;
+  return Object.freeze({
+    source: sourceIdentity,
+    observedAt,
+    freshness: freshness as MetricFreshness,
+    evidence,
+  });
 }
 
 function validateEvidence(

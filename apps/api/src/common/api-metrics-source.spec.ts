@@ -7,6 +7,7 @@ import {
 } from './api-metrics-source.js';
 
 const metadata: ApplicationSnapshotMetadata = {
+  source: 'api_application',
   observedAt: '2026-09-30T00:00:00.000Z',
   freshness: 'fresh',
   evidence: {
@@ -69,6 +70,13 @@ describe('ApiMetricsSourceAdapter', () => {
     await expect(new ApiMetricsSourceAdapter().flush(metrics)).resolves.toEqual({
       source: 'api_application',
       freshness: 'collector_failure',
+      reason: 'metadata_missing',
+    });
+    await expect(
+      new ApiMetricsSourceAdapter().flush(metrics, metadata),
+    ).resolves.toEqual({
+      source: 'api_application',
+      freshness: 'collector_failure',
       reason: 'sink_unavailable',
     });
     await expect(
@@ -90,6 +98,91 @@ describe('ApiMetricsSourceAdapter', () => {
       source: 'api_application',
       freshness: 'collector_failure',
       reason: 'sink_rejected',
+    });
+  });
+  it('fails closed for malformed metadata before sending to the sink', async () => {
+    const metrics = new ApiMetricsService();
+    metrics.recordAuthAttempt('success');
+    const accept = vi.fn();
+    const adapter = new ApiMetricsSourceAdapter({
+      acceptApiApplicationSnapshot: accept,
+    });
+    const malformed = [
+      ['timestamp', { observedAt: 'not-a-timestamp' }],
+      [
+        'digest',
+        {
+          evidence: {
+            ...metadata.evidence,
+            sha256Digest: 'sha256:not-a-digest',
+          },
+        },
+      ],
+      [
+        'revision',
+        {
+          evidence: {
+            ...metadata.evidence,
+            contractRevision: 'revision-v1',
+          },
+        },
+      ],
+      ['source', { source: 'worker_application' }],
+      ['freshness', { freshness: 'not-fresh' }],
+      [
+        'evidence observedAt',
+        {
+          evidence: {
+            ...metadata.evidence,
+            observedAt: '2026-09-30T00:01:00.000Z',
+          },
+        },
+      ],
+      [
+        'evidence source',
+        {
+          evidence: {
+            ...metadata.evidence,
+            source: 'worker_application',
+          },
+        },
+      ],
+      [
+        'evidence freshness',
+        {
+          evidence: {
+            ...metadata.evidence,
+            freshness: 'stale',
+          },
+        },
+      ],
+    ] as const;
+
+    for (const [, override] of malformed) {
+      await expect(
+        adapter.flush(metrics, {
+          ...metadata,
+          ...override,
+        } as ApplicationSnapshotMetadata),
+      ).resolves.toMatchObject({
+        freshness: 'collector_failure',
+        reason: 'metadata_missing',
+      });
+    }
+    expect(accept).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for an empty API registry', async () => {
+    const adapter = new ApiMetricsSourceAdapter({
+      acceptApiApplicationSnapshot: vi.fn(),
+    });
+
+    await expect(
+      adapter.flush(new ApiMetricsService(), metadata),
+    ).resolves.toEqual({
+      source: 'api_application',
+      freshness: 'collector_failure',
+      reason: 'snapshot_empty',
     });
   });
 });

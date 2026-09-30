@@ -1,7 +1,8 @@
-import type {
-  ApplicationSnapshotMetadata,
-  MetricFreshness,
-  MetricSourceSnapshot,
+import {
+  type ApplicationSnapshotMetadata,
+  type MetricFreshness,
+  type MetricSourceSnapshot,
+  validateMetricSnapshotMetadata,
 } from '@imeal/observability';
 import type { ApiMetricsService } from './metrics.service.js';
 
@@ -11,7 +12,8 @@ type ApiMetricsFailureReason =
   | 'sink_unavailable'
   | 'sink_rejected'
   | 'metadata_missing'
-  | 'snapshot_invalid';
+  | 'snapshot_invalid'
+  | 'snapshot_empty';
 
 export interface ApiMetricsSourceSnapshot {
   readonly source: typeof API_METRICS_SOURCE;
@@ -26,36 +28,6 @@ export interface WorkerMetricsAggregator {
   ): Promise<void> | void;
 }
 
-const FRESHNESS_STATES = new Set<MetricFreshness>([
-  'fresh',
-  'stale',
-  'unknown',
-  'collector_failure',
-]);
-
-function hasRequiredMetadata(
-  metadata: ApplicationSnapshotMetadata | undefined,
-): metadata is ApplicationSnapshotMetadata {
-  if (!metadata || typeof metadata !== 'object') return false;
-  if (
-    typeof metadata.observedAt !== 'string' ||
-    !FRESHNESS_STATES.has(metadata.freshness) ||
-    !metadata.evidence ||
-    typeof metadata.evidence !== 'object'
-  ) {
-    return false;
-  }
-  const evidence = metadata.evidence as unknown as Record<string, unknown>;
-  return [
-    'release',
-    'source',
-    'observedAt',
-    'contractRevision',
-    'freshness',
-    'sha256Digest',
-  ].every((key) => typeof evidence[key] === 'string');
-}
-
 export class ApiMetricsSourceAdapter {
   constructor(private readonly aggregator?: WorkerMetricsAggregator) {}
 
@@ -63,14 +35,13 @@ export class ApiMetricsSourceAdapter {
     metrics: ApiMetricsService,
     metadata?: ApplicationSnapshotMetadata,
   ): Promise<ApiMetricsSourceSnapshot> {
-    if (!this.aggregator) {
-      return {
-        source: API_METRICS_SOURCE,
-        freshness: 'collector_failure',
-        reason: 'sink_unavailable',
-      };
-    }
-    if (!hasRequiredMetadata(metadata)) {
+    let validatedMetadata: ApplicationSnapshotMetadata;
+    try {
+      validatedMetadata = validateMetricSnapshotMetadata(
+        metadata,
+        API_METRICS_SOURCE,
+      );
+    } catch {
       return {
         source: API_METRICS_SOURCE,
         freshness: 'collector_failure',
@@ -80,7 +51,7 @@ export class ApiMetricsSourceAdapter {
 
     let snapshot: MetricSourceSnapshot;
     try {
-      snapshot = metrics.createApplicationSnapshot(metadata);
+      snapshot = metrics.createApplicationSnapshot(validatedMetadata);
     } catch {
       return {
         source: API_METRICS_SOURCE,
@@ -88,12 +59,26 @@ export class ApiMetricsSourceAdapter {
         reason: 'snapshot_invalid',
       };
     }
+    if (snapshot.samples.length === 0) {
+      return {
+        source: API_METRICS_SOURCE,
+        freshness: 'collector_failure',
+        reason: 'snapshot_empty',
+      };
+    }
+    if (!this.aggregator) {
+      return {
+        source: API_METRICS_SOURCE,
+        freshness: 'collector_failure',
+        reason: 'sink_unavailable',
+      };
+    }
 
     try {
       await this.aggregator.acceptApiApplicationSnapshot(snapshot);
       return {
         source: API_METRICS_SOURCE,
-        freshness: metadata.freshness,
+        freshness: validatedMetadata.freshness,
         snapshot,
       };
     } catch {

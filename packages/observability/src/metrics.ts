@@ -2,13 +2,13 @@ import {
   containsMetricSensitiveText,
   METRIC_CONTRACT,
   type MetricContractRow,
-  type MetricEvidenceMetadata,
-  type MetricFreshness,
   type MetricHistogramValue,
   type MetricSampleEnvelope,
+  type MetricSnapshotMetadata,
   type MetricSourceIdentity,
   type MetricUnit,
   validateMetricSampleEnvelope,
+  validateMetricSnapshotMetadata,
 } from './metrics-contract.js';
 
 type MetricLabels = Readonly<Record<string, string>>;
@@ -17,11 +17,7 @@ export interface MetricSourceSnapshot {
   readonly source: MetricSourceIdentity;
   readonly samples: readonly MetricSampleEnvelope[];
 }
-export interface ApplicationSnapshotMetadata {
-  readonly observedAt: string;
-  readonly freshness: MetricFreshness;
-  readonly evidence: MetricEvidenceMetadata;
-}
+export type ApplicationSnapshotMetadata = MetricSnapshotMetadata;
 
 type CounterSeries = {
   readonly type: 'counter';
@@ -105,6 +101,16 @@ function sampleValuesEqual(
     first.count === second.count &&
     first.buckets.length === second.buckets.length &&
     first.buckets.every((bucket, index) => bucket === second.buckets[index])
+  );
+}
+function isZeroMetricSampleValue(
+  value: MetricSampleEnvelope['value'],
+): boolean {
+  if (typeof value === 'number') return value === 0;
+  return (
+    value.count === 0 &&
+    value.sum === 0 &&
+    value.buckets.every((bucket) => bucket === 0)
   );
 }
 
@@ -382,9 +388,10 @@ export class MetricRegistry {
     series.count += 1;
   }
   createApplicationSnapshot(
+    source: MetricSourceIdentity,
     metadata: ApplicationSnapshotMetadata,
   ): MetricSourceSnapshot {
-    const source: MetricSourceIdentity = 'api_application';
+    const validatedMetadata = validateMetricSnapshotMetadata(metadata, source);
     const samples: MetricSampleEnvelope[] = [];
     for (const row of METRIC_CONTRACT) {
       if (row.sourceIdentity !== source) continue;
@@ -402,15 +409,17 @@ export class MetricRegistry {
         const evidenceValues = Object.fromEntries(
           row.evidence.map((binding) => [
             binding,
-            (metadata.evidence as unknown as Record<string, string>)[binding],
+            (validatedMetadata.evidence as unknown as Record<string, string>)[
+              binding
+            ],
           ]),
         ) as Record<string, string>;
         const evidence =
-          metadata.evidence.reference === undefined
+          validatedMetadata.evidence.reference === undefined
             ? evidenceValues
             : {
                 ...evidenceValues,
-                reference: metadata.evidence.reference,
+                reference: validatedMetadata.evidence.reference,
               };
         samples.push(
           validateMetricSampleEnvelope({
@@ -419,9 +428,9 @@ export class MetricRegistry {
             unit: row.unit,
             labels: series.labels,
             value,
-            observedAt: metadata.observedAt,
+            observedAt: validatedMetadata.observedAt,
             source,
-            freshness: metadata.freshness,
+            freshness: validatedMetadata.freshness,
             evidence,
           }),
         );
@@ -456,7 +465,7 @@ export class MetricRegistry {
         if (
           previous &&
           sample.freshness !== 'fresh' &&
-          sample.value === 0 &&
+          isZeroMetricSampleValue(sample.value) &&
           !samplesEqual(previous, sample)
         ) {
           throw new Error(

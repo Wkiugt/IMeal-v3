@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AuthController } from './auth.controller.js';
 import type { OtpService } from './otp.service.js';
 import type { ApiMetricsService } from '../common/metrics.service.js';
+import type { SessionService } from './session.service.js';
 
 const REQUEST_ID = '550e8400-e29b-41d4-a716-446655440000';
 function createController() {

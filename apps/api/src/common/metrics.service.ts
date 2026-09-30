@@ -161,7 +161,10 @@ export class ApiMetricsService {
   createApplicationSnapshot(
     metadata: ApplicationSnapshotMetadata,
   ): MetricSourceSnapshot {
-    return this.registry.createApplicationSnapshot(metadata);
+    return this.registry.createApplicationSnapshot(
+      metadata.source,
+      metadata,
+    );
   }
 
   private withoutThrowing(operation: () => void): void {
