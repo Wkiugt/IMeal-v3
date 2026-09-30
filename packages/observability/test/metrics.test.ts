@@ -246,6 +246,31 @@ describe('MetricRegistry', () => {
     );
   });
 
+  it('omits non-fresh source samples from numeric output but renders fresh samples', () => {
+    const registry = new MetricRegistry();
+    registry.replaceSourceSnapshot({
+      source: 'postgres_authoritative',
+      samples: [
+        sample('imeal_postgres_disk_usage_ratio', 'stale', 0.4),
+        sample('imeal_postgres_transaction_errors_total', 'unknown', 0),
+        sample('imeal_postgres_lock_waits_total', 'collector_failure', 1),
+      ],
+    });
+    const diagnosticOutput = registry.serialize();
+    expect(diagnosticOutput).toBe('');
+    expect(registry.getSourceSnapshot('postgres_authoritative')).toHaveLength(
+      3,
+    );
+
+    registry.replaceSourceSnapshot({
+      source: 'postgres_authoritative',
+      samples: [sample('imeal_postgres_disk_usage_ratio', 'fresh', 0.5)],
+    });
+    expect(registry.serialize()).toContain(
+      'imeal_postgres_disk_usage_ratio 0.5',
+    );
+  });
+
   it('rejects conflicting duplicate samples and zero replacement of a non-fresh source', () => {
     const registry = new MetricRegistry();
     const stale = sample('imeal_postgres_disk_usage_ratio', 'stale', 0.4);
@@ -264,10 +289,21 @@ describe('MetricRegistry', () => {
         source: 'postgres_authoritative',
         samples: [sample('imeal_postgres_disk_usage_ratio', 'fresh', 0)],
       }),
-    ).toThrow();
+    ).not.toThrow();
     expect(registry.getSourceSnapshot('postgres_authoritative')).toEqual([
-      stale,
+      sample('imeal_postgres_disk_usage_ratio', 'fresh', 0),
     ]);
+    const capacityRegistry = new MetricRegistry();
+    capacityRegistry.replaceSourceSnapshot({
+      source: 'object_storage_authoritative',
+      samples: [sample('imeal_object_storage_capacity_bytes', 'stale', 100)],
+    });
+    expect(() =>
+      capacityRegistry.replaceSourceSnapshot({
+        source: 'object_storage_authoritative',
+        samples: [sample('imeal_object_storage_capacity_bytes', 'fresh', 0)],
+      }),
+    ).not.toThrow();
     const freshRegistry = new MetricRegistry();
     freshRegistry.replaceSourceSnapshot({
       source: 'postgres_authoritative',

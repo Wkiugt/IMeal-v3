@@ -63,3 +63,13 @@ Fresh verification after Task 2:
 
 - `yarn workspace @imeal/observability test` — **PASS**; 3 test files, 66 tests.
 - `yarn workspace @imeal/observability build` — **PASS**; TypeScript exited 0 with no output.
+
+## Task 2 freshness and zero-handling correction
+
+- Source snapshots retain all freshness states for diagnostics, but `serialize()` now emits numeric OpenMetrics rows only for `fresh` samples; stale, unknown, and collector-failure values cannot appear as metrics or fallback zeros.
+- Fresh observed zero values remain valid, including M-18 capacity, and may replace prior non-fresh samples. Incoming non-fresh zero values are still rejected when they would hide a prior source value.
+
+Fresh verification after this correction:
+
+- `yarn workspace @imeal/observability test` — **PASS**; 3 test files, 67 tests.
+- `yarn workspace @imeal/observability build` — **PASS**; TypeScript exited 0 with no output.

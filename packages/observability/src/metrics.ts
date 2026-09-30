@@ -410,8 +410,8 @@ export class MetricRegistry {
         const previous = prior.get(key);
         if (
           previous &&
+          sample.freshness !== 'fresh' &&
           sample.value === 0 &&
-          (previous.freshness !== 'fresh' || sample.freshness !== 'fresh') &&
           !samplesEqual(previous, sample)
         ) {
           throw new Error(
@@ -461,7 +461,8 @@ export class MetricRegistry {
       const local = this.metrics.get(row.name);
       const localSeries = local ? [...local.series.values()] : [];
       const sourceSamples = externalSamples.filter(
-        (sample) => sample.metricName === row.name,
+        (sample) =>
+          sample.metricName === row.name && sample.freshness === 'fresh',
       );
       if (localSeries.length === 0 && sourceSamples.length === 0) continue;
       lines.push(`# HELP ${row.familyName} ${row.source}`);
