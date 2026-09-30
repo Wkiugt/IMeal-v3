@@ -91,6 +91,13 @@ export type MetricFailureMapping = Readonly<{
   invalid: MetricFreshness;
   unavailable: MetricFreshness;
 }>;
+export type MetricValueSemantics = Readonly<{
+  nonnegative: true;
+  minimum?: number;
+  maximum?: number;
+  negativeHandling?: 'reject' | 'clamp_to_zero';
+  futureHandling?: 'reject';
+}>;
 
 export type MetricEvidenceBinding =
   | 'release'
@@ -102,14 +109,20 @@ export type MetricEvidenceBinding =
   | 'routeTaxonomyRevision'
   | 'bucketRevision'
   | 'resultTaxonomyRevision'
+  | 'idempotencyBranchRevision'
   | 'retryPolicyRevision'
   | 'failureTaxonomyRevision'
+  | 'jobTaxonomyRevision'
   | 'querySchemaRevision'
+  | 'queryExporterBinding'
+  | 'sourceBinding'
   | 'scheduleRevision'
   | 'sourceKind'
   | 'targetFingerprint'
+  | 'capacitySourceBinding'
   | 'operationTaxonomyRevision'
   | 'manifestDigest'
+  | 'manifestCompletionTimestamp'
   | 'verificationResult'
   | 'rehearsalDigest'
   | 'securityTaxonomyRevision'
@@ -124,10 +137,11 @@ export interface MetricContractRow {
   readonly type: MetricType;
   readonly unit: MetricUnit;
   readonly labels: MetricLabels;
-  /** Product of finite label enum sizes, or zero for an unlabelled metric. */
+  /** Label-combination cardinality budget; zero means the metric has no labels. */
   readonly cardinalityBudget: number;
   readonly buckets: readonly number[];
   readonly histogramSeriesSuffixes: readonly string[];
+  readonly valueSemantics: MetricValueSemantics;
   readonly sourceKind: MetricSourceKind;
   readonly source: string;
   readonly producer: string;
@@ -249,9 +263,13 @@ function cardinalityBudget(value: MetricLabels): number {
 function defineRow(
   value: Omit<
     MetricContractRow,
-    'familyName' | 'cardinalityBudget' | 'histogramSeriesSuffixes'
+    | 'familyName'
+    | 'cardinalityBudget'
+    | 'histogramSeriesSuffixes'
+    | 'valueSemantics'
   > & {
     readonly familyName?: string;
+    readonly valueSemantics?: MetricValueSemantics;
   },
 ): MetricContractRow {
   const rowLabels = labels(value.labels as Record<string, readonly string[]>);
@@ -269,8 +287,17 @@ function defineRow(
     histogramSeriesSuffixes: Object.freeze(
       value.type === 'histogram' ? [...HISTOGRAM_SERIES_SUFFIXES] : [],
     ),
+    valueSemantics: Object.freeze({
+      ...DEFAULT_VALUE_SEMANTICS,
+      ...value.valueSemantics,
+    }),
+    failureMapping: Object.freeze({ ...value.failureMapping }),
+    evidence: Object.freeze([...value.evidence]),
   });
 }
+const DEFAULT_VALUE_SEMANTICS: MetricValueSemantics = Object.freeze({
+  nonnegative: true,
+});
 
 const APPLICATION_ROW_DEFAULTS = {
   sourceKind: 'application' as const,
@@ -427,7 +454,11 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
     producer: 'ApiApplicationMetricsAdapter',
     resetBehavior:
       'Reset on API process restart; successful exact replay is excluded.',
-    evidence: [...COMMON_EVIDENCE, 'resultTaxonomyRevision'],
+    evidence: [
+      ...COMMON_EVIDENCE,
+      'resultTaxonomyRevision',
+      'idempotencyBranchRevision',
+    ],
     ...APPLICATION_ROW_DEFAULTS,
   }),
   defineRow({
@@ -441,7 +472,7 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
     producer: 'WorkerApplicationMetricsAdapter',
     resetBehavior:
       'Reset on worker process restart; count one terminal status per invocation.',
-    evidence: [...COMMON_EVIDENCE, 'resultTaxonomyRevision'],
+    evidence: [...COMMON_EVIDENCE, 'jobTaxonomyRevision'],
     ...APPLICATION_ROW_DEFAULTS,
   }),
   defineRow({
@@ -470,6 +501,10 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
     unit: 'seconds',
     labels: { job: WORKER_JOBS },
     buckets: [],
+    valueSemantics: {
+      nonnegative: true,
+      negativeHandling: 'clamp_to_zero',
+    },
     source: 'Real job-run completion combined with checked-in cron schedules',
     producer: 'WorkerApplicationMetricsAdapter',
     resetBehavior:
@@ -489,12 +524,19 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
     unit: 'ratio',
     labels: { pool: ['pgbouncer_client', 'postgres_backend'] },
     buckets: [],
+    valueSemantics: { nonnegative: true, minimum: 0, maximum: 1 },
     source:
       'Authoritative PostgreSQL/PgBouncer exporter or least-privilege query',
     producer: 'PostgresAuthoritativeMetricsAdapter',
     resetBehavior:
       'Replace with newest valid source value; source reset has no synthetic correction.',
-    evidence: [...COMMON_EVIDENCE, 'sourceKind', 'targetFingerprint'],
+    evidence: [
+      ...COMMON_EVIDENCE,
+      'sourceKind',
+      'targetFingerprint',
+      'queryExporterBinding',
+      'sourceBinding',
+    ],
     ...AUTHORITATIVE_ROW_DEFAULTS,
   }),
   defineRow({
@@ -513,6 +555,8 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
       'sourceKind',
       'targetFingerprint',
       'querySchemaRevision',
+      'queryExporterBinding',
+      'sourceBinding',
     ],
     ...AUTHORITATIVE_ROW_DEFAULTS,
   }),
@@ -532,6 +576,8 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
       'sourceKind',
       'targetFingerprint',
       'querySchemaRevision',
+      'queryExporterBinding',
+      'sourceBinding',
     ],
     ...AUTHORITATIVE_ROW_DEFAULTS,
   }),
@@ -542,6 +588,7 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
     unit: 'ratio',
     labels: {},
     buckets: [],
+    valueSemantics: { nonnegative: true, minimum: 0, maximum: 1 },
     source: 'Authoritative PostgreSQL data-volume/filesystem disk source',
     producer: 'PostgresAuthoritativeMetricsAdapter',
     resetBehavior:
@@ -551,6 +598,8 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
       'sourceKind',
       'targetFingerprint',
       'querySchemaRevision',
+      'queryExporterBinding',
+      'sourceBinding',
     ],
     ...AUTHORITATIVE_ROW_DEFAULTS,
   }),
@@ -565,7 +614,13 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
     producer: 'ObjectStorageAuthoritativeMetricsAdapter',
     resetBehavior:
       'Replace with newest valid capacity; zero is a real observed value.',
-    evidence: [...COMMON_EVIDENCE, 'sourceKind', 'targetFingerprint'],
+    evidence: [
+      ...COMMON_EVIDENCE,
+      'sourceKind',
+      'targetFingerprint',
+      'capacitySourceBinding',
+      'sourceBinding',
+    ],
     ...AUTHORITATIVE_ROW_DEFAULTS,
   }),
   defineRow({
@@ -584,6 +639,7 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
       'sourceKind',
       'targetFingerprint',
       'operationTaxonomyRevision',
+      'sourceBinding',
     ],
     ...AUTHORITATIVE_ROW_DEFAULTS,
   }),
@@ -594,11 +650,17 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
     unit: 'seconds',
     labels: {},
     buckets: [],
+    valueSemantics: { nonnegative: true, futureHandling: 'reject' },
     source: 'Encrypted approved recoverable-backup manifest evidence pipeline',
     producer: 'BackupRestoreEvidenceAdapter',
     resetBehavior:
       'Replace with manifest-derived age; missing evidence is unknown, never zero.',
-    evidence: [...COMMON_EVIDENCE, 'manifestDigest', 'targetFingerprint'],
+    evidence: [
+      ...COMMON_EVIDENCE,
+      'manifestDigest',
+      'manifestCompletionTimestamp',
+      'targetFingerprint',
+    ],
     ...AUTHORITATIVE_ROW_DEFAULTS,
     failureMapping: MISSING_EVIDENCE_FAILURE_MAPPING,
   }),
@@ -616,6 +678,7 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
     evidence: [
       ...COMMON_EVIDENCE,
       'manifestDigest',
+      'manifestCompletionTimestamp',
       'targetFingerprint',
       'verificationResult',
     ],
@@ -636,6 +699,7 @@ export const METRIC_CONTRACT: readonly MetricContractRow[] = Object.freeze([
     evidence: [
       ...COMMON_EVIDENCE,
       'rehearsalDigest',
+      'manifestCompletionTimestamp',
       'targetFingerprint',
       'verificationResult',
     ],
@@ -671,9 +735,29 @@ export interface MetricEvidenceMetadata {
   readonly observedAt: string;
   readonly contractRevision: string;
   readonly freshness: MetricFreshness;
-  readonly digest: string;
+  readonly sha256Digest: string;
+  readonly routeTaxonomyRevision?: string;
+  readonly bucketRevision?: string;
+  readonly resultTaxonomyRevision?: string;
+  readonly idempotencyBranchRevision?: string;
+  readonly retryPolicyRevision?: string;
+  readonly failureTaxonomyRevision?: string;
+  readonly jobTaxonomyRevision?: string;
+  readonly querySchemaRevision?: string;
+  readonly queryExporterBinding?: string;
+  readonly sourceBinding?: string;
+  readonly scheduleRevision?: string;
+  readonly sourceKind?: string;
+  readonly targetFingerprint?: string;
+  readonly capacitySourceBinding?: string;
+  readonly operationTaxonomyRevision?: string;
+  readonly manifestDigest?: string;
+  readonly manifestCompletionTimestamp?: string;
+  readonly verificationResult?: string;
+  readonly rehearsalDigest?: string;
+  readonly securityTaxonomyRevision?: string;
+  readonly deduplicationWindow?: string;
   readonly reference?: string;
-  readonly [key: string]: string | undefined;
 }
 
 export interface MetricSampleEnvelope {
@@ -699,6 +783,51 @@ const METRIC_SECRET_PATTERNS: readonly RegExp[] = [
   /\b-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+\b/,
   /(?:request|user|employee|location|session|provider|payload|body|message|target)[-_ ]?(?:id|code|name|url)?\s*[:=]\s*\S+/i,
 ];
+
+const SAMPLE_ENVELOPE_KEYS: Record<string, true> = {
+  metricName: true,
+  type: true,
+  unit: true,
+  labels: true,
+  value: true,
+  observedAt: true,
+  source: true,
+  freshness: true,
+  evidence: true,
+};
+
+const EVIDENCE_KEY_ALLOWLIST: Record<string, true> = {
+  release: true,
+  source: true,
+  observedAt: true,
+  contractRevision: true,
+  freshness: true,
+  sha256Digest: true,
+  routeTaxonomyRevision: true,
+  bucketRevision: true,
+  resultTaxonomyRevision: true,
+  idempotencyBranchRevision: true,
+  retryPolicyRevision: true,
+  failureTaxonomyRevision: true,
+  jobTaxonomyRevision: true,
+  querySchemaRevision: true,
+  queryExporterBinding: true,
+  sourceBinding: true,
+  scheduleRevision: true,
+  sourceKind: true,
+  targetFingerprint: true,
+  capacitySourceBinding: true,
+  operationTaxonomyRevision: true,
+  manifestDigest: true,
+  manifestCompletionTimestamp: true,
+  verificationResult: true,
+  rehearsalDigest: true,
+  securityTaxonomyRevision: true,
+  deduplicationWindow: true,
+  reference: true,
+};
+
+const REFERENCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 
 export function containsMetricSensitiveText(value: string): boolean {
   return METRIC_SECRET_PATTERNS.some((pattern) => pattern.test(value));
@@ -749,38 +878,83 @@ function requireSafeString(
 
 function validateEvidence(
   value: unknown,
+  row: MetricContractRow,
   sample: Omit<MetricSampleEnvelope, 'evidence'>,
 ): MetricEvidenceMetadata {
   if (!isRecord(value)) throw new Error('Metric sample evidence is required');
-  requireSafeString(value.release, 'evidence.release');
-  requireSafeString(value.source, 'evidence.source');
-  requireCanonicalTimestamp(value.observedAt, 'evidence.observedAt');
-  requireSafeString(value.contractRevision, 'evidence.contractRevision');
-  requireSafeString(value.freshness, 'evidence.freshness');
-  requireSafeString(value.digest, 'evidence.digest');
-  if (!/^sha256:[a-f0-9]{64}$/.test(value.digest)) {
-    throw new Error('Metric sample evidence.digest must be a SHA-256 digest');
-  }
-  for (const [key, entry] of Object.entries(value)) {
-    if (typeof entry === 'string') requireSafeString(entry, `evidence.${key}`);
-    else if (entry !== undefined) {
-      throw new Error(`Metric sample evidence.${key} must be a string`);
+  for (const key of Object.keys(value)) {
+    if (
+      EVIDENCE_KEY_ALLOWLIST[key] !== true ||
+      (key !== 'reference' &&
+        !row.evidence.includes(key as MetricEvidenceBinding))
+    ) {
+      throw new Error(`Metric sample evidence.${key} is not allowlisted`);
     }
   }
+  const sanitizedEvidence: Record<string, string> = {};
+
+  for (const binding of row.evidence) {
+    const entry = value[binding];
+    if (binding === 'manifestCompletionTimestamp') {
+      requireCanonicalTimestamp(entry, `evidence.${binding}`);
+    } else {
+      requireSafeString(entry, `evidence.${binding}`);
+    }
+    sanitizedEvidence[binding] = entry;
+  }
+  if (value.reference !== undefined) {
+    requireSafeString(value.reference, 'evidence.reference');
+    if (!REFERENCE_PATTERN.test(value.reference)) {
+      throw new Error('Metric sample evidence.reference is not constrained');
+    }
+    sanitizedEvidence.reference = value.reference;
+  }
+
   if (
-    value.source !== sample.source ||
-    value.observedAt !== sample.observedAt
+    !SAMPLE_FRESHNESS_STATES.includes(
+      sanitizedEvidence.freshness as MetricFreshness,
+    )
+  ) {
+    throw new Error(
+      'Metric sample evidence freshness state is not allowlisted',
+    );
+  }
+  if (!/^sha256:[a-f0-9]{64}$/.test(sanitizedEvidence.sha256Digest)) {
+    throw new Error(
+      'Metric sample evidence.sha256Digest must be a SHA-256 digest',
+    );
+  }
+  if (
+    sanitizedEvidence.source !== sample.source ||
+    sanitizedEvidence.observedAt !== sample.observedAt
   ) {
     throw new Error(
       'Metric sample evidence identity does not match the sample',
     );
   }
-  if (value.freshness !== sample.freshness) {
+  if (
+    sanitizedEvidence.manifestCompletionTimestamp !== undefined &&
+    new Date(sanitizedEvidence.manifestCompletionTimestamp).getTime() >
+      new Date(sample.observedAt).getTime()
+  ) {
+    throw new Error(
+      'Metric sample manifest completion time cannot be in the future',
+    );
+  }
+  if (sanitizedEvidence.freshness !== sample.freshness) {
     throw new Error(
       'Metric sample evidence freshness does not match the sample',
     );
   }
-  return value as MetricEvidenceMetadata;
+
+  const evidenceRecord: Record<string, string> = {};
+  for (const binding of row.evidence) {
+    evidenceRecord[binding] = sanitizedEvidence[binding];
+  }
+  if (sanitizedEvidence.reference !== undefined) {
+    evidenceRecord.reference = sanitizedEvidence.reference;
+  }
+  return evidenceRecord as unknown as MetricEvidenceMetadata;
 }
 
 export function validateMetricSampleEnvelope(
@@ -788,6 +962,11 @@ export function validateMetricSampleEnvelope(
 ): MetricSampleEnvelope {
   if (!isRecord(value))
     throw new Error('Metric sample envelope must be an object');
+  for (const key of Object.keys(value)) {
+    if (SAMPLE_ENVELOPE_KEYS[key] !== true) {
+      throw new Error(`Metric sample field ${key} is not allowlisted`);
+    }
+  }
   const row = METRIC_BY_NAME[String(value.metricName)];
   if (!row)
     throw new Error('Metric sample name is not in the approved contract');
@@ -806,6 +985,7 @@ export function validateMetricSampleEnvelope(
   ) {
     throw new Error('Metric sample labels are not allowlisted');
   }
+  const labels: Record<string, string> = {};
   for (const [key, labelValue] of Object.entries(value.labels)) {
     if (
       typeof labelValue !== 'string' ||
@@ -814,18 +994,48 @@ export function validateMetricSampleEnvelope(
       throw new Error('Metric sample label value is not in its bounded enum');
     }
     rejectSensitiveText(labelValue, `labels.${key}`);
+    labels[key] = labelValue;
   }
   if (typeof value.value !== 'number' || !Number.isFinite(value.value)) {
     throw new Error('Metric sample value must be a finite number');
+  }
+  let sampleValue = value.value;
+  if (row.valueSemantics.nonnegative && sampleValue < 0) {
+    if (row.valueSemantics.negativeHandling === 'clamp_to_zero') {
+      sampleValue = 0;
+    } else {
+      throw new Error('Metric sample value must be nonnegative');
+    }
+  }
+  if (
+    row.valueSemantics.minimum !== undefined &&
+    sampleValue < row.valueSemantics.minimum
+  ) {
+    throw new Error('Metric sample value is below its contract minimum');
+  }
+  if (
+    row.valueSemantics.maximum !== undefined &&
+    sampleValue > row.valueSemantics.maximum
+  ) {
+    throw new Error('Metric sample value is above its contract maximum');
   }
   requireCanonicalTimestamp(value.observedAt, 'observedAt');
   requireSafeString(value.source, 'source');
   if (!SAMPLE_FRESHNESS_STATES.includes(value.freshness as MetricFreshness)) {
     throw new Error('Metric sample freshness state is not allowlisted');
   }
-  const sample = value as Omit<MetricSampleEnvelope, 'evidence'>;
-  const evidence = validateEvidence(value.evidence, sample);
-  return { ...sample, evidence };
+  const sample = {
+    metricName: row.name,
+    type: row.type,
+    unit: row.unit,
+    labels: Object.freeze(labels),
+    value: sampleValue,
+    observedAt: value.observedAt,
+    source: value.source,
+    freshness: value.freshness as MetricFreshness,
+  };
+  const evidence = validateEvidence(value.evidence, row, sample);
+  return Object.freeze({ ...sample, evidence: Object.freeze(evidence) });
 }
 
 export const validateMetricSample = validateMetricSampleEnvelope;
