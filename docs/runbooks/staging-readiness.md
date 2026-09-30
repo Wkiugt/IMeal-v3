@@ -346,13 +346,12 @@ yarn staging:smoke \
   --output "$EVIDENCE_DIR/smoke-infrastructure.json"
 ```
 
-This runner checks HTTP-to-HTTPS redirect, API liveness/readiness, Admin
-`/health`, safe error envelopes, request IDs, and optional authenticated
-`/auth/me`; its business workflow field remains `NOT_RUN`. Operators must
-provide separately reviewed, target-bound PASS artifacts named
-`smoke-auth-rbac.json`, `smoke-business.json`, `smoke-mobile-admin.json`, and
-`smoke-worker.json` for the corresponding identity, business, client, and
-worker paths. Do not turn local test mode into staging evidence.
+This runner checks exactly `https-redirect` (PASS, or SKIP only in explicit local
+test mode), `api-live`, `api-ready`, `admin-health`, and
+`safe-error-envelope`, plus optional `auth-me` when a session token is supplied.
+Every required check must PASS; arbitrary check names and omitted required
+checks are invalid. Its business workflow field remains `NOT_RUN`. Operators
+must provide separately reviewed, target-bound PASS artifacts named
 
 The protected workflow invokes `runRuntimeIntegration` from
 `scripts/staging/runtime-integration.mjs` after deployment and before it records
@@ -369,11 +368,14 @@ Before sign-off, the network owner must prove the approved edge WAF and
 rate-limit policy, trusted-proxy/client-IP handling, TLS certificate and
 redirect, and an alert route that reaches the named on-call destination. Record
 only redacted results in `observability-alert-test.json`: it must bind the
-exact release and target, name an approved source identity with
-`fresh` freshness and a SHA-256 metric snapshot digest, and include an
-explicit acknowledgement, route, destination, and canonical `observedAt`.
-The verifier never creates an acknowledgement; stale, unknown,
-`collector_failure`, missing, conflicting, or unsafe fields fail closed. The
+exact release and target, use `runtime-integration.json` as the approved metric
+snapshot artifact, record that artifact's SHA-256 provenance, and carry a
+`snapshotDigest` equal to `runtime-integration.json.evidence.metricsSnapshotDigest`
+computed from the fetched worker metrics body. It must also name an approved source identity
+with `fresh` freshness and include an explicit acknowledgement, route,
+destination, and canonical `observedAt`.
+The snapshot digest must equal the worker metrics body hash; the verifier never creates an acknowledgement;
+Stale, unknown, `collector_failure`, missing, conflicting, or unsafe fields fail closed.
 alert route is an external prerequisite and there is no repository command
 that can manufacture this evidence. Missing WAF/rate-limit approval or
 missing alert delivery is a NO-GO.
@@ -409,7 +411,9 @@ signoff.json
 `runtime-integration.json` and `staging-smoke.json` are required PASS phase
 artifacts in every evidence bundle. They are checksum inputs and must carry
 the exact release and target bindings. Runtime evidence must show API and worker
-live/readiness HTTP 200 plus internal-only metrics. Staging smoke evidence must
+live/readiness HTTP 200, internal-only metrics, `metricsSnapshotSource:
+worker-internal`, and a SHA-256 `metricsSnapshotDigest` computed from the fetched
+worker metrics body. Staging smoke evidence must
 carry HTTPS origin fields, at least one named PASS check, and a `NOT_RUN`
 business workflow marker. A missing or mismatched field, failed/unknown result,
 missing migration clean marker, or malformed target fingerprint fails closed. The

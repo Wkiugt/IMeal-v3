@@ -5,9 +5,11 @@
 Task 7 hardens the exact 23-name staging metrics contract, bounded Prometheus
 labels/status selectors, worker job completeness, fail-closed runtime parsing,
 strict phase-specific PASS evidence, required runtime/smoke evidence, and
-target-bound observability alert evidence. The verifier requires the alert
-snapshot digest to equal the SHA-256 of a supplied PASS evidence artifact and
-never creates an alert acknowledgement.
+target-bound observability alert evidence. The verifier requires
+`runtime-integration.json.evidence.metricsSnapshotDigest` to be the SHA-256 of
+the fetched worker metrics body; the alert source is restricted to that
+artifact, records its artifact hash provenance, and must match the runtime
+metrics digest. It never creates an alert acknowledgement.
 
 ## Focused verification
 
@@ -36,6 +38,6 @@ credentials, or prove an external target/source.
 - `STG-EXT-01`: **CONDITIONAL / NO-GO** pending approved edge WAF/rate-limit,
   TLS/redirect, controlled alert delivery, and acknowledgement evidence.
 
-The repository changes establish the verifier contracts and fail-closed checks;
-they do not manufacture runtime observations, collectors, alert delivery, or
-release qualification.
+The API/authoritative runtime wiring gap remains a Task 8 and external
+qualification blocker; these repository-only changes do not fake collectors,
+target bindings, or staging observations.

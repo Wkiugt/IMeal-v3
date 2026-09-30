@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -138,6 +140,8 @@ test('consumes the hardening health, request-ID and internal metrics contracts',
     api: { live: 200, ready: 200, requestId: REQUEST_ID },
     worker: { live: 200, ready: 200 },
     metricsInternalOnly: true,
+    metricsSnapshotSource: 'worker-internal',
+    metricsSnapshotDigest: createHash('sha256').update(METRICS, 'utf8').digest('hex'),
   });
 });
 

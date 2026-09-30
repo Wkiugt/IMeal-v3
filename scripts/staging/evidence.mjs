@@ -69,6 +69,9 @@ const SAFE_SOURCE_IDENTITIES = new Set([
   'staging-runtime',
   'staging-smoke',
 ]);
+const APPROVED_METRICS_SNAPSHOT_ARTIFACTS = new Set([
+  'runtime-integration.json',
+]);
 const SAFE_FRESHNESS_STATES = new Set([
   'fresh',
   'stale',
@@ -90,6 +93,14 @@ const CONSTRAINT_NAMES = [
   'registration_lifecycle_snapshot_complete',
   'registration_serving_consistency',
 ];
+const STAGING_SMOKE_CHECK_RESULTS = Object.freeze({
+  'https-redirect': new Set(['PASS', 'SKIP']),
+  'api-live': new Set(['PASS']),
+  'api-ready': new Set(['PASS']),
+  'admin-health': new Set(['PASS']),
+  'safe-error-envelope': new Set(['PASS']),
+  'auth-me': new Set(['PASS']),
+});
 
 function assertNonEmptyString(value, label) {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -563,11 +574,45 @@ function assertSmokeCheck(check, name) {
     !check ||
     typeof check.name !== 'string' ||
     check.name.trim() === '' ||
-    check.result !== 'PASS'
+    typeof check.result !== 'string'
   ) {
     throw new Error(`${name} checks are invalid`);
   }
 }
+function assertStagingSmokeChecks(checks) {
+  const seen = new Set();
+  for (const check of checks) {
+    assertSmokeCheck(check, 'staging-smoke.json');
+    if (
+      !Object.hasOwn(STAGING_SMOKE_CHECK_RESULTS, check.name) ||
+      seen.has(check.name) ||
+      !STAGING_SMOKE_CHECK_RESULTS[check.name].has(check.result)
+    ) {
+      throw new Error('staging-smoke.json checks are invalid');
+    }
+    if (
+      check.name === 'https-redirect' &&
+      check.result === 'SKIP' &&
+      check.reason !== 'explicit local test mode'
+    ) {
+      throw new Error('staging-smoke.json redirect skip is invalid');
+    }
+    seen.add(check.name);
+  }
+  const requiredNames = Object.keys(STAGING_SMOKE_CHECK_RESULTS).filter(
+    (name) => name !== 'auth-me',
+  );
+  if (
+    requiredNames.some((name) => !seen.has(name)) ||
+    (seen.has('auth-me') &&
+      !STAGING_SMOKE_CHECK_RESULTS['auth-me'].has(
+        checks.find((check) => check.name === 'auth-me').result,
+      ))
+  ) {
+    throw new Error('staging-smoke.json checks are incomplete');
+  }
+}
+
 
 
 function assertRuntimeSchema(artifact) {
@@ -578,7 +623,10 @@ function assertRuntimeSchema(artifact) {
     evidence.api?.ready !== 200 ||
     evidence.worker?.live !== 200 ||
     evidence.worker?.ready !== 200 ||
-    evidence.metricsInternalOnly !== true
+    evidence.metricsInternalOnly !== true ||
+    evidence.metricsSnapshotSource !== 'worker-internal' ||
+    typeof evidence.metricsSnapshotDigest !== 'string' ||
+    !SHA256_PATTERN.test(evidence.metricsSnapshotDigest)
   ) {
     throw new Error('runtime-integration.json runtime evidence is not PASS');
   }
@@ -600,9 +648,7 @@ function assertSmokeSchema(artifact, name) {
     }
     assertEvidenceOrigin(artifact.apiOrigin, 'staging smoke API');
     assertEvidenceOrigin(artifact.adminOrigin, 'staging smoke admin');
-    for (const check of artifact.checks) {
-      assertSmokeCheck(check, 'staging-smoke.json');
-    }
+    assertStagingSmokeChecks(artifact.checks);
   } else {
     assertNonEmptyString(artifact.command, `${name} command`);
     assertNonEmptyString(artifact.operator, `${name} operator`);
@@ -627,7 +673,7 @@ function assertObservabilityAlertEvidence(
     typeof source !== 'object' ||
     Array.isArray(source) ||
     Object.keys(source).sort().join(',') !==
-      'freshness,identity,snapshotArtifact,snapshotDigest'
+      'freshness,identity,snapshotArtifact,snapshotArtifactSha256,snapshotDigest'
   ) {
     throw new Error('observability source evidence is required');
   }
@@ -641,14 +687,23 @@ function assertObservabilityAlertEvidence(
     throw new Error('observability source freshness is not fresh');
   }
   if (
+    typeof source.snapshotArtifact !== 'string' ||
+    !APPROVED_METRICS_SNAPSHOT_ARTIFACTS.has(source.snapshotArtifact) ||
+    !artifacts[source.snapshotArtifact] ||
+    artifacts[source.snapshotArtifact].parsed?.result !== 'PASS' ||
+    typeof source.snapshotArtifactSha256 !== 'string' ||
+    !SHA256_PATTERN.test(source.snapshotArtifactSha256) ||
+    artifacts[source.snapshotArtifact].sha256 !== source.snapshotArtifactSha256
+  ) {
+    throw new Error('observability snapshot artifact provenance is invalid');
+  }
+  const runtimeEvidence = artifacts['runtime-integration.json'].parsed?.evidence;
+  if (
     typeof source.snapshotDigest !== 'string' ||
     !SHA256_PATTERN.test(source.snapshotDigest) ||
-    typeof source.snapshotArtifact !== 'string' ||
-    !artifacts[source.snapshotArtifact] ||
-    artifacts[source.snapshotArtifact].sha256 !== source.snapshotDigest ||
-    artifacts[source.snapshotArtifact].parsed?.result !== 'PASS'
+    source.snapshotDigest !== runtimeEvidence?.metricsSnapshotDigest
   ) {
-    throw new Error('observability snapshot digest does not match evidence');
+    throw new Error('observability snapshot digest does not match runtime metrics');
   }
   const acknowledgement = artifact.acknowledgement;
   if (

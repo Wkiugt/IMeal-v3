@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { assertNoSecrets } from './staging-lib.mjs';
 
 export const HARDENING_METRIC_NAMES = Object.freeze([
@@ -580,7 +582,10 @@ async function readMetrics({
       throw new Error(`internal metrics missing required metric: ${metric}`);
     }
   }
-  return { reachable: true };
+  return {
+    reachable: true,
+    metricsSnapshotDigest: createHash('sha256').update(text, 'utf8').digest('hex'),
+  };
 }
 
 export async function runRuntimeIntegration({
@@ -660,10 +665,12 @@ export async function runRuntimeIntegration({
       requestId: apiLive.requestId,
     },
     worker: { live: workerLive.status, ready: workerReady.status },
-    metricsInternalOnly: !internalMetrics.reachable ? false : true,
+    metricsInternalOnly: internalMetrics.reachable === true,
+    metricsSnapshotSource: 'worker-internal',
+    metricsSnapshotDigest: internalMetrics.metricsSnapshotDigest,
   };
-}
 
+}
 export function assertAlertRules({ rulesText, requiredMetrics }) {
   if (typeof rulesText !== 'string' || rulesText.trim() === '') {
     throw new Error('alert rules text is required');

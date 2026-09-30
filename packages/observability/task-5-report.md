@@ -23,5 +23,5 @@ No adapter performs network access, credential lookup, backfill, synthetic zero 
 
 ## External status
 
-- Production source-binding omission is intentional and remains a Task 6 prerequisite: Task 5 validates the fail-closed configuration contract but does not provision runtime bindings or claim production startup/readiness.
+- Production source-binding omission is intentional and remains a Task 8/external qualification prerequisite: Task 5 validates the fail-closed configuration contract but does not provision runtime bindings or claim production startup/readiness.
 - Repository implementation evidence is local only. No PostgreSQL/PgBouncer exporter, private MinIO/storage target, encrypted backup/restore evidence pipeline, independent Caddy/WAF/TLS/scanner feed, staging credentials, staging target, controlled alert delivery, or independent approval was provisioned or observed. `STG-METRICS-01` remains **BLOCKED / CONDITIONAL / NO-GO**; this report does not claim staging or production approval.

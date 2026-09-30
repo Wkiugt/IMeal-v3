@@ -165,16 +165,24 @@ async function makeEvidenceDirectory({
                           api: { live: 200, ready: 200 },
                           worker: { live: 200, ready: 200 },
                           metricsInternalOnly: true,
-                        },
-                      }
-                    : name === 'staging-smoke.json'
+                          metricsSnapshotSource: 'worker-internal',
+                          metricsSnapshotDigest: phaseDigest,
+                        }
+                        }
+                      : name === 'staging-smoke.json'
                       ? {
                           result: 'PASS',
                           releaseId,
                           target,
                           apiOrigin: 'https://staging.example.test',
                           adminOrigin: 'https://admin.staging.example.test',
-                          checks: [{ name: 'health', result: 'PASS' }],
+                          checks: [
+                            { name: 'https-redirect', result: 'PASS' },
+                            { name: 'api-live', result: 'PASS' },
+                            { name: 'api-ready', result: 'PASS' },
+                            { name: 'admin-health', result: 'PASS' },
+                            { name: 'safe-error-envelope', result: 'PASS' },
+                          ],
                           businessWorkflow: { result: 'NOT_RUN' },
                         }
                       : name.startsWith('smoke-')
@@ -206,6 +214,7 @@ async function makeEvidenceDirectory({
                                   identity: 'prometheus',
                                   freshness: 'fresh',
                                   snapshotArtifact: 'runtime-integration.json',
+                                  snapshotArtifactSha256: phaseDigest,
                                   snapshotDigest: phaseDigest,
                                 },
                                 acknowledgement: {
@@ -224,7 +233,7 @@ async function makeEvidenceDirectory({
   const runtimeDigest = createHash('sha256').update(runtimeBytes).digest('hex');
   const alertPath = join(directory, 'observability-alert-test.json');
   const alertEvidence = JSON.parse(await readFile(alertPath, 'utf8'));
-  alertEvidence.source.snapshotDigest = runtimeDigest;
+  alertEvidence.source.snapshotArtifactSha256 = runtimeDigest;
   await writeFile(alertPath, `${JSON.stringify(alertEvidence)}\n`);
   await writeFile(
     join(directory, 'migration-status.txt'),
@@ -508,7 +517,29 @@ test('requires fresh target-bound alert evidence without manufacturing acknowled
       target,
       artifactDirectory: mismatchedSnapshot,
     }),
-    /snapshot digest does not match evidence/,
+    /snapshot digest does not match runtime metrics/,
+  );
+  const arbitrarySnapshot = await makeEvidenceDirectory();
+  const arbitrarySnapshotPath = join(
+    arbitrarySnapshot,
+    'observability-alert-test.json',
+  );
+  const arbitrarySnapshotEvidence = JSON.parse(
+    await readFile(arbitrarySnapshotPath, 'utf8'),
+  );
+  arbitrarySnapshotEvidence.source.snapshotArtifact = 'smoke-business.json';
+  arbitrarySnapshotEvidence.source.snapshotArtifactSha256 = digest;
+  await writeFile(
+    arbitrarySnapshotPath,
+    JSON.stringify(arbitrarySnapshotEvidence),
+  );
+  await assert.rejects(
+    createEvidenceManifest({
+      releaseId,
+      target,
+      artifactDirectory: arbitrarySnapshot,
+    }),
+    /snapshot artifact provenance is invalid/,
   );
 });
 
@@ -678,6 +709,13 @@ test('rejects failed or unbound phase-specific and smoke schemas', async () => {
       },
       error: /staging smoke API origin is invalid/,
     },
+    {
+      name: 'staging-smoke.json',
+      mutate: (artifact) => {
+        artifact.checks[0].name = 'arbitrary-check';
+      },
+      error: /staging-smoke\.json checks are invalid/,
+    },
   ];
   for (const { name, mutate, error } of cases) {
     const directory = await makeEvidenceDirectory();
@@ -690,6 +728,25 @@ test('rejects failed or unbound phase-specific and smoke schemas', async () => {
       error,
     );
   }
+});
+
+test('allows only explicit local redirect skip in staging smoke evidence', async () => {
+  const directory = await makeEvidenceDirectory({ writeChecksum: false });
+  const path = join(directory, 'staging-smoke.json');
+  const artifact = JSON.parse(await readFile(path, 'utf8'));
+  artifact.checks[0] = {
+    name: 'https-redirect',
+    result: 'SKIP',
+    reason: 'explicit local test mode',
+  };
+  await writeFile(path, JSON.stringify(artifact));
+  await writeChecksums({ artifactDirectory: directory });
+  const manifest = await createEvidenceManifest({
+    releaseId,
+    target,
+    artifactDirectory: directory,
+  });
+  assert.equal(manifest.result, 'PASS');
 });
 
 test('requires exact approval and independent signoff metadata', async () => {
