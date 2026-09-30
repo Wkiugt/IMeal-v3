@@ -218,13 +218,6 @@ function renderLabels(
   return pairs.length === 0 ? '' : `{${pairs.join(',')}}`;
 }
 
-function renderSeriesName(
-  name: string,
-  labels: MetricLabels,
-  extra?: readonly [string, string],
-): string {
-  return `${name}${renderLabels(labels, extra)}`;
-}
 
 export class MetricRegistry {
   private readonly metrics = new Map<string, MetricState>();

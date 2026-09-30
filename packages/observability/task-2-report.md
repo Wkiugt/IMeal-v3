@@ -23,3 +23,9 @@ Task 2 implements the shared bounded in-process registry and deterministic OpenM
 - No arbitrary metric emit escape hatch was added; unknown names, units, labels, values, and sensitive text remain rejected.
 - Application state is process-local and resets on restart. Authoritative samples remain separate snapshots; non-fresh samples are diagnostic/evidence only and never render numeric output.
 - Public `/metrics` rejection remains unchanged; the internal worker-origin endpoint is a later task.
+
+## Final cleanup verification
+
+- Removed the unused private `renderSeriesName` helper from `packages/observability/src/metrics.ts`; no runtime behavior changed.
+- `yarn workspace @imeal/observability test` — **PASS**; 3 test files, 71 tests.
+- `yarn workspace @imeal/observability build` — **PASS**; TypeScript exited 0 with no output.
