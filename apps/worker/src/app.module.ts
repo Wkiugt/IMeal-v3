@@ -32,11 +32,45 @@ import {
   WORKER_STRUCTURED_LOGGER,
 } from './common/structured-logger.js';
 import { WORKER_METRICS_TRANSPORT_TOKEN_ENV } from '@imeal/observability';
+import {
+  AuthoritativeMetricsRuntimeService,
+  WORKER_METRICS_BACKUP_RESTORE_SOURCE_PROVIDER,
+  WORKER_METRICS_COLLECTOR_SCHEDULER,
+  WORKER_METRICS_OBJECT_STORAGE_SOURCE_PROVIDER,
+  WORKER_METRICS_POSTGRES_SOURCE_PROVIDER,
+  WORKER_METRICS_RUNTIME_ENVIRONMENT,
+  WORKER_METRICS_SECURITY_BOUNDARY_SOURCE_PROVIDER,
+} from './metrics/authoritative-metrics-runtime.service.js';
 
 @Module({
   imports: [ScheduleModule.forRoot()],
   controllers: [AppController, HealthController, MetricsController],
   providers: [
+    AuthoritativeMetricsRuntimeService,
+    {
+      provide: WORKER_METRICS_POSTGRES_SOURCE_PROVIDER,
+      useFactory: () => undefined,
+    },
+    {
+      provide: WORKER_METRICS_OBJECT_STORAGE_SOURCE_PROVIDER,
+      useFactory: () => undefined,
+    },
+    {
+      provide: WORKER_METRICS_BACKUP_RESTORE_SOURCE_PROVIDER,
+      useFactory: () => undefined,
+    },
+    {
+      provide: WORKER_METRICS_SECURITY_BOUNDARY_SOURCE_PROVIDER,
+      useFactory: () => undefined,
+    },
+    {
+      provide: WORKER_METRICS_COLLECTOR_SCHEDULER,
+      useFactory: () => undefined,
+    },
+    {
+      provide: WORKER_METRICS_RUNTIME_ENVIRONMENT,
+      useFactory: () => process.env,
+    },
     PrismaService,
     WorkerMetricsService,
     {
