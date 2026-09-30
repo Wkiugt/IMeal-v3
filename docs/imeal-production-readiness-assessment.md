@@ -235,8 +235,7 @@ The operator procedure is the
 is documentation/tooling evidence only; it does not claim a staging target,
 external approval, or production qualification.
 
-- **Current hard blocker:** this application has no actual hardening `/metrics`
-  collectors/endpoints, so protected runtime integration fails closed.
+- **Current hard blocker:** private worker `/metrics` endpoint and verifier exist, but no runtime API-to-worker transport/flush, authoritative collector callers, protected bindings, target-bound evidence, or external alert delivery; protected runtime integration remains fail-closed and release **NO-GO**.
 - **Current external blockers:** the approved edge WAF/rate-limit control and
   alert route are not provisioned; real staging env/DNS/TLS/OTP, backup
   restore, alert delivery, UAT, identity approval, and location/roster
