@@ -22,6 +22,17 @@
   URLs, targets, or payloads. Without protected staging bindings, target
   fingerprint, API evidence digest, and release metadata, the API publisher
   and production-mode worker validator remain fail-closed before release.
+- Commits `07fd8b8`, `755e310`, and `43f1746` complete the typed private
+  HTTPS registry/feed transport and four concrete source providers, with DI
+  wiring into the worker collector. Strict-schema validation and fail-closed
+  mapping are repository-complete and tested; no external source is contacted
+  without protected deployment inputs.
+- The source registry URL/protocol, protected source identifiers,
+  credentials/workload identity/mTLS, exporter semantics, and target
+  fingerprints/digests remain external inputs. No credentials or real
+  endpoints were used. M-23 remains registry-bound and has no cryptographic
+  target binding.
+
 
 ## Focused verification
 
@@ -32,7 +43,14 @@
 
 ## External status
 
-No staging credentials, staging target, external collectors, source payloads, alert delivery, or deployment approval were provisioned or observed. The worker endpoint/configuration and repository boundary checks are local implementation evidence only. `STG-METRICS-01` remains **BLOCKED** and staging remains **CONDITIONAL / NO-GO** until real private sources, bindings, target evidence, alert delivery, and independent qualification exist.
+No staging credentials, staging target, external source registry URL or
+protocol, protected source identifiers, credentials/workload identity/mTLS,
+exporter semantics, source payloads, target fingerprints/digests, alert
+delivery, or deployment approval were provisioned or observed. The typed
+transport/providers and repository boundary checks are local implementation
+evidence only. `STG-METRICS-01` remains **BLOCKED** and staging remains
+**CONDITIONAL / NO-GO** until real private sources, bindings, target evidence,
+alert delivery, and independent qualification exist.
 
 ## Runtime wiring update
 
@@ -51,7 +69,11 @@ No staging credentials, staging target, external collectors, source payloads, al
   orchestrator in the worker lifecycle: initial collection, fixed 60-second
   schedule, and shutdown stop. Worker application snapshots continue on the
   30-second interval.
-- The four authoritative providers remain intentionally unimplemented pending
-  external source contracts. These repository bindings do not constitute real
-  source observations, target-bound evidence, or complete 23-metric runtime
-  qualification.
+- Commits `07fd8b8`, `755e310`, and `43f1746` complete the typed private
+  HTTPS registry/feed transport and four concrete source providers. They are
+  DI-wired into the worker collector, enforce strict schemas, and fail closed
+  when registry configuration, protected source identifiers, payloads, target
+  fingerprints/digests, or release metadata are absent or invalid.
+- These repository providers do not constitute real source observations,
+  target-bound evidence, or complete 23-metric runtime qualification. M-23
+  remains registry-bound without cryptographic target binding.

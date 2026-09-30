@@ -4,9 +4,10 @@
 
 Task 8 records repository-only verification. No staging or production
 credentials, targets, backfill, alert delivery, or live collector calls were
-used. Commits `22e5b25`, `84edd67`, `85bdf01`, `199eab2`, and `fd4d0aa` add
-repository runtime wiring and protected configuration only; they do not
-constitute external source evidence or release approval.
+used. Commits `07fd8b8`, `755e310`, `43f1746`, `22e5b25`, `84edd67`,
+`85bdf01`, `199eab2`, and `fd4d0aa` add repository runtime wiring and
+protected configuration only; they do not constitute external source evidence
+or release approval.
 
 The worker has a private `/metrics` endpoint, a private structured
 API-to-worker snapshot transport, worker application snapshot publication, and
@@ -22,15 +23,25 @@ waits for the underlying operation. Production Compose commit `fd4d0aa`
 requires the API transport URL/token and API evidence digest, plus the worker
 transport token and worker evidence digest, using opaque fail-closed bindings.
 
-The four authoritative source-provider contracts remain intentionally
-unimplemented pending external source contracts. Their provider tokens remain
-optional and undefined, so missing providers or protected configuration fail
-closed without zeroes, Prisma/application substitutions, or synthetic data.
+The four authoritative source providers are repository-complete: typed
+PostgreSQL/PgBouncer, object-storage, backup/restore-evidence, and
+security-boundary providers are DI-wired into the worker collector, enforce
+strict schemas, fail closed on missing or invalid inputs, and are covered by
+focused tests. Their implementation does not imply that any external source
+was contacted.
 
-These are implementation boundaries only. No real PostgreSQL/PgBouncer,
-object-storage, backup/restore, or security-boundary provider implementations,
-protected staging bindings, target/evidence values, redacted target-bound
-runtime evidence, or controlled alert acknowledgement are present.
+The private HTTPS registry/feed transport resolves opaque references through a
+protected boundary and sends references in the request body. The external
+source registry URL/protocol, protected source identifiers,
+credentials/workload identity/mTLS, exporter semantics, and target
+fingerprints/digests remain external inputs. No credentials or real endpoints
+were used. M-23 remains registry-bound and has no cryptographic target binding.
+
+These are repository implementation boundaries only. No real
+PostgreSQL/PgBouncer, object-storage, backup/restore, or security-boundary
+source observations, protected staging bindings, target/evidence values,
+redacted target-bound runtime evidence, or controlled alert acknowledgement
+are present.
 
 ## Current repository wiring evidence
 
@@ -45,9 +56,14 @@ runtime evidence, or controlled alert acknowledgement are present.
   values are supplied.
 - `85bdf01`: four strict authoritative adapter orchestration with source
   provider ports, fixed 60-second schedule, and failure forwarding.
+- `07fd8b8`, `755e310`, and `43f1746`: typed private HTTPS registry/feed
+  transport plus four strict-schema/fail-closed concrete providers, DI-wired
+  into the worker collector; registry URL/protocol, source identifiers,
+  credentials/workload identity/mTLS, exporter semantics, and target
+  fingerprints/digests remain external inputs.
 - `199eab2`: worker lifecycle registration, initial collection, module-destroy
-  stop, optional provider tokens, protected target-fingerprint/release
-  validation, and staging/production target-fingerprint pass-through.
+  stop, protected target-fingerprint/release validation, and
+  staging/production target-fingerprint pass-through.
 
 ## Exact verification results
 
@@ -67,8 +83,9 @@ production credentials or targets.
 - `yarn workspace @imeal/api exec tsc -p tsconfig.json --noEmit` — **PASS**.
 
 ### Worker metrics, authoritative sources, lifecycle, and build
-
+- `yarn workspace @imeal/worker test --run src/metrics/sources/authoritative-source-providers.spec.ts src/app.module.spec.ts` — **PASS**; 2 files, 13 tests.
 - `yarn workspace @imeal/worker test --run src/metrics/authoritative-metrics-runtime.service.spec.ts src/metrics/authoritative-metrics-collector.spec.ts` — **PASS**; 2 files, 14 tests.
+
 - `yarn workspace @imeal/worker test --run src/metrics/authoritative-metrics-runtime.service.spec.ts src/metrics/authoritative-metrics-collector.spec.ts src/metrics/metrics.service.spec.ts src/metrics/metrics.controller.spec.ts src/metrics/metrics-environment.spec.ts` — **PASS**; 5 files, 37 tests.
 - `yarn workspace @imeal/worker test:e2e --run test/app.e2e-spec.ts` — **PASS**; 1 file, 5 tests after worker lifecycle registration.
 - `yarn workspace @imeal/worker build` — **PASS**.
@@ -79,6 +96,7 @@ production credentials or targets.
 ### Focused staging tooling and scripts
 
 - `node --test scripts/staging/alert-rules.test.mjs scripts/staging/evidence.test.mjs scripts/staging/runbook-links.test.mjs scripts/staging/runtime-integration.test.mjs scripts/staging/compose-config.test.mjs scripts/staging/smoke-staging.test.mjs scripts/staging/backup-restore.test.mjs` — **PASS**; 7 files, 80 tests.
+- `node --test scripts/staging/runbook-links.test.mjs` — **PASS**; 7 tests.
 - `node --check scripts/staging/alert-rules.test.mjs && node --check scripts/staging/evidence.mjs && node --check scripts/staging/evidence.test.mjs && node --check scripts/staging/restore-rehearsal.mjs && node --check scripts/staging/runtime-integration.mjs && node --check scripts/staging/runtime-integration.test.mjs` — **PASS**.
 
 These staging tests use disposable fixtures and injected fetch/command
@@ -107,11 +125,15 @@ The following remain blockers:
   timeout, single-flight retention through underlying settlement, and
   shutdown draining; commit `fd4d0aa` supplies the required production
   bindings. These remain repository wiring, not external qualification.
-- The collector lifecycle and four optional provider tokens are registered, but
-  no real PostgreSQL/PgBouncer, private object-storage, backup/restore, or
-  security-boundary provider implementations exist; the four authoritative
-  providers remain intentionally unimplemented pending external source
-  contracts, and missing providers/configuration remain `collector_failure`.
+- The collector lifecycle and four concrete source providers are repository
+  complete and DI-wired. Their strict schemas and fail-closed transport
+  behavior are tested, but protected source identifiers and provider payloads
+  are not present here; no real PostgreSQL/PgBouncer, private object-storage,
+  backup/restore, or security-boundary observations were obtained.
+- The external source registry URL/protocol, credentials/workload
+  identity/mTLS, exporter semantics, target fingerprints/digests, deployed
+  target identity, redacted runtime/smoke evidence, and independent release
+  signoff are absent.
 - Protected source bindings, target fingerprint/evidence digest and release
   values, deployed target identity, redacted runtime/smoke evidence, and
   independent release signoff are absent.

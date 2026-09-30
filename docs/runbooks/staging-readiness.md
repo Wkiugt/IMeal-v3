@@ -80,13 +80,18 @@ that MUST remain visible in the release decision are:
 - API and worker share only the existing private `data` network for this
   transport. The worker declares no public ports and Caddy MUST NOT proxy the
   worker or either metrics route;
-- the worker authoritative adapters have no protected runtime callers for
-  PostgreSQL, object storage, backup/restore, or security-boundary sources;
-- the authoritative collector orchestrator is registered in the worker
-  lifecycle, performs an initial collection, then schedules a fixed 60-second
-  collection and stops on shutdown. The four source-provider tokens remain
-  optional and undefined in this repository, so incomplete configuration
-  fails closed and no real provider is started;
+- The worker authoritative adapters and four concrete source providers are
+  repository-complete: typed private HTTPS registry/feed transport plus
+  PostgreSQL/PgBouncer, object-storage, backup/restore-evidence, and
+  security-boundary providers are DI-wired, strict-schema validated, and
+  fail-closed. The collector orchestrator performs an initial collection, then
+  schedules a fixed 60-second collection and stops on shutdown. Missing
+  protected inputs produce no fabricated observations;
+- the source registry URL/protocol, protected source identifiers,
+  credentials/workload identity/mTLS, exporter semantics, and target
+  fingerprints/digests remain external inputs. No credentials or real
+  endpoints were used. M-23 remains registry-bound and has no cryptographic
+  target binding;
 - the worker publishes its local application snapshot on the 30-second
   `APPLICATION_OBSERVATION_INTERVAL_SECONDS` interval. Commit `84edd67` adds
   the API publisher's initial non-blocking flush and fixed 30-second interval;
@@ -96,14 +101,17 @@ that MUST remain visible in the release decision are:
 - production binding hardening is recorded in commit `fd4d0aa`; it requires
   opaque API transport URL/token and API evidence digest plus worker transport
   token/evidence digest values without repository defaults;
-- the collector lifecycle registration is implementation evidence only: no real
-  PostgreSQL/storage/backup/security providers or target fingerprint binding
-  are available for bootstrap, so the worker MUST NOT start with fake providers
-  or inferred target values;
+- the typed provider and registry transport are implementation evidence only:
+  the protected source registry URL/protocol, source identifiers,
+  credentials/workload identity/mTLS, exporter semantics, target fingerprints
+  and digests, and provider payloads are unavailable for bootstrap. The
+  worker MUST NOT start with fake providers, inferred target values, or
+  synthetic source observations;
 - Staging and production Compose require the four opaque worker source-reference
   names plus the target-bound `WORKER_METRICS_TARGET_FINGERPRINT`; the protected
-  staging environment must supply approved reference IDs and fingerprint. This
-  repository supplies no values, credentials, targets, or source payloads;
+  staging environment must supply approved reference IDs, registry
+  configuration, and fingerprint. This repository supplies no values,
+  credentials, targets, or source payloads;
 - the approved edge WAF/rate-limit control and the alert delivery route are not
   provisioned;
 - no real staging environment, DNS, TLS certificate, OTP provider path,
@@ -393,10 +401,11 @@ The protected workflow invokes `runRuntimeIntegration` from
 and readiness endpoints to return HTTP 200 with body `status: "ok"` and the
 expected release marker; HTTP 503 readiness is a failed gate, not a diagnostic
 PASS. It must also observe the actual hardening endpoints. This repository
-contains the worker `/metrics` endpoint and private Compose isolation, but no
-real PostgreSQL/storage/backup/security collectors or target bindings are
-provisioned; that gate MUST remain FAIL until the deployed sources and their
-redacted evidence exist.
+contains the worker `/metrics` endpoint, private Compose isolation, and the
+typed strict-schema/fail-closed source providers, but no external source
+registry inputs, source observations, or target bindings are provisioned; that
+gate MUST remain FAIL until the deployed sources and their redacted evidence
+exist.
 
 Before sign-off, the network owner must prove the approved edge WAF and
 rate-limit policy, trusted-proxy/client-IP handling, TLS certificate and
