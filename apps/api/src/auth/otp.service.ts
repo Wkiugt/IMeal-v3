@@ -308,9 +308,7 @@ export class OtpService {
     context: OtpVerifyContext = {},
   ): Promise<VerifiedOtpPrincipal> {
     try {
-      const principal = await this.verifyInternal(input, context);
-      this.metrics?.recordAuthAttempt('success');
-      return principal;
+      return await this.verifyInternal(input, context);
     } catch (error: unknown) {
       this.metrics?.recordAuthAttempt(
         error instanceof UnauthorizedException

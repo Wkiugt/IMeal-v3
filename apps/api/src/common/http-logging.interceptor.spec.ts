@@ -100,6 +100,32 @@ describe('HttpLoggingInterceptor', () => {
 
     expect(metricSink.recordHttpRequest).not.toHaveBeenCalled();
   });
+  it('does not record a request with no approved response status', async () => {
+    const sink = logger();
+    const metricSink = metrics();
+    const interceptor = new HttpLoggingInterceptor(
+      sink,
+      undefined,
+      metricSink as never,
+    );
+
+    await lastValueFrom(
+      interceptor.intercept(
+        context(
+          {
+            method: 'GET',
+            route: { path: '/api/orders' },
+            url: '/api/orders',
+          },
+          {},
+        ),
+        { handle: () => of({ ok: true }) },
+      ),
+    );
+
+    expect(metricSink.recordHttpRequest).not.toHaveBeenCalled();
+  });
+
 
   it('logs safe error metadata while preserving the original exception', async () => {
     const sink = logger();

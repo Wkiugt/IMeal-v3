@@ -18,6 +18,15 @@ describe('ApiMetricsService', () => {
       'imeal_http_request_duration_seconds_sum{method="GET",route="registrations",status="200"} 0.25',
     );
   });
+  it('fails closed for unsupported method and status instead of relabeling', () => {
+    const unsupportedMethod = new ApiMetricsService();
+    unsupportedMethod.recordHttpRequest('/api/orders', 'TRACE', 200, 10);
+    expect(unsupportedMethod.serialize()).toBe('');
+
+    const unsupportedStatus = new ApiMetricsService();
+    unsupportedStatus.recordHttpRequest('/api/orders', 'GET', 418, 10);
+    expect(unsupportedStatus.serialize()).toBe('');
+  });
 
   it('records bounded authentication and serving outcome taxonomies without sensitive labels', () => {
     const metrics = new ApiMetricsService();

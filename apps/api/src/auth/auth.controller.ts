@@ -13,6 +13,7 @@ import { CurrentUser } from './current-user.decorator.js';
 import type { AuthenticatedUser } from './authenticated-user.js';
 import { OtpService, type OtpRequestContext } from './otp.service.js';
 import { SessionGuard } from './session.guard.js';
+import { ApiMetricsService } from '../common/metrics.service.js';
 import { SessionService } from './session.service.js';
 
 interface AuthRequest {
@@ -51,6 +52,7 @@ export class AuthController {
   constructor(
     private readonly otpService: OtpService,
     private readonly sessionService: SessionService,
+    private readonly metrics: ApiMetricsService,
   ) {}
 
   @Post('otp/request')
@@ -90,12 +92,19 @@ export class AuthController {
         ? { userAgent: firstHeader(request.headers, 'user-agent') }
         : {}),
     };
-    const session = await this.sessionService.create({
-      userId: principal.userId,
-      purpose: parsed.data.purpose,
-      requestId,
-      metadata,
-    });
+    let session: Awaited<ReturnType<SessionService['create']>>;
+    try {
+      session = await this.sessionService.create({
+        userId: principal.userId,
+        purpose: parsed.data.purpose,
+        requestId,
+        metadata,
+      });
+    } catch (error: unknown) {
+      this.metrics.recordAuthAttempt('dependency_failure');
+      throw error;
+    }
+    this.metrics.recordAuthAttempt('success');
 
     return {
       sessionToken: session.token,

@@ -2,6 +2,9 @@ import {
   containsMetricSensitiveText,
   METRIC_CONTRACT,
   type MetricContractRow,
+  type MetricEvidenceMetadata,
+  type MetricFreshness,
+  type MetricHistogramValue,
   type MetricSampleEnvelope,
   type MetricSourceIdentity,
   type MetricUnit,
@@ -13,6 +16,11 @@ export type MetricLabelValues = MetricLabels;
 export interface MetricSourceSnapshot {
   readonly source: MetricSourceIdentity;
   readonly samples: readonly MetricSampleEnvelope[];
+}
+export interface ApplicationSnapshotMetadata {
+  readonly observedAt: string;
+  readonly freshness: MetricFreshness;
+  readonly evidence: MetricEvidenceMetadata;
 }
 
 type CounterSeries = {
@@ -85,6 +93,20 @@ function sampleKey(sample: MetricSampleEnvelope): string {
 function compareStrings(first: string, second: string): number {
   return first < second ? -1 : first > second ? 1 : 0;
 }
+function sampleValuesEqual(
+  first: MetricSampleEnvelope['value'],
+  second: MetricSampleEnvelope['value'],
+): boolean {
+  if (typeof first === 'number' || typeof second === 'number') {
+    return first === second;
+  }
+  return (
+    first.sum === second.sum &&
+    first.count === second.count &&
+    first.buckets.length === second.buckets.length &&
+    first.buckets.every((bucket, index) => bucket === second.buckets[index])
+  );
+}
 
 function samplesEqual(
   first: MetricSampleEnvelope,
@@ -94,7 +116,7 @@ function samplesEqual(
     first.metricName !== second.metricName ||
     first.type !== second.type ||
     first.unit !== second.unit ||
-    first.value !== second.value ||
+    !sampleValuesEqual(first.value, second.value) ||
     first.observedAt !== second.observedAt ||
     first.source !== second.source ||
     first.freshness !== second.freshness ||
@@ -359,6 +381,57 @@ export class MetricRegistry {
     series.sum += value;
     series.count += 1;
   }
+  createApplicationSnapshot(
+    metadata: ApplicationSnapshotMetadata,
+  ): MetricSourceSnapshot {
+    const source: MetricSourceIdentity = 'api_application';
+    const samples: MetricSampleEnvelope[] = [];
+    for (const row of METRIC_CONTRACT) {
+      if (row.sourceIdentity !== source) continue;
+      const state = this.metrics.get(row.name);
+      if (!state) continue;
+      for (const series of state.series.values()) {
+        const value: number | MetricHistogramValue =
+          series.type === 'histogram'
+            ? {
+                buckets: Object.freeze([...series.buckets]),
+                sum: series.sum,
+                count: series.count,
+              }
+            : series.value;
+        const evidenceValues = Object.fromEntries(
+          row.evidence.map((binding) => [
+            binding,
+            (metadata.evidence as unknown as Record<string, string>)[binding],
+          ]),
+        ) as Record<string, string>;
+        const evidence =
+          metadata.evidence.reference === undefined
+            ? evidenceValues
+            : {
+                ...evidenceValues,
+                reference: metadata.evidence.reference,
+              };
+        samples.push(
+          validateMetricSampleEnvelope({
+            metricName: row.name,
+            type: row.type,
+            unit: row.unit,
+            labels: series.labels,
+            value,
+            observedAt: metadata.observedAt,
+            source,
+            freshness: metadata.freshness,
+            evidence,
+          }),
+        );
+      }
+    }
+    return Object.freeze({
+      source,
+      samples: Object.freeze(samples),
+    });
+  }
 
   mergeSourceSnapshot(snapshot: MetricSourceSnapshot): void {
     const incoming = this.validateSourceSnapshot(snapshot);
@@ -453,17 +526,21 @@ export class MetricRegistry {
         }
         renderedSeries.add(key);
         if (row.type === 'histogram') {
+          if (typeof sample.value === 'number') {
+            throw new Error(`Metric histogram value is not structured: ${row.name}`);
+          }
           const histogram: HistogramSeries = {
             type: 'histogram',
             labels,
-            buckets: row.buckets.map((bucket) =>
-              sample.value <= bucket ? 1 : 0,
-            ),
-            sum: sample.value,
-            count: 1,
+            buckets: [...sample.value.buckets],
+            sum: sample.value.sum,
+            count: sample.value.count,
           };
           this.renderSeries(lines, row, histogram, new Set());
         } else {
+          if (typeof sample.value !== 'number') {
+            throw new Error(`Metric scalar value is structured: ${row.name}`);
+          }
           lines.push(
             `${row.name}${renderLabels(labels)} ${formatNumber(sample.value)}`,
           );

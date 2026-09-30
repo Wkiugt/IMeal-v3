@@ -301,8 +301,7 @@ describe('OtpService', () => {
     expect(JSON.stringify(prisma.auditLog.create.mock.calls)).not.toContain(
       '123456',
     );
-    expect(metricSink.recordAuthAttempt).toHaveBeenCalledTimes(1);
-    expect(metricSink.recordAuthAttempt).toHaveBeenCalledWith('success');
+    expect(metricSink.recordAuthAttempt).not.toHaveBeenCalled();
   });
 
   it.each([

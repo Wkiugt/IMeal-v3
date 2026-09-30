@@ -53,8 +53,14 @@ export class HttpLoggingInterceptor implements NestInterceptor {
     const method = request.method ?? 'UNKNOWN';
     const route = normalizeRoute(request);
     let metricsRecorded = false;
-    const recordMetrics = (statusCode: number): void => {
-      if (metricsRecorded || route === '/metrics') return;
+    const recordMetrics = (statusCode: number | undefined): void => {
+      if (
+        statusCode === undefined ||
+        metricsRecorded ||
+        route === '/metrics'
+      ) {
+        return;
+      }
       metricsRecorded = true;
       this.metrics?.recordHttpRequest(
         route,
@@ -80,7 +86,7 @@ export class HttpLoggingInterceptor implements NestInterceptor {
     }
 
     const log = (
-      statusCode: number,
+      statusCode: number | undefined,
       event: string,
       level: 'info' | 'error',
     ): void => {
@@ -91,14 +97,14 @@ export class HttpLoggingInterceptor implements NestInterceptor {
         event,
         method,
         route,
-        statusCode,
+        statusCode: statusCode ?? 200,
         durationMs: Math.max(0, Date.now() - startedAt),
         requestId,
       });
     };
 
     return next.handle().pipe(
-      tap(() => log(response.statusCode ?? 200, 'http.request', 'info')),
+      tap(() => log(response.statusCode, 'http.request', 'info')),
       catchError((error: unknown) => {
         const statusCode =
           error instanceof HttpException ? error.getStatus() : 500;

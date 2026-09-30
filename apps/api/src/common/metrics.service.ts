@@ -2,7 +2,9 @@ import { Injectable, Optional } from '@nestjs/common';
 import {
   METRIC_CONTRACT,
   MetricRegistry,
+  type ApplicationSnapshotMetadata,
   type MetricName,
+  type MetricSourceSnapshot,
 } from '@imeal/observability';
 
 type HttpRouteLabel =
@@ -83,17 +85,13 @@ function normalizeRoute(route: string): HttpRouteLabel | null {
   );
 }
 
-function normalizeMethod(method: string): HttpMethodLabel {
-  return isHttpMethod(method) ? method : 'OPTIONS';
+function normalizeMethod(method: string): HttpMethodLabel | null {
+  return isHttpMethod(method) ? method : null;
 }
 
-function normalizeStatus(statusCode: number): HttpStatusLabel {
+function normalizeStatus(statusCode: number): HttpStatusLabel | null {
   const value = String(statusCode);
-  if (isHttpStatus(value)) return value;
-  if (statusCode >= 500) return '500';
-  if (statusCode >= 400) return '400';
-  if (statusCode >= 300) return '200';
-  return '200';
+  return isHttpStatus(value) ? value : null;
 }
 
 function normalizedDurationSeconds(durationMs: number): number {
@@ -116,11 +114,13 @@ export class ApiMetricsService {
     durationMs: number,
   ): void {
     const normalizedRoute = normalizeRoute(route);
-    if (!normalizedRoute) return;
+    const normalizedMethod = normalizeMethod(method);
+    const normalizedStatus = normalizeStatus(statusCode);
+    if (!normalizedRoute || !normalizedMethod || !normalizedStatus) return;
     const labels = {
       route: normalizedRoute,
-      method: normalizeMethod(method),
-      status: normalizeStatus(statusCode),
+      method: normalizedMethod,
+      status: normalizedStatus,
     };
     this.withoutThrowing(() => {
       this.registry.increment('imeal_http_requests_total', labels);
@@ -157,6 +157,11 @@ export class ApiMetricsService {
 
   serialize(): string {
     return this.registry.serialize();
+  }
+  createApplicationSnapshot(
+    metadata: ApplicationSnapshotMetadata,
+  ): MetricSourceSnapshot {
+    return this.registry.createApplicationSnapshot(metadata);
   }
 
   private withoutThrowing(operation: () => void): void {

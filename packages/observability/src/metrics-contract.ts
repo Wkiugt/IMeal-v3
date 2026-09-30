@@ -781,12 +781,20 @@ export interface MetricEvidenceMetadata {
   readonly reference?: string;
 }
 
+export interface MetricHistogramValue {
+  readonly buckets: readonly number[];
+  readonly sum: number;
+  readonly count: number;
+}
+
+export type MetricSampleValue = number | MetricHistogramValue;
+
 export interface MetricSampleEnvelope {
   readonly metricName: MetricName;
   readonly type: MetricType;
   readonly unit: MetricUnit;
   readonly labels: Readonly<Record<string, string>>;
-  readonly value: number;
+  readonly value: MetricSampleValue;
   readonly observedAt: string;
   readonly source: string;
   readonly freshness: MetricFreshness;
@@ -932,6 +940,85 @@ function requireSafeString(
     throw new Error(`Metric sample ${field} must be a non-empty string`);
   }
   rejectSensitiveText(value, field);
+}
+function normalizeSampleValue(
+  value: unknown,
+  row: MetricContractRow,
+): MetricSampleValue {
+  if (row.type !== 'histogram') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error('Metric sample value must be a finite number');
+    }
+    let normalized = value;
+    if (row.valueSemantics.nonnegative && normalized < 0) {
+      if (row.valueSemantics.negativeHandling === 'clamp_to_zero') {
+        normalized = 0;
+      } else {
+        throw new Error('Metric sample value must be nonnegative');
+      }
+    }
+    if (
+      row.valueSemantics.minimum !== undefined &&
+      normalized < row.valueSemantics.minimum
+    ) {
+      throw new Error('Metric sample value is below its contract minimum');
+    }
+    if (
+      row.valueSemantics.maximum !== undefined &&
+      normalized > row.valueSemantics.maximum
+    ) {
+      throw new Error('Metric sample value is above its contract maximum');
+    }
+    return normalized;
+  }
+
+  if (!isRecord(value)) {
+    throw new Error('Metric histogram value must be an object');
+  }
+  const keys = Object.keys(value).sort();
+  if (
+    keys.length !== 3 ||
+    keys[0] !== 'buckets' ||
+    keys[1] !== 'count' ||
+    keys[2] !== 'sum' ||
+    !Array.isArray(value.buckets) ||
+    value.buckets.length !== row.buckets.length
+  ) {
+    throw new Error('Metric histogram buckets are not contract-shaped');
+  }
+  const buckets: number[] = [];
+  let previous = 0;
+  for (const bucket of value.buckets) {
+    if (
+      typeof bucket !== 'number' ||
+      !Number.isFinite(bucket) ||
+      !Number.isInteger(bucket) ||
+      bucket < previous
+    ) {
+      throw new Error('Metric histogram buckets must be cumulative counts');
+    }
+    buckets.push(bucket);
+    previous = bucket;
+  }
+  const sum = value.sum;
+  const count = value.count;
+  if (
+    typeof sum !== 'number' ||
+    !Number.isFinite(sum) ||
+    sum < 0 ||
+    typeof count !== 'number' ||
+    !Number.isFinite(count) ||
+    !Number.isInteger(count) ||
+    count < 0 ||
+    buckets[buckets.length - 1] !== count
+  ) {
+    throw new Error('Metric histogram sum/count is invalid');
+  }
+  return Object.freeze({
+    buckets: Object.freeze(buckets),
+    sum,
+    count,
+  });
 }
 function requireEvidenceBindingValue(
   binding: MetricEvidenceBinding,
@@ -1140,29 +1227,7 @@ export function validateMetricSampleEnvelope(
     rejectSensitiveText(labelValue, `labels.${key}`);
     labels[key] = labelValue;
   }
-  if (typeof value.value !== 'number' || !Number.isFinite(value.value)) {
-    throw new Error('Metric sample value must be a finite number');
-  }
-  let sampleValue = value.value;
-  if (row.valueSemantics.nonnegative && sampleValue < 0) {
-    if (row.valueSemantics.negativeHandling === 'clamp_to_zero') {
-      sampleValue = 0;
-    } else {
-      throw new Error('Metric sample value must be nonnegative');
-    }
-  }
-  if (
-    row.valueSemantics.minimum !== undefined &&
-    sampleValue < row.valueSemantics.minimum
-  ) {
-    throw new Error('Metric sample value is below its contract minimum');
-  }
-  if (
-    row.valueSemantics.maximum !== undefined &&
-    sampleValue > row.valueSemantics.maximum
-  ) {
-    throw new Error('Metric sample value is above its contract maximum');
-  }
+  const sampleValue = normalizeSampleValue(value.value, row);
   requireCanonicalTimestamp(value.observedAt, 'observedAt');
   requireSafeString(value.source, 'source');
   if (value.source !== row.sourceIdentity) {

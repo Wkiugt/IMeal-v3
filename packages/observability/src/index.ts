@@ -345,6 +345,7 @@ export {
   escapeMetricLabelValue,
   serializeMetrics,
   serializeOpenMetrics,
+  type ApplicationSnapshotMetadata,
   type MetricLabelValues,
   type MetricSourceSnapshot,
 } from './metrics.js';

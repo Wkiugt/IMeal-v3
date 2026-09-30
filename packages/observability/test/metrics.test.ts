@@ -91,12 +91,20 @@ function sample(
         evidence[binding] = revisionValues[binding];
     }
   }
+  const sampleValue =
+    row.type === 'histogram'
+      ? {
+          buckets: row.buckets.map((bucket) => (value <= bucket ? 1 : 0)),
+          sum: value,
+          count: 1,
+        }
+      : value;
   return validateMetricSampleEnvelope({
     metricName,
     type: row.type,
     unit: row.unit,
     labels,
-    value,
+    value: sampleValue,
     observedAt,
     source: row.sourceIdentity,
     freshness,
@@ -255,6 +263,75 @@ describe('MetricRegistry', () => {
     const restarted = new MetricRegistry();
     expect(restarted.serialize()).not.toContain(
       'imeal_http_request_duration_seconds',
+    );
+  });
+  it('creates structured API application snapshots without untouched series', () => {
+    const registry = new MetricRegistry();
+    registry.increment('imeal_auth_attempts_total', { result: 'success' });
+    registry.observeHistogram(
+      'imeal_http_request_duration_seconds_bucket',
+      { route: 'api', method: 'GET', status: '200' },
+      0.25,
+    );
+
+    const snapshot = registry.createApplicationSnapshot({
+      observedAt,
+      freshness: 'fresh',
+      evidence: {
+        release: 'release-test',
+        source: 'api_application',
+        observedAt,
+        contractRevision: '2026-09-30',
+        freshness: 'fresh',
+        sha256Digest: digest,
+        routeTaxonomyRevision: 'route-taxonomy-v1',
+        bucketRevision: 'bucket-v1',
+        resultTaxonomyRevision: 'result-taxonomy-v1',
+      },
+    });
+
+    expect(snapshot.source).toBe('api_application');
+    expect(snapshot.samples.map((sample) => sample.metricName)).toEqual([
+      'imeal_http_request_duration_seconds_bucket',
+      'imeal_auth_attempts_total',
+    ]);
+    expect(
+      snapshot.samples.find(
+        (sample) =>
+          sample.metricName ===
+          'imeal_http_request_duration_seconds_bucket',
+      )?.value,
+    ).toEqual({
+      buckets: METRIC_CONTRACT.find(
+        (row) => row.name === 'imeal_http_request_duration_seconds_bucket',
+      )!.buckets.map((bucket) => (0.25 <= bucket ? 1 : 0)),
+      sum: 0.25,
+      count: 1,
+  });
+  });
+
+  it('serializes structured histogram source buckets, sum, and count exactly', () => {
+    const registry = new MetricRegistry();
+    registry.replaceSourceSnapshot({
+      source: 'api_application',
+      samples: [
+        sample(
+          'imeal_http_request_duration_seconds_bucket',
+          'fresh',
+          0.25,
+        ),
+      ],
+    });
+
+    const output = registry.serialize();
+    expect(output).toContain(
+      'imeal_http_request_duration_seconds_sum{method="GET",route="/health/live",status="200"} 0.25',
+    );
+    expect(output).toContain(
+      'imeal_http_request_duration_seconds_count{method="GET",route="/health/live",status="200"} 1',
+    );
+    expect(output).toContain(
+      'imeal_http_request_duration_seconds_bucket{method="GET",route="/health/live",status="200",le="0.25"} 1',
     );
   });
 

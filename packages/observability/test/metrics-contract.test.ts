@@ -361,12 +361,20 @@ function sample(
   for (const binding of row.evidence) {
     evidence[binding] = evidenceValue(binding, row, observedAt);
   }
+  const sampleValue =
+    row.type === 'histogram'
+      ? {
+          buckets: row.buckets.map((bucket) => (value <= bucket ? 1 : 0)),
+          sum: value,
+          count: 1,
+        }
+      : value;
   return {
     metricName: name,
     type: row.type,
     unit: row.unit,
     labels,
-    value,
+    value: sampleValue,
     observedAt,
     source: row.sourceIdentity,
     freshness: 'fresh',
@@ -691,6 +699,32 @@ describe('metric contract', () => {
         unit: 'seconds',
       } as unknown),
     ).toThrow();
+  });
+  it('requires explicit histogram bucket, sum, and count values', () => {
+    const baseSample = sample(
+      'imeal_http_request_duration_seconds_bucket',
+      {
+        route: 'api',
+        method: 'GET',
+        status: '200',
+      },
+      0.25,
+    );
+    expect(() =>
+      validateMetricSampleEnvelope({
+        ...baseSample,
+        value: 0.25,
+      } as unknown),
+    ).toThrow();
+    expect(
+      validateMetricSampleEnvelope(baseSample).value,
+    ).toEqual({
+      buckets: METRIC_CONTRACT.find(
+        (row) => row.name === baseSample.metricName,
+      )!.buckets.map((bucket) => (0.25 <= bucket ? 1 : 0)),
+      sum: 0.25,
+      count: 1,
+    });
   });
 
   it('rejects unknown top-level and evidence keys', () => {

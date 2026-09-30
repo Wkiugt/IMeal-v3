@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AuthController } from './auth.controller.js';
 import type { OtpService } from './otp.service.js';
-import type { SessionService } from './session.service.js';
+import type { ApiMetricsService } from '../common/metrics.service.js';
 
 const REQUEST_ID = '550e8400-e29b-41d4-a716-446655440000';
 function createController() {
@@ -14,11 +14,15 @@ function createController() {
     resolve: vi.fn(),
     revoke: vi.fn(),
   } satisfies Pick<SessionService, 'create' | 'resolve' | 'revoke'>;
+  const metrics = {
+    recordAuthAttempt: vi.fn(),
+  } satisfies Pick<ApiMetricsService, 'recordAuthAttempt'>;
   const controller = new AuthController(
     otpService as never,
     sessionService as never,
+    metrics as never,
   );
-  return { controller, otpService, sessionService };
+  return { controller, otpService, sessionService, metrics };
 }
 
 describe('AuthController OTP and session endpoints', () => {
@@ -51,7 +55,7 @@ describe('AuthController OTP and session endpoints', () => {
   });
 
   it('creates exactly one opaque session and returns only the safe verify response', async () => {
-    const { controller, otpService, sessionService } = createController();
+    const { controller, otpService, sessionService, metrics } = createController();
     otpService.verify.mockResolvedValue({
       userId: 'user-1',
       challengeId: 'challenge-1',
@@ -106,8 +110,44 @@ describe('AuthController OTP and session endpoints', () => {
         userAgent: 'test-agent',
       },
     });
+    expect(metrics.recordAuthAttempt).toHaveBeenCalledTimes(1);
+    expect(metrics.recordAuthAttempt).toHaveBeenCalledWith('success');
     expect(JSON.stringify(response)).not.toContain('123456');
   });
+  it('records dependency failure when session creation rejects after OTP verification', async () => {
+    const { controller, otpService, sessionService, metrics } = createController();
+    otpService.verify.mockResolvedValue({
+      userId: 'user-1',
+      challengeId: 'challenge-1',
+      requestId: REQUEST_ID,
+      user: {
+        id: 'user-1',
+        userId: 'user-1',
+        email: 'employee@example.test',
+        name: 'Employee',
+        roles: ['staff'],
+        permissions: [],
+      },
+    });
+    const dependencyError = new Error('session store unavailable');
+    sessionService.create.mockRejectedValue(dependencyError);
+
+    await expect(
+      controller.verifyOtp(
+        {
+          email: 'employee@example.test',
+          purpose: 'SESSION_LOGIN',
+          code: '123456',
+        },
+        { requestId: REQUEST_ID, headers: {} },
+      ),
+    ).rejects.toThrow(dependencyError);
+    expect(metrics.recordAuthAttempt).toHaveBeenCalledTimes(1);
+    expect(metrics.recordAuthAttempt).toHaveBeenCalledWith(
+      'dependency_failure',
+    );
+  });
+
 
   it('replaces malformed incoming IDs before OTP correlation', async () => {
     const { controller, otpService } = createController();
