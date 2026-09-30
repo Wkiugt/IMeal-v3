@@ -46,34 +46,13 @@ const METRIC_BY_NAME: ReadonlyMap<string, MetricContractRow> = new Map(
   METRIC_CONTRACT.map((row) => [row.name, row]),
 );
 
-const SOURCE_IDENTITIES: ReadonlySet<string> = new Set([
-  'api_application',
-  'worker_application',
-  'postgres_authoritative',
-  'object_storage_authoritative',
-  'backup_restore_evidence',
-  'security_boundary_evidence',
-]);
+const SOURCE_IDENTITIES: ReadonlySet<string> = new Set(
+  METRIC_CONTRACT.map((row) => row.sourceIdentity),
+);
 
-const UNIT_VALUES: ReadonlySet<string> = new Set([
-  'requests',
-  'seconds',
-  'attempts',
-  'delivery_attempts',
-  'retries',
-  'terminal_failures',
-  'confirmations',
-  'conflicts',
-  'runs',
-  'unix_epoch_seconds',
-  'ratio',
-  'errors',
-  'lock_waits',
-  'bytes',
-  'checksum_failures',
-  'restore_test_failures',
-  'violations',
-]);
+const UNIT_VALUES: ReadonlySet<string> = new Set(
+  METRIC_CONTRACT.map((row) => row.unit),
+);
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

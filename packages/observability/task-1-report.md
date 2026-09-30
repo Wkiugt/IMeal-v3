@@ -73,3 +73,13 @@ Fresh verification after this correction:
 
 - `yarn workspace @imeal/observability test` — **PASS**; 3 test files, 67 tests.
 - `yarn workspace @imeal/observability build` — **PASS**; TypeScript exited 0 with no output.
+
+## Task 2 review quality fix
+
+- Added focused coverage for histogram restart reset, fresh external zero rendering (including M-18), cardinality exhaustion, HELP/label output, identical duplicate merge idempotence, and cross-source duplicate rejection.
+- Removed runtime allowlist drift by deriving source identities and units from `METRIC_CONTRACT`; no second schema was introduced. Full Task 2 details and observed verification are checked in at `packages/observability/task-2-report.md`.
+
+Fresh verification after the quality fix:
+
+- `yarn workspace @imeal/observability test` — **PASS**; 3 test files, 71 tests.
+- `yarn workspace @imeal/observability build` — **PASS**; TypeScript exited 0 with no output.

@@ -165,8 +165,39 @@ describe('MetricRegistry', () => {
       status: '200',
     });
 
-    expect(first.serialize()).toBe(second.serialize());
+    const output = first.serialize();
+    expect(output).toContain(
+      '# HELP imeal_http_requests_total API request finalization and normalized route/status',
+    );
+    expect(output).toContain(
+      'imeal_http_requests_total{method="GET",route="api",status="200"} 1',
+    );
+    expect(output).toBe(second.serialize());
     expect(escapeMetricLabelValue('a"b\\c\n')).toBe('a\\"b\\\\c\\n');
+  });
+
+  it('exhausts the approved cardinality budget without accepting a new label value', () => {
+    const registry = new MetricRegistry();
+    const row = METRIC_CONTRACT.find(
+      (entry) => entry.name === 'imeal_auth_attempts_total',
+    );
+    if (!row) throw new Error('Missing auth metric contract row');
+    const results = row.labels.result;
+    expect(results.length).toBe(row.cardinalityBudget);
+    for (const result of results) {
+      registry.increment('imeal_auth_attempts_total', { result });
+    }
+    expect(() => {
+      registry.increment('imeal_auth_attempts_total', {
+        result: 'unapproved_result',
+      } as never);
+    }).toThrow();
+    expect(
+      registry
+        .serialize()
+        .split('\n')
+        .filter((line) => line.startsWith('imeal_auth_attempts_total{')),
+    ).toHaveLength(row.cardinalityBudget);
   });
 
   it('rejects unknown names, labels, units, invalid values, and sensitive text', () => {
@@ -208,6 +239,52 @@ describe('MetricRegistry', () => {
 
     const restarted = new MetricRegistry();
     expect(restarted.serialize()).not.toContain('imeal_otp_delivery_total');
+  });
+
+  it('resets process-local histogram state when a new registry is constructed', () => {
+    const running = new MetricRegistry();
+    running.observeHistogram(
+      'imeal_http_request_duration_seconds_bucket',
+      { route: 'api', method: 'GET', status: '200' },
+      0.25,
+    );
+    expect(running.serialize()).toContain(
+      'imeal_http_request_duration_seconds_count{method="GET",route="api",status="200"} 1',
+    );
+
+    const restarted = new MetricRegistry();
+    expect(restarted.serialize()).not.toContain(
+      'imeal_http_request_duration_seconds',
+    );
+  });
+
+  it('merges identical duplicate source samples idempotently', () => {
+    const registry = new MetricRegistry();
+    const observation = sample('imeal_postgres_disk_usage_ratio', 'fresh', 0.4);
+    const snapshot = {
+      source: 'postgres_authoritative' as const,
+      samples: [observation],
+    };
+    registry.mergeSourceSnapshot(snapshot);
+    registry.mergeSourceSnapshot(snapshot);
+    expect(registry.getSourceSnapshot('postgres_authoritative')).toEqual([
+      observation,
+    ]);
+    expect(registry.serialize()).toContain(
+      'imeal_postgres_disk_usage_ratio 0.4',
+    );
+  });
+
+  it('rejects cross-source duplicate candidates before serialization', () => {
+    const registry = new MetricRegistry();
+    const applicationSample = sample('imeal_auth_attempts_total', 'fresh', 1);
+    expect(() =>
+      registry.mergeSourceSnapshot({
+        source: 'worker_application',
+        samples: [applicationSample],
+      }),
+    ).toThrow();
+    expect(registry.serialize()).toBe('');
   });
 
   it('merges and replaces source snapshots while preserving freshness states', () => {
@@ -304,6 +381,9 @@ describe('MetricRegistry', () => {
         samples: [sample('imeal_object_storage_capacity_bytes', 'fresh', 0)],
       }),
     ).not.toThrow();
+    expect(capacityRegistry.serialize()).toContain(
+      'imeal_object_storage_capacity_bytes 0',
+    );
     const freshRegistry = new MetricRegistry();
     freshRegistry.replaceSourceSnapshot({
       source: 'postgres_authoritative',
