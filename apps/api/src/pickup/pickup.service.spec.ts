@@ -1,6 +1,6 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PickupService } from './pickup.service.js';
-import { vi } from 'vitest';
+import { vi, type Mock } from 'vitest';
 import { createHash } from 'node:crypto';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 
@@ -95,11 +95,25 @@ vi.mock('@prisma/client', () => {
 
 describe('PickupService', () => {
   let service: PickupService;
+  let metricSink: {
+    recordServingConfirmation: Mock;
+    recordIdempotencyConflict: Mock;
+  };
 
   beforeEach(async () => {
     vi.stubEnv('QR_SIGNING_SECRET', 'test-qr-signing-secret-at-least-32');
     vi.resetAllMocks();
-    service = new PickupService(mockPrisma as never);
+    metricSink = {
+      recordServingConfirmation: vi.fn(),
+      recordIdempotencyConflict: vi.fn(),
+    };
+    service = new PickupService(
+      mockPrisma as never,
+      undefined,
+      undefined,
+      undefined,
+      metricSink as never,
+    );
   });
 
   afterEach(() => {
@@ -714,6 +728,11 @@ describe('PickupService', () => {
         ),
       ).resolves.toEqual(originalResult);
       expect(tx.mealServing.create).not.toHaveBeenCalled();
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledTimes(1);
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledWith(
+        'success',
+        expect.any(Number),
+      );
     });
 
     it('conflicts when a successful key is reused for a changed session body', async () => {
@@ -749,6 +768,12 @@ describe('PickupService', () => {
       ).rejects.toMatchObject({
         response: { code: 'IDEMPOTENCY_CONFLICT' },
       });
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledTimes(1);
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledWith(
+        'error',
+        expect.any(Number),
+      );
+      expect(metricSink.recordIdempotencyConflict).toHaveBeenCalledTimes(1);
     });
 
     it('records immutable owner, proxy, kitchen, location, intent and verification snapshots', async () => {
@@ -968,6 +993,11 @@ describe('PickupService', () => {
       expect(result.servedCount).toBe(1);
       expect(result.servings[0].registrationId).toBe('reg-1');
       expect(tx.mealServing.create).not.toHaveBeenCalled();
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledTimes(1);
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledWith(
+        'success',
+        expect.any(Number),
+      );
     });
 
     it('processes transaction if not idempotently fulfilled', async () => {
@@ -987,6 +1017,12 @@ describe('PickupService', () => {
       expect(result.success).toBe(true);
       expect(result.servedCount).toBe(1);
       expect(mockPrisma.$transaction).toHaveBeenCalled();
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledTimes(1);
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledWith(
+        'success',
+        expect.any(Number),
+      );
+      expect(metricSink.recordIdempotencyConflict).not.toHaveBeenCalled();
     });
 
     it('serving_confirmed_event_contains_projection_payload_after_commit', async () => {
@@ -1045,12 +1081,67 @@ describe('PickupService', () => {
         }),
       );
     });
+    it('preserves committed success when post-commit kitchen event emission fails', async () => {
+      const eventsService = new KitchenEventsService();
+      const emitSpy = vi
+        .spyOn(eventsService, 'emitEvent')
+        .mockImplementationOnce(() => {
+          throw new Error('event sink unavailable');
+        });
+      const serviceWithEvents = new PickupService(
+        mockPrisma as never,
+        eventsService,
+        undefined,
+        undefined,
+        metricSink as never,
+      );
+      vi.spyOn(serviceWithEvents, 'checkServingWindow').mockResolvedValue(
+        undefined,
+      );
+      vi.spyOn(
+        serviceWithEvents as unknown as {
+          assertServingReadyInTransaction: () => Promise<{
+            currentMenuRevisionId: string;
+            serviceStartAt: Date;
+            serviceEndAt: Date;
+          }>;
+        },
+        'assertServingReadyInTransaction',
+      ).mockResolvedValue({
+        currentMenuRevisionId: 'menu-revision-1',
+        serviceStartAt: new Date('2026-09-24T03:30:00.000Z'),
+        serviceEndAt: new Date('2026-09-24T06:30:00.000Z'),
+      });
+      const tx = makeTransaction();
+      mockPrisma.$transaction.mockImplementationOnce(async (callback) =>
+        callback(tx as never),
+      );
+
+      const result = await serviceWithEvents.confirmPickup(
+        {
+          pickupSessionId: 'session-1',
+          idempotencyKey: 'key-event-failure',
+        },
+        kitchenActor,
+      );
+
+      expect(result.success).toBe(true);
+      expect(emitSpy).toHaveBeenCalledTimes(1);
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledTimes(1);
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledWith(
+        'success',
+        expect.any(Number),
+      );
+    });
     it('does not emit SERVING_CONFIRMED when the serving transaction rolls back', async () => {
       const eventsService = new KitchenEventsService();
       const emitSpy = vi.spyOn(eventsService, 'emitEvent');
       const serviceWithEvents = new PickupService(
         mockPrisma as never,
         eventsService,
+        undefined,
+        undefined,
+        metricSink as never,
       );
       const transactionError = new Error('serving transaction rolled back');
       mockPrisma.$transaction.mockRejectedValueOnce(transactionError);
@@ -1062,6 +1153,11 @@ describe('PickupService', () => {
         ),
       ).rejects.toThrow(transactionError);
       expect(emitSpy).not.toHaveBeenCalled();
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledTimes(1);
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledWith(
+        'failure',
+        expect.any(Number),
+      );
     });
 
     it('throws if pickup session is expired', async () => {
@@ -1090,6 +1186,11 @@ describe('PickupService', () => {
         },
       });
       expect(tx.mealServing.create).not.toHaveBeenCalled();
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledTimes(1);
+      expect(metricSink.recordServingConfirmation).toHaveBeenCalledWith(
+        'error',
+        expect.any(Number),
+      );
     });
 
     it('gracefully handles concurrent idempotency inside transaction', async () => {

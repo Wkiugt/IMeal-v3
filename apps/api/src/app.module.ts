@@ -12,11 +12,14 @@ import { KitchenModule } from './kitchen/kitchen.module.js';
 import { LocationsModule } from './locations/locations.module.js';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import type { StructuredLogger } from '@imeal/observability';
+import { MetricRegistry } from '@imeal/observability';
 import {
   API_STRUCTURED_LOGGER,
   createApiStructuredLogger,
 } from './common/structured-logger.js';
 import { ApiExceptionFilter } from './common/api-exception.filter.js';
+import { ApiMetricsService } from './common/metrics.service.js';
+import { ApiMetricsSourceAdapter } from './common/api-metrics-source.js';
 import { HttpLoggingInterceptor } from './common/http-logging.interceptor.js';
 import { RequestIdInterceptor } from './common/request-id.interceptor.js';
 import { ShutdownCoordinator } from './common/shutdown-coordinator.js';
@@ -43,6 +46,15 @@ import { PrismaService } from './common/prisma.service.js';
   controllers: [AppController, HealthController],
   providers: [
     PrismaService,
+    {
+      provide: MetricRegistry,
+      useFactory: () => new MetricRegistry(),
+    },
+    ApiMetricsService,
+    {
+      provide: ApiMetricsSourceAdapter,
+      useFactory: () => new ApiMetricsSourceAdapter(),
+    },
     ShutdownCoordinator,
     {
       provide: HEALTH_SHUTDOWN_COORDINATOR,
@@ -61,15 +73,27 @@ import { PrismaService } from './common/prisma.service.js';
     },
     {
       provide: APP_INTERCEPTOR,
-      useFactory: (logger: StructuredLogger, shutdown: ShutdownCoordinator) =>
-        new HttpLoggingInterceptor(logger, shutdown),
-      inject: [API_STRUCTURED_LOGGER, HEALTH_SHUTDOWN_COORDINATOR],
+      useFactory: (
+        logger: StructuredLogger,
+        shutdown: ShutdownCoordinator,
+        metrics: ApiMetricsService,
+      ) => new HttpLoggingInterceptor(logger, shutdown, metrics),
+      inject: [
+        API_STRUCTURED_LOGGER,
+        HEALTH_SHUTDOWN_COORDINATOR,
+        ApiMetricsService,
+      ],
     },
     {
       provide: APP_FILTER,
       useClass: ApiExceptionFilter,
     },
   ],
-  exports: [PrismaService],
+  exports: [
+    PrismaService,
+    MetricRegistry,
+    ApiMetricsService,
+    ApiMetricsSourceAdapter,
+  ],
 })
 export class AppModule {}

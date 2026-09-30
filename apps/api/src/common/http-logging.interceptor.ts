@@ -17,6 +17,7 @@ import {
   type RequestContextRequest,
 } from './request-context.js';
 import { API_STRUCTURED_LOGGER } from './structured-logger.js';
+import { ApiMetricsService } from './metrics.service.js';
 import {
   HEALTH_SHUTDOWN_COORDINATOR,
   type ShutdownCoordinatorLike,
@@ -36,6 +37,8 @@ export class HttpLoggingInterceptor implements NestInterceptor {
     @Optional()
     @Inject(HEALTH_SHUTDOWN_COORDINATOR)
     private readonly shutdown?: ShutdownCoordinatorLike,
+    @Optional()
+    private readonly metrics?: ApiMetricsService,
   ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -49,12 +52,24 @@ export class HttpLoggingInterceptor implements NestInterceptor {
     );
     const method = request.method ?? 'UNKNOWN';
     const route = normalizeRoute(request);
+    let metricsRecorded = false;
+    const recordMetrics = (statusCode: number): void => {
+      if (metricsRecorded || route === '/metrics') return;
+      metricsRecorded = true;
+      this.metrics?.recordHttpRequest(
+        route,
+        method,
+        statusCode,
+        Math.max(0, Date.now() - startedAt),
+      );
+    };
     const healthRoute = route === '/health' || route.startsWith('/health/');
     const release =
       healthRoute && this.shutdown?.isDraining?.()
         ? undefined
         : this.shutdown?.registerInFlight?.();
     if (this.shutdown?.registerInFlight && !release && !healthRoute) {
+      recordMetrics(503);
       return throwError(
         () =>
           new ServiceUnavailableException({
@@ -69,6 +84,7 @@ export class HttpLoggingInterceptor implements NestInterceptor {
       event: string,
       level: 'info' | 'error',
     ): void => {
+      recordMetrics(statusCode);
       this.logger[level](event, {
         service: 'api',
         release: process.env.RELEASE_VERSION?.trim() || 'unconfigured',

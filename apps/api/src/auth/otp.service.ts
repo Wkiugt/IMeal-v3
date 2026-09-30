@@ -1,10 +1,11 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Optional, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service.js';
 import { createHash, createHmac, randomInt, randomUUID } from 'node:crypto';
 import type { v1 } from '@imeal/contracts';
 import { OtpOutboxService } from '../otp/otp-outbox.service.js';
 import { otpDeliveryEncryptionSecret } from '../otp/otp-provider.js';
 import { AllowlistService } from './allowlist.service.js';
+import { ApiMetricsService } from '../common/metrics.service.js';
 import type {
   AuthenticatedUser,
   VerifiedOtpPrincipal,
@@ -101,6 +102,8 @@ export class OtpService {
     private readonly allowlistService: AllowlistService,
     private readonly prisma: PrismaService,
     outboxService?: OtpOutboxService,
+    @Optional()
+    private readonly metrics?: ApiMetricsService,
   ) {
     this.outboxService = outboxService ?? new OtpOutboxService(this.prisma);
   }
@@ -300,8 +303,25 @@ export class OtpService {
       return { accepted: true };
     });
   }
-
   async verify(
+    input: v1.VerifyOtpInput,
+    context: OtpVerifyContext = {},
+  ): Promise<VerifiedOtpPrincipal> {
+    try {
+      const principal = await this.verifyInternal(input, context);
+      this.metrics?.recordAuthAttempt('success');
+      return principal;
+    } catch (error: unknown) {
+      this.metrics?.recordAuthAttempt(
+        error instanceof UnauthorizedException
+          ? 'failure'
+          : 'dependency_failure',
+      );
+      throw error;
+    }
+  }
+
+  private async verifyInternal(
     input: v1.VerifyOtpInput,
     context: OtpVerifyContext = {},
   ): Promise<VerifiedOtpPrincipal> {

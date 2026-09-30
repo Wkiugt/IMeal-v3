@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   ForbiddenException,
+  HttpException,
   Optional,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -21,6 +22,7 @@ import {
   type GpsVerificationResult,
   type ResolvedLocation,
 } from '../locations/locations.service.js';
+import { ApiMetricsService } from '../common/metrics.service.js';
 import type { AuthenticatedUser } from '../auth/authenticated-user.js';
 
 const QR_TTL_SECONDS = 5;
@@ -320,6 +322,7 @@ export class PickupService {
     @Optional() private readonly kitchenEventsService?: KitchenEventsService,
     @Optional() private readonly notificationsService?: NotificationsService,
     @Optional() private readonly locationsService?: LocationsService,
+    @Optional() private readonly metrics?: ApiMetricsService,
   ) {}
 
   private getTodayDate(now: Date = new Date()) {
@@ -1107,8 +1110,36 @@ export class PickupService {
       serviceEndAt,
     };
   }
-
   async confirmPickup(
+    body: v1.ConfirmPickupInput,
+    kitchenActor: AuthenticatedUser,
+  ): Promise<ConfirmPickupResult> {
+    const startedAt = Date.now();
+    try {
+      const response = await this.confirmPickupInternal(body, kitchenActor);
+      this.metrics?.recordServingConfirmation(
+        'success',
+        Math.max(0, Date.now() - startedAt),
+      );
+      return response;
+    } catch (error: unknown) {
+      const result =
+        error instanceof HttpException && error.getStatus() < 500
+          ? ('error' as const)
+          : ('failure' as const);
+      this.metrics?.recordServingConfirmation(
+        result,
+        Math.max(0, Date.now() - startedAt),
+      );
+      if (exceptionCode(error) === 'IDEMPOTENCY_CONFLICT') {
+        this.metrics?.recordIdempotencyConflict();
+      }
+      throw error;
+    }
+  }
+
+
+  private async confirmPickupInternal(
     body: v1.ConfirmPickupInput,
     kitchenActor: AuthenticatedUser,
   ): Promise<ConfirmPickupResult> {
@@ -1823,16 +1854,20 @@ export class PickupService {
       const sortedServingIds = transactionResult.response.servings
         .map((serving) => serving.id)
         .sort((left, right) => left.localeCompare(right));
-      this.kitchenEventsService.emitEvent({
-        eventId: `serving:${sortedServingIds.join(',')}`,
-        eventType: 'SERVING_CONFIRMED',
-        mealDate: transactionResult.mealDate,
-        requestId: transactionResult.requestId,
-        payload: {
-          servedCount: transactionResult.response.servedCount,
-          servingIds: sortedServingIds,
-        },
-      });
+      try {
+        this.kitchenEventsService.emitEvent({
+          eventId: `serving:${sortedServingIds.join(',')}`,
+          eventType: 'SERVING_CONFIRMED',
+          mealDate: transactionResult.mealDate,
+          requestId: transactionResult.requestId,
+          payload: {
+            servedCount: transactionResult.response.servedCount,
+            servingIds: sortedServingIds,
+          },
+        });
+      } catch {
+        // The transaction already committed; preserve the successful response.
+      }
     }
     return transactionResult.response;
   }

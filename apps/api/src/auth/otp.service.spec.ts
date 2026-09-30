@@ -6,6 +6,7 @@ import {
 } from './allowlist.service.js';
 import { hashOtpCode, OtpService } from './otp.service.js';
 import { decryptOtpProviderPayload } from '../otp/otp-provider.js';
+import type { ApiMetricsService } from '../common/metrics.service.js';
 
 type MockFunction = Mock;
 
@@ -70,11 +71,18 @@ function createPrisma() {
   return prisma;
 }
 
-function installService() {
+function installService(
+  metrics?: Pick<ApiMetricsService, 'recordAuthAttempt'>,
+) {
   const prisma = createPrisma();
   const allowlist = new AllowlistService(prisma as never);
   Reflect.set(allowlist, 'prisma', prisma);
-  const service = new OtpService(allowlist, prisma as never);
+  const service = new OtpService(
+    allowlist,
+    prisma as never,
+    undefined,
+    metrics as never,
+  );
   Reflect.set(service, 'prisma', prisma);
   Reflect.set(service, 'generateCode', vi.fn().mockReturnValue('123456'));
   return { service, allowlist, prisma };
@@ -255,8 +263,8 @@ describe('OtpService', () => {
   });
 
   it('atomically consumes a valid code and resolves the current user', async () => {
-    const { service, allowlist, prisma } = installService();
-    vi.spyOn(allowlist, 'findEligible').mockResolvedValue(ALLOWLIST);
+    const metricSink = { recordAuthAttempt: vi.fn() };
+    const { service, allowlist, prisma } = installService(metricSink);
     prisma.otpChallenge.findFirst.mockResolvedValue({
       id: 'challenge-1',
       normalizedEmail: EMAIL,
@@ -293,6 +301,8 @@ describe('OtpService', () => {
     expect(JSON.stringify(prisma.auditLog.create.mock.calls)).not.toContain(
       '123456',
     );
+    expect(metricSink.recordAuthAttempt).toHaveBeenCalledTimes(1);
+    expect(metricSink.recordAuthAttempt).toHaveBeenCalledWith('success');
   });
 
   it.each([
@@ -301,8 +311,8 @@ describe('OtpService', () => {
     ['consumed', '123456'],
     ['attempt-limited', '123456'],
   ])('fails closed for %s challenges', async (kind, code) => {
-    const { service, allowlist, prisma } = installService();
-    vi.spyOn(allowlist, 'findEligible').mockResolvedValue(ALLOWLIST);
+    const metricSink = { recordAuthAttempt: vi.fn() };
+    const { service, allowlist, prisma } = installService(metricSink);
     const challenge = {
       id: 'challenge-1',
       normalizedEmail: EMAIL,
@@ -330,6 +340,8 @@ describe('OtpService', () => {
     ).rejects.toMatchObject({
       response: expect.objectContaining({ code: 'OTP_INVALID_OR_EXPIRED' }),
     });
+    expect(metricSink.recordAuthAttempt).toHaveBeenCalledTimes(1);
+    expect(metricSink.recordAuthAttempt).toHaveBeenCalledWith('failure');
   });
 
   it('rejects a race when the conditional consume updates no row', async () => {
@@ -361,5 +373,22 @@ describe('OtpService', () => {
     ).rejects.toMatchObject({
       response: expect.objectContaining({ code: 'OTP_INVALID_OR_EXPIRED' }),
     });
+  });
+
+  it('marks unavailable authentication dependencies as dependency_failure', async () => {
+    const metricSink = { recordAuthAttempt: vi.fn() };
+    const { service, prisma } = installService(metricSink);
+    prisma.$transaction.mockRejectedValueOnce(new Error('database unavailable'));
+
+    await expect(
+      service.verify(
+        { email: EMAIL, purpose: 'SESSION_LOGIN', code: '123456' },
+        context,
+      ),
+    ).rejects.toThrow('database unavailable');
+    expect(metricSink.recordAuthAttempt).toHaveBeenCalledTimes(1);
+    expect(metricSink.recordAuthAttempt).toHaveBeenCalledWith(
+      'dependency_failure',
+    );
   });
 });
