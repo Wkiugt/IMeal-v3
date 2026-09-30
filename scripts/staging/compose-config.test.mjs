@@ -51,6 +51,7 @@ const secretNames = new Set([
   'OTP_DELIVERY_ENCRYPTION_KEY',
   'SESSION_HASH_SECRET',
   'OTP_PROVIDER_API_KEY',
+  'WORKER_METRICS_SOURCE_BEARER_TOKEN',
 ]);
 
 function fixtureValues() {
@@ -224,6 +225,18 @@ test('renders an isolated immutable staging boundary', () => {
     );
   }
   assert.equal(
+    environment(services.worker).WORKER_METRICS_SOURCE_REGISTRY_URL,
+    values.WORKER_METRICS_SOURCE_REGISTRY_URL,
+  );
+  assert.match(
+    stagingWorkerBlock,
+    /WORKER_METRICS_SOURCE_REGISTRY_URL: \$\{WORKER_METRICS_SOURCE_REGISTRY_URL:\?WORKER_METRICS_SOURCE_REGISTRY_URL is required\}/,
+  );
+  assert.match(
+    stagingWorkerBlock,
+    /WORKER_METRICS_SOURCE_BEARER_TOKEN: \$\{WORKER_METRICS_SOURCE_BEARER_TOKEN:-\}/,
+  );
+  assert.equal(
     services.api.depends_on.migrate.condition,
     'service_completed_successfully',
   );
@@ -354,6 +367,20 @@ test('production worker metrics stay private and transport bindings remain prote
     );
     assert.match(envExampleText, new RegExp(`^# ${name}=$`, 'm'));
   }
+  assert.equal(
+    environment(productionWorker).WORKER_METRICS_SOURCE_REGISTRY_URL,
+    productionValues.WORKER_METRICS_SOURCE_REGISTRY_URL,
+  );
+  assert.match(
+    workerBlock,
+    /WORKER_METRICS_SOURCE_REGISTRY_URL: \$\{WORKER_METRICS_SOURCE_REGISTRY_URL:\?WORKER_METRICS_SOURCE_REGISTRY_URL is required\}/,
+  );
+  assert.match(
+    workerBlock,
+    /WORKER_METRICS_SOURCE_BEARER_TOKEN: \$\{WORKER_METRICS_SOURCE_BEARER_TOKEN:-\}/,
+  );
+  assert.match(envExampleText, /^# WORKER_METRICS_SOURCE_REGISTRY_URL=$/m);
+  assert.match(envExampleText, /^# WORKER_METRICS_SOURCE_BEARER_TOKEN=$/m);
 
   const sourceLines = workerBlock
     .split('\n')
