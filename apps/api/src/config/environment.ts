@@ -1,6 +1,9 @@
 import { isIP } from 'node:net';
+import { API_METRICS_EVIDENCE_DIGEST_ENV } from '@imeal/observability';
 import { otpProviderConfiguration } from '../otp/otp-provider.js';
 
+export { API_METRICS_EVIDENCE_DIGEST_ENV };
+export const API_METRICS_EVIDENCE_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const REQUIRED_API_ENV = ['DATABASE_URL', 'QR_SIGNING_SECRET'] as const;
 const OTP_HASH_SECRET = 'OTP_HASH_SECRET' as const;
 const OTP_DELIVERY_ENCRYPTION_KEY = 'OTP_DELIVERY_ENCRYPTION_KEY' as const;
@@ -94,6 +97,13 @@ function requireExact(
   }
 }
 
+function requireSha256Digest(name: string, env: NodeJS.ProcessEnv): void {
+  const digest = requireValue(name, env);
+  if (!API_METRICS_EVIDENCE_DIGEST_PATTERN.test(digest)) {
+    throw new Error(`${name} must be a lowercase sha256 digest`);
+  }
+}
+
 function requireProductionRuntimeSettings(env: NodeJS.ProcessEnv): void {
   const logLevel = requireValue('LOG_LEVEL', env).toLowerCase();
   if (!LOG_LEVELS.includes(logLevel as (typeof LOG_LEVELS)[number])) {
@@ -101,6 +111,7 @@ function requireProductionRuntimeSettings(env: NodeJS.ProcessEnv): void {
   }
 
   requireValue('RELEASE_VERSION', env);
+  requireSha256Digest(API_METRICS_EVIDENCE_DIGEST_ENV, env);
   requireInteger('SHUTDOWN_TIMEOUT_SECONDS', 1, env, 300);
   const evidencePath = requireValue('MIGRATION_EVIDENCE_PATH', env);
   if (!evidencePath.startsWith('/')) {

@@ -1,4 +1,5 @@
 import { Global, Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -26,6 +27,10 @@ import { ApiMetricsService } from './common/metrics.service.js';
 import { HttpLoggingInterceptor } from './common/http-logging.interceptor.js';
 import { RequestIdInterceptor } from './common/request-id.interceptor.js';
 import { ShutdownCoordinator } from './common/shutdown-coordinator.js';
+import {
+  API_METRICS_SCHEDULER_ENVIRONMENT,
+  ApiMetricsSchedulerService,
+} from './common/api-metrics-scheduler.service.js';
 import { HealthController } from './health/health.controller.js';
 import { HealthService } from './health/health.service.js';
 import {
@@ -36,6 +41,7 @@ import { PrismaService } from './common/prisma.service.js';
 @Global()
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     AuthModule,
     DelegationsModule,
     WeeklyMenusModule,
@@ -60,6 +66,11 @@ import { PrismaService } from './common/prisma.service.js';
         new ApiMetricsSourceAdapter(createWorkerMetricsHttpAggregator()),
     },
     ShutdownCoordinator,
+    {
+      provide: API_METRICS_SCHEDULER_ENVIRONMENT,
+      useFactory: () => process.env,
+    },
+    ApiMetricsSchedulerService,
     {
       provide: HEALTH_SHUTDOWN_COORDINATOR,
       useExisting: ShutdownCoordinator,

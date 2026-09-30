@@ -33,6 +33,7 @@ export interface ApiMetricsSourceSnapshot {
 export interface WorkerMetricsAggregator {
   acceptApiApplicationSnapshot(
     snapshot: MetricSourceSnapshot,
+    signal?: AbortSignal,
   ): Promise<void> | void;
   isAvailable?(): boolean;
 }
@@ -78,6 +79,7 @@ export class WorkerMetricsHttpAggregator implements WorkerMetricsAggregator {
 
   async acceptApiApplicationSnapshot(
     snapshot: MetricSourceSnapshot,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (!this.configured || !this.endpoint || !this.token) {
       throw new Error('Worker metrics transport is unavailable');
@@ -90,6 +92,7 @@ export class WorkerMetricsHttpAggregator implements WorkerMetricsAggregator {
         'content-type': 'application/json',
       },
       body: JSON.stringify(snapshot),
+      signal,
     });
     if (!response.ok) {
       throw new Error(`Worker metrics transport rejected (${response.status})`);
@@ -112,6 +115,7 @@ export class ApiMetricsSourceAdapter {
   async flush(
     metrics: ApiMetricsService,
     metadata?: ApplicationSnapshotMetadata,
+    signal?: AbortSignal,
   ): Promise<ApiMetricsSourceSnapshot> {
     let validatedMetadata: ApplicationSnapshotMetadata;
     try {
@@ -161,9 +165,8 @@ export class ApiMetricsSourceAdapter {
         reason: 'sink_unavailable',
       };
     }
-
     try {
-      await this.aggregator.acceptApiApplicationSnapshot(snapshot);
+      await this.aggregator.acceptApiApplicationSnapshot(snapshot, signal);
       return {
         source: API_METRICS_SOURCE,
         freshness: validatedMetadata.freshness,

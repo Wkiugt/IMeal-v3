@@ -37,6 +37,7 @@ function setValidProductionEnvironment() {
   process.env.QR_CLOCK_SKEW_SECONDS = '2';
   process.env.PICKUP_SESSION_TTL_SECONDS = '30';
   process.env.RELEASE_VERSION = 'release-1';
+  process.env.API_METRICS_EVIDENCE_DIGEST = `sha256:${'a'.repeat(64)}`;
   process.env.LOG_LEVEL = 'info';
   process.env.SHUTDOWN_TIMEOUT_SECONDS = '30';
   process.env.MIGRATION_EVIDENCE_PATH = '/run/imeal/migration-gate.json';
@@ -208,6 +209,17 @@ describe('API environment validation', () => {
     delete process.env[name];
 
     expect(() => validateApiEnvironment()).toThrow(name);
+  });
+  it('rejects production when API metrics evidence digest is missing or invalid', () => {
+    setValidProductionEnvironment();
+    delete process.env.API_METRICS_EVIDENCE_DIGEST;
+    expect(() => validateApiEnvironment()).toThrow('API_METRICS_EVIDENCE_DIGEST');
+
+    setValidProductionEnvironment();
+    process.env.API_METRICS_EVIDENCE_DIGEST = 'not-a-digest';
+    expect(() => validateApiEnvironment()).toThrow(
+      'API_METRICS_EVIDENCE_DIGEST',
+    );
   });
 
   it.each(['0', '301', 'not-a-number'])(
