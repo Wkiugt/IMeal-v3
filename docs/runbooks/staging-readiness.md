@@ -65,8 +65,13 @@ node --test scripts/staging/compose-config.test.mjs
 These checks do not establish external staging readiness. Current blockers
 that MUST remain visible in the release decision are:
 
-- the application has no actual hardening `/metrics` collectors/endpoints, so
-  protected runtime integration fails closed rather than creating evidence;
+- the worker now owns an internal `/metrics` endpoint, but the checked-in
+  Compose boundary provides no external authoritative source bindings; protected
+  runtime integration therefore fails closed until those sources and evidence
+  exist;
+- Production Compose requires the four opaque worker source-reference names;
+  staging does not provide values for them, so production-mode worker startup
+  remains fail-closed until deployment supplies approved references.
 - the approved edge WAF/rate-limit control and the alert delivery route are not
   provisioned;
 - no real staging environment, DNS, TLS certificate, OTP provider path,
@@ -340,10 +345,11 @@ worker paths. Do not turn local test mode into staging evidence.
 The protected workflow invokes `runRuntimeIntegration` from
 `scripts/staging/runtime-integration.mjs` after deployment and before it records
 `runtimeIntegration: PASS`. It must observe the expected release marker,
-health/readiness behavior, and the actual hardening endpoints. Because this
-repository currently has no real hardening `/metrics` collectors/endpoints,
-that gate fails closed and MUST remain FAIL until the deployed implementation
-and its collector evidence exist.
+health/readiness behavior, and the actual hardening endpoints. This repository
+contains the worker `/metrics` endpoint and private Compose isolation, but no
+real PostgreSQL/storage/backup/security collectors or target bindings are
+provisioned; that gate MUST remain FAIL until the deployed sources and their
+redacted evidence exist.
 
 Before sign-off, the network owner must prove the approved edge WAF and
 rate-limit policy, trusted-proxy/client-IP handling, TLS certificate and

@@ -25,7 +25,7 @@ candidate + immutable artifact
 
 A nonzero preflight result, target mismatch, missing backup, failed validation, failed smoke, or missing independent approval aborts the sequence. There is no destructive down migration and no Firebase rollback path. Recovery is an approved PostgreSQL/object-storage restore or rollback to the prior compatible application artifact.
 
-The current repository already provides the migration SQL, startup environment validators, focused domain/API/worker suites, local-only seed safety, and a candid NO-GO assessment. It does not yet provide the staging wrapper scripts, CI workflow, production-safe Compose override, metrics/alert integration, backup job, or external approval records described here.
+The current repository already provides the migration SQL, startup environment validators, focused domain/API/worker suites, local-only seed safety, a private worker `/metrics` endpoint, and a candid NO-GO assessment. It does not yet provide external authoritative metric collectors/source bindings, the staging wrapper scripts, CI workflow, backup job, or external approval records described here.
 
 ## 2. Goals
 
@@ -102,6 +102,13 @@ Staging MUST have:
 ### 5.2 Server variables
 
 The exact names are governed by `.env.example:5-76` and `docs/02-technical-requirements.md:226-256`. The staging secret manifest records names, source, owner, rotation date and validation status, never values.
+The worker's authoritative metric source bindings are opaque deployment references:
+`WORKER_METRICS_POSTGRES_SOURCE`,
+`WORKER_METRICS_OBJECT_STORAGE_SOURCE`,
+`WORKER_METRICS_BACKUP_EVIDENCE_SOURCE`, and
+`WORKER_METRICS_SECURITY_BOUNDARY_SOURCE`. Production Compose requires each
+reference; staging remains fail-closed when bindings are absent. The references
+must never contain credentials, URLs, targets, or source payloads.
 
 **API required:** `DATABASE_URL`, `AUTH_MODE`, `REQUIRE_AUTH`, `QR_SIGNING_SECRET`, `OTP_HASH_SECRET`, `OTP_DELIVERY_ENCRYPTION_KEY`, `OTP_PROVIDER_URL`, `OTP_PROVIDER_API_KEY`, `OTP_PROVIDER_FROM`, all `OTP_*` expiry/rate values, `SESSION_HASH_SECRET`, both session timeout values, all `GPS_DEFAULT_*` values, and the fixed `SERVING_*`, `NO_SHOW_PROCESSING_TIME`, `QR_*`, `PICKUP_SESSION_TTL_SECONDS` values.
 

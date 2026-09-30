@@ -7,7 +7,11 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const root = resolve(fileURLToPath(new URL('../..', import.meta.url)));
-const composeFiles = ['docker-compose.yml', 'docker-compose.staging.yml'];
+const composeFiles = [
+  'docker-compose.yml',
+  'docker-compose.staging.yml',
+  'docker-compose.production.yml',
+];
 const composeText = composeFiles
   .map((file) => readFileSync(resolve(root, file), 'utf8'))
   .join('\n');
@@ -15,6 +19,15 @@ const caddyText = readFileSync(
   resolve(root, 'infra/staging/Caddyfile'),
   'utf8',
 );
+const productionComposeText = readFileSync(
+  resolve(root, 'docker-compose.production.yml'),
+  'utf8',
+);
+const productionCaddyText = readFileSync(
+  resolve(root, 'Caddyfile.production'),
+  'utf8',
+);
+const envExampleText = readFileSync(resolve(root, '.env.example'), 'utf8');
 const alertRulesText = readFileSync(
   resolve(root, 'infra/staging/alert-rules.yml'),
   'utf8',
@@ -90,7 +103,10 @@ function fixtureValues() {
   return values;
 }
 
-function renderCompose(values) {
+function renderCompose(
+  values,
+  files = ['docker-compose.yml', 'docker-compose.staging.yml'],
+) {
   const directory = mkdtempSync(join(tmpdir(), 'imeal-staging-compose-'));
   const envFile = join(directory, 'compose.env');
   writeFileSync(
@@ -107,10 +123,7 @@ function renderCompose(values) {
           'compose',
           '--env-file',
           envFile,
-          '-f',
-          'docker-compose.yml',
-          '-f',
-          'docker-compose.staging.yml',
+          ...files.flatMap((file) => ['-f', file]),
           'config',
           '--format',
           'json',
@@ -213,6 +226,7 @@ test('renders an isolated immutable staging boundary', () => {
     /infra\/staging\/Caddyfile/,
   );
   assert.equal(config.networks.app.internal, true);
+  assert.deepEqual(Object.keys(services.worker.networks ?? {}), ['data']);
   assert.equal(config.networks.data.internal, true);
   const bucketCommand = services['minio-create-bucket'].command.join('\n');
   assert.match(bucketCommand, /anonymous set private/);
@@ -260,6 +274,64 @@ test('Caddy owns HTTPS redirect, health routes, headers and request IDs without 
   assert.ok(metricsIndex < caddyText.lastIndexOf('handle {'));
   assert.doesNotMatch(alertRulesText, /\brate_limit\s*:/i);
 });
+test('production worker metrics stay private and source references remain opaque', () => {
+  const workerBlock = productionComposeText.match(
+    /\n  worker:\n([\s\S]*?)\n  admin-web:/,
+  )?.[1];
+  assert.ok(workerBlock, 'production worker service must be present');
+  assert.doesNotMatch(workerBlock, /^\s+ports:/m);
+  assert.match(workerBlock, /networks:\s*(?:!override\s*)?\n\s+- data\b/);
+  assert.doesNotMatch(workerBlock, /^\s+- app\b/m);
+
+  const sourceNames = [
+    'WORKER_METRICS_POSTGRES_SOURCE',
+    'WORKER_METRICS_OBJECT_STORAGE_SOURCE',
+    'WORKER_METRICS_BACKUP_EVIDENCE_SOURCE',
+    'WORKER_METRICS_SECURITY_BOUNDARY_SOURCE',
+  ];
+  const productionValues = fixtureValues();
+  const productionConfig = renderCompose(productionValues, [
+    'docker-compose.yml',
+    'docker-compose.production.yml',
+  ]);
+  const productionWorker = productionConfig.services.worker;
+  assert.equal(productionWorker.ports, undefined);
+  const productionWorkerNetworks = Array.isArray(productionWorker.networks)
+    ? productionWorker.networks.map((network) =>
+        typeof network === 'string' ? network : network.target,
+      )
+    : Object.keys(productionWorker.networks ?? {});
+  assert.deepEqual(productionWorkerNetworks, ['data']);
+  for (const name of sourceNames) {
+    assert.equal(environment(productionWorker)[name], productionValues[name]);
+    assert.match(
+      workerBlock,
+      new RegExp(`${name}: \\$\\{${name}:\\?${name} is required\\}`),
+    );
+    assert.match(envExampleText, new RegExp(`^# ${name}=$`, 'm'));
+  }
+
+  const sourceLines = workerBlock
+    .split('\n')
+    .filter((line) => sourceNames.some((name) => line.includes(name)));
+  assert.equal(sourceLines.length, sourceNames.length);
+  assert.doesNotMatch(
+    sourceLines.join('\n'),
+    /(?:postgres(?:ql)?:\/\/|https?:\/\/|password|token|secret|api[_-]?key)/i,
+  );
+
+  const metricsHandle = productionCaddyText.match(
+    /handle @metrics \{[\s\S]*?\n\s*\}/,
+  )?.[0];
+  assert.ok(metricsHandle, 'production Caddy must define an explicit /metrics deny route');
+  assert.match(metricsHandle, /respond 404/);
+  assert.doesNotMatch(metricsHandle, /reverse_proxy/);
+  const metricsIndex = productionCaddyText.indexOf('handle @metrics');
+  assert.ok(metricsIndex < productionCaddyText.indexOf('handle @api'));
+  assert.ok(metricsIndex < productionCaddyText.lastIndexOf('handle {'));
+  assert.match(productionCaddyText, /Strict-Transport-Security/);
+});
+
 
 test('alert rules use the hardening-owned metric and alert names', () => {
   for (const name of [

@@ -206,7 +206,6 @@ services:
     volumes: !override
       - staging_migration_evidence:/run/imeal:ro
     networks: !override
-      - app
       - data
     depends_on: !override
       pgbouncer:

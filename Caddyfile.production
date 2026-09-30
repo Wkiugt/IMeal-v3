@@ -18,6 +18,13 @@ http://{$PUBLIC_HOSTNAME} {
         Content-Security-Policy "default-src 'self'; connect-src 'self' https: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     }
 
+    # Keep the worker metrics endpoint private to the monitoring/data network.
+    # Never let the admin SPA fallback turn public /metrics into a successful response.
+    @metrics path /metrics /metrics/*
+    handle @metrics {
+        respond 404
+    }
+
     @api path /api/* /auth/* /registrations/* /admin/* /v1/* /internal/*
     handle @api {
         # flush_interval -1 keeps server-sent events flowing; WebSocket
