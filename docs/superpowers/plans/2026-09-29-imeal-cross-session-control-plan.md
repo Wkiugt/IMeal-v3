@@ -33,6 +33,30 @@ Canonical implementation plans and operational guidance remain the dated plans a
 | Staging-readiness repository surface | **IMPLEMENTATION-COMPLETE / DONE (repository only)** | The staging tooling, Compose/Caddy boundary, workflow, alert rules, release/evidence helpers, and runbook exist on observed branch `develop/Hardening`. Their presence does not prove an external staging target or release qualification. See [`2026-09-28-staging-readiness-plan.md`](2026-09-28-staging-readiness-plan.md), [`staging-readiness.md`](../../runbooks/staging-readiness.md), and [`staging-readiness.yml`](../../../.github/workflows/staging-readiness.yml). |
 | Staging/release qualification | **BLOCKED / CONDITIONAL / NO-GO** | The runbook reports no real staging environment, DNS/TLS, OTP provider path, backup/restore rehearsal, alert delivery, UAT, identity approval, or location/roster approval. The private worker `/metrics` endpoint and verifier now exist, but real API-to-worker transport/flush, authoritative collector callers, protected bindings, and qualification evidence remain absent; protected runtime integration still fails closed. See [`staging-readiness.md`](../../runbooks/staging-readiness.md) and [`imeal-production-readiness-assessment.md`](../../imeal-production-readiness-assessment.md). |
 | Phase 1 product/pilot work | **NOT_STARTED** | The product gaps and one-canteen pilot remain after the Phase 0 gate; no Phase 1 product task is claimed complete here. See the P1 list and pilot sequence in [`imeal-production-readiness-assessment.md`](../../imeal-production-readiness-assessment.md). |
+### Phase 0.5 execution record (repository-only bridge)
+
+**2026-09-29 — evidence-first record.** The repository has no formal “Phase 0.5” label; this session maps the requested bridge to formal `P0-DOM-09` + `STG-EXT-01`, gated by `STG-METRICS-01`. No Phase 1 work started.
+
+Observed repository-only checks:
+
+- `yarn test:staging-tools` — **PASS, 110/110**.
+- `node --test scripts/staging/compose-config.test.mjs` — **PASS, 5/5**.
+
+No external target or credentials were used. No release gate changed: `P0-DOM-09` and `STG-EXT-01` remain `CONDITIONAL / NO-GO`; `STG-METRICS-01` remains `BLOCKED` because the external prerequisites listed in this plan are unavailable.
+
+Next safe action: resolve metrics ownership/implementation and provision an approved isolated staging target before any target write/backfill. This record claims no metrics endpoint, staging qualification, approval, backup/restore, UAT, or signoff.
+
+### STG-METRICS-01 implementation assessment
+
+**2026-09-29 — evidence-first assessment.** Runtime integration requires 23 metric names from `scripts/staging/runtime-integration.mjs`; the repository has no concrete producer/exporter contract for all of them. Application-only constants/zeros would be misleading and violate the release gate.
+
+Implementation is blocked pending a named runtime/platform owner and decisions for exporter/endpoint ownership, API/worker metric types/labels, PostgreSQL source, object-storage source, backup/restore evidence-to-metric source, and security-boundary event source.
+
+No production code was changed, no status changed, and no metrics endpoint is claimed.
+
+Next action: create an independently reviewable 23-metric contract/decision record, then implement ownership-aligned collectors; keep `STG-METRICS-01` `BLOCKED` until real signals and focused proof exist.
+Draft decision record: [`2026-09-29-imeal-metrics-contract-design.md`](../specs/2026-09-29-imeal-metrics-contract-design.md), **DRAFT — PENDING NAMED RUNTIME/PLATFORM OWNER REVIEW**; it does not change status or claim an endpoint.
+Implementation plan: [`2026-09-30-imeal-metrics-implementation-plan.md`](2026-09-30-imeal-metrics-implementation-plan.md). D1–D9 are approved for implementation planning; Task 1's row-level 23-metric contract and named runtime/platform owner review are still required before instrumentation. `STG-METRICS-01` remains **BLOCKED**.
 
 ### Implementation-complete versus release-ready
 
@@ -137,7 +161,7 @@ This handoff records only observed values; re-check branch, HEAD, and worktree s
 | Field | Handoff |
 | --- | --- |
 | Current branch | `develop/Hardening` (observed with `git branch --show-current` before this control-plan commit) |
-| HEAD | `663fefdbd324a24753b370817681862bb9d0945e` (observed before this control-plan commit; re-check after checkout) |
+| HEAD | `4f043aa6f44089f666a2c0dc4e276747b578b000` (observed repository state for this control-plan update; re-check after checkout) |
 | Active session | `[fill with session/owner identifier]` |
 | Last completed task | Phase 0 domain-correctness Tasks 1–8; production-hardening Tasks 1–9; staging-readiness repository surface present. Phase 0 Task 9 is not complete. |
 | Blockers | External staging target/approval, backup/restore and rollback evidence, representative data remediation, `/metrics`, edge/alert provisioning, identity/provider/location approval, and UAT. |

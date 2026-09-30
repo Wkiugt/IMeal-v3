@@ -213,6 +213,18 @@ test('renders an isolated immutable staging boundary', () => {
   assert.equal(environment(services.worker).NODE_ENV, 'production');
   assert.equal(environment(services.api).REQUIRE_AUTH, 'true');
   assert.equal(environment(services.worker).REQUIRE_AUTH, 'true');
+  assert.equal(
+    environment(services.api).API_METRICS_EVIDENCE_DIGEST,
+    values.API_METRICS_EVIDENCE_DIGEST,
+  );
+  const stagingApiBlock = stagingComposeText.match(
+    /\n  api:\n([\s\S]*?)\n  worker:/,
+  )?.[1];
+  assert.ok(stagingApiBlock, 'staging api service must be present');
+  assert.match(
+    stagingApiBlock,
+    /API_METRICS_EVIDENCE_DIGEST: \$\{API_METRICS_EVIDENCE_DIGEST:\?API_METRICS_EVIDENCE_DIGEST is required\}/,
+  );
   const stagingWorkerBlock = stagingComposeText.match(
     /\n  worker:\n([\s\S]*?)\n  admin-web:/,
   )?.[1];
