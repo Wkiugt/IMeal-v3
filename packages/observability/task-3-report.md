@@ -44,6 +44,7 @@ Task 3 instruments the API's existing request, OTP verification, and pickup conf
 - `yarn workspace @imeal/observability build` — **PASS**.
 - `yarn workspace @imeal/api test --run src/common/http-logging.interceptor.spec.ts src/common/metrics.service.spec.ts src/common/api-metrics-source.spec.ts src/auth/otp.service.spec.ts src/auth/auth.controller.spec.ts src/pickup/pickup.service.spec.ts` — **PASS**; 6 files, 83 tests.
 - `yarn workspace @imeal/api build` — **PASS**.
+- `yarn workspace @imeal/api test --run src/common/http-logging.interceptor.spec.ts src/auth/otp.service.spec.ts src/pickup/pickup.service.spec.ts` — **PASS**; 3 files, 71 tests (final planned-command rerun).
 - Nest module smoke check — **PASS**; `ApiMetricsService` resolves as one shared instance in `AuthController`, `OtpService`, and `PickupService`.
 
 The structured transport has no broker, public endpoint, authoritative metric producer, credentials, backfill, or fallback-zero path.
