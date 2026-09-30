@@ -296,11 +296,15 @@ test('Caddy owns HTTPS redirect, health routes, headers and request IDs without 
   assert.ok(metricsIndex < caddyText.lastIndexOf('handle {'));
   assert.doesNotMatch(alertRulesText, /\brate_limit\s*:/i);
 });
-test('production worker metrics stay private and source references remain opaque', () => {
+test('production worker metrics stay private and transport bindings remain protected', () => {
   const workerBlock = productionComposeText.match(
     /\n  worker:\n([\s\S]*?)\n  admin-web:/,
   )?.[1];
   assert.ok(workerBlock, 'production worker service must be present');
+  const apiBlock = productionComposeText.match(
+    /\n  api:\n([\s\S]*?)\n  worker:/,
+  )?.[1];
+  assert.ok(apiBlock, 'production api service must be present');
   assert.doesNotMatch(workerBlock, /^\s+ports:/m);
   assert.match(workerBlock, /networks:\s*(?:!override\s*)?\n\s+- data\b/);
   assert.doesNotMatch(workerBlock, /^\s+- app\b/m);
@@ -310,6 +314,7 @@ test('production worker metrics stay private and source references remain opaque
     'docker-compose.yml',
     'docker-compose.production.yml',
   ]);
+  const productionApi = productionConfig.services.api;
   const productionWorker = productionConfig.services.worker;
   assert.equal(productionWorker.ports, undefined);
   const productionWorkerNetworks = Array.isArray(productionWorker.networks)
@@ -318,6 +323,29 @@ test('production worker metrics stay private and source references remain opaque
       )
     : Object.keys(productionWorker.networks ?? {});
   assert.deepEqual(productionWorkerNetworks, ['data']);
+  for (const name of [
+    'WORKER_METRICS_TRANSPORT_URL',
+    'WORKER_METRICS_TRANSPORT_TOKEN',
+    'API_METRICS_EVIDENCE_DIGEST',
+  ]) {
+    assert.equal(environment(productionApi)[name], productionValues[name]);
+    assert.match(
+      apiBlock,
+      new RegExp(`${name}: \\$\\{${name}:\\?${name} is required\\}`),
+    );
+    assert.match(envExampleText, new RegExp(`^# ${name}=$`, 'm'));
+  }
+  for (const name of [
+    'WORKER_METRICS_TRANSPORT_TOKEN',
+    'WORKER_METRICS_EVIDENCE_DIGEST',
+  ]) {
+    assert.equal(environment(productionWorker)[name], productionValues[name]);
+    assert.match(
+      workerBlock,
+      new RegExp(`${name}: \\$\\{${name}:\\?${name} is required\\}`),
+    );
+    assert.match(envExampleText, new RegExp(`^# ${name}=$`, 'm'));
+  }
   for (const name of workerSourceNames) {
     assert.equal(environment(productionWorker)[name], productionValues[name]);
     assert.match(
