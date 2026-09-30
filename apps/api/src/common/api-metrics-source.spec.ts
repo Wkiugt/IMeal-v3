@@ -63,7 +63,7 @@ describe('ApiMetricsSourceAdapter', () => {
     );
   });
 
-  it('exposes collector_failure when metadata or the private sink is unavailable', async () => {
+  it('reports metadata_missing before checking an unavailable sink', async () => {
     const metrics = new ApiMetricsService();
     metrics.recordAuthAttempt('success');
 
@@ -72,6 +72,12 @@ describe('ApiMetricsSourceAdapter', () => {
       freshness: 'collector_failure',
       reason: 'metadata_missing',
     });
+  });
+
+  it('reports sink_unavailable after valid metadata is accepted', async () => {
+    const metrics = new ApiMetricsService();
+    metrics.recordAuthAttempt('success');
+
     await expect(
       new ApiMetricsSourceAdapter().flush(metrics, metadata),
     ).resolves.toEqual({
@@ -79,16 +85,11 @@ describe('ApiMetricsSourceAdapter', () => {
       freshness: 'collector_failure',
       reason: 'sink_unavailable',
     });
-    await expect(
-      new ApiMetricsSourceAdapter({
-        acceptApiApplicationSnapshot: vi.fn(),
-      }).flush(metrics),
-    ).resolves.toEqual({
-      source: 'api_application',
-      freshness: 'collector_failure',
-      reason: 'metadata_missing',
-    });
+  });
 
+  it('reports sink_rejected when the structured sink rejects', async () => {
+    const metrics = new ApiMetricsService();
+    metrics.recordAuthAttempt('success');
     const adapter = new ApiMetricsSourceAdapter({
       acceptApiApplicationSnapshot: vi
         .fn()

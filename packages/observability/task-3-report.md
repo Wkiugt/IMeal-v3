@@ -63,3 +63,16 @@ The structured transport has no broker, public endpoint, authoritative metric pr
 - `yarn workspace @imeal/api test --run src/common/http-logging.interceptor.spec.ts src/common/metrics.service.spec.ts src/common/api-metrics-source.spec.ts src/auth/otp.service.spec.ts src/auth/auth.controller.spec.ts src/pickup/pickup.service.spec.ts` — **PASS**; 6 files, 85 tests.
 - `yarn workspace @imeal/api test --run src/common/http-logging.interceptor.spec.ts src/auth/otp.service.spec.ts src/pickup/pickup.service.spec.ts` — **PASS**; 3 files, 71 tests.
 - `yarn workspace @imeal/api build` — **PASS**.
+
+## Final source-adapter expectation review
+
+- The no-metadata/no-sink case is explicitly asserted as `metadata_missing`, reflecting metadata-first fail-closed precedence.
+- A separate valid-metadata/no-sink call asserts `sink_unavailable`; sink rejection remains separately covered.
+
+## Final fresh rerun
+
+- `yarn workspace @imeal/api test --run src/common/http-logging.interceptor.spec.ts src/auth/otp.service.spec.ts src/pickup/pickup.service.spec.ts` — **PASS**; 3 files, 71 tests.
+- `yarn workspace @imeal/api test --run src/common/api-metrics-source.spec.ts` — **PASS**; 1 file, 6 tests.
+- `yarn workspace @imeal/observability test` — **PASS**; 3 files, 75 tests.
+- `yarn workspace @imeal/observability build` — **PASS**.
+- `yarn workspace @imeal/api build` — **PASS**.
