@@ -2,6 +2,26 @@ import type { v1 } from '@imeal/contracts';
 
 export type MealChoice = v1.MealChoice;
 const REGULAR: MealChoice = 'REGULAR';
+export type CalendarDayLifecycle =
+  'ACTIVE' | 'SERVED' | 'NO_SHOW' | 'CANCELLED' | 'UNREGISTERED';
+
+export type CalendarDayPresentation = {
+  lifecycle: CalendarDayLifecycle;
+  selected: boolean;
+  locked: boolean;
+  warning: boolean;
+  mealChoice: MealChoice;
+};
+
+export type CalendarRegistrationSnapshot = Pick<
+  v1.RegistrationRecord,
+  'status' | 'mealChoice'
+>;
+
+export type CalendarLifecycleByDate = Readonly<
+  Record<string, CalendarDayLifecycle>
+>;
+
 export type CalendarDayState = {
   active: boolean;
   mealChoice: MealChoice;
@@ -27,6 +47,42 @@ const inactiveCalendarDay: CalendarDayState = {
   mealChoice: REGULAR,
 };
 
+export function getCalendarDayLifecycle(
+  status: v1.RegistrationRecordStatus | null | undefined,
+): CalendarDayLifecycle {
+  return status ?? 'UNREGISTERED';
+}
+
+export function isCalendarDayBooked(lifecycle: CalendarDayLifecycle): boolean {
+  return (
+    lifecycle === 'ACTIVE' || lifecycle === 'SERVED' || lifecycle === 'NO_SHOW'
+  );
+}
+
+export function isCalendarDayFinalized(
+  lifecycle: CalendarDayLifecycle,
+): boolean {
+  return lifecycle === 'SERVED' || lifecycle === 'NO_SHOW';
+}
+
+export function getCalendarDayPresentation(
+  registration: CalendarRegistrationSnapshot | null | undefined,
+  serverDay: CalendarDayState | undefined,
+  draftDay: CalendarDayState | undefined,
+): CalendarDayPresentation {
+  const lifecycle = getCalendarDayLifecycle(registration?.status);
+  const authoritativeDay = serverDay ?? inactiveCalendarDay;
+  const currentDay = draftDay ?? authoritativeDay;
+  const finalized = isCalendarDayFinalized(lifecycle);
+  return {
+    lifecycle,
+    locked: finalized,
+    warning: lifecycle === 'NO_SHOW',
+    selected: finalized ? true : currentDay.active,
+    mealChoice: finalized ? authoritativeDay.mealChoice : currentDay.mealChoice,
+  };
+}
+
 function sameCalendarDay(
   left: CalendarDayState | undefined,
   right: CalendarDayState | undefined,
@@ -35,6 +91,30 @@ function sameCalendarDay(
   return (
     left.active === right.active &&
     (!left.active || left.mealChoice === right.mealChoice)
+  );
+}
+
+export function isAuthoritativeCalendarRestore(
+  serverDay: CalendarDayState | undefined,
+  currentDay: CalendarDayState,
+  nextActive: boolean,
+): boolean {
+  const authoritativeDay = serverDay ?? inactiveCalendarDay;
+  return (
+    !sameCalendarDay(authoritativeDay, currentDay) &&
+    nextActive === authoritativeDay.active
+  );
+}
+
+export function isAuthoritativeCalendarMealChoiceRestore(
+  serverDay: CalendarDayState | undefined,
+  currentDay: CalendarDayState,
+  choice: MealChoice,
+): boolean {
+  const authoritativeDay = serverDay ?? inactiveCalendarDay;
+  return (
+    choice === authoritativeDay.mealChoice &&
+    !sameCalendarDay(authoritativeDay, currentDay)
   );
 }
 
@@ -85,9 +165,12 @@ export function buildDirtyBatchPayload(
   serverState: CalendarServerState,
   draftState: CalendarDraftState,
   dirtyDates: readonly string[],
+  finalizedDates: readonly string[] = [],
 ): v1.BatchRegistrationItem[] {
+  const finalizedDateSet = new Set(finalizedDates);
   const payload: v1.BatchRegistrationItem[] = [];
   for (const dateKey of dirtyDates) {
+    if (finalizedDateSet.has(dateKey)) continue;
     const serverDay = serverState[dateKey] ?? inactiveCalendarDay;
     const draftDay = draftState[dateKey] ?? serverDay;
     if (draftDay.active) {
@@ -126,6 +209,30 @@ export function isDateCancelable(
 ): boolean {
   const cutoffAt = Date.parse(day.cutoffAt);
   return day.canCancel && Number.isFinite(cutoffAt) && nowAt < cutoffAt;
+}
+
+export function isMealChoiceChangeAllowed(
+  day: CalendarDayAvailability,
+  serverDay: CalendarDayState | undefined,
+  currentDay: CalendarDayState,
+  choice: MealChoice,
+  nowAt: number,
+): boolean {
+  const authoritativeDay = serverDay ?? inactiveCalendarDay;
+  if (
+    choice === authoritativeDay.mealChoice &&
+    !sameCalendarDay(authoritativeDay, currentDay)
+  ) {
+    return true;
+  }
+  if (!day.availableMealChoices.includes(choice)) return false;
+  if (!currentDay.active || !authoritativeDay.active) {
+    return isDateSelectable(day, nowAt);
+  }
+  const cutoffAt = Date.parse(day.cutoffAt);
+  return (
+    day.canChangeMealChoice && Number.isFinite(cutoffAt) && nowAt < cutoffAt
+  );
 }
 export function isDateSelectAllEligible(
   serverDay: CalendarDayState | undefined,
@@ -217,6 +324,7 @@ export function mergeAuthoritativeWeek(
   authoritativeState: CalendarServerState,
   previousServerState: CalendarServerState,
   previousDraftState: CalendarDraftState,
+  authoritativeLifecycles: CalendarLifecycleByDate = {},
 ): {
   serverState: CalendarServerState;
   draftState: CalendarDraftState;
@@ -225,6 +333,11 @@ export function mergeAuthoritativeWeek(
     ...createDraftState(authoritativeState),
   };
   for (const [dateKey, draftDay] of Object.entries(previousDraftState)) {
+    if (
+      isCalendarDayFinalized(authoritativeLifecycles[dateKey] ?? 'UNREGISTERED')
+    ) {
+      continue;
+    }
     const previousServerDay =
       previousServerState[dateKey] ?? inactiveCalendarDay;
     if (

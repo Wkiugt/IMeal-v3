@@ -249,6 +249,14 @@ address snapshots for history. Serving retains those snapshots and the
 server-resolved location/verification context even after future roster/policy
 changes.
 
+The weekly registration read model uses `REGISTRATION_SNAPSHOT` locations only
+for `ACTIVE`, `SERVED`, and `NO_SHOW` rows. `CANCELLED` rows retain their status
+but, like dates without a registration, display the current effective roster
+location for that meal date (`EFFECTIVE_ROSTER_ASSIGNMENT`), or `null` when
+unavailable or ambiguous. This matches creation/reactivation authority:
+`canActivate` remains governed by the effective assignment, menu and cutoff.
+Reading a cancelled day does not rewrite its stored historical snapshots.
+
 Presenter GPS is an additional serving-time signal only. The API evaluates a
 fresh foreground presenter fix against the effective policy and persists only
 safe verification result, timestamp, accuracy and location ID. It does not

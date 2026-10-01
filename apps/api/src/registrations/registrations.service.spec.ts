@@ -459,10 +459,10 @@ describe('RegistrationsService', () => {
         mealServing: null,
         penalties: [],
         delegations: [],
-        serviceLocationId: null,
-        serviceLocationCode: null,
-        serviceLocationName: null,
-        serviceLocationAddress: null,
+        serviceLocationId: 'cancelled-snapshot-location',
+        serviceLocationCode: 'OLD',
+        serviceLocationName: 'Old Hall',
+        serviceLocationAddress: 'Old Street',
       },
     ]);
     prismaMock.employeeLocationAssignment.findMany.mockResolvedValue([
@@ -531,7 +531,11 @@ describe('RegistrationsService', () => {
     });
     expect(response.days[4]).toMatchObject({
       registration: { id: 'registration-cancelled', status: 'CANCELLED' },
-      location: null,
+      location: {
+        id: 'fresh-location',
+        shortCode: 'FRESH',
+        source: 'EFFECTIVE_ROSTER_ASSIGNMENT',
+      },
       canActivate: true,
       unavailableReasons: { activate: [] },
     });

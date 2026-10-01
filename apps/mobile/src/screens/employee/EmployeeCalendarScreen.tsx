@@ -37,11 +37,17 @@ import { weekHeadingCopyStyle, weekHeadingRowStyle } from './calendarLayout';
 import {
   CalendarBatchTracker,
   buildDirtyBatchPayload,
-  createDraftState,
+  getCalendarDayLifecycle,
+  getCalendarDayPresentation,
   getDirtyDates,
   getDirtyDatesForWeek,
+  isAuthoritativeCalendarMealChoiceRestore,
+  isAuthoritativeCalendarRestore,
+  isCalendarDayBooked,
+  isCalendarDayFinalized,
   isDateSelectable,
   isDateSelectAllEligible,
+  isMealChoiceChangeAllowed,
   mergeAuthoritativeWeek,
   reconcileBatchResults,
   selectAllEligible,
@@ -282,10 +288,17 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
         return false;
       }
       const nextServerState = createServerState(response.days);
+      const authoritativeLifecycles = Object.fromEntries(
+        Object.values(snapshot.days).map((day) => [
+          day.mealDate,
+          getCalendarDayLifecycle(day.registration?.status),
+        ]),
+      );
       const merged = mergeAuthoritativeWeek(
         nextServerState,
         serverStateRef.current,
         draftStateRef.current,
+        authoritativeLifecycles,
       );
       const nextDraftState = merged.draftState;
       serverStateRef.current = nextServerState;
@@ -382,7 +395,11 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
       if (requestId !== monthRequestId.current) return;
       const dates = responses.flatMap((response) =>
         response.days
-          .filter((day) => day.registration?.status === 'ACTIVE')
+          .filter((day) =>
+            isCalendarDayBooked(
+              getCalendarDayLifecycle(day.registration?.status),
+            ),
+          )
           .map((day) => day.mealDate),
       );
       setMonthRegistrations(new Set(dates));
@@ -463,11 +480,21 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
     ? toBusinessDateKey(new Date(windowSnapshot.serverNowAt).toISOString())
     : toBusinessDateKey(new Date().toISOString());
   const presentationState = useMemo(
-    () => ({ ...serverState, ...draftState }),
-    [draftState, serverState],
+    () =>
+      Object.fromEntries(
+        Object.entries(dayByDate).map(([dateKey, day]) => [
+          dateKey,
+          getCalendarDayPresentation(
+            day.registration,
+            serverState[dateKey],
+            draftState[dateKey],
+          ),
+        ]),
+      ),
+    [dayByDate, draftState, serverState],
   );
   const selectedCount = Object.values(presentationState).filter(
-    (day) => day.active,
+    (day) => day.selected,
   ).length;
   const hasSelectableDay = Object.entries(dayByDate).some(([dateKey, day]) =>
     isDateSelectAllEligible(serverState[dateKey], day, nowAt),
@@ -514,6 +541,17 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
       const serverDay = serverStateRef.current[dateKey] ?? EMPTY_DAY_STATE;
       const currentDay = draftStateRef.current[dateKey] ?? serverDay;
       const nextActive = !currentDay.active;
+      if (isAuthoritativeCalendarRestore(serverDay, currentDay, nextActive)) {
+        updateDraftDay(dateKey, { ...serverDay });
+        return;
+      }
+      if (
+        isCalendarDayFinalized(
+          getCalendarDayLifecycle(day.registration?.status),
+        )
+      ) {
+        return;
+      }
       const estimatedNowAt = windowSnapshot
         ? windowSnapshot.serverNowAt + (Date.now() - windowSnapshot.receiptAt)
         : Date.now();
@@ -569,19 +607,36 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
     (dateKey: string, choice: MealChoice) => {
       if (savingRef.current) return;
       const day = dayByDate[dateKey];
-      if (!day || !day.availableMealChoices.includes(choice)) return;
+      if (!day) return;
       const serverDay = serverStateRef.current[dateKey] ?? EMPTY_DAY_STATE;
       const currentDay = draftStateRef.current[dateKey] ?? serverDay;
+      if (
+        isCalendarDayFinalized(
+          getCalendarDayLifecycle(day.registration?.status),
+        )
+      ) {
+        return;
+      }
+      if (
+        isAuthoritativeCalendarMealChoiceRestore(serverDay, currentDay, choice)
+      ) {
+        updateDraftDay(dateKey, { ...serverDay });
+        return;
+      }
       const estimatedNowAt = windowSnapshot
         ? windowSnapshot.serverNowAt + (Date.now() - windowSnapshot.receiptAt)
         : Date.now();
-      const canChange =
-        (!currentDay.active && isDateSelectable(day, estimatedNowAt)) ||
-        (currentDay.active &&
-          (!serverDay.active
-            ? isDateSelectable(day, estimatedNowAt)
-            : day.canChangeMealChoice && isBeforeCutoff(day, estimatedNowAt)));
-      if (!canChange) return;
+      if (
+        !isMealChoiceChangeAllowed(
+          day,
+          serverDay,
+          currentDay,
+          choice,
+          estimatedNowAt,
+        )
+      ) {
+        return;
+      }
       updateDraftDay(dateKey, {
         active: currentDay.active,
         mealChoice: choice,
@@ -612,7 +667,19 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
       Object.keys(dayByDate),
     );
     if (dates.length === 0) return;
-    const payload = buildDirtyBatchPayload(currentServer, currentDraft, dates);
+    const finalizedDates = Object.entries(dayByDate)
+      .filter(([, day]) =>
+        isCalendarDayFinalized(
+          getCalendarDayLifecycle(day.registration?.status),
+        ),
+      )
+      .map(([dateKey]) => dateKey);
+    const payload = buildDirtyBatchPayload(
+      currentServer,
+      currentDraft,
+      dates,
+      finalizedDates,
+    );
     if (payload.length === 0) return;
     const requestId = tracker.begin();
     if (requestId === null) return;
@@ -995,21 +1062,49 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
                 const day = dayByDate[dateKey];
                 const serverDay = serverState[dateKey] ?? EMPTY_DAY_STATE;
                 const state = draftState[dateKey] ?? serverDay;
+                const presentation = presentationState[dateKey];
                 const isSaving = savingDates.has(dateKey);
                 const nextActive = !state.active;
+                const authoritativeRestore = isAuthoritativeCalendarRestore(
+                  serverDay,
+                  state,
+                  nextActive,
+                );
                 const toggleEnabled =
-                  isBeforeCutoff(day, nowAt) &&
-                  (serverDay.active ? day.canCancel : day.canActivate);
+                  !presentation.locked &&
+                  (authoritativeRestore ||
+                    (isBeforeCutoff(day, nowAt) &&
+                      (serverDay.active ? day.canCancel : day.canActivate)));
                 const availableChoices = day.availableMealChoices;
-                const selectedChoice = state.mealChoice;
-                const choiceCanChange =
-                  (!state.active && isDateSelectable(day, nowAt)) ||
-                  (state.active &&
-                    (!serverDay.active
-                      ? isDateSelectable(day, nowAt)
-                      : day.canChangeMealChoice && isBeforeCutoff(day, nowAt)));
+                const choiceOptions = Array.from(
+                  new Set([
+                    ...availableChoices,
+                    ...(presentation.locked ||
+                    (state.active === serverDay.active &&
+                      state.mealChoice === serverDay.mealChoice)
+                      ? []
+                      : [serverDay.mealChoice]),
+                  ]),
+                );
+                const selectedChoice = presentation.mealChoice;
+                const choiceCanChange = (choice: MealChoice) =>
+                  !saving &&
+                  !presentation.locked &&
+                  isMealChoiceChangeAllowed(
+                    day,
+                    serverDay,
+                    state,
+                    choice,
+                    nowAt,
+                  );
                 const reason = getDayReason(day, serverDay, state);
                 const reasonText = reason ? t(reasonKey(reason)) : undefined;
+                const lifecycleText =
+                  presentation.lifecycle === 'SERVED'
+                    ? t('dashboard.todayServed')
+                    : presentation.lifecycle === 'NO_SHOW'
+                      ? t('calendar.noShowWarning')
+                      : undefined;
                 const menuTitle =
                   day.menu?.mealName ?? t('calendar.menuUnavailable');
                 const menuDescription = day.menu?.description ?? undefined;
@@ -1042,14 +1137,15 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
                   lunarLabel,
                   choiceLabel,
                   cutoffLabel,
+                  lifecycleText,
                   reasonText,
                 ]
                   .filter(Boolean)
                   .join(' · ');
                 const rowState: MealSelectionCardState =
-                  !toggleEnabled && !state.active
+                  !toggleEnabled && !presentation.selected
                     ? 'disabled'
-                    : state.active
+                    : presentation.selected
                       ? 'selected'
                       : 'default';
                 const parsedDate = parseDateKey(dateKey);
@@ -1066,11 +1162,11 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
                     state={rowState}
                     saving={isSaving}
                     badges={
-                      availableChoices.length > 1 ? (
+                      choiceOptions.length > 1 ? (
                         <MealChoiceSelector
                           value={selectedChoice}
-                          choices={availableChoices}
-                          disabled={saving || !choiceCanChange}
+                          choices={choiceOptions}
+                          isChoiceEnabled={choiceCanChange}
                           onChange={(choice) =>
                             selectMealChoice(dateKey, choice)
                           }
@@ -1085,18 +1181,20 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
                     }
                     trailing={
                       <Toggle
-                        value={state.active}
+                        value={presentation.selected}
                         disabled={!toggleEnabled || saving}
                         loading={isSaving}
                         label={t(
-                          state.active
-                            ? 'calendar.toggleEnabledAccessibility'
-                            : 'calendar.toggleAccessibility',
+                          presentation.locked
+                            ? 'calendar.toggleLockedAccessibility'
+                            : presentation.selected
+                              ? 'calendar.toggleEnabledAccessibility'
+                              : 'calendar.toggleAccessibility',
                           { day: rowTitle },
                         )}
                         showLabel={false}
                         onValueChange={(nextValue) => {
-                          if (nextValue !== state.active)
+                          if (nextValue !== presentation.selected)
                             toggleRegistration(dateKey);
                         }}
                       />
@@ -1176,14 +1274,14 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
 type MealChoiceSelectorProps = {
   value: MealChoice;
   choices: readonly MealChoice[];
-  disabled: boolean;
+  isChoiceEnabled: (choice: MealChoice) => boolean;
   onChange: (choice: MealChoice) => void;
 };
 
 function MealChoiceSelector({
   value,
   choices,
-  disabled,
+  isChoiceEnabled,
   onChange,
 }: MealChoiceSelectorProps) {
   const { t } = useLanguage();
@@ -1202,7 +1300,7 @@ function MealChoiceSelector({
             key={choice}
             type={choice}
             selected={value === choice}
-            disabled={disabled}
+            disabled={!isChoiceEnabled(choice)}
             onPress={() => onChange(choice)}
             accessibilityLabel={`${t('calendar.mealChoiceGroup')}: ${t(choice === 'REGULAR' ? 'calendar.mealChoice.regular' : 'calendar.mealChoice.vegetarian')}`}
             style={styles.choiceOption}

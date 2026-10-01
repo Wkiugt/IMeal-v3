@@ -461,15 +461,16 @@ export class RegistrationsService {
         rosterAssignments,
         mealDate,
       );
-      const registrationLocation = registration
+      const usesRegistrationSnapshot =
+        registration !== undefined &&
+        (registration.status === 'ACTIVE' ||
+          registration.status === 'SERVED' ||
+          registration.status === 'NO_SHOW');
+      const location = usesRegistrationSnapshot
         ? toRegistrationLocation(registration)
-        : null;
-      const location =
-        registration !== undefined
-          ? registrationLocation
-          : effectiveLocation.kind === 'AVAILABLE'
-            ? effectiveLocation.location
-            : null;
+        : effectiveLocation.kind === 'AVAILABLE'
+          ? effectiveLocation.location
+          : null;
       const menuReasons = menuUnavailableReasons(menu);
       const locationReasons =
         effectiveLocation.kind === 'AVAILABLE'

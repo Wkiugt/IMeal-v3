@@ -4,8 +4,15 @@ import {
   CalendarBatchTracker,
   buildDirtyBatchPayload,
   createDraftState,
+  getCalendarDayLifecycle,
+  getCalendarDayPresentation,
   getDirtyDates,
   getDirtyDatesForWeek,
+  isAuthoritativeCalendarMealChoiceRestore,
+  isAuthoritativeCalendarRestore,
+  isCalendarDayBooked,
+  isCalendarDayFinalized,
+  isMealChoiceChangeAllowed,
   isDateCancelable,
   isDateSelectable,
   mergeAuthoritativeWeek,
@@ -51,6 +58,191 @@ function makeCalendarDayAvailability(
     ...overrides,
   };
 }
+
+describe('calendar lifecycle presentation and authoritative recovery', () => {
+  it.each([
+    ['ACTIVE', true, true, false, false],
+    ['SERVED', false, true, true, false],
+    ['NO_SHOW', false, true, true, true],
+    ['CANCELLED', false, false, false, false],
+    [null, false, false, false, false],
+  ] as const)(
+    'projects %s as booked/locked presentation without changing mutation active',
+    (
+      status,
+      expectedActive,
+      expectedBooked,
+      expectedLocked,
+      expectedWarning,
+    ) => {
+      const serverDay = {
+        active: status === 'ACTIVE',
+        mealChoice: 'VEGETARIAN' as const,
+      };
+      const presentation = getCalendarDayPresentation(
+        status === null ? null : { status, mealChoice: 'VEGETARIAN' },
+        serverDay,
+        serverDay,
+      );
+
+      expect(serverDay.active).toBe(expectedActive);
+      expect(presentation.selected).toBe(expectedBooked);
+      expect(presentation.locked).toBe(expectedLocked);
+      expect(presentation.warning).toBe(expectedWarning);
+      expect(isCalendarDayBooked(getCalendarDayLifecycle(status))).toBe(
+        expectedBooked,
+      );
+      expect(isCalendarDayFinalized(getCalendarDayLifecycle(status))).toBe(
+        expectedLocked,
+      );
+    },
+  );
+
+  it('ignores a stale draft when a refresh reports a finalized registration', () => {
+    const authoritative: CalendarServerState = {
+      '2026-09-21': { active: false, mealChoice: 'REGULAR' },
+    };
+    const previousServer: CalendarServerState = {
+      '2026-09-21': { active: true, mealChoice: 'VEGETARIAN' },
+    };
+    const previousDraft: CalendarDraftState = {
+      '2026-09-21': { active: false, mealChoice: 'VEGETARIAN' },
+    };
+
+    const merged = mergeAuthoritativeWeek(
+      authoritative,
+      previousServer,
+      previousDraft,
+      { '2026-09-21': 'SERVED' },
+    );
+
+    expect(merged.draftState).toEqual(authoritative);
+    expect(getDirtyDates(merged.serverState, merged.draftState)).toEqual([]);
+    expect(
+      buildDirtyBatchPayload(
+        merged.serverState,
+        {
+          ...merged.draftState,
+          '2026-09-21': { active: true, mealChoice: 'REGULAR' },
+        },
+        ['2026-09-21'],
+        ['2026-09-21'],
+      ),
+    ).toEqual([]);
+    expect(
+      getCalendarDayPresentation(
+        { status: 'SERVED', mealChoice: 'REGULAR' },
+        merged.serverState['2026-09-21'],
+        {
+          active: true,
+          mealChoice: 'REGULAR',
+        },
+      ),
+    ).toMatchObject({
+      lifecycle: 'SERVED',
+      selected: true,
+      locked: true,
+    });
+    expect(merged.serverState['2026-09-21'].active).toBe(false);
+  });
+
+  it('retains failed activation through cutoff refresh and restores exact authoritative state', () => {
+    const server: CalendarServerState = {
+      '2026-09-21': { active: false, mealChoice: 'REGULAR' },
+    };
+    const submittedDraft: CalendarDraftState = {
+      '2026-09-21': { active: true, mealChoice: 'VEGETARIAN' },
+    };
+    const failed = reconcileBatchResults(
+      server,
+      submittedDraft,
+      submittedDraft,
+      [
+        {
+          date: '2026-09-21',
+          success: false,
+          code: 'CUTOFF_PASSED',
+          reason: 'Cutoff passed',
+        },
+      ],
+    );
+    expect(failed.draftState['2026-09-21']).toEqual(
+      submittedDraft['2026-09-21'],
+    );
+
+    const refreshed = mergeAuthoritativeWeek(
+      server,
+      failed.serverState,
+      failed.draftState,
+      { '2026-09-21': 'UNREGISTERED' },
+    );
+    const lockedAvailability = makeCalendarDayAvailability({
+      cutoffAt: '2026-09-20T00:00:00.000Z',
+      canActivate: false,
+      unavailableReasons: {
+        activate: ['CUTOFF_PASSED'],
+        cancel: ['NOT_ACTIVE'],
+        changeMealChoice: ['NOT_ACTIVE'],
+      },
+    });
+    expect(
+      isDateSelectable(
+        lockedAvailability,
+        Date.parse('2026-09-21T00:00:00.000Z'),
+      ),
+    ).toBe(false);
+    expect(refreshed.draftState['2026-09-21']).toEqual(
+      submittedDraft['2026-09-21'],
+    );
+
+    const serverDay = refreshed.serverState['2026-09-21'];
+    const currentDay = refreshed.draftState['2026-09-21'];
+    expect(isAuthoritativeCalendarRestore(serverDay, currentDay, false)).toBe(
+      true,
+    );
+    const restored = setDraftDay(refreshed.draftState, '2026-09-21', serverDay);
+    expect(getDirtyDates(refreshed.serverState, restored)).toEqual([]);
+    expect(
+      buildDirtyBatchPayload(
+        refreshed.serverState,
+        restored,
+        getDirtyDates(refreshed.serverState, restored),
+      ),
+    ).toEqual([]);
+  });
+
+  it('enables only the authoritative meal choice when change permission is revoked', () => {
+    const day = makeCalendarDayAvailability({
+      cutoffAt: '2026-09-20T00:00:00.000Z',
+      availableMealChoices: ['VEGETARIAN'],
+      canChangeMealChoice: false,
+    });
+    const serverDay = { active: true, mealChoice: 'REGULAR' as const };
+    const draftDay = { active: true, mealChoice: 'VEGETARIAN' as const };
+    const nowAt = Date.parse('2026-09-21T00:00:00.000Z');
+    const refreshed = mergeAuthoritativeWeek(
+      { '2026-09-21': serverDay },
+      { '2026-09-21': serverDay },
+      { '2026-09-21': draftDay },
+    );
+    expect(getDirtyDates(refreshed.serverState, refreshed.draftState)).toEqual([
+      '2026-09-21',
+    ]);
+    expect(
+      isAuthoritativeCalendarMealChoiceRestore(serverDay, draftDay, 'REGULAR'),
+    ).toBe(true);
+
+    expect(
+      isMealChoiceChangeAllowed(day, serverDay, draftDay, 'REGULAR', nowAt),
+    ).toBe(true);
+    expect(
+      isMealChoiceChangeAllowed(day, serverDay, draftDay, 'VEGETARIAN', nowAt),
+    ).toBe(false);
+    const restored = setDraftDay(refreshed.draftState, '2026-09-21', serverDay);
+    expect(restored['2026-09-21']).toEqual(serverDay);
+    expect(getDirtyDates(refreshed.serverState, restored)).toEqual([]);
+  });
+});
 
 describe('calendar draft batch behavior', () => {
   it('updates local draft state without mutating server state', () => {

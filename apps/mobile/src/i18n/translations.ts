@@ -94,6 +94,7 @@ export const vi = {
   'calendar.toggleUnavailableAccessibility':
     'Xem ngày %{day}, không khả dụng để đăng ký',
   'calendar.registrationLocked': 'Đăng ký đã khóa',
+  'calendar.noShowWarning': 'Đã đặt · chưa ghi nhận nhận suất',
   'calendar.cutoffPassed': 'Đã quá giờ chốt cho ngày này.',
   'calendar.registrationNotChanged': 'Đăng ký chưa được thay đổi',
   'calendar.registrationUnavailable': 'Không thể tải thông tin giờ chốt.',
@@ -522,6 +523,7 @@ export const en: Record<TranslationKey, string> = {
   'calendar.toggleUnavailableAccessibility':
     'View %{day}, unavailable for registration',
   'calendar.registrationLocked': 'Registration locked',
+  'calendar.noShowWarning': 'Booked · meal receipt not recorded',
   'calendar.cutoffPassed': 'The cutoff time has passed for this day.',
   'calendar.registrationNotChanged': 'Registration not changed',
   'calendar.registrationUnavailable':

@@ -184,6 +184,9 @@ No published menu:
 - `Chọn cả tuần` only selects editable days and defaults to `Mặn (REGULAR)` unless an eligible lunar day is explicitly changed.
 - Sticky/footer CTA `Lưu thay đổi` appears when draft differs from server.
 - Unsaved changes remain if request partially fails.
+- The weekly display keeps `ACTIVE` selected and mutable while allowed; `SERVED` remains selected as meal received and `NO_SHOW` remains selected with a receipt-not-recorded warning; both finalized states are locked and never become mutation payloads. `CANCELLED` and unregistered dates are not booked.
+- Month booked markers include `ACTIVE`, `SERVED`, and `NO_SHOW`; Home/count semantics remain unchanged.
+- If a save fails because cutoff or authority changed, retain the failed local draft through authoritative refresh. The user can always choose the authoritative active state or meal choice to restore the complete server state locally, even when the choice is no longer offered for new changes; divergent new intent still follows current capability and cutoff rules.
 - Unticking a day with active delegation opens confirmation naming the delegate and explains that the delegation will be revoked.
 
 ### 7.3 Feedback
@@ -320,17 +323,17 @@ the push language.
 
 ### 10.1 Notification matrix and actions
 
-| Kind | Recipient and timing | Detail CTA/destination |
-| ---- | -------------------- | ---------------------- |
-| `REGISTRATION_OPENED` | Every active Staff user when Kitchen first publishes a week; repeat publish is a no-op. | Calendar. |
-| `REGISTRATION_REMINDER` | Staff missing enabled non-holiday registrations, Sunday 10:00 VN for next week, only when reminders are enabled. | Calendar. |
-| `PICKUP_REMINDER` | Accepted delegate or owner for today's active unserved meals, 11:30 VN, grouped by recipient/date, when reminders are enabled. | Pickup Intent. |
-| `DELEGATION_REQUESTED` | Delegate when owner creates a pending request. | Delegation. |
-| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` | Owner after delegate response. | Delegation. |
-| `DELEGATION_REVOKED` | Delegate after owner revoke or registration cancellation; show reason. | Delegation. |
-| `PROXY_PICKUP_COMPLETED` | Owner after successful proxy serving; self pickup has no item. | Readable detail, no CTA. |
-| `REGISTERED_MENU_CHANGED` | Active registrants after an actual edit to a published date; no-op has no item. | Calendar/date. |
-| `NO_SHOW_PENALTY_CREATED` | Owner after 13:45 VN no-show processing, with 50,000 VND amount. | Readable detail, no CTA. |
+| Kind                                          | Recipient and timing                                                                                                           | Detail CTA/destination   |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
+| `REGISTRATION_OPENED`                         | Every active Staff user when Kitchen first publishes a week; repeat publish is a no-op.                                        | Calendar.                |
+| `REGISTRATION_REMINDER`                       | Staff missing enabled non-holiday registrations, Sunday 10:00 VN for next week, only when reminders are enabled.               | Calendar.                |
+| `PICKUP_REMINDER`                             | Accepted delegate or owner for today's active unserved meals, 11:30 VN, grouped by recipient/date, when reminders are enabled. | Pickup Intent.           |
+| `DELEGATION_REQUESTED`                        | Delegate when owner creates a pending request.                                                                                 | Delegation.              |
+| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` | Owner after delegate response.                                                                                                 | Delegation.              |
+| `DELEGATION_REVOKED`                          | Delegate after owner revoke or registration cancellation; show reason.                                                         | Delegation.              |
+| `PROXY_PICKUP_COMPLETED`                      | Owner after successful proxy serving; self pickup has no item.                                                                 | Readable detail, no CTA. |
+| `REGISTERED_MENU_CHANGED`                     | Active registrants after an actual edit to a published date; no-op has no item.                                                | Calendar/date.           |
+| `NO_SHOW_PENALTY_CREATED`                     | Owner after 13:45 VN no-show processing, with 50,000 VND amount.                                                               | Readable detail, no CTA. |
 
 First publish emits `REGISTRATION_OPENED`; an edit to an already-published registered date
 emits `REGISTERED_MENU_CHANGED`, not another opened item. Admin account-disable notification
@@ -550,23 +553,23 @@ Staff Account includes read-only meal history and penalty list/detail; mutation 
 
 ## 18. Error/recovery matrix
 
-| Flow             | Error                          | Required recovery                                                        |
-| ---------------- | ------------------------------ | ------------------------------------------------------------------------ |
+| Flow             | Error                            | Required recovery                                                                  |
+| ---------------- | -------------------------------- | ---------------------------------------------------------------------------------- |
 | Email OTP        | invalid/expired/network/disabled | Generic reason-safe copy; retry request or verification without account disclosure |
-| Weekly load      | API fail                       | Preserve last safe view where possible + retry                           |
-| Weekly save      | partial cutoff/conflict        | Per-day result + retain failed draft                                     |
-| QR               | issue/refresh fail             | Expired state + retry                                                    |
-| Delegation       | target/revoke conflict         | Server message + refresh authoritative state                             |
+| Weekly load      | API fail                         | Preserve last safe view where possible + retry                                     |
+| Weekly save      | partial cutoff/conflict          | Per-day result + retain failed draft                                               |
+| QR               | issue/refresh fail               | Expired state + retry                                                              |
+| Delegation       | target/revoke conflict           | Server message + refresh authoritative state                                       |
 | Scanner          | camera/GPS denied or unavailable | Show safe state with `Retry`/`Refresh`; no manual location or manual-code fallback |
-| Resolve          | QR expired/forged              | Ask user show current QR                                                 |
-| Confirm          | DB/network fail                | Retry with idempotency key, never fake success                           |
-| Confirm batch    | any selected item stale        | Commit none; show changed item and require re-resolve                    |
-| Pickup session   | reaches 30s expiry             | Disable confirm; preserve names; re-scan/re-resolve                      |
-| Service window   | before 10:30 or at/after 13:30 | Keep dashboard readable; disable serving with exact window               |
-| Account disabled | any protected action           | Stop action, clear sensitive session state and show account-support path |
-| Menu revision    | registered date changed        | Preserve registration; show revision notice from persisted inbox         |
-| Realtime         | socket disconnect              | Re-fetch snapshot and reconnect                                          |
-| Menu upload      | file/upload fail               | Retry without losing text fields                                         |
+| Resolve          | QR expired/forged                | Ask user show current QR                                                           |
+| Confirm          | DB/network fail                  | Retry with idempotency key, never fake success                                     |
+| Confirm batch    | any selected item stale          | Commit none; show changed item and require re-resolve                              |
+| Pickup session   | reaches 30s expiry               | Disable confirm; preserve names; re-scan/re-resolve                                |
+| Service window   | before 10:30 or at/after 13:30   | Keep dashboard readable; disable serving with exact window                         |
+| Account disabled | any protected action             | Stop action, clear sensitive session state and show account-support path           |
+| Menu revision    | registered date changed          | Preserve registration; show revision notice from persisted inbox                   |
+| Realtime         | socket disconnect                | Re-fetch snapshot and reconnect                                                    |
+| Menu upload      | file/upload fail                 | Retry without losing text fields                                                   |
 
 ## 19. UX acceptance tests
 
