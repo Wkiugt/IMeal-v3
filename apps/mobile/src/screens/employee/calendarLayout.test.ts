@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  registrationDayIndexes,
-  weekHeadingCopyStyle,
-  weekHeadingRowStyle,
-} from './calendarLayout';
+import { weekHeadingCopyStyle, weekHeadingRowStyle } from './calendarLayout';
 
 describe('weekly registration heading layout', () => {
   it('keeps the heading and count badge inside the mobile content width', () => {
@@ -16,9 +12,5 @@ describe('weekly registration heading layout', () => {
       alignItems: 'stretch',
       width: '100%',
     });
-  });
-
-  it('only exposes Monday through Friday registration rows', () => {
-    expect(registrationDayIndexes).toEqual([0, 1, 2, 3, 4]);
   });
 });

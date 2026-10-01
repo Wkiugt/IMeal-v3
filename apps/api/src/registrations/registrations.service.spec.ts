@@ -1,9 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { v1 } from '@imeal/contracts';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { PrismaService } from '../common/prisma.service.js';
 import { RegistrationsService } from './registrations.service.js';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
-
 const txMock = {
   $queryRaw: vi.fn(),
   dailyMenu: { findFirst: vi.fn() },
@@ -25,6 +26,7 @@ const prismaMock = {
   appSetting: { findUnique: vi.fn() },
   weeklyMenu: { findFirst: vi.fn() },
   registration: { findMany: vi.fn() },
+  employeeLocationAssignment: { findMany: vi.fn() },
   $transaction: vi.fn(),
 };
 
@@ -53,6 +55,17 @@ vi.mock('@prisma/client', () => ({
   },
 }));
 
+function createService(
+  notificationsService?: NotificationsService,
+  kitchenEventsService?: KitchenEventsService,
+): RegistrationsService {
+  return new RegistrationsService(
+    new PrismaService(),
+    notificationsService,
+    kitchenEventsService,
+  );
+}
+
 describe('RegistrationsService', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -60,6 +73,7 @@ describe('RegistrationsService', () => {
     prismaMock.appSetting.findUnique.mockResolvedValue({ value: '14:00' });
     prismaMock.weeklyMenu.findFirst.mockResolvedValue(null);
     prismaMock.registration.findMany.mockResolvedValue([]);
+    prismaMock.employeeLocationAssignment.findMany.mockResolvedValue([]);
     prismaMock.$transaction.mockImplementation(async (callback) =>
       callback(txMock),
     );
@@ -107,7 +121,7 @@ describe('RegistrationsService', () => {
 
   it('rejects registration at the exact 14:00:00 Vietnam cutoff', async () => {
     vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -134,7 +148,7 @@ describe('RegistrationsService', () => {
     txMock.registration.findUnique.mockResolvedValue(null);
 
     await expect(
-      new RegistrationsService(prismaMock as never).batchRegister('user-1', [
+      createService().batchRegister('user-1', [
         { mealDate: '2026-09-05', status: 'ACTIVE', mealChoice: 'REGULAR' },
       ]),
     ).resolves.toEqual([{ date: '2026-09-05', success: true }]);
@@ -151,7 +165,7 @@ describe('RegistrationsService', () => {
         mealChoice: 'VEGETARIAN',
       },
     ]);
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     const response = await service.getWeekData('user-1', '2026-09-21');
 
@@ -187,6 +201,16 @@ describe('RegistrationsService', () => {
       lunarDate: { day: 15, month: 8, year: 2026, isLeapMonth: false },
       availableMealChoices: ['REGULAR', 'VEGETARIAN'],
     });
+    expect(response.days[0]).toMatchObject({
+      mealDate: '2026-09-21',
+      lunarDate: { day: 11, month: 8, year: 2026, isLeapMonth: false },
+      availableMealChoices: ['REGULAR'],
+    });
+    expect(response.days[4]).toMatchObject({
+      mealDate: '2026-09-25',
+      lunarDate: { day: 15, month: 8, year: 2026, isLeapMonth: false },
+      availableMealChoices: ['REGULAR', 'VEGETARIAN'],
+    });
     expect(response.registrationWindow.days[5].availableMealChoices).toEqual([
       'REGULAR',
     ]);
@@ -196,6 +220,511 @@ describe('RegistrationsService', () => {
       ),
     ).toBe(true);
     expect(response.registrations[0].mealDate).not.toBeInstanceOf(Date);
+  });
+  it('projects an existing serving as SERVED in legacy and presentation rows', async () => {
+    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    prismaMock.registration.findMany.mockResolvedValue([
+      {
+        id: 'registration-1',
+        mealDate: new Date('2026-09-25T00:00:00.000Z'),
+        status: 'ACTIVE',
+        mealChoice: 'REGULAR',
+        menuRevisionId: 'revision-1',
+        mealServing: {
+          id: 'serving-1',
+          servedAt: new Date('2026-09-25T05:00:00.000Z'),
+        },
+      },
+    ]);
+
+    const response = await createService().getWeekData('user-1', '2026-09-21');
+
+    expect(response.registrations).toEqual([
+      {
+        id: 'registration-1',
+        mealDate: '2026-09-25',
+        status: 'SERVED',
+        mealChoice: 'REGULAR',
+        menuRevisionId: 'revision-1',
+      },
+    ]);
+    expect(response.days[4].registration).toMatchObject({
+      id: 'registration-1',
+      status: 'SERVED',
+      mealChoice: 'REGULAR',
+    });
+  });
+
+  it('does not expose an unpublished weekly menu in the response', async () => {
+    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    const draftMenu = {
+      id: 'draft-week',
+      startDate: new Date('2026-09-21T00:00:00.000Z'),
+      endDate: new Date('2026-09-27T00:00:00.000Z'),
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-02T00:00:00.000Z'),
+      publishedAt: null,
+      dailyMenus: [
+        {
+          id: 'draft-day',
+          weeklyMenuId: 'draft-week',
+          date: new Date('2026-09-21T00:00:00.000Z'),
+          isHoliday: false,
+          isEnabled: true,
+          createdAt: new Date('2026-09-01T00:00:00.000Z'),
+          revisions: [
+            {
+              id: 'draft-revision',
+              revision: null,
+              mealName: 'Draft lunch',
+              description: null,
+              imageUrl: null,
+            },
+          ],
+        },
+      ],
+    };
+    prismaMock.weeklyMenu.findFirst.mockImplementation(
+      async (options: { where?: { publishedAt?: { not?: null } } }) =>
+        options.where?.publishedAt?.not === null ? null : draftMenu,
+    );
+
+    const response = await createService().getWeekData('user-1', '2026-09-21');
+
+    expect(response.menu).toBeNull();
+    expect(response.days.every((day) => day.menu === null)).toBe(true);
+  });
+
+  it('exposes effective roster location and activation availability for an empty day', async () => {
+    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    prismaMock.weeklyMenu.findFirst.mockResolvedValue({
+      id: 'week-1',
+      startDate: new Date('2026-09-21T00:00:00.000Z'),
+      endDate: new Date('2026-09-27T00:00:00.000Z'),
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-02T00:00:00.000Z'),
+      publishedAt: new Date('2026-09-03T00:00:00.000Z'),
+      dailyMenus: [
+        {
+          id: 'daily-menu-1',
+          weeklyMenuId: 'week-1',
+          date: new Date('2026-09-21T00:00:00.000Z'),
+          isHoliday: false,
+          isEnabled: true,
+          createdAt: new Date('2026-09-01T00:00:00.000Z'),
+          revisions: [
+            {
+              id: 'revision-1',
+              revision: 1,
+              mealName: 'Lunch',
+              description: 'Soup',
+              imageUrl: null,
+            },
+          ],
+        },
+      ],
+    });
+    prismaMock.employeeLocationAssignment.findMany.mockResolvedValue([
+      {
+        id: 'assignment-1',
+        userId: 'user-1',
+        isActive: true,
+        employeeName: 'Owner',
+        employeeCode: 'EMP-1',
+        serviceLocationCode: 'LOC-A',
+        locationId: 'location-1',
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+        effectiveTo: null,
+        location: {
+          id: 'location-1',
+          shortCode: 'LOC-A',
+          displayName: 'Main Hall',
+          address: '1 Main Street',
+          isActive: true,
+          effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+          effectiveTo: null,
+        },
+      },
+    ]);
+
+    const response = await createService().getWeekData('user-1', '2026-09-21');
+
+    expect(response.days[0]).toMatchObject({
+      menu: {
+        id: 'daily-menu-1',
+        menuRevisionId: 'revision-1',
+        mealName: 'Lunch',
+      },
+      location: {
+        id: 'location-1',
+        shortCode: 'LOC-A',
+        displayName: 'Main Hall',
+        address: '1 Main Street',
+        source: 'EFFECTIVE_ROSTER_ASSIGNMENT',
+      },
+      canActivate: true,
+      canCancel: false,
+      canChangeMealChoice: false,
+      unavailableReasons: {
+        activate: [],
+        cancel: ['NOT_ACTIVE'],
+        changeMealChoice: ['NOT_ACTIVE'],
+      },
+    });
+  });
+
+  it('keeps registration snapshots while resolving effective locations per date', async () => {
+    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    const mealDates = Array.from(
+      { length: 7 },
+      (_, index) => `2026-09-${String(21 + index).padStart(2, '0')}`,
+    );
+    const menuDay = (mealDate: string, index: number) => ({
+      id: `daily-menu-${index + 1}`,
+      weeklyMenuId: 'week-1',
+      date: new Date(`${mealDate}T00:00:00.000Z`),
+      isHoliday: false,
+      isEnabled: true,
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      revisions: [
+        {
+          id: `revision-${index + 1}`,
+          revision: 1,
+          mealName: `Meal ${index + 1}`,
+          description: null,
+          imageUrl: null,
+        },
+      ],
+    });
+    const locationAssignment = (
+      id: string,
+      locationId: string,
+      shortCode: string,
+      effectiveFrom: string,
+      effectiveTo: string | null,
+    ) => ({
+      id,
+      userId: 'user-1',
+      isActive: true,
+      employeeName: 'Owner',
+      employeeCode: 'EMP-1',
+      serviceLocationCode: shortCode,
+      locationId,
+      effectiveFrom: new Date(`${effectiveFrom}T00:00:00.000Z`),
+      effectiveTo: effectiveTo
+        ? new Date(`${effectiveTo}T00:00:00.000Z`)
+        : null,
+      location: {
+        id: locationId,
+        shortCode,
+        displayName: `Location ${shortCode}`,
+        address: `${shortCode} Street`,
+        isActive: true,
+        effectiveFrom: new Date(`${effectiveFrom}T00:00:00.000Z`),
+        effectiveTo: effectiveTo
+          ? new Date(`${effectiveTo}T00:00:00.000Z`)
+          : null,
+      },
+    });
+    prismaMock.weeklyMenu.findFirst.mockResolvedValue({
+      id: 'week-1',
+      startDate: new Date('2026-09-21T00:00:00.000Z'),
+      endDate: new Date('2026-09-27T00:00:00.000Z'),
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-02T00:00:00.000Z'),
+      publishedAt: new Date('2026-09-03T00:00:00.000Z'),
+      dailyMenus: mealDates.map(menuDay),
+    });
+    prismaMock.registration.findMany.mockResolvedValue([
+      {
+        id: 'registration-snapshot',
+        mealDate: new Date('2026-09-21T00:00:00.000Z'),
+        status: 'ACTIVE',
+        mealChoice: 'REGULAR',
+        menuRevisionId: 'revision-1',
+        mealServing: null,
+        penalties: [],
+        delegations: [],
+        serviceLocationId: 'snapshot-location',
+        serviceLocationCode: 'SNAP',
+        serviceLocationName: 'Snapshot Hall',
+        serviceLocationAddress: 'Snapshot Street',
+      },
+      {
+        id: 'registration-cancelled',
+        mealDate: new Date('2026-09-25T00:00:00.000Z'),
+        status: 'CANCELLED',
+        mealChoice: 'REGULAR',
+        menuRevisionId: 'revision-5',
+        mealServing: null,
+        penalties: [],
+        delegations: [],
+        serviceLocationId: 'cancelled-snapshot-location',
+        serviceLocationCode: 'OLD',
+        serviceLocationName: 'Old Hall',
+        serviceLocationAddress: 'Old Street',
+      },
+    ]);
+    prismaMock.employeeLocationAssignment.findMany.mockResolvedValue([
+      locationAssignment(
+        'assignment-snapshot-day',
+        'current-location',
+        'CURRENT',
+        '2026-01-01',
+        '2026-09-22',
+      ),
+      locationAssignment(
+        'assignment-effective-day',
+        'effective-location',
+        'EFFECTIVE',
+        '2026-09-22',
+        '2026-09-23',
+      ),
+      locationAssignment(
+        'assignment-ambiguous-a',
+        'ambiguous-location-a',
+        'AMB-A',
+        '2026-09-24',
+        '2026-09-25',
+      ),
+      locationAssignment(
+        'assignment-ambiguous-b',
+        'ambiguous-location-b',
+        'AMB-B',
+        '2026-09-24',
+        '2026-09-25',
+      ),
+      locationAssignment(
+        'assignment-cancelled-day',
+        'fresh-location',
+        'FRESH',
+        '2026-09-25',
+        null,
+      ),
+    ]);
+
+    const response = await createService().getWeekData('user-1', '2026-09-21');
+
+    expect(response.days[0]).toMatchObject({
+      registration: { id: 'registration-snapshot', status: 'ACTIVE' },
+      location: {
+        id: 'snapshot-location',
+        source: 'REGISTRATION_SNAPSHOT',
+      },
+    });
+    expect(response.days[1]).toMatchObject({
+      location: {
+        id: 'effective-location',
+        source: 'EFFECTIVE_ROSTER_ASSIGNMENT',
+      },
+      canActivate: true,
+    });
+    expect(response.days[2]).toMatchObject({
+      location: null,
+      canActivate: false,
+      unavailableReasons: { activate: ['LOCATION_UNAVAILABLE'] },
+    });
+    expect(response.days[3]).toMatchObject({
+      location: null,
+      canActivate: false,
+      unavailableReasons: { activate: ['LOCATION_AMBIGUOUS'] },
+    });
+    expect(response.days[4]).toMatchObject({
+      registration: { id: 'registration-cancelled', status: 'CANCELLED' },
+      location: {
+        id: 'fresh-location',
+        shortCode: 'FRESH',
+        source: 'EFFECTIVE_ROSTER_ASSIGNMENT',
+      },
+      canActivate: true,
+      unavailableReasons: { activate: [] },
+    });
+  });
+
+  it('locks activation at the exact cutoff in the week response', async () => {
+    vi.setSystemTime(new Date('2026-09-20T07:00:00.000Z'));
+
+    const response = await createService().getWeekData('user-1', '2026-09-21');
+
+    expect(response.registrationWindow.days[0].cutoffAt).toBe(
+      '2026-09-20T07:00:00.000Z',
+    );
+    expect(response.days[0]).toMatchObject({
+      canActivate: false,
+      unavailableReasons: {
+        activate: ['CUTOFF_PASSED'],
+      },
+    });
+  });
+  it.each([
+    {
+      title: 'an inactive location',
+      employeeName: 'Owner',
+      locationPatch: { isActive: false },
+    },
+    {
+      title: 'a location outside the meal date range',
+      employeeName: 'Owner',
+      locationPatch: {
+        effectiveFrom: new Date('2027-01-01T00:00:00.000Z'),
+      },
+    },
+    {
+      title: 'a missing employee identity',
+      employeeName: '',
+      locationPatch: {},
+    },
+    {
+      title: 'a mismatched location identity',
+      employeeName: 'Owner',
+      locationPatch: { id: 'location-2' },
+    },
+  ])(
+    'does not advertise activation with $title',
+    async ({ employeeName, locationPatch }) => {
+      vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+      prismaMock.weeklyMenu.findFirst.mockResolvedValue({
+        id: 'week-1',
+        startDate: new Date('2026-09-21T00:00:00.000Z'),
+        endDate: new Date('2026-09-27T00:00:00.000Z'),
+        createdAt: new Date('2026-09-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-09-02T00:00:00.000Z'),
+        publishedAt: new Date('2026-09-03T00:00:00.000Z'),
+        dailyMenus: [
+          {
+            id: 'daily-menu-1',
+            weeklyMenuId: 'week-1',
+            date: new Date('2026-09-21T00:00:00.000Z'),
+            isHoliday: false,
+            isEnabled: true,
+            createdAt: new Date('2026-09-01T00:00:00.000Z'),
+            revisions: [
+              {
+                id: 'revision-1',
+                revision: 1,
+                mealName: 'Lunch',
+                description: null,
+                imageUrl: null,
+              },
+            ],
+          },
+        ],
+      });
+      prismaMock.employeeLocationAssignment.findMany.mockResolvedValue([
+        {
+          id: 'assignment-1',
+          userId: 'user-1',
+          isActive: true,
+          employeeName,
+          employeeCode: 'EMP-1',
+          serviceLocationCode: 'LOC-A',
+          locationId: 'location-1',
+          effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+          effectiveTo: null,
+          location: {
+            id: 'location-1',
+            shortCode: 'LOC-A',
+            displayName: 'Main Hall',
+            address: '1 Main Street',
+            isActive: true,
+            effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+            effectiveTo: null,
+            ...locationPatch,
+          },
+        },
+      ]);
+
+      const response = await createService().getWeekData(
+        'user-1',
+        '2026-09-21',
+      );
+
+      expect(response.days[0]).toMatchObject({
+        location: null,
+        canActivate: false,
+        unavailableReasons: {
+          activate: ['LOCATION_UNAVAILABLE'],
+        },
+      });
+    },
+  );
+
+  it('reports holiday, disabled, and missing-menu activation reasons separately', async () => {
+    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    const menuDay = (
+      id: string,
+      date: string,
+      isHoliday: boolean,
+      isEnabled: boolean,
+      revision: string,
+    ) => ({
+      id,
+      weeklyMenuId: 'week-1',
+      date: new Date(`${date}T00:00:00.000Z`),
+      isHoliday,
+      isEnabled,
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      revisions: [
+        {
+          id: revision,
+          revision: 1,
+          mealName: 'Lunch',
+          description: null,
+          imageUrl: null,
+        },
+      ],
+    });
+    prismaMock.weeklyMenu.findFirst.mockResolvedValue({
+      id: 'week-1',
+      startDate: new Date('2026-09-21T00:00:00.000Z'),
+      endDate: new Date('2026-09-27T00:00:00.000Z'),
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-02T00:00:00.000Z'),
+      publishedAt: new Date('2026-09-03T00:00:00.000Z'),
+      dailyMenus: [
+        menuDay('holiday-day', '2026-09-21', true, true, 'holiday-revision'),
+        menuDay(
+          'disabled-day',
+          '2026-09-22',
+          false,
+          false,
+          'disabled-revision',
+        ),
+      ],
+    });
+    prismaMock.employeeLocationAssignment.findMany.mockResolvedValue([
+      {
+        id: 'assignment-1',
+        userId: 'user-1',
+        isActive: true,
+        employeeName: 'Owner',
+        employeeCode: 'EMP-1',
+        serviceLocationCode: 'LOC-A',
+        locationId: 'location-1',
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+        effectiveTo: null,
+        location: {
+          id: 'location-1',
+          shortCode: 'LOC-A',
+          displayName: 'Main Hall',
+          address: '1 Main Street',
+          isActive: true,
+          effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+          effectiveTo: null,
+        },
+      },
+    ]);
+
+    const response = await createService().getWeekData('user-1', '2026-09-21');
+
+    expect(response.days[0].unavailableReasons.activate).toEqual(['HOLIDAY']);
+    expect(response.days[1].unavailableReasons.activate).toEqual(['DISABLED']);
+    expect(response.days[2].unavailableReasons.activate).toEqual([
+      'NO_PUBLISHED_MENU',
+    ]);
+    expect(response.days[0].canActivate).toBe(false);
+    expect(response.days[1].canActivate).toBe(false);
+    expect(response.days[2].canActivate).toBe(false);
   });
 
   it('serializes menu dates before strict week response parsing', async () => {
@@ -218,7 +747,7 @@ describe('RegistrationsService', () => {
         },
       ],
     });
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     const response = await service.getWeekData('user-1', '2026-09-21');
 
@@ -284,9 +813,7 @@ describe('RegistrationsService', () => {
       },
     ]);
 
-    const response = await new RegistrationsService(
-      prismaMock as never,
-    ).getWeekData('user-1', '2026-09-21');
+    const response = await createService().getWeekData('user-1', '2026-09-21');
 
     expect(response).toMatchObject({
       registrations: [{ id: 'registration-1', menuRevisionId: 'revision-1' }],
@@ -304,15 +831,15 @@ describe('RegistrationsService', () => {
   });
 
   it('returns a typed bad request for a valid date outside lunar support', async () => {
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.getWeekData('user-1', '2200-01-01'),
     ).rejects.toMatchObject({
-        status: 400,
-        response: {
-          code: 'INVALID_MEAL_DATE',
-        },
+      status: 400,
+      response: {
+        code: 'INVALID_MEAL_DATE',
+      },
     });
     expect(prismaMock.appSetting.findUnique).not.toHaveBeenCalled();
   });
@@ -320,7 +847,7 @@ describe('RegistrationsService', () => {
   it('returns ordered partial results and rejects vegetarian meals on ordinary days', async () => {
     vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue(null);
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     const response = await service.batchRegister('user-1', [
       {
@@ -360,7 +887,7 @@ describe('RegistrationsService', () => {
   it('creates a regular registration with version one', async () => {
     vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue(null);
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -382,12 +909,135 @@ describe('RegistrationsService', () => {
       },
     });
   });
+  it('requires the published menu resolution to exclude holidays', async () => {
+    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    txMock.registration.findUnique.mockResolvedValue(null);
+    txMock.dailyMenu.findFirst.mockImplementation(
+      async (options: { where?: { isHoliday?: boolean } }) =>
+        options.where?.isHoliday === false ? null : { id: 'daily-menu-1' },
+    );
+
+    await expect(
+      createService().batchRegister('user-1', [
+        {
+          mealDate: '2026-09-24',
+          status: 'ACTIVE',
+          mealChoice: 'REGULAR',
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        date: '2026-09-24',
+        success: false,
+        code: 'REGISTRATION_FAILED',
+        reason: 'Published menu is unavailable',
+      },
+    ]);
+    expect(txMock.registration.create).not.toHaveBeenCalled();
+  });
+
+  it('cancels an active registration without menu or location authority', async () => {
+    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    txMock.registration.findUnique.mockResolvedValue({
+      id: 'registration-1',
+      status: 'ACTIVE',
+      mealChoice: 'REGULAR',
+      delegations: [],
+      mealServing: null,
+      penalties: [],
+    });
+    txMock.dailyMenu.findFirst.mockResolvedValue(null);
+    txMock.employeeLocationAssignment.findMany.mockResolvedValue([]);
+
+    await expect(
+      createService().batchRegister('user-1', [
+        { mealDate: '2026-09-24', status: 'CANCELLED' },
+      ]),
+    ).resolves.toEqual([{ date: '2026-09-24', success: true }]);
+    expect(txMock.registration.update).toHaveBeenCalledWith({
+      where: { id: 'registration-1' },
+      data: {
+        status: 'CANCELLED',
+        version: { increment: 1 },
+        cancelledAt: new Date('2026-09-03T07:00:00.000Z'),
+        cancelReason: 'REGISTRATION_CANCELLED',
+        cancelledByUserId: 'user-1',
+      },
+    });
+  });
+
+  it('changes an active meal choice without resolving fresh menu or location authority', async () => {
+    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    txMock.registration.findUnique.mockResolvedValue({
+      id: 'registration-1',
+      status: 'ACTIVE',
+      mealChoice: 'VEGETARIAN',
+      delegations: [],
+      mealServing: null,
+      penalties: [],
+      ...completeRegistrationSnapshot,
+    });
+    txMock.dailyMenu.findFirst.mockResolvedValue(null);
+    txMock.employeeLocationAssignment.findMany.mockResolvedValue([]);
+
+    await expect(
+      createService().batchRegister('user-1', [
+        {
+          mealDate: '2026-09-25',
+          status: 'ACTIVE',
+          mealChoice: 'REGULAR',
+        },
+      ]),
+    ).resolves.toEqual([{ date: '2026-09-25', success: true }]);
+    expect(txMock.registration.update).toHaveBeenCalledWith({
+      where: { id: 'registration-1' },
+      data: { mealChoice: 'REGULAR', version: { increment: 1 } },
+    });
+    expect(txMock.dailyMenu.findFirst).not.toHaveBeenCalled();
+    expect(txMock.employeeLocationAssignment.findMany).not.toHaveBeenCalled();
+  });
+
+  it('requires fresh effective authority when reactivating a cancelled registration', async () => {
+    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    txMock.registration.findUnique.mockResolvedValue({
+      id: 'registration-1',
+      status: 'CANCELLED',
+      mealChoice: 'REGULAR',
+      delegations: [],
+      mealServing: null,
+      penalties: [],
+    });
+    txMock.location.findFirst.mockResolvedValue({
+      id: 'location-1',
+      shortCode: 'LOC-B',
+      displayName: 'Other Hall',
+      address: '2 Main Street',
+    });
+
+    await expect(
+      createService().batchRegister('user-1', [
+        {
+          mealDate: '2026-09-25',
+          status: 'ACTIVE',
+          mealChoice: 'VEGETARIAN',
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        date: '2026-09-25',
+        success: false,
+        code: 'REGISTRATION_FAILED',
+        reason: 'Service location authority is unavailable',
+      },
+    ]);
+    expect(txMock.registration.update).not.toHaveBeenCalled();
+  });
 
   it('rejects registration when the published menu revision is missing', async () => {
     vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue(null);
     txMock.dailyMenuRevision.findMany.mockResolvedValue([]);
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -425,7 +1075,7 @@ describe('RegistrationsService', () => {
         effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
       },
     ]);
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -449,7 +1099,7 @@ describe('RegistrationsService', () => {
         ...completeRegistrationSnapshot,
       });
     txMock.registration.create.mockRejectedValueOnce({ code: 'P2002' });
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -473,7 +1123,7 @@ describe('RegistrationsService', () => {
       delegations: [],
       ...completeRegistrationSnapshot,
     });
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -497,7 +1147,7 @@ describe('RegistrationsService', () => {
       delegations: [],
       ...completeRegistrationSnapshot,
     });
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -522,7 +1172,7 @@ describe('RegistrationsService', () => {
       mealChoice: 'REGULAR',
       delegations: [],
     });
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -557,7 +1207,7 @@ describe('RegistrationsService', () => {
       mealServing: { id: 'serving-1' },
       penalties: [{ id: 'penalty-1' }],
     });
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -597,7 +1247,7 @@ describe('RegistrationsService', () => {
         status: 'PENDING',
       },
     ]);
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -640,13 +1290,10 @@ describe('RegistrationsService', () => {
       return result;
     });
 
-    const result = await new RegistrationsService(
-      prismaMock as never,
-      undefined,
-      eventsService,
-    ).batchRegister('user-1', [
-      { mealDate: '2026-09-24', status: 'CANCELLED' },
-    ]);
+    const result = await createService(undefined, eventsService).batchRegister(
+      'user-1',
+      [{ mealDate: '2026-09-24', status: 'CANCELLED' }],
+    );
 
     expect(result).toEqual([{ date: '2026-09-24', success: true }]);
     expect(committed).toBe(true);
@@ -670,11 +1317,7 @@ describe('RegistrationsService', () => {
     const eventsService = new KitchenEventsService();
     const emitEvent = vi.spyOn(eventsService, 'emitEvent');
 
-    await new RegistrationsService(
-      prismaMock as never,
-      undefined,
-      eventsService,
-    ).batchRegister('user-1', [
+    await createService(undefined, eventsService).batchRegister('user-1', [
       {
         mealDate: '2026-09-25',
         status: 'ACTIVE',
@@ -709,18 +1352,13 @@ describe('RegistrationsService', () => {
     ]);
     txMock.auditLog.create.mockResolvedValueOnce({ id: 'audit-rollback' });
     const publishError = new Error('notification write failed');
-    const notifications = {
-      publish: vi.fn().mockRejectedValueOnce(publishError),
-    };
+    const notifications = new NotificationsService(new PrismaService());
+    vi.spyOn(notifications, 'publish').mockRejectedValueOnce(publishError);
     const eventsService = new KitchenEventsService();
     const emitEvent = vi.spyOn(eventsService, 'emitEvent');
 
     await expect(
-      new RegistrationsService(
-        prismaMock as never,
-        notifications as never,
-        eventsService,
-      ).batchRegister('user-1', [
+      createService(notifications, eventsService).batchRegister('user-1', [
         { mealDate: '2026-09-24', status: 'CANCELLED' },
       ]),
     ).resolves.toEqual([
@@ -744,7 +1382,7 @@ describe('RegistrationsService', () => {
         mealChoice: 'REGULAR',
         delegations: [],
       });
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -768,7 +1406,7 @@ describe('RegistrationsService', () => {
         mealChoice: 'REGULAR',
         delegations: [],
       });
-      const service = new RegistrationsService(prismaMock as never);
+      const service = createService();
 
       await expect(
         service.batchRegister('user-1', [
@@ -798,7 +1436,7 @@ describe('RegistrationsService', () => {
       mealChoice: 'REGULAR',
       delegations: [],
     });
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -821,7 +1459,7 @@ describe('RegistrationsService', () => {
 
   it('returns INVALID_MEAL_DATE for an unsupported batch date', async () => {
     vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -847,7 +1485,7 @@ describe('RegistrationsService', () => {
     txMock.registration.findUnique.mockRejectedValue(
       new Error('database down'),
     );
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.batchRegister('user-1', [
@@ -868,7 +1506,7 @@ describe('RegistrationsService', () => {
   });
 
   it('uses a BadRequestException for malformed week starts', async () => {
-    const service = new RegistrationsService(prismaMock as never);
+    const service = createService();
 
     await expect(
       service.getWeekData('user-1', 'not-a-date'),

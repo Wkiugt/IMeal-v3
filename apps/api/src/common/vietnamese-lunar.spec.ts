@@ -30,6 +30,34 @@ describe('Vietnamese lunar date utility', () => {
     expect(getAvailableMealChoices('2026-09-26')).toEqual(['REGULAR']);
   });
 
+  it('supports vegetarian choices on leap-month lunar days 1 and 15', () => {
+    const leapMealDates = [
+      {
+        mealDate: '2025-07-25',
+        lunarDate: { day: 1, month: 6, year: 2025, isLeapMonth: true },
+      },
+      {
+        mealDate: '2025-08-08',
+        lunarDate: { day: 15, month: 6, year: 2025, isLeapMonth: true },
+      },
+    ];
+    for (const { mealDate, lunarDate } of leapMealDates) {
+      expect(getVietnameseLunarDate(mealDate)).toEqual(lunarDate);
+      expect(getAvailableMealChoices(mealDate)).toEqual([
+        'REGULAR',
+        'VEGETARIAN',
+      ]);
+    }
+
+    expect(getVietnameseLunarDate('2025-08-09')).toEqual({
+      day: 16,
+      month: 6,
+      year: 2025,
+      isLeapMonth: true,
+    });
+    expect(getAvailableMealChoices('2025-08-09')).toEqual(['REGULAR']);
+  });
+
   it.each(['2026-02-30', '2026/09/25', 'not-a-date'])(
     'rejects invalid meal date %s',
     (mealDate) => {
@@ -49,10 +77,12 @@ describe('Vietnamese lunar date utility', () => {
     },
   );
 
-  it.each(['1200-02-01', '2199-12-31'])
-    ('supports lunar range boundary date %s', (mealDate) => {
+  it.each(['1200-02-01', '2199-12-31'])(
+    'supports lunar range boundary date %s',
+    (mealDate) => {
       expect(getVietnameseLunarDate(mealDate).year).toBeGreaterThanOrEqual(
         1200,
       );
-    });
+    },
+  );
 });

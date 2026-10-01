@@ -19,7 +19,10 @@ export type WeekRegistrationResponse = v1.WeekRegistrationResponse;
 export type BatchRegistrationResult = v1.BatchRegistrationResult;
 
 export const registrationAPI = {
-  getWeek: async (startDate: string, token: string): Promise<WeekRegistrationResponse> => {
+  getWeek: async (
+    startDate: string,
+    token: string,
+  ): Promise<WeekRegistrationResponse> => {
     let response: Response;
     try {
       response = await fetchWithTimeout(
@@ -30,11 +33,19 @@ export const registrationAPI = {
     } catch (error: unknown) {
       throw toMobileApiError(error, 'errors.loadCalendar');
     }
-    if (!response.ok) await throwMobileResponseError(response, 'errors.loadCalendar');
-    const payload = await readMobileResponseJson(response, 'errors.loadCalendar');
+    if (!response.ok)
+      await throwMobileResponseError(response, 'errors.loadCalendar');
+    const payload = await readMobileResponseJson(
+      response,
+      'errors.loadCalendar',
+    );
     const parsed = v1.WeekRegistrationResponseSchema.safeParse(payload);
     if (!parsed.success) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
+      throw new MobileApiError(
+        'INVALID_RESPONSE',
+        'errors.invalidResponse',
+        parsed.error,
+      );
     }
     return parsed.data;
   },
@@ -45,20 +56,35 @@ export const registrationAPI = {
   ): Promise<v1.BatchRegistrationResult[]> => {
     let response: Response;
     try {
-      response = await fetch(`${API_BASE}/registrations/batch`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ registrations }),
-      });
+      response = await fetchWithTimeout(
+        `${API_BASE}/registrations/batch`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ registrations }),
+        },
+        REGISTRATION_REQUEST_TIMEOUT_MS,
+      );
     } catch (error: unknown) {
       throw toMobileApiError(error, 'errors.updateRegistration');
     }
-    if (!response.ok) await throwMobileResponseError(response, 'errors.updateRegistration');
+    if (!response.ok)
+      await throwMobileResponseError(response, 'errors.updateRegistration');
 
-    const payload = await readMobileResponseJson(response, 'errors.updateRegistration');
+    const payload = await readMobileResponseJson(
+      response,
+      'errors.updateRegistration',
+    );
     const parsed = v1.BatchRegistrationResponseSchema.safeParse(payload);
     if (!parsed.success) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
+      throw new MobileApiError(
+        'INVALID_RESPONSE',
+        'errors.invalidResponse',
+        parsed.error,
+      );
     }
     return parsed.data;
   },

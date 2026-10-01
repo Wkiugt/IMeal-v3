@@ -4,6 +4,7 @@ import {
   formatDay,
   formatMonth,
   formatShortDate,
+  toBusinessDateKey,
 } from './businessDate';
 
 describe('business date formatting', () => {
@@ -33,5 +34,9 @@ describe('business date formatting', () => {
         timeZone: 'Asia/Ho_Chi_Minh',
       }),
     );
+  });
+  it('derives the meal date from an instant in the business timezone', () => {
+    expect(toBusinessDateKey('2026-09-30T16:59:59.000Z')).toBe('2026-09-30');
+    expect(toBusinessDateKey('2026-09-30T17:00:00.000Z')).toBe('2026-10-01');
   });
 });
