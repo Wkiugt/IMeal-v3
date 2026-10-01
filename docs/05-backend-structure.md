@@ -33,40 +33,40 @@ flowchart TB
     API --> PUSH
 ```
 
-| Table                          | Purpose/source of truth                                                   |
-| ------------------------------ | ------------------------------------------------------------------------- |
-| `users`                        | Canonical employee identity, status and profile                           |
-| `otp_allowlist`                | Administrator-managed allowlist-A email eligibility                       |
-| `otp_challenges`               | Hashed verifier, expiry, attempts and atomic-use state                    |
-| `otp_delivery_outbox`          | Encrypted provider payload, claim/retry state and redacted delivery audit |
-| `auth_sessions`                | One-way opaque session hash, expiry/revocation and minimized metadata     |
-| `roles`                        | Canonical roles                                                            |
-| `user_roles`                   | User-role assignments + audit                                             |
-| `permissions`                  | Canonical sensitive capability codes                                       |
-| `role_permissions`             | Default permission grants by role                                          |
-| `user_permissions`             | Exceptional direct grants/revocations + audit                              |
-| `locations`                    | Exactly four organization-approved operational location records            |
-| `location_policies`            | Effective geofence/freshness/accuracy policy per location                 |
-| `employee_location_assignments`| Effective roster assignment and immutable employee/location snapshots      |
-| `roster_import_batches`        | Preview/commit result and idempotent import audit                          |
-| `weekly_menus`                 | Weekly menu lifecycle                                                      |
-| `daily_menus`                  | One fixed meal per date                                                    |
-| `daily_menu_revisions`         | Immutable menu content revisions for history/notification                  |
-| `meal_days`                    | Locked/snapshot operational day data                                       |
-| `registrations`                | One reserved meal per user/date plus location/name/address snapshot        |
-| `pickup_delegations`           | A→B receive-on-behalf authorization                                        |
-| `pickup_sessions`              | Exact QR intent, presenter/GPS verification and 30-second session          |
-| `serving_verifications`        | Safe presenter GPS verification result; no raw coordinate history          |
-| `serving_confirm_requests`     | Request-level idempotency and result for batch confirm                     |
-| `meal_servings`                | Immutable final serving; at most one per registration                      |
-| `meal_events`                  | Immutable meal lifecycle audit ledger                                      |
-| `penalties`                    | No-show financial state                                                    |
-| `notifications`                | Persisted notification inbox                                               |
-| `push_devices`                 | Device push token metadata if push enabled                                 |
-| `job_runs`                     | Job execution history                                                      |
-| `outbox_events`                | Transactional notification-created delivery work                          |
-| `notification_deliveries`      | Per-notification/per-device delivery state and retry metadata              |
-| `audit_logs`                   | Generic sensitive admin/audit actions                                      |
+| Table                           | Purpose/source of truth                                                   |
+| ------------------------------- | ------------------------------------------------------------------------- |
+| `users`                         | Canonical employee identity, status and profile                           |
+| `otp_allowlist`                 | Administrator-managed allowlist-A email eligibility                       |
+| `otp_challenges`                | Hashed verifier, expiry, attempts and atomic-use state                    |
+| `otp_delivery_outbox`           | Encrypted provider payload, claim/retry state and redacted delivery audit |
+| `auth_sessions`                 | One-way opaque session hash, expiry/revocation and minimized metadata     |
+| `roles`                         | Canonical roles                                                           |
+| `user_roles`                    | User-role assignments + audit                                             |
+| `permissions`                   | Canonical sensitive capability codes                                      |
+| `role_permissions`              | Default permission grants by role                                         |
+| `user_permissions`              | Exceptional direct grants/revocations + audit                             |
+| `locations`                     | Exactly four organization-approved operational location records           |
+| `location_policies`             | Effective geofence/freshness/accuracy policy per location                 |
+| `employee_location_assignments` | Effective roster assignment and immutable employee/location snapshots     |
+| `roster_import_batches`         | Preview/commit result and idempotent import audit                         |
+| `weekly_menus`                  | Weekly menu lifecycle                                                     |
+| `daily_menus`                   | One fixed meal per date                                                   |
+| `daily_menu_revisions`          | Immutable menu content revisions for history/notification                 |
+| `meal_days`                     | Locked/snapshot operational day data                                      |
+| `registrations`                 | One reserved meal per user/date plus location/name/address snapshot       |
+| `pickup_delegations`            | A→B receive-on-behalf authorization                                       |
+| `pickup_sessions`               | Exact QR intent, presenter/GPS verification and 30-second session         |
+| `serving_verifications`         | Safe presenter GPS verification result; no raw coordinate history         |
+| `serving_confirm_requests`      | Request-level idempotency and result for batch confirm                    |
+| `meal_servings`                 | Immutable final serving; at most one per registration                     |
+| `meal_events`                   | Immutable meal lifecycle audit ledger                                     |
+| `penalties`                     | No-show financial state                                                   |
+| `notifications`                 | Persisted notification inbox                                              |
+| `push_devices`                  | Device push token metadata if push enabled                                |
+| `job_runs`                      | Job execution history                                                     |
+| `outbox_events`                 | Transactional notification-created delivery work                          |
+| `notification_deliveries`       | Per-notification/per-device delivery state and retry metadata             |
+| `audit_logs`                    | Generic sensitive admin/audit actions                                     |
 
 ## 3. Entity relationships
 
@@ -150,6 +150,7 @@ disable, compromise, replay, explicit revocation and expiry invalidate sessions.
 The only bypass is the non-production harness pair `NODE_ENV=test` and
 `REQUIRE_AUTH=false`. It injects a synthetic principal for automated tests and
 is rejected in production; it is not documented or supported as production auth.
+
 ## 5. Roles
 
 ```text
@@ -215,6 +216,7 @@ Admin-role lifecycle is a separately audited server-side operation.
 4. Already served rows remain historical and are not rewritten.
 5. `account_disabled` cancellations are excluded from Kitchen preparation/dashboard totals and no-show/penalty selection.
 6. If the preview became stale, return a conflict with a refreshed preview; never apply a partial cleanup.
+
 ### 5.2 Locations and fixed roster assignments
 
 Exactly four real operational location records are in scope. Their names,
@@ -252,7 +254,6 @@ fresh foreground presenter fix against the effective policy and persists only
 safe verification result, timestamp, accuracy and location ID. It does not
 collect owner GPS for proxy pickup. GPS failure returns only safe `Retry` or
 `Refresh`; Kitchen sends no GPS.
-
 
 ## 6. Weekly and daily menus
 
@@ -352,11 +353,11 @@ Purpose:
 
 ## 8. `registrations`
 
-id              UUID PK
-user_id         UUID FK
-meal_date       date NOT NULL
-meal_choice     REGULAR | VEGETARIAN NOT NULL DEFAULT REGULAR
-status          ACTIVE | CANCELLED | SERVED | NO_SHOW
+id UUID PK
+user_id UUID FK
+meal_date date NOT NULL
+meal_choice REGULAR | VEGETARIAN NOT NULL DEFAULT REGULAR
+status ACTIVE | CANCELLED | SERVED | NO_SHOW
 menu_revision_id UUID NULL FK daily_menu_revisions
 owner_name_snapshot text NULL
 employee_code_snapshot text NULL
@@ -370,13 +371,13 @@ service_location_name text NULL
 service_location_address text NULL
 service_location_effective_from timestamptz NULL
 service_location_snapshot_at timestamptz NULL
-registered_at   timestamptz NULL
-cancelled_at    timestamptz NULL
-cancel_reason   text NULL
+registered_at timestamptz NULL
+cancelled_at timestamptz NULL
+cancel_reason text NULL
 cancelled_by_user_id UUID NULL
-no_show_at      timestamptz NULL
+no_show_at timestamptz NULL
 created_at/updated_at
-version         integer NOT NULL DEFAULT 1
+version integer NOT NULL DEFAULT 1
 
 UNIQUE(user_id, meal_date)
 
@@ -403,7 +404,6 @@ accepting a mismatch); and nullable description/image snapshots use
 `IS NOT DISTINCT FROM` equality
 with the immutable revision. Any mismatch remains a reported remediation or
 quarantine row and does not weaken pickup's fail-closed behavior.
-
 
 `meal_days` stores nullable `menu_name_snapshot`, `menu_description_snapshot`,
 `menu_image_snapshot`, `locked_at`, `service_start_at` and `service_end_at`
@@ -450,6 +450,35 @@ snapshots atomically, and returns per-date results. Cancellation locks the
 registration, revokes `PENDING|ACCEPTED` delegations, and writes audit and
 notifications in the same transaction.
 
+### 8.2 Weekly registration read contract
+
+`GET /api/registrations/week` returns an ordered seven-day `days` projection
+alongside the legacy `menu`, `registrations` and `registrationWindow` fields.
+Each day carries its ISO `mealDate`, lunar date, cutoff instant, available meal
+choices, published menu (or `null`), registration (or `null`), optional
+delegation, and per-action availability/reason arrays. The menu lookup is
+published-only; a draft or ambiguous latest revision is not an activation
+authority.
+
+For a registered row, `location` is always the persisted registration snapshot
+(`source: REGISTRATION_SNAPSHOT`) when that snapshot is complete. An empty day
+may expose the effective roster assignment (`source:
+EFFECTIVE_ROSTER_ASSIGNMENT`) only when the assignment, employee identity and
+related location are active, date-effective, non-ambiguous, internally
+consistent and display-complete. This read-side authority uses the same
+location identity and menu-revision validity checks as activation; it never
+replaces a registered snapshot with current roster data.
+
+`canActivate` is the only action that requires current published-menu and
+effective-location authority. `canCancel` and `canChangeMealChoice` operate
+on the existing registration lifecycle and remain available for complete
+historical rows even when current menu or roster authority is unavailable.
+Any linked `meal_servings` row is projected as `SERVED` (including legacy
+`ACTIVE + meal_serving` rows), while finalized serving/no-show/penalty history
+blocks lifecycle mutations. The reason arrays are machine-readable contract
+values (`HOLIDAY`, `DISABLED`, `NO_PUBLISHED_MENU`, `LOCATION_UNAVAILABLE`,
+`LOCATION_AMBIGUOUS`, `CUTOFF_PASSED`, `REGISTRATION_FINALIZED`,
+`ALREADY_ACTIVE`, `NOT_ACTIVE`, and `NO_ALTERNATIVE_MEAL_CHOICE`).
 
 ## 9. `pickup_delegations`
 
@@ -534,6 +563,7 @@ Confirm accepts only `pickupSessionId` and an idempotency key; Kitchen cannot
 re-select, add or remove registrations. Confirm re-queries current database
 state and fails the entire batch if any item, delegation, account, location,
 verification, serving-window or session condition changed.
+
 ## 11. `meal_servings`
 
 ### 11.1 `serving_confirm_requests`
@@ -630,7 +660,6 @@ claim, all serving/delegation writes, and returns `PICKUP_INTENT_CONFLICT`;
 Kitchen must resolve again. Successful serving is final, and only the same
 idempotency key/body for a committed success returns the stored result without
 a duplicate serving. Realtime events are published only after commit.
-
 
 ## 13. Concurrency cases
 
@@ -840,17 +869,17 @@ reminders, not for transactional event notification kinds.
 
 ### 18.2 Exact event matrix
 
-| Kind | Trigger/timing | Recipient |
-| ---- | -------------- | --------- |
-| `REGISTRATION_OPENED` | First weekly-menu publish only; missing revisions initialized and `publishedAt` set. Repeat/concurrent publish no-op. | Every active Staff user, regardless of reminders. |
-| `REGISTRATION_REMINDER` | Sunday 10:00 `Asia/Ho_Chi_Minh`, next Monday-start published menu, one/user/week. | Active Staff missing an enabled non-holiday `ACTIVE` registration and reminders enabled. |
-| `PICKUP_REMINDER` | Daily 11:30 VN, today's `ACTIVE` unserved registrations. | Accepted delegate else owner; grouped by recipient/date, reminders enabled only. |
-| `DELEGATION_REQUESTED` | Pending request created. | Delegate. |
-| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` | Delegate decision committed. | Registration owner. |
-| `DELEGATION_REVOKED` | Owner revoke or registration cancellation auto-revokes active delegation. | Delegate; payload reason `OWNER_REVOKED` or `REGISTRATION_CANCELLED`. |
-| `PROXY_PICKUP_COMPLETED` | Accepted delegated serving commits and pickup user differs from owner. | Owner only; self pickup emits no item. |
-| `REGISTERED_MENU_CHANGED` | Actual tracked edit to already-published menu date (content, meal type, holiday, enabled). | Active registrants of that date; no-op emits none. |
-| `NO_SHOW_PENALTY_CREATED` | No-show worker at 13:45 VN after service end 13:30. | Registration owner. |
+| Kind                                          | Trigger/timing                                                                                                        | Recipient                                                                                |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `REGISTRATION_OPENED`                         | First weekly-menu publish only; missing revisions initialized and `publishedAt` set. Repeat/concurrent publish no-op. | Every active Staff user, regardless of reminders.                                        |
+| `REGISTRATION_REMINDER`                       | Sunday 10:00 `Asia/Ho_Chi_Minh`, next Monday-start published menu, one/user/week.                                     | Active Staff missing an enabled non-holiday `ACTIVE` registration and reminders enabled. |
+| `PICKUP_REMINDER`                             | Daily 11:30 VN, today's `ACTIVE` unserved registrations.                                                              | Accepted delegate else owner; grouped by recipient/date, reminders enabled only.         |
+| `DELEGATION_REQUESTED`                        | Pending request created.                                                                                              | Delegate.                                                                                |
+| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` | Delegate decision committed.                                                                                          | Registration owner.                                                                      |
+| `DELEGATION_REVOKED`                          | Owner revoke or registration cancellation auto-revokes active delegation.                                             | Delegate; payload reason `OWNER_REVOKED` or `REGISTRATION_CANCELLED`.                    |
+| `PROXY_PICKUP_COMPLETED`                      | Accepted delegated serving commits and pickup user differs from owner.                                                | Owner only; self pickup emits no item.                                                   |
+| `REGISTERED_MENU_CHANGED`                     | Actual tracked edit to already-published menu date (content, meal type, holiday, enabled).                            | Active registrants of that date; no-op emits none.                                       |
+| `NO_SHOW_PENALTY_CREATED`                     | No-show worker at 13:45 VN after service end 13:30.                                                                   | Registration owner.                                                                      |
 
 First publish emits `REGISTRATION_OPENED`; an edit to an already-published registered date
 emits `REGISTERED_MENU_CHANGED`, never another opened event. Admin account-disable
@@ -1012,6 +1041,7 @@ Canonical history retention is **1 year** for meal lifecycle/business audit data
   reversal endpoint exists. Same idempotency key/body cannot double-serve.
 - Worker has no independent business-write path; scheduled work uses the same
   application invariants and records sanitized `job_runs`.
+
 ## 24. Clean-slate provisioning
 
 1. Confirm a disposable/staging target and a restorable database backup before
@@ -1032,7 +1062,7 @@ Canonical history retention is **1 year** for meal lifecycle/business audit data
    is ambiguous/duplicate.
    The rollout scope is explicit: a registration is operational when
    `status <> 'CANCELLED' OR meal_date >= current business date in
-   Asia/Ho_Chi_Minh`; only `CANCELLED` rows before that business date are
+Asia/Ho_Chi_Minh`; only `CANCELLED` rows before that business date are
    legacy history permitted to retain nullable snapshots. The
    `registration_serving_mismatch` check still evaluates every status and
    always blocks.

@@ -98,35 +98,179 @@ type RegistrationLifecycleEvent = {
   status: 'ACTIVE' | 'CANCELLED';
 };
 
-type WeeklyMenuData = {
-  id: string;
-  startDate: Date;
-  endDate: Date;
-  createdAt: Date;
-  updatedAt: Date;
-  dailyMenus: Array<{
-    id: string;
-    weeklyMenuId: string;
-    date: Date;
-    isHoliday: boolean;
-    isEnabled: boolean;
-    createdAt: Date;
-    revisions?: Array<{
-      id: string;
-      revision: number | null;
-      mealName: string | null;
-      description: string | null;
-      imageUrl: string | null;
-    }>;
-  }>;
+type RegistrationStatusValue = v1.RegistrationRecordStatus;
+
+type RegistrationLocationFields = {
+  serviceLocationId?: string | null;
+  serviceLocationCode?: string | null;
+  serviceLocationName?: string | null;
+  serviceLocationAddress?: string | null;
 };
+
+type EffectiveRosterAssignment = {
+  isActive: boolean;
+  employeeName: string;
+  employeeCode: string;
+  serviceLocationCode: string;
+  locationId: string;
+  effectiveFrom: Date;
+  effectiveTo: Date | null;
+  location: {
+    id: string;
+    shortCode: string;
+    displayName: string;
+    address: string;
+    isActive: boolean;
+    effectiveFrom: Date;
+    effectiveTo: Date | null;
+  } | null;
+};
+
+type EffectiveLocationResolution =
+  | { kind: 'AVAILABLE'; location: v1.WeekDayLocation }
+  | { kind: 'UNAVAILABLE'; reason: 'LOCATION_UNAVAILABLE' }
+  | { kind: 'AMBIGUOUS'; reason: 'LOCATION_AMBIGUOUS' };
+
+type WeekDelegation = {
+  id: string;
+  status: string;
+  delegateUser?: { name: string | null } | null;
+};
+
+function hasText(value: string | null | undefined): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function toRegistrationLocation(
+  registration: RegistrationLocationFields,
+): v1.WeekDayLocation | null {
+  if (
+    !hasText(registration.serviceLocationId) ||
+    !hasText(registration.serviceLocationCode) ||
+    !hasText(registration.serviceLocationName) ||
+    !hasText(registration.serviceLocationAddress)
+  ) {
+    return null;
+  }
+  return {
+    id: registration.serviceLocationId,
+    shortCode: registration.serviceLocationCode,
+    displayName: registration.serviceLocationName,
+    address: registration.serviceLocationAddress,
+    source: 'REGISTRATION_SNAPSHOT',
+  };
+}
+
+function resolveEffectiveRosterLocation(
+  assignments: readonly EffectiveRosterAssignment[],
+  mealDate: Date,
+): EffectiveLocationResolution {
+  const effectiveAssignments = assignments.filter(
+    (assignment) =>
+      assignment.isActive &&
+      assignment.effectiveFrom <= mealDate &&
+      (assignment.effectiveTo === null || assignment.effectiveTo > mealDate),
+  );
+  if (effectiveAssignments.length === 0) {
+    return { kind: 'UNAVAILABLE', reason: 'LOCATION_UNAVAILABLE' };
+  }
+  if (effectiveAssignments.length > 1) {
+    return { kind: 'AMBIGUOUS', reason: 'LOCATION_AMBIGUOUS' };
+  }
+
+  const assignment = effectiveAssignments[0];
+  const location = assignment.location;
+  if (
+    !hasText(assignment.employeeName) ||
+    !hasText(assignment.employeeCode) ||
+    !location ||
+    !location.isActive ||
+    location.effectiveFrom > mealDate ||
+    (location.effectiveTo !== null && location.effectiveTo <= mealDate) ||
+    location.id !== assignment.locationId ||
+    !hasText(assignment.serviceLocationCode) ||
+    !hasText(location.shortCode) ||
+    assignment.serviceLocationCode !== location.shortCode ||
+    !hasText(location.id) ||
+    !hasText(location.displayName) ||
+    !hasText(location.address)
+  ) {
+    return { kind: 'UNAVAILABLE', reason: 'LOCATION_UNAVAILABLE' };
+  }
+  return {
+    kind: 'AVAILABLE',
+    location: {
+      id: location.id,
+      shortCode: location.shortCode,
+      displayName: location.displayName,
+      address: location.address,
+      source: 'EFFECTIVE_ROSTER_ASSIGNMENT',
+    },
+  };
+}
+
+function menuUnavailableReasons(
+  menu: v1.WeekDailyMenu | null,
+): v1.RegistrationDayUnavailableReason[] {
+  if (!menu) return ['NO_PUBLISHED_MENU'];
+  const reasons: v1.RegistrationDayUnavailableReason[] = [];
+  if (menu.isHoliday) reasons.push('HOLIDAY');
+  if (!menu.isEnabled) reasons.push('DISABLED');
+  if (!menu.menuRevisionId || !hasText(menu.mealName)) {
+    reasons.push('NO_PUBLISHED_MENU');
+  }
+  return reasons;
+}
+
+function isRegistrationFinalized(registration: {
+  status: string;
+  mealServing?: unknown;
+  penalties?: readonly unknown[];
+}): boolean {
+  return (
+    registration.status === 'SERVED' ||
+    registration.status === 'NO_SHOW' ||
+    (registration.mealServing !== null &&
+      registration.mealServing !== undefined) ||
+    (registration.penalties?.length ?? 0) > 0
+  );
+}
+
+function projectRegistrationStatus(
+  status: string,
+  mealServing: unknown,
+): RegistrationStatusValue {
+  if (mealServing !== null && mealServing !== undefined) return 'SERVED';
+  if (
+    status === 'ACTIVE' ||
+    status === 'CANCELLED' ||
+    status === 'SERVED' ||
+    status === 'NO_SHOW'
+  ) {
+    return status;
+  }
+  throw new Error('Unknown registration status');
+}
+
+function serializeDelegation(
+  delegations: readonly WeekDelegation[] | undefined,
+): v1.WeekRegistrationDayDelegation | null {
+  const delegation = delegations?.find(
+    (candidate) =>
+      candidate.status === 'PENDING' || candidate.status === 'ACCEPTED',
+  );
+  if (!delegation) return null;
+  return {
+    id: delegation.id,
+    status: delegation.status === 'PENDING' ? 'PENDING' : 'ACCEPTED',
+    delegateName: hasText(delegation.delegateUser?.name)
+      ? delegation.delegateUser.name.trim()
+      : null,
+  };
+}
 
 @Injectable()
 export class RegistrationsService {
-  private menuCache = new Map<
-    string,
-    { data: WeeklyMenuData; expiry: number }
-  >();
   private readonly notificationsService: NotificationsService;
   private readonly kitchenEventsService?: KitchenEventsService;
   private readonly logger: StructuredLogger;
@@ -178,7 +322,7 @@ export class RegistrationsService {
     endDate.setUTCDate(startDate.getUTCDate() + 6);
     const cutoffSetting = await this.getCutoffTime();
     const serverNow = new Date();
-    const days = mealDates.map((mealDateKey, index) => {
+    const windowDays = mealDates.map((mealDateKey, index) => {
       const cutoffAt = getCutoffInstant(mealDateKey, cutoffSetting.time);
       return {
         mealDate: mealDateKey,
@@ -189,36 +333,23 @@ export class RegistrationsService {
       };
     });
 
-    // 1. Traffic smoothing: Cache the weekly menu to reduce DB queries on Mon morning.
-    // Jitter caching: TTL between 15s to 25s
-    const cacheKey = `menu_${weekStart}`;
-    let menuData: WeeklyMenuData | null = null;
-    const now = Date.now();
-    const cached = this.menuCache.get(cacheKey);
-
-    if (cached && cached.expiry > now) {
-      menuData = cached.data;
-    } else {
-      menuData = await this.prisma.weeklyMenu.findFirst({
-        where: { startDate },
-        include: {
-          dailyMenus: {
-            include: {
-              revisions: {
-                where: { revision: { not: null } },
-                orderBy: [{ revision: 'desc' }, { id: 'desc' }],
-                take: 1,
-              },
+    const menuData = await this.prisma.weeklyMenu.findFirst({
+      where: {
+        startDate,
+        publishedAt: { not: null },
+      },
+      include: {
+        dailyMenus: {
+          include: {
+            revisions: {
+              where: { revision: { not: null } },
+              orderBy: [{ revision: 'desc' }, { id: 'desc' }],
+              take: 2,
             },
           },
         },
-      });
-      if (menuData) {
-        const jitter = Math.floor(Math.random() * 10000) + 15000; // 15-25s
-        this.menuCache.set(cacheKey, { data: menuData, expiry: now + jitter });
-      }
-    }
-    // 2. Fetch user's own registrations (no cache, specific to user)
+      },
+    });
     const registrations = await this.prisma.registration.findMany({
       where: {
         userId,
@@ -227,7 +358,42 @@ export class RegistrationsService {
           lte: endDate,
         },
       },
+      include: {
+        mealServing: { select: { id: true } },
+        penalties: { select: { id: true } },
+        delegations: {
+          where: { status: { in: ['PENDING', 'ACCEPTED'] } },
+          orderBy: { id: 'asc' },
+          take: 1,
+          include: {
+            delegateUser: { select: { name: true } },
+          },
+        },
+      },
     });
+    const rosterAssignments =
+      await this.prisma.employeeLocationAssignment.findMany({
+        where: {
+          userId,
+          isActive: true,
+          effectiveFrom: { lte: endDate },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gt: startDate } }],
+        },
+        include: {
+          location: {
+            select: {
+              id: true,
+              shortCode: true,
+              displayName: true,
+              address: true,
+              isActive: true,
+              effectiveFrom: true,
+              effectiveTo: true,
+            },
+          },
+        },
+        orderBy: [{ effectiveFrom: 'desc' }, { id: 'asc' }],
+      });
 
     const serializedMenu = menuData
       ? {
@@ -237,42 +403,150 @@ export class RegistrationsService {
           createdAt: menuData.createdAt.toISOString(),
           updatedAt: menuData.updatedAt.toISOString(),
           dailyMenus: menuData.dailyMenus.map((dailyMenu) => {
-            const revision = dailyMenu.revisions?.[0] ?? null;
+            const revisions = dailyMenu.revisions ?? [];
+            const revision = revisions[0] ?? null;
+            const revisionIsValid =
+              revision !== null &&
+              revision.revision !== null &&
+              hasText(revision.mealName) &&
+              revisions[1]?.revision !== revision.revision;
             return {
               id: dailyMenu.id,
               weeklyMenuId: dailyMenu.weeklyMenuId,
               date: dailyMenu.date.toISOString().slice(0, 10),
               isHoliday: dailyMenu.isHoliday,
               isEnabled: dailyMenu.isEnabled,
-              menuRevisionId: revision?.id ?? null,
-              mealName: revision?.mealName ?? null,
-              description: revision?.description ?? null,
-              imageUrl: revision?.imageUrl ?? null,
+              menuRevisionId: revisionIsValid ? revision.id : null,
+              mealName: revisionIsValid ? revision.mealName : null,
+              description: revisionIsValid ? revision.description : null,
+              imageUrl: revisionIsValid ? revision.imageUrl : null,
               createdAt: dailyMenu.createdAt.toISOString(),
             };
           }),
         }
       : null;
+    const menuByDate = new Map(
+      serializedMenu?.dailyMenus.map((menu) => [menu.date, menu]) ?? [],
+    );
+    const registrationByDate = new Map(
+      registrations.map((registration) => [
+        registration.mealDate.toISOString().slice(0, 10),
+        registration,
+      ]),
+    );
     const serializedRegistrations = registrations.map((registration) => ({
       id: registration.id,
       mealDate: registration.mealDate.toISOString().slice(0, 10),
-      status: registration.status,
-      mealChoice:
-        'mealChoice' in registration ? registration.mealChoice : undefined,
-      menuRevisionId:
-        'menuRevisionId' in registration
-          ? (registration.menuRevisionId ?? null)
-          : null,
+      status: projectRegistrationStatus(
+        registration.status,
+        registration.mealServing,
+      ),
+      mealChoice: registration.mealChoice,
+      menuRevisionId: registration.menuRevisionId ?? null,
     }));
+    const serializedRegistrationByDate = new Map(
+      serializedRegistrations.map((registration) => [
+        registration.mealDate,
+        registration,
+      ]),
+    );
+
+    const days = windowDays.map((windowDay) => {
+      const mealDate = parseMealDate(windowDay.mealDate);
+      const menu = menuByDate.get(windowDay.mealDate) ?? null;
+      const registration = registrationByDate.get(windowDay.mealDate);
+      const registrationRecord =
+        serializedRegistrationByDate.get(windowDay.mealDate) ?? null;
+      const effectiveLocation = resolveEffectiveRosterLocation(
+        rosterAssignments,
+        mealDate,
+      );
+      const registrationLocation = registration
+        ? toRegistrationLocation(registration)
+        : null;
+      const location =
+        registration !== undefined
+          ? registrationLocation
+          : effectiveLocation.kind === 'AVAILABLE'
+            ? effectiveLocation.location
+            : null;
+      const menuReasons = menuUnavailableReasons(menu);
+      const locationReasons =
+        effectiveLocation.kind === 'AVAILABLE'
+          ? []
+          : [effectiveLocation.reason];
+      const activateReasons: v1.RegistrationDayUnavailableReason[] = [];
+      if (serverNow >= new Date(windowDay.cutoffAt)) {
+        activateReasons.push('CUTOFF_PASSED');
+      } else if (registration) {
+        if (isRegistrationFinalized(registration)) {
+          activateReasons.push('REGISTRATION_FINALIZED');
+        } else if (registration.status === 'ACTIVE') {
+          activateReasons.push('ALREADY_ACTIVE');
+        } else if (registration.status === 'CANCELLED') {
+          activateReasons.push(...menuReasons, ...locationReasons);
+        } else {
+          activateReasons.push('NOT_ACTIVE');
+        }
+      } else {
+        activateReasons.push(...menuReasons, ...locationReasons);
+      }
+
+      const cancelReasons: v1.RegistrationDayUnavailableReason[] = [];
+      if (!registration) {
+        cancelReasons.push('NOT_ACTIVE');
+      } else if (serverNow >= new Date(windowDay.cutoffAt)) {
+        cancelReasons.push('CUTOFF_PASSED');
+      } else if (isRegistrationFinalized(registration)) {
+        cancelReasons.push('REGISTRATION_FINALIZED');
+      } else if (registration.status !== 'ACTIVE') {
+        cancelReasons.push('NOT_ACTIVE');
+      }
+
+      const changeMealChoiceReasons: v1.RegistrationDayUnavailableReason[] = [];
+      if (!registration || registration.status !== 'ACTIVE') {
+        changeMealChoiceReasons.push('NOT_ACTIVE');
+      } else if (serverNow >= new Date(windowDay.cutoffAt)) {
+        changeMealChoiceReasons.push('CUTOFF_PASSED');
+      } else if (isRegistrationFinalized(registration)) {
+        changeMealChoiceReasons.push('REGISTRATION_FINALIZED');
+      } else if (
+        windowDay.availableMealChoices.every(
+          (choice) => choice === registration.mealChoice,
+        )
+      ) {
+        changeMealChoiceReasons.push('NO_ALTERNATIVE_MEAL_CHOICE');
+      }
+
+      return {
+        mealDate: windowDay.mealDate,
+        menu,
+        registration: registrationRecord,
+        location,
+        lunarDate: windowDay.lunarDate,
+        availableMealChoices: windowDay.availableMealChoices,
+        cutoffAt: windowDay.cutoffAt,
+        canActivate: activateReasons.length === 0,
+        canCancel: cancelReasons.length === 0,
+        canChangeMealChoice: changeMealChoiceReasons.length === 0,
+        unavailableReasons: {
+          activate: activateReasons,
+          cancel: cancelReasons,
+          changeMealChoice: changeMealChoiceReasons,
+        },
+        delegation: serializeDelegation(registration?.delegations),
+      };
+    });
 
     return v1.WeekRegistrationResponseSchema.parse({
       menu: serializedMenu,
       registrations: serializedRegistrations,
+      days,
       registrationWindow: {
         serverNow: serverNow.toISOString(),
-        cutoffAt: days[0].cutoffAt,
+        cutoffAt: windowDays[0].cutoffAt,
         timeZone: BUSINESS_TIME_ZONE,
-        days,
+        days: windowDays,
       },
     });
   }
@@ -343,6 +617,7 @@ export class RegistrationsService {
       where: {
         date: mealDate,
         isEnabled: true,
+        isHoliday: false,
         weeklyMenu: { publishedAt: { not: null } },
       },
       select: { id: true },

@@ -147,12 +147,19 @@ describe('Contracts v1', () => {
         totalPages: 0,
       };
       expect(v1.PenaltyMetricsDtoSchema.safeParse(metrics).success).toBe(true);
-      expect(v1.PenaltyListResponseDtoSchema.safeParse(listResponse).success).toBe(true);
+      expect(
+        v1.PenaltyListResponseDtoSchema.safeParse(listResponse).success,
+      ).toBe(true);
     });
 
     it('validates waive penalty DTO minimum 5 chars requirement', () => {
-      expect(v1.WaivePenaltyDtoSchema.safeParse({ reason: 'Sick' }).success).toBe(false);
-      expect(v1.WaivePenaltyDtoSchema.safeParse({ reason: 'Medical leave approved' }).success).toBe(true);
+      expect(
+        v1.WaivePenaltyDtoSchema.safeParse({ reason: 'Sick' }).success,
+      ).toBe(false);
+      expect(
+        v1.WaivePenaltyDtoSchema.safeParse({ reason: 'Medical leave approved' })
+          .success,
+      ).toBe(true);
     });
   });
   describe('Pickup availability', () => {
@@ -225,16 +232,19 @@ describe('Contracts v1', () => {
       ).toBe(false);
       expect(
         v1.BatchRegistrationRequestSchema.safeParse({
-          registrations: [
-            { mealDate: '2026-09-05', status: 'ACTIVE' },
-          ],
+          registrations: [{ mealDate: '2026-09-05', status: 'ACTIVE' }],
         }).success,
       ).toBe(false);
     });
 
     it('validates ordered per-date success and failure results', () => {
       const result = v1.BatchRegistrationResponseSchema.safeParse([
-        { date: '2026-09-05', success: false, code: 'CUTOFF_PASSED', reason: 'Cutoff time exceeded' },
+        {
+          date: '2026-09-05',
+          success: false,
+          code: 'CUTOFF_PASSED',
+          reason: 'Cutoff time exceeded',
+        },
         { date: '2026-09-06', success: true },
       ]);
 
@@ -338,8 +348,161 @@ describe('Contracts v1', () => {
       ).toBe(false);
     });
 
+    it('validates a complete seven-day response with real menu, location, and lifecycle fields', () => {
+      const mealDates = [
+        '2026-09-21',
+        '2026-09-22',
+        '2026-09-23',
+        '2026-09-24',
+        '2026-09-25',
+        '2026-09-26',
+        '2026-09-27',
+      ];
+      const menuDays = mealDates.map((mealDate, index) => ({
+        id: `menu-day-${index + 1}`,
+        weeklyMenuId: 'week-1',
+        date: mealDate,
+        isHoliday: false,
+        isEnabled: true,
+        menuRevisionId: `revision-${index + 1}`,
+        mealName: `Meal ${index + 1}`,
+        description: `Description ${index + 1}`,
+        imageUrl: `https://example.test/meal-${index + 1}.jpg`,
+        createdAt: '2026-09-01T00:00:00.000Z',
+      }));
+      const registrations = [
+        {
+          id: 'registration-active',
+          mealDate: mealDates[0],
+          status: 'ACTIVE',
+          mealChoice: 'REGULAR',
+          menuRevisionId: 'revision-1',
+        },
+        {
+          id: 'registration-served',
+          mealDate: mealDates[1],
+          status: 'SERVED',
+          mealChoice: 'REGULAR',
+          menuRevisionId: 'revision-2',
+        },
+        {
+          id: 'registration-no-show',
+          mealDate: mealDates[2],
+          status: 'NO_SHOW',
+          mealChoice: 'REGULAR',
+          menuRevisionId: 'revision-3',
+        },
+        {
+          id: 'registration-cancelled',
+          mealDate: mealDates[3],
+          status: 'CANCELLED',
+          mealChoice: 'VEGETARIAN',
+          menuRevisionId: 'revision-4',
+        },
+      ];
+      const locations = [
+        {
+          id: 'snapshot-location',
+          shortCode: 'SNAP',
+          displayName: 'Snapshot Hall',
+          address: '1 Snapshot Street',
+          source: 'REGISTRATION_SNAPSHOT',
+        },
+        {
+          id: 'effective-location-1',
+          shortCode: 'LOC-1',
+          displayName: 'Location One',
+          address: '1 Location Street',
+          source: 'EFFECTIVE_ROSTER_ASSIGNMENT',
+        },
+        {
+          id: 'effective-location-2',
+          shortCode: 'LOC-2',
+          displayName: 'Location Two',
+          address: '2 Location Street',
+          source: 'EFFECTIVE_ROSTER_ASSIGNMENT',
+        },
+        {
+          id: 'effective-location-3',
+          shortCode: 'LOC-3',
+          displayName: 'Location Three',
+          address: '3 Location Street',
+          source: 'EFFECTIVE_ROSTER_ASSIGNMENT',
+        },
+        null,
+        {
+          id: 'effective-location-6',
+          shortCode: 'LOC-6',
+          displayName: 'Location Six',
+          address: '6 Location Street',
+          source: 'EFFECTIVE_ROSTER_ASSIGNMENT',
+        },
+        null,
+      ];
+      const days = mealDates.map((mealDate, index) => {
+        const registration =
+          registrations.find((candidate) => candidate.mealDate === mealDate) ??
+          null;
+        const isFinalized =
+          registration?.status === 'SERVED' ||
+          registration?.status === 'NO_SHOW';
+        const isCancelled = registration?.status === 'CANCELLED';
+        const unavailable =
+          index === 6
+            ? ['NO_PUBLISHED_MENU']
+            : registration?.status === 'ACTIVE'
+              ? ['ALREADY_ACTIVE']
+              : isFinalized
+                ? ['REGISTRATION_FINALIZED']
+                : [];
+        return {
+          mealDate,
+          menu: index === 6 ? null : menuDays[index],
+          registration,
+          location: locations[index],
+          lunarDate: {
+            day: index === 4 ? 15 : index === 5 ? 1 : index + 2,
+            month: 8,
+            year: 2026,
+            isLeapMonth: index === 5,
+          },
+          availableMealChoices:
+            index === 3 || index === 4
+              ? ['REGULAR', 'VEGETARIAN']
+              : ['REGULAR'],
+          cutoffAt: `2026-09-${String(20 + index).padStart(2, '0')}T07:00:00.000Z`,
+          canActivate: isCancelled || (!registration && index !== 6),
+          canCancel: registration?.status === 'ACTIVE',
+          canChangeMealChoice: registration?.status === 'ACTIVE',
+          unavailableReasons: {
+            activate: unavailable,
+            cancel:
+              registration?.status === 'ACTIVE'
+                ? []
+                : isFinalized
+                  ? ['REGISTRATION_FINALIZED']
+                  : ['NOT_ACTIVE'],
+            changeMealChoice:
+              registration?.status === 'ACTIVE' ? [] : ['NOT_ACTIVE'],
+          },
+          delegation:
+            registration?.status === 'ACTIVE'
+              ? {
+                  id: 'delegation-1',
+                  status: 'PENDING',
+                  delegateName: 'Delegate',
+                }
+              : null,
+        };
+      });
+      const registrationWindowDays = mealDates.map((mealDate, index) => ({
+        mealDate,
+        cutoffAt: `2026-09-${String(20 + index).padStart(2, '0')}T07:00:00.000Z`,
+        editable: index > 0,
+        lunarDate: days[index].lunarDate,
+        availableMealChoices: days[index].availableMealChoices,
+      }));
 
-    it('validates the seven-day week response without Date objects', () => {
       const response = v1.WeekRegistrationResponseSchema.safeParse({
         menu: {
           id: 'week-1',
@@ -347,68 +510,48 @@ describe('Contracts v1', () => {
           endDate: '2026-09-27',
           createdAt: '2026-09-01T00:00:00.000Z',
           updatedAt: '2026-09-01T00:00:00.000Z',
-          dailyMenus: [
-            {
-              id: 'menu-day-1',
-              weeklyMenuId: 'week-1',
-              date: '2026-09-21',
-              isHoliday: false,
-              isEnabled: true,
-              menuRevisionId: null,
-              mealName: null,
-              description: null,
-              imageUrl: null,
-              createdAt: '2026-09-01T00:00:00.000Z',
-            },
-          ],
+          dailyMenus: menuDays.slice(0, 6),
         },
-        registrations: [
-          {
-            id: 'registration-1',
-            mealDate: '2026-09-25',
-            status: 'ACTIVE',
-            mealChoice: 'VEGETARIAN',
-            menuRevisionId: null,
-          },
-        ],
+        registrations,
+        days,
         registrationWindow: {
           serverNow: '2026-09-20T06:00:00.000Z',
           cutoffAt: '2026-09-20T07:00:00.000Z',
           timeZone: 'Asia/Ho_Chi_Minh',
-          days: [
-            '2026-09-21',
-            '2026-09-22',
-            '2026-09-23',
-            '2026-09-24',
-            '2026-09-25',
-            '2026-09-26',
-            '2026-09-27',
-          ].map((mealDate, index) => ({
-            mealDate,
-            cutoffAt: `2026-09-${String(20 + index).padStart(2, '0')}T07:00:00.000Z`,
-            editable: index > 0,
-            lunarDate: {
-              day: index + 1,
-              month: 8,
-              year: 2026,
-              isLeapMonth: false,
-            },
-            availableMealChoices:
-              index === 4
-                ? ['REGULAR', 'VEGETARIAN']
-                : ['REGULAR'],
-          })),
+          days: registrationWindowDays,
         },
       });
 
       expect(response.success).toBe(true);
+      if (response.success) {
+        expect(response.data.menu?.dailyMenus[0]).toMatchObject({
+          mealName: 'Meal 1',
+          menuRevisionId: 'revision-1',
+        });
+        expect(response.data.days[0]).toMatchObject({
+          registration: { status: 'ACTIVE' },
+          location: { source: 'REGISTRATION_SNAPSHOT' },
+        });
+        expect(response.data.days[1].registration?.status).toBe('SERVED');
+        expect(response.data.days[2].registration?.status).toBe('NO_SHOW');
+        expect(response.data.days[3].registration?.status).toBe('CANCELLED');
+        expect(response.data.days[5].lunarDate).toMatchObject({
+          day: 1,
+          isLeapMonth: true,
+        });
+        expect(response.data.days[6]).toMatchObject({
+          menu: null,
+          unavailableReasons: { activate: ['NO_PUBLISHED_MENU'] },
+        });
+      }
     });
 
-    it('requires UTC timestamps, exact seven days, and strict week response objects', () => {
-      const invalidWindowDay = {
+    it('rejects a day with an unknown action reason or extra presentation field', () => {
+      const day = {
         mealDate: '2026-09-21',
-        cutoffAt: '2026-09-20T14:00:00+07:00',
-        editable: true,
+        menu: null,
+        registration: null,
+        location: null,
         lunarDate: {
           day: 1,
           month: 8,
@@ -416,28 +559,116 @@ describe('Contracts v1', () => {
           isLeapMonth: false,
         },
         availableMealChoices: ['REGULAR'],
+        cutoffAt: '2026-09-20T07:00:00.000Z',
+        canActivate: false,
+        canCancel: false,
+        canChangeMealChoice: false,
+        unavailableReasons: {
+          activate: ['UNKNOWN'],
+          cancel: ['NOT_ACTIVE'],
+          changeMealChoice: ['NOT_ACTIVE'],
+        },
+        delegation: null,
       };
+
+      expect(v1.WeekRegistrationDaySchema.safeParse(day).success).toBe(false);
+      expect(
+        v1.WeekRegistrationDaySchema.safeParse({
+          ...day,
+          unavailableReasons: {
+            activate: ['NO_PUBLISHED_MENU'],
+            cancel: ['NOT_ACTIVE'],
+            changeMealChoice: ['NOT_ACTIVE'],
+          },
+          extra: true,
+        }).success,
+      ).toBe(false);
+    });
+    it('rejects non-UTC timestamps, non-seven-day arrays, and strict response extras', () => {
+      const mealDates = [
+        '2026-09-21',
+        '2026-09-22',
+        '2026-09-23',
+        '2026-09-24',
+        '2026-09-25',
+        '2026-09-26',
+        '2026-09-27',
+      ];
+      const validDay = (mealDate: string) => ({
+        mealDate,
+        menu: null,
+        registration: null,
+        location: null,
+        lunarDate: {
+          day: 1,
+          month: 8,
+          year: 2026,
+          isLeapMonth: false,
+        },
+        availableMealChoices: ['REGULAR'],
+        cutoffAt: '2026-09-20T07:00:00.000Z',
+        canActivate: false,
+        canCancel: false,
+        canChangeMealChoice: false,
+        unavailableReasons: {
+          activate: ['NO_PUBLISHED_MENU'],
+          cancel: ['NOT_ACTIVE'],
+          changeMealChoice: ['NOT_ACTIVE'],
+        },
+        delegation: null,
+      });
+      const validWindowDay = (mealDate: string) => ({
+        mealDate,
+        cutoffAt: '2026-09-20T07:00:00.000Z',
+        editable: false,
+        lunarDate: {
+          day: 1,
+          month: 8,
+          year: 2026,
+          isLeapMonth: false,
+        },
+        availableMealChoices: ['REGULAR'],
+      });
       const response = {
         menu: null,
         registrations: [],
+        days: mealDates.map(validDay),
         registrationWindow: {
           serverNow: '2026-09-20T06:00:00.000Z',
           cutoffAt: '2026-09-20T07:00:00.000Z',
           timeZone: 'Asia/Ho_Chi_Minh',
-          days: Array.from({ length: 6 }, () => invalidWindowDay),
+          days: mealDates.map(validWindowDay),
         },
       };
 
       expect(
         v1.WeekRegistrationResponseSchema.safeParse(response).success,
+      ).toBe(true);
+      expect(
+        v1.WeekRegistrationResponseSchema.safeParse({
+          ...response,
+          days: response.days.slice(0, 6),
+        }).success,
       ).toBe(false);
       expect(
         v1.WeekRegistrationResponseSchema.safeParse({
           ...response,
           registrationWindow: {
             ...response.registrationWindow,
-            days: Array.from({ length: 7 }, () => invalidWindowDay),
+            days: response.registrationWindow.days.slice(0, 6),
           },
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.WeekRegistrationResponseSchema.safeParse({
+          ...response,
+          days: [
+            {
+              ...response.days[0],
+              cutoffAt: '2026-09-20T14:00:00+07:00',
+            },
+            ...response.days.slice(1),
+          ],
         }).success,
       ).toBe(false);
       expect(
@@ -446,10 +677,6 @@ describe('Contracts v1', () => {
           registrationWindow: {
             ...response.registrationWindow,
             cutoffAt: '2026-09-20T14:00:00+07:00',
-            days: Array.from({ length: 7 }, () => ({
-              ...invalidWindowDay,
-              cutoffAt: '2026-09-20T07:00:00.000Z',
-            })),
           },
         }).success,
       ).toBe(false);
@@ -822,12 +1049,12 @@ describe('Contracts v1', () => {
           },
         }).success,
       ).toBe(false);
-      expect(v1.NotificationListQuerySchema.safeParse({ limit: 0 }).success).toBe(
-        false,
-      );
-      expect(v1.NotificationListQuerySchema.safeParse({ limit: 51 }).success).toBe(
-        false,
-      );
+      expect(
+        v1.NotificationListQuerySchema.safeParse({ limit: 0 }).success,
+      ).toBe(false);
+      expect(
+        v1.NotificationListQuerySchema.safeParse({ limit: 51 }).success,
+      ).toBe(false);
       expect(
         v1.NotificationListQuerySchema.safeParse({
           cursor: 'not-a-uuid',
@@ -854,52 +1081,66 @@ describe('Contracts v1', () => {
   });
   describe('Email OTP, location, and exact pickup contracts', () => {
     it('accepts the exact OTP and evidence examples', () => {
-      expect(v1.RequestOtpSchema.parse({
-        email: 'employee@example.test',
-        purpose: 'SESSION_LOGIN',
-      })).toEqual({
+      expect(
+        v1.RequestOtpSchema.parse({
+          email: 'employee@example.test',
+          purpose: 'SESSION_LOGIN',
+        }),
+      ).toEqual({
         email: 'employee@example.test',
         purpose: 'SESSION_LOGIN',
       });
-      expect(v1.PresenterLocationEvidenceSchema.parse({
-        capturedAt: '2026-09-24T03:00:00.000Z',
-        latitude: 10.77,
-        longitude: 106.69,
-        accuracyMeters: 12,
-      })).toMatchObject({ accuracyMeters: 12 });
+      expect(
+        v1.PresenterLocationEvidenceSchema.parse({
+          capturedAt: '2026-09-24T03:00:00.000Z',
+          latitude: 10.77,
+          longitude: 106.69,
+          accuracyMeters: 12,
+        }),
+      ).toMatchObject({ accuracyMeters: 12 });
     });
 
     it('rejects invalid timestamps, coordinates, accuracy, and unknown fields', () => {
-      expect(() => v1.PresenterLocationEvidenceSchema.parse({
-        capturedAt: '2026-09-24T03:00:00.000+07:00',
-        latitude: 10.77,
-        longitude: 106.69,
-        accuracyMeters: 12,
-      })).toThrow();
-      expect(() => v1.PresenterLocationEvidenceSchema.parse({
-        capturedAt: '2026-09-24T03:00:00.000Z',
-        latitude: 91,
-        longitude: 106.69,
-        accuracyMeters: 12,
-      })).toThrow();
-      expect(() => v1.PresenterLocationEvidenceSchema.parse({
-        capturedAt: '2026-09-24T03:00:00.000Z',
-        latitude: 10.77,
-        longitude: 181,
-        accuracyMeters: 12,
-      })).toThrow();
-      expect(() => v1.PresenterLocationEvidenceSchema.parse({
-        capturedAt: '2026-09-24T03:00:00.000Z',
-        latitude: 10.77,
-        longitude: 106.69,
-        accuracyMeters: -1,
-        extra: true,
-      })).toThrow();
-      expect(() => v1.RequestOtpSchema.parse({
-        email: 'employee@example.test',
-        purpose: 'SESSION_LOGIN',
-        extra: true,
-      })).toThrow();
+      expect(() =>
+        v1.PresenterLocationEvidenceSchema.parse({
+          capturedAt: '2026-09-24T03:00:00.000+07:00',
+          latitude: 10.77,
+          longitude: 106.69,
+          accuracyMeters: 12,
+        }),
+      ).toThrow();
+      expect(() =>
+        v1.PresenterLocationEvidenceSchema.parse({
+          capturedAt: '2026-09-24T03:00:00.000Z',
+          latitude: 91,
+          longitude: 106.69,
+          accuracyMeters: 12,
+        }),
+      ).toThrow();
+      expect(() =>
+        v1.PresenterLocationEvidenceSchema.parse({
+          capturedAt: '2026-09-24T03:00:00.000Z',
+          latitude: 10.77,
+          longitude: 181,
+          accuracyMeters: 12,
+        }),
+      ).toThrow();
+      expect(() =>
+        v1.PresenterLocationEvidenceSchema.parse({
+          capturedAt: '2026-09-24T03:00:00.000Z',
+          latitude: 10.77,
+          longitude: 106.69,
+          accuracyMeters: -1,
+          extra: true,
+        }),
+      ).toThrow();
+      expect(() =>
+        v1.RequestOtpSchema.parse({
+          email: 'employee@example.test',
+          purpose: 'SESSION_LOGIN',
+          extra: true,
+        }),
+      ).toThrow();
     });
     it('keeps location and roster contracts strict', () => {
       const location = {
@@ -911,8 +1152,12 @@ describe('Contracts v1', () => {
         maxAccuracyMeters: 50,
       };
       expect(v1.LocationPolicySchema.parse(location)).toEqual(location);
-      expect(() => v1.LocationPolicySchema.parse({ ...location, geofenceRadiusMeters: 0 })).toThrow();
-      expect(() => v1.LocationPolicySchema.parse({ ...location, unexpected: true })).toThrow();
+      expect(() =>
+        v1.LocationPolicySchema.parse({ ...location, geofenceRadiusMeters: 0 }),
+      ).toThrow();
+      expect(() =>
+        v1.LocationPolicySchema.parse({ ...location, unexpected: true }),
+      ).toThrow();
       const roster = {
         email: 'employee@example.test',
         name: 'Employee',
@@ -924,8 +1169,12 @@ describe('Contracts v1', () => {
         effectiveTo: null,
       };
       expect(v1.RosterImportRowSchema.parse(roster)).toEqual(roster);
-      expect(() => v1.RosterImportRowSchema.parse({ ...roster, email: 'not-an-email' })).toThrow();
-      expect(() => v1.RosterImportRowSchema.parse({ ...roster, unexpected: true })).toThrow();
+      expect(() =>
+        v1.RosterImportRowSchema.parse({ ...roster, email: 'not-an-email' }),
+      ).toThrow();
+      expect(() =>
+        v1.RosterImportRowSchema.parse({ ...roster, unexpected: true }),
+      ).toThrow();
     });
 
     it('keeps OTP responses free of clear codes and requires UTC expiry', () => {
@@ -935,13 +1184,16 @@ describe('Contracts v1', () => {
         user: { id: 'user', email: 'employee@example.test', name: null },
       };
       expect(v1.VerifyOtpResponseSchema.parse(response)).toEqual(response);
-      expect(() => v1.VerifyOtpResponseSchema.parse({ ...response, code: '123456' })).toThrow();
-      expect(() => v1.VerifyOtpResponseSchema.parse({
-        ...response,
-        expiresAt: '2026-09-24T04:00:00.000+07:00',
-      })).toThrow();
+      expect(() =>
+        v1.VerifyOtpResponseSchema.parse({ ...response, code: '123456' }),
+      ).toThrow();
+      expect(() =>
+        v1.VerifyOtpResponseSchema.parse({
+          ...response,
+          expiresAt: '2026-09-24T04:00:00.000+07:00',
+        }),
+      ).toThrow();
     });
-
 
     it('requires canonical sorted unique registration IDs for Generate QR', () => {
       const evidence = {
@@ -950,66 +1202,105 @@ describe('Contracts v1', () => {
         longitude: 106.69,
         accuracyMeters: 12,
       };
-      expect(v1.GenerateQrSchema.parse({
-        registrationIds: ['a', 'b'],
-        presenterEvidence: evidence,
-      }).registrationIds).toEqual(['a', 'b']);
-      expect(() => v1.GenerateQrSchema.parse({
-        registrationIds: ['a', 'a'],
-        presenterEvidence: evidence,
-      })).toThrow();
-      expect(() => v1.GenerateQrSchema.parse({
-        registrationIds: ['b', 'a'],
-        presenterEvidence: evidence,
-      })).toThrow();
-      expect(() => v1.GenerateQrSchema.parse({
-        registrationIds: ['a', ''],
-        presenterEvidence: evidence,
-      })).toThrow();
+      expect(
+        v1.GenerateQrSchema.parse({
+          registrationIds: ['a', 'b'],
+          presenterEvidence: evidence,
+        }).registrationIds,
+      ).toEqual(['a', 'b']);
+      expect(() =>
+        v1.GenerateQrSchema.parse({
+          registrationIds: ['a', 'a'],
+          presenterEvidence: evidence,
+        }),
+      ).toThrow();
+      expect(() =>
+        v1.GenerateQrSchema.parse({
+          registrationIds: ['b', 'a'],
+          presenterEvidence: evidence,
+        }),
+      ).toThrow();
+      expect(() =>
+        v1.GenerateQrSchema.parse({
+          registrationIds: ['a', ''],
+          presenterEvidence: evidence,
+        }),
+      ).toThrow();
     });
 
     it('keeps resolve QR-only and confirm session-only', () => {
-      expect(v1.ResolvePickupSchema.parse({ qr: 'signed-qr' })).toEqual({ qr: 'signed-qr' });
-      expect(() => v1.ResolvePickupSchema.parse({ qr: 'signed-qr', presenterEvidence: {} })).toThrow();
-      expect(v1.ConfirmPickupSchema.parse({
-        pickupSessionId: 's',
-        idempotencyKey: 'k',
-      })).toEqual({
+      expect(v1.ResolvePickupSchema.parse({ qr: 'signed-qr' })).toEqual({
+        qr: 'signed-qr',
+      });
+      expect(() =>
+        v1.ResolvePickupSchema.parse({
+          qr: 'signed-qr',
+          presenterEvidence: {},
+        }),
+      ).toThrow();
+      expect(
+        v1.ConfirmPickupSchema.parse({
+          pickupSessionId: 's',
+          idempotencyKey: 'k',
+        }),
+      ).toEqual({
         pickupSessionId: 's',
         idempotencyKey: 'k',
       });
-      expect(() => v1.ConfirmPickupSchema.parse({ pickupSessionId: '', idempotencyKey: 'k' })).toThrow();
-      expect(() => v1.ErrorDetailSchema.parse({
-        code: 'BAD_REQUEST',
-        message: 'bad request',
-        details: { reason: 'invalid input' },
-        legacyField: 'preserved',
-      })).not.toThrow();
-      expect(v1.ErrorDetailSchema.parse({
-        code: 'GPS_STALE',
-        message: 'retry location',
-        details: { action: 'RETRY' },
-      }).details).toEqual({ action: 'RETRY' });
-      expect(() => v1.ErrorDetailSchema.parse({
-        code: 'GPS_STALE',
-        message: 'retry location',
-        details: { action: 'RETRY', latitude: 10.77 },
-      })).toThrow();
-      expect(() => v1.ErrorDetailSchema.parse({
-        code: 'GPS_INACCURATE',
-        message: 'refresh location',
-        details: { action: 'REFRESH', distanceMeters: 2 },
-      })).toThrow();
-      expect(() => v1.ConfirmPickupSchema.parse({ pickupSessionId: 's', idempotencyKey: '' })).toThrow();
-      expect(() => v1.ConfirmPickupSchema.parse({
-        pickupSessionId: 's',
-        idempotencyKey: 'k',
-        registrationIds: ['r'],
-      })).toThrow();
+      expect(() =>
+        v1.ConfirmPickupSchema.parse({
+          pickupSessionId: '',
+          idempotencyKey: 'k',
+        }),
+      ).toThrow();
+      expect(() =>
+        v1.ErrorDetailSchema.parse({
+          code: 'BAD_REQUEST',
+          message: 'bad request',
+          details: { reason: 'invalid input' },
+          legacyField: 'preserved',
+        }),
+      ).not.toThrow();
+      expect(
+        v1.ErrorDetailSchema.parse({
+          code: 'GPS_STALE',
+          message: 'retry location',
+          details: { action: 'RETRY' },
+        }).details,
+      ).toEqual({ action: 'RETRY' });
+      expect(() =>
+        v1.ErrorDetailSchema.parse({
+          code: 'GPS_STALE',
+          message: 'retry location',
+          details: { action: 'RETRY', latitude: 10.77 },
+        }),
+      ).toThrow();
+      expect(() =>
+        v1.ErrorDetailSchema.parse({
+          code: 'GPS_INACCURATE',
+          message: 'refresh location',
+          details: { action: 'REFRESH', distanceMeters: 2 },
+        }),
+      ).toThrow();
+      expect(() =>
+        v1.ConfirmPickupSchema.parse({
+          pickupSessionId: 's',
+          idempotencyKey: '',
+        }),
+      ).toThrow();
+      expect(() =>
+        v1.ConfirmPickupSchema.parse({
+          pickupSessionId: 's',
+          idempotencyKey: 'k',
+          registrationIds: ['r'],
+        }),
+      ).toThrow();
     });
 
     it('accepts safe GPS recovery details and canonical stable error codes', () => {
-      expect(v1.GpsFailureDetailsSchema.parse({ action: 'RETRY' })).toEqual({ action: 'RETRY' });
+      expect(v1.GpsFailureDetailsSchema.parse({ action: 'RETRY' })).toEqual({
+        action: 'RETRY',
+      });
       const verification: v1.ServingVerification = {
         presenterUserId: 'presenter',
         receiverType: 'SELF',
@@ -1021,27 +1312,40 @@ describe('Contracts v1', () => {
         },
       };
       expect(verification.gps.result).toBe('VALID');
-      expect(v1.GpsFailureDetailsSchema.parse({ action: 'REFRESH' })).toEqual({ action: 'REFRESH' });
-      expect(() => v1.GpsFailureDetailsSchema.parse({ action: 'RETRY', latitude: 10.77 })).toThrow();
-      expect(() => v1.GpsFailureDetailsSchema.parse({ action: 'RETRY', distanceMeters: 1 })).toThrow();
-      expect(v1.PickupErrorCodeSchema.options).toEqual(expect.arrayContaining([
-        'OTP_REQUEST_ACCEPTED',
-        'OTP_INVALID_OR_EXPIRED',
-        'SESSION_REVOKED',
-        'GPS_RETRY_REQUIRED',
-        'GPS_UNAVAILABLE',
-        'GPS_STALE',
-        'GPS_INACCURATE',
-        'PICKUP_INTENT_REQUIRED',
-        'PICKUP_INTENT_CONFLICT',
-        'PICKUP_SESSION_EXPIRED',
-        'IDEMPOTENCY_CONFLICT',
-      ]));
-      expect(v1.PickupErrorCodeSchema.options).not.toEqual(expect.arrayContaining([
-        'EXACT_INTENT_REQUIRED',
-        'GPS_FIX_TOO_OLD',
-        'GPS_ACCURACY_TOO_LOW',
-      ]));
+      expect(v1.GpsFailureDetailsSchema.parse({ action: 'REFRESH' })).toEqual({
+        action: 'REFRESH',
+      });
+      expect(() =>
+        v1.GpsFailureDetailsSchema.parse({ action: 'RETRY', latitude: 10.77 }),
+      ).toThrow();
+      expect(() =>
+        v1.GpsFailureDetailsSchema.parse({
+          action: 'RETRY',
+          distanceMeters: 1,
+        }),
+      ).toThrow();
+      expect(v1.PickupErrorCodeSchema.options).toEqual(
+        expect.arrayContaining([
+          'OTP_REQUEST_ACCEPTED',
+          'OTP_INVALID_OR_EXPIRED',
+          'SESSION_REVOKED',
+          'GPS_RETRY_REQUIRED',
+          'GPS_UNAVAILABLE',
+          'GPS_STALE',
+          'GPS_INACCURATE',
+          'PICKUP_INTENT_REQUIRED',
+          'PICKUP_INTENT_CONFLICT',
+          'PICKUP_SESSION_EXPIRED',
+          'IDEMPOTENCY_CONFLICT',
+        ]),
+      );
+      expect(v1.PickupErrorCodeSchema.options).not.toEqual(
+        expect.arrayContaining([
+          'EXACT_INTENT_REQUIRED',
+          'GPS_FIX_TOO_OLD',
+          'GPS_ACCURACY_TOO_LOW',
+        ]),
+      );
     });
   });
 });

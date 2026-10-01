@@ -17,9 +17,8 @@ redirect unauthenticated users to the allowlist-A email OTP screen.
 
 ## Implemented surfaces
 
-- Employee dashboard: greeting, meal card, meal status, canteen location, ticket CTA.
-- Employee calendar: monthly booking markers, weekly registration toggles, server partial-success handling, cutoff error rollback.
-- Employee ticket: real pickup options, multi-selection, signed QR generation, five-second refresh/countdown, QR progress indicator.
+- Employee dashboard: business-date greeting, authoritative daily lifecycle/menu/location summary and registration denominator; QR is shown only for an active registration whose server response allows opening it.
+- Employee calendar: seven server-returned days (including weekends and disabled/unpublished days), monthly booking markers, authoritative per-day toggle/choice flags, draft batch save, per-date partial-success reconciliation, cutoff/delegation warnings and explicit refresh retry.
 - Employee profile: identity, account metadata, preferences surface, delegation entry, logout.
 - Kitchen profile: server-backed kitchen identity, language selection, persistence warning, logout confirmation; no Staff-only meal or delegation controls.
 - Delegations: outgoing/incoming tabs, search, status pills, accept/decline/revoke actions.
@@ -30,8 +29,8 @@ redirect unauthenticated users to the allowlist-A email OTP screen.
 
 The employee registration client uses the existing API controller paths:
 
-- `GET /registrations/week?startDate=YYYY-MM-DD`
-- `PUT /registrations/batch`
+- `GET /registrations/week?startDate=YYYY-MM-DD` returns exactly seven `days` with menu, registration, location, lunar date, choices, cutoff, delegation and authoritative action/reason fields. The client uses `serverNowAt` for business-date/week alignment and does not infer weekday availability.
+- `PUT /registrations/batch` accepts only dirty date changes. The response is per-date: successful changes commit, failed changes remain in the draft, and all returned failure reasons are shown.
 
 The mobile API base strips a trailing `/api` for registration, auth, and direct controller paths. Pickup and serving endpoints use the shared API origin. In Expo development, the host is derived from the Metro session as `http://<Metro-host>:3000/api`; every connected device uses that endpoint.
 Serving authorization no longer depends on an internal LAN source IP; an active
@@ -76,9 +75,7 @@ Validated during implementation:
 
 ```text
 corepack yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json
+corepack yarn workspace @imeal/mobile test
 ```
-Expo web smoke coverage included the login surface, protected cold deep links,
-employee dashboard/calendar/ticket/profile/delegations, kitchen dashboard,
-scanner permission state, 1440px desktop framing, and 360px/390px mobile
-layouts. Physical camera scanning and native-device session expiry still require
-a device with the API, OTP provider and approved role configuration.
+
+Expo web smoke coverage includes the employee dashboard and calendar against a local API fixture, including the seven-day surface, lifecycle-aware QR visibility, server cutoff states and draft save/reconciliation. Physical camera scanning, native-device session expiry and role-specific native flows still require a device with the API, OTP provider and approved role configuration.

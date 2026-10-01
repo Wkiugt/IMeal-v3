@@ -1,121 +1,271 @@
 import type { v1 } from '@imeal/contracts';
-import { addDays, parseDateKey, toDateKey } from '../../businessDate';
 
 export type MealChoice = v1.MealChoice;
-export type WeekState = Record<string, { active: boolean; mealChoice: MealChoice }>;
-export type DraftChoiceByDate = Record<string, MealChoice>;
-
 const REGULAR: MealChoice = 'REGULAR';
+export type CalendarDayState = {
+  active: boolean;
+  mealChoice: MealChoice;
+};
 
-export function isDefaultNonServiceDate(dateKey: string): boolean {
-  const dayOfWeek = parseDateKey(dateKey).getDay();
-  return dayOfWeek === 0 || dayOfWeek === 6;
+export type CalendarServerState = Readonly<Record<string, CalendarDayState>>;
+export type CalendarDraftState = Readonly<Record<string, CalendarDayState>>;
+export type CalendarDayAvailability = Pick<
+  v1.WeekRegistrationDay,
+  | 'cutoffAt'
+  | 'availableMealChoices'
+  | 'canActivate'
+  | 'canCancel'
+  | 'canChangeMealChoice'
+  | 'menu'
+  | 'location'
+  | 'unavailableReasons'
+>;
+export type CalendarBatchResult = v1.BatchRegistrationResult;
+
+const inactiveCalendarDay: CalendarDayState = {
+  active: false,
+  mealChoice: REGULAR,
+};
+
+function sameCalendarDay(
+  left: CalendarDayState | undefined,
+  right: CalendarDayState | undefined,
+): boolean {
+  if (!left || !right) return left === right;
+  return (
+    left.active === right.active &&
+    (!left.active || left.mealChoice === right.mealChoice)
+  );
 }
 
-export function createWeekState(
-  registrations: readonly v1.RegistrationRecord[],
-  weekStart: Date,
-): WeekState {
-  const next: WeekState = {};
-  for (let index = 0; index < 7; index += 1) {
-    const dateKey = toDateKey(addDays(weekStart, index));
-    const registration = registrations.find((candidate) => candidate.mealDate === dateKey);
-    next[dateKey] = {
-      active: registration?.status === 'ACTIVE',
-      mealChoice: registration?.mealChoice ?? REGULAR,
-    };
+export function createDraftState(
+  serverState: CalendarServerState,
+): CalendarDraftState {
+  const next: Record<string, CalendarDayState> = {};
+  for (const [dateKey, state] of Object.entries(serverState)) {
+    next[dateKey] = { ...state };
   }
   return next;
 }
 
-export function getAvailableChoices(
-  response: Pick<v1.WeekRegistrationResponse, 'registrationWindow'>,
+export function setDraftDay(
+  draftState: CalendarDraftState,
   dateKey: string,
-): readonly MealChoice[] {
-  return response.registrationWindow.days.find((day) => day.mealDate === dateKey)?.availableMealChoices ?? [REGULAR];
+  nextDay: CalendarDayState,
+): CalendarDraftState {
+  return { ...draftState, [dateKey]: { ...nextDay } };
 }
 
-export function reconcileWeekState(
-  serverState: WeekState,
-  drafts: DraftChoiceByDate,
-  response: v1.WeekRegistrationResponse,
-  weekStart: Date,
-): { weekState: WeekState; draftChoiceByDate: DraftChoiceByDate } {
-  const next: WeekState = {};
-  const nextDrafts: DraftChoiceByDate = {};
+export function getDirtyDates(
+  serverState: CalendarServerState,
+  draftState: CalendarDraftState,
+): string[] {
+  const dateKeys = new Set([
+    ...Object.keys(serverState),
+    ...Object.keys(draftState),
+  ]);
+  return [...dateKeys].sort().filter((dateKey) => {
+    const serverDay = serverState[dateKey] ?? inactiveCalendarDay;
+    const draftDay = draftState[dateKey] ?? serverDay;
+    return !sameCalendarDay(serverDay, draftDay);
+  });
+}
+export function getDirtyDatesForWeek(
+  serverState: CalendarServerState,
+  draftState: CalendarDraftState,
+  weekDates: readonly string[],
+): string[] {
+  const allowedDates = new Set(weekDates);
+  return getDirtyDates(serverState, draftState).filter((dateKey) =>
+    allowedDates.has(dateKey),
+  );
+}
 
-  for (let index = 0; index < 7; index += 1) {
-    const dateKey = toDateKey(addDays(weekStart, index));
-    const registration = response.registrations.find((candidate) => candidate.mealDate === dateKey);
-    const available = getAvailableChoices(response, dateKey);
-    if (registration?.status === 'ACTIVE') {
-      next[dateKey] = {
-        active: true,
-        mealChoice: registration.mealChoice ?? REGULAR,
-      };
-      continue;
+export function buildDirtyBatchPayload(
+  serverState: CalendarServerState,
+  draftState: CalendarDraftState,
+  dirtyDates: readonly string[],
+): v1.BatchRegistrationItem[] {
+  const payload: v1.BatchRegistrationItem[] = [];
+  for (const dateKey of dirtyDates) {
+    const serverDay = serverState[dateKey] ?? inactiveCalendarDay;
+    const draftDay = draftState[dateKey] ?? serverDay;
+    if (draftDay.active) {
+      payload.push({
+        mealDate: dateKey,
+        status: 'ACTIVE',
+        mealChoice: draftDay.mealChoice,
+      });
+    } else if (serverDay.active) {
+      payload.push({ mealDate: dateKey, status: 'CANCELLED' });
     }
+  }
+  return payload;
+}
 
-    const draft = drafts[dateKey];
-    if (draft && available.includes(draft)) nextDrafts[dateKey] = draft;
-    next[dateKey] = {
-      active: false,
-      mealChoice: REGULAR,
-    };
+export function isDateSelectable(
+  day: CalendarDayAvailability,
+  nowAt: number,
+): boolean {
+  const cutoffAt = Date.parse(day.cutoffAt);
+  return (
+    day.canActivate &&
+    day.menu !== null &&
+    day.menu.isEnabled &&
+    day.menu.menuRevisionId !== null &&
+    !day.menu.isHoliday &&
+    day.availableMealChoices.length > 0 &&
+    Number.isFinite(cutoffAt) &&
+    nowAt < cutoffAt
+  );
+}
+
+export function isDateCancelable(
+  day: CalendarDayAvailability,
+  nowAt: number,
+): boolean {
+  const cutoffAt = Date.parse(day.cutoffAt);
+  return day.canCancel && Number.isFinite(cutoffAt) && nowAt < cutoffAt;
+}
+export function isDateSelectAllEligible(
+  serverDay: CalendarDayState | undefined,
+  day: CalendarDayAvailability,
+  nowAt: number,
+): boolean {
+  const menuIsPublished =
+    day.menu !== null &&
+    day.menu.isEnabled &&
+    day.menu.menuRevisionId !== null &&
+    !day.menu.isHoliday;
+  return (
+    menuIsPublished &&
+    day.availableMealChoices.length > 0 &&
+    (isDateSelectable(day, nowAt) ||
+      (serverDay?.active === true && isDateCancelable(day, nowAt)))
+  );
+}
+
+export function selectAllEligible(
+  serverState: CalendarServerState,
+  draftState: CalendarDraftState,
+  availabilityByDate: Readonly<Record<string, CalendarDayAvailability>>,
+  nowAt: number,
+): CalendarDraftState {
+  const next: Record<string, CalendarDayState> = { ...draftState };
+  for (const dateKey of Object.keys(availabilityByDate).sort()) {
+    const day = availabilityByDate[dateKey];
+    if (!isDateSelectAllEligible(serverState[dateKey], day, nowAt)) continue;
+    const current =
+      next[dateKey] ?? serverState[dateKey] ?? inactiveCalendarDay;
+    const preferredChoice = day.availableMealChoices.includes(
+      current.mealChoice,
+    )
+      ? current.mealChoice
+      : day.availableMealChoices.includes(REGULAR)
+        ? REGULAR
+        : day.availableMealChoices[0];
+    if (!preferredChoice) continue;
+    next[dateKey] = { active: true, mealChoice: preferredChoice };
+  }
+  return next;
+}
+
+export function reconcileBatchResults(
+  serverState: CalendarServerState,
+  draftState: CalendarDraftState,
+  submittedDraft: CalendarDraftState,
+  results: readonly CalendarBatchResult[],
+): {
+  serverState: CalendarServerState;
+  draftState: CalendarDraftState;
+  provisionalDates: string[];
+} {
+  const nextServer: Record<string, CalendarDayState> = { ...serverState };
+  const nextDraft: Record<string, CalendarDayState> = { ...draftState };
+  const provisionalDates: string[] = [];
+
+  for (const result of results) {
+    const submittedDay =
+      submittedDraft[result.date] ??
+      serverState[result.date] ??
+      inactiveCalendarDay;
+    if (!result.success) continue;
+    nextServer[result.date] = { ...submittedDay };
+    provisionalDates.push(result.date);
+    if (sameCalendarDay(nextDraft[result.date], submittedDay)) {
+      delete nextDraft[result.date];
+    }
   }
 
-  return { weekState: { ...serverState, ...next }, draftChoiceByDate: nextDrafts };
-}
+  const resultDates = new Set(results.map((result) => result.date));
+  for (const dateKey of Object.keys(submittedDraft)) {
+    if (resultDates.has(dateKey)) continue;
+    const submittedDay = submittedDraft[dateKey];
+    if (!sameCalendarDay(serverState[dateKey], submittedDay)) {
+      nextDraft[dateKey] = { ...submittedDay };
+    }
+  }
 
-export function getMutationPayload(
-  dateKey: string,
-  weekState: WeekState,
-  drafts: DraftChoiceByDate,
-  active: boolean,
-): v1.BatchRegistrationItem {
-  if (!active) return { mealDate: dateKey, status: 'CANCELLED' };
   return {
-    mealDate: dateKey,
-    status: 'ACTIVE',
-    mealChoice: drafts[dateKey] ?? weekState[dateKey]?.mealChoice ?? REGULAR,
+    serverState: nextServer,
+    draftState: nextDraft,
+    provisionalDates,
   };
 }
 
-export class CalendarMutationTracker {
-  private readonly requestIds: Record<string, number> = {};
-  private readonly inFlight = new Set<string>();
+export function mergeAuthoritativeWeek(
+  authoritativeState: CalendarServerState,
+  previousServerState: CalendarServerState,
+  previousDraftState: CalendarDraftState,
+): {
+  serverState: CalendarServerState;
+  draftState: CalendarDraftState;
+} {
+  const nextDraft: Record<string, CalendarDayState> = {
+    ...createDraftState(authoritativeState),
+  };
+  for (const [dateKey, draftDay] of Object.entries(previousDraftState)) {
+    const previousServerDay =
+      previousServerState[dateKey] ?? inactiveCalendarDay;
+    if (
+      draftDay.active !== previousServerDay.active ||
+      draftDay.mealChoice !== previousServerDay.mealChoice
+    ) {
+      nextDraft[dateKey] = { ...draftDay };
+    }
+  }
+  return { serverState: authoritativeState, draftState: nextDraft };
+}
 
-  begin(dateKey: string): number | null {
-    if (this.inFlight.has(dateKey)) return null;
-    const requestId = (this.requestIds[dateKey] ?? 0) + 1;
-    this.requestIds[dateKey] = requestId;
-    this.inFlight.add(dateKey);
-    return requestId;
+export class CalendarBatchTracker {
+  private saveRequestId = 0;
+  private saveInFlight = false;
+  private loadRequestId = 0;
+
+  begin(): number | null {
+    if (this.saveInFlight) return null;
+    this.loadRequestId += 1;
+    this.saveInFlight = true;
+    this.saveRequestId += 1;
+    return this.saveRequestId;
   }
 
-  isCurrent(dateKey: string, requestId: number): boolean {
-    return this.requestIds[dateKey] === requestId;
+  isCurrent(requestId: number): boolean {
+    return this.saveInFlight && this.saveRequestId === requestId;
   }
 
-  latestRequestId(dateKey: string): number {
-    return this.requestIds[dateKey] ?? 0;
-  }
-
-  finish(dateKey: string, requestId: number): boolean {
-    if (!this.isCurrent(dateKey, requestId)) return false;
-    this.inFlight.delete(dateKey);
+  finish(requestId: number): boolean {
+    if (!this.isCurrent(requestId)) return false;
+    this.saveInFlight = false;
     return true;
   }
 
-  isInFlight(dateKey: string): boolean {
-    return this.inFlight.has(dateKey);
+  beginLoad(): number {
+    this.loadRequestId += 1;
+    return this.loadRequestId;
   }
 
-  snapshotRequestIds(): Readonly<Record<string, number>> {
-    return { ...this.requestIds };
-  }
-
-  snapshotInFlight(): ReadonlySet<string> {
-    return new Set(this.inFlight);
+  isCurrentLoad(requestId: number): boolean {
+    return this.loadRequestId === requestId;
   }
 }

@@ -69,21 +69,29 @@ logout, expiry, disable or revocation invalidates it.
 
 ### Outcomes
 
-| Condition | Outcome |
-| --- | --- |
-| Active allowlist-A email and valid OTP | Create opaque session, load current permissions and open app |
+| Condition                                           | Outcome                                                            |
+| --------------------------------------------------- | ------------------------------------------------------------------ |
+| Active allowlist-A email and valid OTP              | Create opaque session, load current permissions and open app       |
 | Unknown, disabled, expired or non-allowlisted email | Same generic accepted/request or invalid-code response; no session |
-| Wrong/expired/replayed code | `OTP_INVALID_OR_EXPIRED`; no session |
-| Disabled account after a prior session | `ACCOUNT_DISABLED`/session invalid; protected actions blocked |
-| API/worker/provider unavailable | Safe server/network recovery; no alternate login path |
+| Wrong/expired/replayed code                         | `OTP_INVALID_OR_EXPIRED`; no session                               |
+| Disabled account after a prior session              | `ACCOUNT_DISABLED`/session invalid; protected actions blocked      |
+| API/worker/provider unavailable                     | Safe server/network recovery; no alternate login path              |
 
 The only authentication bypass is `NODE_ENV=test` with `REQUIRE_AUTH=false` for
 automated harness/controller tests. It is non-production, not a user login flow,
 must not use production credentials or data, and is rejected by production
 startup validation.
+
 ## 3. Staff Home
 
-Home summarizes current and next actions rather than duplicating all screens.
+Home receives the VN-business-date day from the authoritative seven-day registration response; it renders backend menu description/location and registration lifecycle without inventing a weekday or serving projection.
+
+The today card shows:
+
+- `ACTIVE`, `SERVED`, `NO_SHOW`, `CANCELLED`, `UNREGISTERED`, or `NO_MENU` as distinct localized lifecycle states.
+- The published menu name/description and that day’s location when available.
+- The pickup QR action only when lifecycle is `ACTIVE`, the menu is complete/published, and the server allows `canOpenQr`.
+- A weekly count of `ACTIVE`, `SERVED`, and `NO_SHOW` registrations over the enabled published-menu denominator; cancelled and unregistered days are excluded.
 
 Suggested content:
 
@@ -96,7 +104,7 @@ Cơm gà xối mỡ
 [ Mở mã nhận suất ]
 
 TUẦN NÀY
-4 / 5 ngày đã đăng ký
+<registered active/served/no-show> / <enabled published days> ngày đã đăng ký
 [ Quản lý tuần ăn ]
 
 ỦY QUYỀN
@@ -137,9 +145,9 @@ sequenceDiagram
     participant DB as PostgreSQL
 
     S->>M: Mở Tuần ăn
-    M->>API: GET weekly menu + own registrations
-    API->>DB: Load published daily menus + registrations
-    API-->>M: Days + registered/editable/cutoff state + available meal choices
+    M->>API: GET /api/registrations/week?startDate=YYYY-MM-DD
+    API->>DB: Load exactly seven service dates, published menus, roster/location facts and registrations
+    API-->>M: Days + authoritative canActivate/canCancel/canChangeMealChoice, cutoffAt, reasons and choices
 ```
 
 Weekly list example:
@@ -172,6 +180,10 @@ Weekly list example:
 - Day without published menu is disabled and explains why.
 - `Chọn cả tuần` only affects currently editable/published days and uses `REGULAR` unless the Staff chooses otherwise on an eligible lunar date.
 - Unticking a registration with `pending|accepted` delegation warns that the delegation will also be revoked.
+- The API is authoritative for all seven returned dates, including weekends, holidays, menu publication, location eligibility, cutoff and registration lifecycle; the client does not infer editability from weekday.
+- `canActivate`, `canCancel`, and `canChangeMealChoice` are independent server flags. A day may remain visible with `menu=null` or an unavailable location while its local draft stays unchanged.
+- Every activation/cancellation/change is retained as a local draft until the batch response reconciles it. Successful dates commit immediately; failed dates retain their requested draft and show every date-specific failure reason.
+- When a post-save refresh fails, the committed provisional state remains visible with an explicit Retry action; an initial load failure shows Retry without masking the error behind a loading skeleton.
 
 ### 4.3 Save week
 
@@ -264,6 +276,7 @@ unmounts.
 The refreshed QR preserves the exact intent. QR TTL is exactly 5 seconds and
 accepted clock skew is at most 2 seconds. QR availability and serving remain
 restricted to the 10:30–13:30 `Asia/Ho_Chi_Minh` serving window.
+
 ## 6. Delegation / nhận hộ flow
 
 ### 6.1 A requests B
@@ -350,16 +363,16 @@ read are owner-scoped; a foreign notification ID is indistinguishable from a mis
 
 ### Canonical event matrix
 
-| Event | When | Who receives it | Flow destination |
-| ----- | ---- | --------------- | ---------------- |
-| `REGISTRATION_OPENED` | First publish only; initializes missing daily revisions and marks weekly menu published. | Every active Staff user, independent of reminder opt-out. | Calendar. |
-| `REGISTRATION_REMINDER` | Sunday 10:00 VN for next Monday's published menu; one per Staff/week. | Active Staff missing at least one enabled, non-holiday registration and with reminders enabled. | Calendar. |
-| `PICKUP_REMINDER` | Daily 11:30 VN for today's active unserved registrations. | Accepted delegate, otherwise owner; one grouped item per recipient/date when reminders enabled. | Pickup Intent. |
-| `DELEGATION_REQUESTED` | Owner sends pending request. | Delegate. | Delegation. |
-| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` | Delegate responds. | Owner. | Delegation. |
-| `DELEGATION_REVOKED` | Owner revokes, or owner cancellation revokes the active delegation. | Delegate, with reason `OWNER_REVOKED` or `REGISTRATION_CANCELLED`. | Delegation. |
-| `PROXY_PICKUP_COMPLETED` | Accepted delegate successfully receives the meal for the owner. | Owner only; self pickup creates no notification. | Readable detail, no CTA. |
-| `NO_SHOW_PENALTY_CREATED` | No-show worker at 13:45 VN after the 13:30 service end. | Registration owner. | Readable detail, no CTA. |
+| Event                                         | When                                                                                     | Who receives it                                                                                 | Flow destination         |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------ |
+| `REGISTRATION_OPENED`                         | First publish only; initializes missing daily revisions and marks weekly menu published. | Every active Staff user, independent of reminder opt-out.                                       | Calendar.                |
+| `REGISTRATION_REMINDER`                       | Sunday 10:00 VN for next Monday's published menu; one per Staff/week.                    | Active Staff missing at least one enabled, non-holiday registration and with reminders enabled. | Calendar.                |
+| `PICKUP_REMINDER`                             | Daily 11:30 VN for today's active unserved registrations.                                | Accepted delegate, otherwise owner; one grouped item per recipient/date when reminders enabled. | Pickup Intent.           |
+| `DELEGATION_REQUESTED`                        | Owner sends pending request.                                                             | Delegate.                                                                                       | Delegation.              |
+| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` | Delegate responds.                                                                       | Owner.                                                                                          | Delegation.              |
+| `DELEGATION_REVOKED`                          | Owner revokes, or owner cancellation revokes the active delegation.                      | Delegate, with reason `OWNER_REVOKED` or `REGISTRATION_CANCELLED`.                              | Delegation.              |
+| `PROXY_PICKUP_COMPLETED`                      | Accepted delegate successfully receives the meal for the owner.                          | Owner only; self pickup creates no notification.                                                | Readable detail, no CTA. |
+| `NO_SHOW_PENALTY_CREATED`                     | No-show worker at 13:45 VN after the 13:30 service end.                                  | Registration owner.                                                                             | Readable detail, no CTA. |
 
 Published-menu edits use `REGISTERED_MENU_CHANGED`, never `REGISTRATION_OPENED`. Admin
 account-disable notification is not a current flow; it remains part of a future
@@ -405,7 +418,6 @@ reminder switch.
 - Pickup (`PICKUP_REMINDER`) → Pickup Intent.
 - Delegation lifecycle → Delegation.
 - No-show and migrated legacy items remain readable without claiming an unavailable action.
-
 
 ## 7. Kitchen menu management
 
@@ -519,6 +531,7 @@ Nguyễn Văn B · NV105
 handed over and presses one confirm action. Kitchen cannot tick, add, remove or
 replace items. If intent changes, the presenter updates mobile selection and
 shows a refreshed QR before resolve.
+
 ## 10. Kitchen serving confirmation
 
 ```mermaid
@@ -553,24 +566,26 @@ another body/intent returns `IDEMPOTENCY_CONFLICT`.
 
 ### Outcomes
 
-| Outcome | Kitchen UI |
-| --- | --- |
-| Self serving success | Green success with owner/name/time |
-| Proxy success | Green success: “B đã nhận hộ A” |
-| Already served/delegation revoked | Conflict; do not serve; resolve again |
-| QR expired at resolve | Ask presenter to show refreshed QR |
-| Pickup session expired before confirm | Re-scan/re-resolve |
-| Any selected item changed | `PICKUP_INTENT_CONFLICT`; no item or request claim committed; resolve again |
-| GPS verification invalid | Safe Retry/Refresh status; Kitchen cannot bypass |
-| Outside 10:30–13:30 | Disable serving and show canonical service window |
-| Account disabled after resolve | No serving; refresh authoritative state |
-| Network/database failure | No success display; retry same idempotency key |
+| Outcome                               | Kitchen UI                                                                  |
+| ------------------------------------- | --------------------------------------------------------------------------- |
+| Self serving success                  | Green success with owner/name/time                                          |
+| Proxy success                         | Green success: “B đã nhận hộ A”                                             |
+| Already served/delegation revoked     | Conflict; do not serve; resolve again                                       |
+| QR expired at resolve                 | Ask presenter to show refreshed QR                                          |
+| Pickup session expired before confirm | Re-scan/re-resolve                                                          |
+| Any selected item changed             | `PICKUP_INTENT_CONFLICT`; no item or request claim committed; resolve again |
+| GPS verification invalid              | Safe Retry/Refresh status; Kitchen cannot bypass                            |
+| Outside 10:30–13:30                   | Disable serving and show canonical service window                           |
+| Account disabled after resolve        | No serving; refresh authoritative state                                     |
+| Network/database failure              | No success display; retry same idempotency key                              |
+
 ## 11. Recovery boundaries
 
 There is no employee-code, username/password, local-login or manual location
 bypass in production. If QR/GPS verification fails, the presenter receives only
 the approved Retry/Refresh recovery. If the exact intent becomes stale, the
 presenter must select/refresh again; Kitchen cannot substitute an item.
+
 ## 12. Kitchen lists and realtime log
 
 ### Chưa nhận (PENDING)
@@ -714,7 +729,7 @@ Served: 12:08:31
 | Success                | State server-confirmed, include date/person/outcome                           |
 | Error                  | Safe message + concrete retry/recovery                                        |
 | Expired QR             | Visually invalid; refresh/retry                                               |
-| Offline                | Distinguish OTP/session/API/provider connectivity failure                    |
+| Offline                | Distinguish OTP/session/API/provider connectivity failure                     |
 | Destructive            | Revoke/role/waive/account-disable cleanup confirm where appropriate           |
 | Realtime reconnect     | Re-fetch authoritative snapshot                                               |
 | Account disabled       | Block protected actions and explain that Admin controls account state         |

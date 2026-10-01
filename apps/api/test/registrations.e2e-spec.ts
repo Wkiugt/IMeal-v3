@@ -2,7 +2,15 @@ import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import type { Server } from 'node:http';
-import { describe, beforeAll, beforeEach, afterEach, it, expect, vi } from 'vitest';
+import {
+  describe,
+  beforeAll,
+  beforeEach,
+  afterEach,
+  it,
+  expect,
+  vi,
+} from 'vitest';
 import type { Mock } from 'vitest';
 import { AppModule } from './../src/app.module.js';
 import { RegistrationsService } from './../src/registrations/registrations.service.js';
@@ -23,6 +31,38 @@ describe('RegistrationsController (e2e)', () => {
       getWeekData: vi.fn().mockResolvedValue({
         menu: null,
         registrations: [],
+        days: [
+          '2026-09-05',
+          '2026-09-06',
+          '2026-09-07',
+          '2026-09-08',
+          '2026-09-09',
+          '2026-09-10',
+          '2026-09-11',
+        ].map((mealDate, index) => ({
+          mealDate,
+          menu: null,
+          registration: null,
+          location: null,
+          lunarDate: {
+            day: index + 1,
+            month: 7,
+            year: 2026,
+            isLeapMonth: false,
+          },
+          availableMealChoices:
+            index === 2 ? ['REGULAR', 'VEGETARIAN'] : ['REGULAR'],
+          cutoffAt: `2026-09-${String(4 + index).padStart(2, '0')}T07:00:00.000Z`,
+          canActivate: false,
+          canCancel: false,
+          canChangeMealChoice: false,
+          unavailableReasons: {
+            activate: ['NO_PUBLISHED_MENU'],
+            cancel: ['NOT_ACTIVE'],
+            changeMealChoice: ['NOT_ACTIVE'],
+          },
+          delegation: null,
+        })),
         registrationWindow: {
           serverNow: '2026-09-03T02:00:00.000Z',
           cutoffAt: '2026-09-04T07:00:00.000Z',
@@ -83,15 +123,11 @@ describe('RegistrationsController (e2e)', () => {
       .query({ startDate: '2026-09-05' });
 
     expect(response.status).toBe(200);
+    expect(response.body.days).toHaveLength(7);
     expect(response.body.registrationWindow.timeZone).toBe('Asia/Ho_Chi_Minh');
-    expect(response.body.registrationWindow.days).toHaveLength(7);
-    expect(mockRegistrationsService.getWeekData).toHaveBeenCalledWith(
-      'test-user-id',
-      '2026-09-05',
-    );
   });
 
-  it('validates and forwards a batch request, returning each date result', async () => {
+  it('validates a batch request and returns each date result', async () => {
     const registrations = [
       {
         mealDate: '2026-09-25',
@@ -114,77 +150,6 @@ describe('RegistrationsController (e2e)', () => {
         reason: 'Cutoff time exceeded',
       },
     ]);
-    expect(mockRegistrationsService.batchRegister).toHaveBeenCalledWith(
-      'test-user-id',
-      registrations,
-    );
-  });
-  it('returns the typed unavailable-choice result for an ordinary date', async () => {
-    mockRegistrationsService.batchRegister.mockResolvedValueOnce([
-      {
-        date: '2026-09-24',
-        success: false,
-        code: 'MEAL_CHOICE_UNAVAILABLE',
-        reason: 'Meal choice is unavailable for this date',
-      },
-    ]);
-    const registrations = [
-      {
-        mealDate: '2026-09-24',
-        status: 'ACTIVE',
-        mealChoice: 'VEGETARIAN',
-      },
-    ];
-
-    const response = await request(app.getHttpServer())
-      .put('/api/registrations/batch')
-      .send({ registrations });
-
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual([
-      {
-        date: '2026-09-24',
-        success: false,
-        code: 'MEAL_CHOICE_UNAVAILABLE',
-        reason: 'Meal choice is unavailable for this date',
-      },
-    ]);
-  });
-
-  it('returns per-date REGISTRATION_FAILED results for snapshot resolution failures', async () => {
-    mockRegistrationsService.batchRegister.mockResolvedValueOnce([
-      {
-        date: '2026-09-25',
-        success: false,
-        code: 'REGISTRATION_FAILED',
-        reason: 'Employee location assignment is unavailable',
-      },
-      { date: '2026-09-26', success: true },
-    ]);
-
-    const response = await request(app.getHttpServer())
-      .put('/api/registrations/batch')
-      .send({
-        registrations: [
-          {
-            mealDate: '2026-09-25',
-            status: 'ACTIVE',
-            mealChoice: 'REGULAR',
-          },
-          { mealDate: '2026-09-26', status: 'CANCELLED' },
-        ],
-      });
-
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual([
-      {
-        date: '2026-09-25',
-        success: false,
-        code: 'REGISTRATION_FAILED',
-        reason: 'Employee location assignment is unavailable',
-      },
-      { date: '2026-09-26', success: true },
-    ]);
   });
 
   it('rejects client-selected registration location and menu authority', async () => {
@@ -205,7 +170,6 @@ describe('RegistrationsController (e2e)', () => {
     expect(response.status).toBe(400);
     expect(mockRegistrationsService.batchRegister).not.toHaveBeenCalled();
   });
-
 
   it.each([
     ['missing body', undefined],

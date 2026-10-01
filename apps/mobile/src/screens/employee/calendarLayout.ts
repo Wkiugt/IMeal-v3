@@ -8,8 +8,6 @@ export const weekHeadingRowStyle: Pick<
   width: '100%',
 };
 
-export const registrationDayIndexes = [0, 1, 2, 3, 4] as const;
-
 export const weekHeadingCopyStyle: Pick<ViewStyle, 'flex' | 'minWidth'> = {
   flex: 1,
   minWidth: 0,

@@ -138,9 +138,7 @@ export const RegistrationWindowDaySchema = z
     availableMealChoices: z.array(MealChoiceSchema).min(1),
   })
   .strict();
-export type RegistrationWindowDay = z.infer<
-  typeof RegistrationWindowDaySchema
->;
+export type RegistrationWindowDay = z.infer<typeof RegistrationWindowDaySchema>;
 
 export const RegistrationWindowSchema = z
   .object({
@@ -167,6 +165,67 @@ export const WeekDailyMenuSchema = z
   })
   .strict();
 export type WeekDailyMenu = z.infer<typeof WeekDailyMenuSchema>;
+export const RegistrationDayUnavailableReasonSchema = z.enum([
+  'HOLIDAY',
+  'DISABLED',
+  'NO_PUBLISHED_MENU',
+  'LOCATION_UNAVAILABLE',
+  'LOCATION_AMBIGUOUS',
+  'CUTOFF_PASSED',
+  'REGISTRATION_FINALIZED',
+  'ALREADY_ACTIVE',
+  'NOT_ACTIVE',
+  'NO_ALTERNATIVE_MEAL_CHOICE',
+]);
+export type RegistrationDayUnavailableReason = z.infer<
+  typeof RegistrationDayUnavailableReasonSchema
+>;
+
+export const WeekDayLocationSchema = z
+  .object({
+    id: z.string(),
+    shortCode: z.string(),
+    displayName: z.string(),
+    address: z.string(),
+    source: z.enum(['REGISTRATION_SNAPSHOT', 'EFFECTIVE_ROSTER_ASSIGNMENT']),
+  })
+  .strict();
+export type WeekDayLocation = z.infer<typeof WeekDayLocationSchema>;
+
+export const WeekRegistrationDayDelegationSchema = z
+  .object({
+    id: z.string(),
+    status: z.enum(['PENDING', 'ACCEPTED']),
+    delegateName: z.string().nullable(),
+  })
+  .strict();
+export type WeekRegistrationDayDelegation = z.infer<
+  typeof WeekRegistrationDayDelegationSchema
+>;
+
+export const WeekRegistrationDaySchema = z
+  .object({
+    mealDate: MealDateSchema,
+    menu: WeekDailyMenuSchema.nullable(),
+    registration: RegistrationRecordSchema.nullable(),
+    location: WeekDayLocationSchema.nullable(),
+    lunarDate: LunarDateSchema,
+    availableMealChoices: z.array(MealChoiceSchema).min(1),
+    cutoffAt: UtcDateTimeSchema,
+    canActivate: z.boolean(),
+    canCancel: z.boolean(),
+    canChangeMealChoice: z.boolean(),
+    unavailableReasons: z
+      .object({
+        activate: z.array(RegistrationDayUnavailableReasonSchema),
+        cancel: z.array(RegistrationDayUnavailableReasonSchema),
+        changeMealChoice: z.array(RegistrationDayUnavailableReasonSchema),
+      })
+      .strict(),
+    delegation: WeekRegistrationDayDelegationSchema.nullable(),
+  })
+  .strict();
+export type WeekRegistrationDay = z.infer<typeof WeekRegistrationDaySchema>;
 
 export const WeekMenuSchema = z
   .object({
@@ -184,6 +243,7 @@ export const WeekRegistrationResponseSchema = z
   .object({
     menu: WeekMenuSchema.nullable(),
     registrations: z.array(RegistrationRecordSchema),
+    days: z.array(WeekRegistrationDaySchema).length(7),
     registrationWindow: RegistrationWindowSchema,
   })
   .strict();
