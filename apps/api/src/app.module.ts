@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { DelegationsModule } from './delegations/delegations.module.js';
 import { WeeklyMenusModule } from './admin/weekly-menus/weekly-menus.module.js';
 import { PenaltiesModule } from './admin/penalties/penalties.module.js';
+import { EmployeePenaltiesModule } from './penalties/employee-penalties.module.js';
 import { RegistrationsModule } from './registrations/registrations.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { PickupModule } from './pickup/pickup.module.js';
@@ -46,6 +47,7 @@ import { PrismaService } from './common/prisma.service.js';
     DelegationsModule,
     WeeklyMenusModule,
     PenaltiesModule,
+    EmployeePenaltiesModule,
     RegistrationsModule,
     NotificationsModule,
     PickupModule,

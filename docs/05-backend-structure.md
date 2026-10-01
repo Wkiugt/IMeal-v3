@@ -909,7 +909,40 @@ Preferences are `GET/PATCH /api/notifications/preferences`. Device registration 
 revocation is `DELETE /api/notifications/push-devices` with `{ token }` only.
 Detail/read never cross user ownership; missing and foreign IDs use `NOTIFICATION_NOT_FOUND`.
 
-### 18.3 Transactional publish and delivery
+### 18.3 Owner activity read API
+
+The self-service activity surface is session-only and always derives ownership from
+`CurrentUser`; clients never provide a `userId`. `GET /api/registrations/history`
+accepts strict offset pagination (`page` default 1, `limit` default 20, maximum 100),
+returns `{ data, meta.pagination }`, and orders by `mealDate DESC, id DESC`. It
+includes only registrations on or before the current `Asia/Ho_Chi_Minh` business
+date. The projected status uses the same serving precedence as the weekly read:
+`ACTIVE`, `CANCELLED`, `SERVED`, or `NO_SHOW`; no competing lifecycle projection is
+allowed.
+
+History rows preserve nullable immutable registration menu/location snapshots and
+safe lifecycle timestamps (`registeredAt`, `cancelledAt`, `noShowAt`, `servedAt`,
+`createdAt`, `updatedAt`). They never substitute current menu or roster values for
+legacy null snapshots. Related penalty summaries are selected only when
+`penalties.userId` equals the authenticated owner.
+
+`GET /api/registrations/stats?month=YYYY-MM` defaults to the current Vietnam
+business month and returns period `month`, `startDate`, and `endDate` metadata.
+The selected month includes future dates: `booked` counts projected
+`ACTIVE|SERVED|NO_SHOW`, `enjoyed` counts projected `SERVED`, and `CANCELLED` is
+excluded from both. The bounded query applies the shared projection once.
+
+`GET /api/penalties` uses the same deterministic page contract and newest order
+(`createdAt DESC, id DESC`), with an optional canonical `PENDING|PAID|WAIVED`
+filter. `GET /api/penalties/:id` is owner-scoped and returns the same not-found
+response for a foreign or nonexistent ID. Penalty responses expose only safe
+financial/timestamp fields and immutable registration/menu/location context when
+the linked registration belongs to the same owner; malformed cross-owner links
+produce `registration: null`. These routes have no mutation or admin permission
+actions, and existing admin penalty routes remain separate.
+
+### 18.4 Transactional publish and delivery
+
 
 API publishers (menu, delegation, registration-cancellation, pickup) and worker publishers
 (registration reminder, pickup reminder, no-show) render fixed bilingual copy and insert the

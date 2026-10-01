@@ -1,21 +1,19 @@
-import React, { useEffect, useState } from 'react';
-import {
-  Pressable,
-  StyleSheet,
-  View,
-  useWindowDimensions,
-} from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   AlertTriangle,
   Bell,
+  BookOpenText,
   Clock3,
   Languages,
+  ReceiptText,
   UsersRound,
   type LucideIcon,
 } from 'lucide-react-native';
-import type { ProfileStackScreenProps } from '../../navigation';
 import { useSession } from '../../auth/session';
-import { initials } from '../../businessDate';
+import type { ProfileStackScreenProps } from '../../navigation';
+import { formatMonth, initials, parseDateKey } from '../../businessDate';
 import { AppFrame, SectionHeader } from '../../ui/AppShell';
 import {
   AppText,
@@ -29,6 +27,18 @@ import { useNotice } from '../../ui/BrandNotice';
 import { useLanguage } from '../../i18n/LanguageProvider';
 import { notificationAPI } from '../../api/notificationAPI';
 import { useNotifications } from '../../notifications/NotificationProvider';
+import { employeeActivityAPI } from '../../api/employeeActivityAPI';
+import {
+  beginProfileStatsLoad,
+  createProfileStatsState,
+  failProfileStats,
+  getProfileStatsData,
+  getProfileStatsValues,
+  getProfileProgressValues,
+  isStatsPeriodCurrent,
+  resolveProfileStats,
+  type ProfileStatsState,
+} from './profileStatsState';
 import { designTokens } from '../../ui/designTokens';
 import { getNotificationPresentation } from './profilePresentation';
 import {
@@ -116,16 +126,20 @@ type WarningSurfaceProps = {
   onAction?: () => void;
 };
 
-function WarningSurface({ message, actionLabel, onAction }: WarningSurfaceProps): React.JSX.Element {
+function WarningSurface({
+  message,
+  actionLabel,
+  onAction,
+}: WarningSurfaceProps): React.JSX.Element {
   return (
     <View style={styles.warningSurface}>
       <View style={styles.warningCopy}>
-        <AlertTriangle size={18} color={designTokens.color.semantic.warning.base} strokeWidth={1.9} />
-        <AppText
-          variant="caption"
-          tone="warning"
-          style={styles.warningMessage}
-        >
+        <AlertTriangle
+          size={18}
+          color={designTokens.color.semantic.warning.base}
+          strokeWidth={1.9}
+        />
+        <AppText variant="caption" tone="warning" style={styles.warningMessage}>
           {message}
         </AppText>
       </View>
@@ -134,9 +148,16 @@ function WarningSurface({ message, actionLabel, onAction }: WarningSurfaceProps)
           accessibilityRole="button"
           accessibilityLabel={actionLabel}
           onPress={onAction}
-          style={({ pressed }) => [styles.warningAction, pressed && styles.warningActionPressed]}
+          style={({ pressed }) => [
+            styles.warningAction,
+            pressed && styles.warningActionPressed,
+          ]}
         >
-          <AppText variant="caption" tone="warning" style={styles.warningActionLabel}>
+          <AppText
+            variant="caption"
+            tone="warning"
+            style={styles.warningActionLabel}
+          >
             {actionLabel}
           </AppText>
         </Pressable>
@@ -155,9 +176,11 @@ function ProfileProgressMeter({
   total,
   label,
 }: ProfileProgressMeterProps): React.JSX.Element {
-  const safeTotal = Math.max(1, total);
-  const safeCompleted = Math.min(safeTotal, Math.max(0, completed));
-  const percentage = Math.round((safeCompleted / safeTotal) * 100);
+  const {
+    completed: safeCompleted,
+    total: safeTotal,
+    percentage,
+  } = getProfileProgressValues(completed, total);
 
   return (
     <View style={styles.progressMeter}>
@@ -190,8 +213,14 @@ function ProfileProgressMeter({
 export function EmployeeProfileScreen({ navigation }: Props) {
   const { token, profile, logout } = useSession();
   const { showNotice } = useNotice();
-  const { language, setLanguage, t } = useLanguage();
-  const { permissionStatus, configurationError, enableNotifications, openSettings, revokeCurrentDevice } = useNotifications();
+  const { language, locale, setLanguage, t } = useLanguage();
+  const {
+    permissionStatus,
+    configurationError,
+    enableNotifications,
+    openSettings,
+    revokeCurrentDevice,
+  } = useNotifications();
   const { width, fontScale } = useWindowDimensions();
   const compactLayout = width < 350 || fontScale > 1.2;
   const [confirmedReminders, setConfirmedReminders] = useState(true);
@@ -199,22 +228,69 @@ export function EmployeeProfileScreen({ navigation }: Props) {
   const [languageSheetVisible, setLanguageSheetVisible] = useState(false);
   const [signOutModalVisible, setSignOutModalVisible] = useState(false);
   const [logoutProcessing, setLogoutProcessing] = useState(false);
-  const mealStats = { booked: 12, used: 8 };
-  const displayName = profile?.name || profile?.email.split('@')[0] || 'Staff 01';
-  const userCode = profile?.userId || profile?.id || 'local-staff-staff01';
+  const [statsState, setStatsState] = useState<ProfileStatsState>(() =>
+    createProfileStatsState(),
+  );
+  const statsRequestIdRef = useRef(0);
+  const displayName = profile?.name?.trim() || t('profile.identityUnavailable');
+  const userCode =
+    profile?.userId || profile?.id || t('profile.identifierUnavailable');
+
+  const loadStats = useCallback(async () => {
+    if (!token) {
+      setStatsState(createProfileStatsState());
+      return;
+    }
+    const requestId = ++statsRequestIdRef.current;
+    setStatsState((current) => beginProfileStatsLoad(current, token));
+    try {
+      const response = await employeeActivityAPI.getStats(token);
+      if (requestId !== statsRequestIdRef.current) return;
+      setStatsState((current) =>
+        resolveProfileStats(current, response.data, token),
+      );
+    } catch (error: unknown) {
+      if (requestId !== statsRequestIdRef.current) return;
+      setStatsState((current) => failProfileStats(current, error, token));
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token) return;
+    statsRequestIdRef.current += 1;
+    setStatsState(createProfileStatsState());
+  }, [token]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadStats();
+      return () => {
+        statsRequestIdRef.current += 1;
+      };
+    }, [loadStats]),
+  );
 
   useEffect(() => {
     if (!token) return;
     let mounted = true;
     setReminderLoading(true);
-    void notificationAPI.getPreferences(token).then((preferences) => {
-      if (!mounted) return;
-      setConfirmedReminders(preferences.remindersEnabled);
-    }).catch(() => {
-      if (mounted) showNotice({ title: t('common.error'), message: t('profile.preferenceLoadFailed'), tone: 'warning' });
-    }).finally(() => {
-      if (mounted) setReminderLoading(false);
-    });
+    void notificationAPI
+      .getPreferences(token)
+      .then((preferences) => {
+        if (!mounted) return;
+        setConfirmedReminders(preferences.remindersEnabled);
+      })
+      .catch(() => {
+        if (mounted)
+          showNotice({
+            title: t('common.error'),
+            message: t('profile.preferenceLoadFailed'),
+            tone: 'warning',
+          });
+      })
+      .finally(() => {
+        if (mounted) setReminderLoading(false);
+      });
     return () => {
       mounted = false;
     };
@@ -225,11 +301,18 @@ export function EmployeeProfileScreen({ navigation }: Props) {
     const previousValue = confirmedReminders;
     setReminderLoading(true);
     try {
-      const preferences = await notificationAPI.updatePreferences({ remindersEnabled: nextValue }, token);
+      const preferences = await notificationAPI.updatePreferences(
+        { remindersEnabled: nextValue },
+        token,
+      );
       setConfirmedReminders(preferences.remindersEnabled);
     } catch {
       setConfirmedReminders(previousValue);
-      showNotice({ title: t('common.error'), message: t('profile.preferenceSaveFailed'), tone: 'warning' });
+      showNotice({
+        title: t('common.error'),
+        message: t('profile.preferenceSaveFailed'),
+        tone: 'warning',
+      });
     } finally {
       setReminderLoading(false);
     }
@@ -250,7 +333,11 @@ export function EmployeeProfileScreen({ navigation }: Props) {
       await performLogout();
       setSignOutModalVisible(false);
     } catch {
-      showNotice({ title: t('common.error'), message: t('profile.signOut'), tone: 'warning' });
+      showNotice({
+        title: t('common.error'),
+        message: t('profile.signOut'),
+        tone: 'warning',
+      });
     } finally {
       setLogoutProcessing(false);
     }
@@ -264,7 +351,11 @@ export function EmployeeProfileScreen({ navigation }: Props) {
     try {
       await setLanguage(nextLanguage);
     } catch {
-      showNotice({ title: t('common.error'), message: t('profile.languagePersistenceFailed'), tone: 'warning' });
+      showNotice({
+        title: t('common.error'),
+        message: t('profile.languagePersistenceFailed'),
+        tone: 'warning',
+      });
       return;
     }
     setLanguageSheetVisible(false);
@@ -272,7 +363,11 @@ export function EmployeeProfileScreen({ navigation }: Props) {
     try {
       await notificationAPI.updatePreferences({ locale: nextLanguage }, token);
     } catch {
-      showNotice({ title: t('common.error'), message: t('profile.languagePreferenceSyncFailed'), tone: 'warning' });
+      showNotice({
+        title: t('common.error'),
+        message: t('profile.languagePreferenceSyncFailed'),
+        tone: 'warning',
+      });
     }
   };
 
@@ -282,40 +377,113 @@ export function EmployeeProfileScreen({ navigation }: Props) {
     notConfigured: t('profile.notificationNotConfigured'),
     unavailable: t('profile.notificationUnavailable'),
   });
-
+  const statsData = getProfileStatsData(statsState, token);
+  const statsValues = getProfileStatsValues(statsState, token);
+  const statsPeriodText = statsData
+    ? formatMonth(parseDateKey(`${statsData.period.month}-01`), locale)
+    : t('profile.thisMonth');
+  const statsPeriodIsCurrent = statsData
+    ? isStatsPeriodCurrent(statsData.period.month, new Date().toISOString())
+    : true;
+  const showStatsStaleWarning = statsData !== null && !statsPeriodIsCurrent;
+  const showStatsLoadWarning =
+    statsState.status === 'error' &&
+    statsState.sessionKey === token &&
+    !showStatsStaleWarning;
 
   return (
     <AppFrame>
-      <SectionHeader title={t('profile.title')} subtitle={t('profile.subtitle')} />
+      <SectionHeader
+        title={t('profile.title')}
+        subtitle={t('profile.subtitle')}
+      />
 
       <ProfileIdentity
-        initials={initials(profile?.name, 'S0')}
+        initials={initials(profile?.name, '?')}
         name={displayName}
         roleLabel={t('profile.employeeAccount')}
         identifier={userCode}
       />
 
-      <ProfileSettingsGroup label={t('profile.groupStatistics')} surface={false}>
-        <View style={[styles.statsHero, compactLayout && styles.statsHeroCompact]}>
+      <ProfileSettingsGroup
+        label={t('profile.groupStatistics')}
+        surface={false}
+      >
+        <View
+          style={[styles.statsHero, compactLayout && styles.statsHeroCompact]}
+        >
           <StatisticsCard
-            eyebrow={t('profile.thisMonth')}
+            eyebrow={
+              statsData
+                ? t('profile.statsPeriod', { period: statsPeriodText })
+                : t('profile.thisMonth')
+            }
             metrics={[
-              { label: t('profile.mealsBooked'), value: mealStats.booked },
-              { label: t('profile.mealsEnjoyed'), value: mealStats.used },
+              { label: t('profile.mealsBooked'), value: statsValues.booked },
+              { label: t('profile.mealsEnjoyed'), value: statsValues.enjoyed },
             ]}
             style={[styles.statsCard, compactLayout && styles.statsCardCompact]}
           />
-          <ProfileProgressMeter
-            completed={mealStats.used}
-            total={mealStats.booked}
-            label={t('profile.progressUsed', {
-              completed: mealStats.used,
-              total: mealStats.booked,
-            })}
-          />
+          {statsData ? (
+            <ProfileProgressMeter
+              completed={statsValues.enjoyed ?? 0}
+              total={statsValues.booked ?? 0}
+              label={t('profile.progressUsed', {
+                completed: statsValues.enjoyed ?? 0,
+                total: statsValues.booked ?? 0,
+              })}
+            />
+          ) : (
+            <AppText
+              variant="supporting"
+              tone="secondary"
+              style={styles.statsStatus}
+            >
+              {statsState.status === 'loading'
+                ? t('profile.statsLoading')
+                : t('profile.statsUnavailable')}
+            </AppText>
+          )}
         </View>
+        {showStatsLoadWarning ? (
+          <WarningSurface
+            message={t('profile.statsLoadFailed')}
+            actionLabel={`${t('profile.statsRetry')} →`}
+            onAction={() => void loadStats()}
+          />
+        ) : null}
+        {showStatsStaleWarning ? (
+          <WarningSurface
+            message={t('profile.statsStale', { period: statsPeriodText })}
+            actionLabel={`${t('profile.statsRetry')} →`}
+            onAction={() => void loadStats()}
+          />
+        ) : null}
       </ProfileSettingsGroup>
 
+      <ProfileSettingsGroup
+        label={t('profile.groupActivity')}
+        surfacePadding="sm"
+        surfaceStyle={styles.settingsGroupSurface}
+      >
+        <ProfileNavigationSettingRow
+          icon={BookOpenText}
+          title={t('profile.mealHistory')}
+          supportingText={t('profile.mealHistoryHint')}
+          onPress={() => navigation.navigate('MealHistory')}
+          compactLayout={compactLayout}
+          tallLayout
+        />
+        <Divider style={styles.settingsDivider} />
+        <ProfileNavigationSettingRow
+          icon={ReceiptText}
+          title={t('profile.penalties')}
+          supportingText={t('profile.penaltiesHint')}
+          onPress={() => navigation.navigate('PenaltyList')}
+          compactLayout={compactLayout}
+          tallLayout
+        />
+      </ProfileSettingsGroup>
       <ProfileSettingsGroup
         label={t('profile.groupNotifications')}
         surfacePadding="sm"
@@ -351,7 +519,10 @@ export function EmployeeProfileScreen({ navigation }: Props) {
             accessibilityRole="button"
             accessibilityLabel={`${t('notifications.enable')} →`}
             onPress={() => void enableNotifications()}
-            style={({ pressed }) => [styles.quietLink, pressed && styles.quietLinkPressed]}
+            style={({ pressed }) => [
+              styles.quietLink,
+              pressed && styles.quietLinkPressed,
+            ]}
           >
             <AppText variant="buttonLabel" tone="information">
               {t('notifications.enable')} →
@@ -362,11 +533,17 @@ export function EmployeeProfileScreen({ navigation }: Props) {
           <WarningSurface message={t('notifications.physicalDeviceRequired')} />
         ) : null}
         {permissionStatus === 'unavailable' ? (
-          <AppText variant="supporting" tone="secondary" style={styles.unavailableHint}>
+          <AppText
+            variant="supporting"
+            tone="secondary"
+            style={styles.unavailableHint}
+          >
             {t('profile.notificationsUnavailableHint')}
           </AppText>
         ) : null}
-        {configurationError ? <WarningSurface message={configurationError} /> : null}
+        {configurationError ? (
+          <WarningSurface message={configurationError} />
+        ) : null}
       </ProfileSettingsGroup>
 
       <ProfileSettingsGroup
@@ -377,7 +554,9 @@ export function EmployeeProfileScreen({ navigation }: Props) {
         <ProfileNavigationSettingRow
           icon={Languages}
           title={t('profile.language')}
-          currentValue={language === 'vi' ? t('profile.vietnamese') : t('profile.english')}
+          currentValue={
+            language === 'vi' ? t('profile.vietnamese') : t('profile.english')
+          }
           onPress={() => setLanguageSheetVisible(true)}
           compactLayout={compactLayout}
         />
@@ -452,6 +631,9 @@ const styles = StyleSheet.create({
   },
   statsCardCompact: {
     minHeight: 240,
+  },
+  statsStatus: {
+    marginTop: designTokens.space.md,
   },
   progressMeter: {
     position: 'absolute',

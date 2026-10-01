@@ -20,9 +20,16 @@ import { v1 } from '@imeal/contracts';
 import type { VietnameseLunarDate } from '../common/vietnamese-lunar.js';
 import {
   BUSINESS_TIME_ZONE,
+  getBusinessDate,
+  getBusinessMonthRange,
   getCutoffInstant,
   parseMealDate,
 } from '../common/business-time.js';
+import {
+  serializeEmployeeRegistrationBase,
+  toNullableIso,
+} from '../common/employee-activity.js';
+import { projectRegistrationStatus } from '../common/registration-status.js';
 import {
   getAvailableMealChoices,
   getVietnameseLunarDate,
@@ -97,8 +104,6 @@ type RegistrationLifecycleEvent = {
   registrationId: string;
   status: 'ACTIVE' | 'CANCELLED';
 };
-
-type RegistrationStatusValue = v1.RegistrationRecordStatus;
 
 type RegistrationLocationFields = {
   serviceLocationId?: string | null;
@@ -236,22 +241,6 @@ function isRegistrationFinalized(registration: {
   );
 }
 
-function projectRegistrationStatus(
-  status: string,
-  mealServing: unknown,
-): RegistrationStatusValue {
-  if (mealServing !== null && mealServing !== undefined) return 'SERVED';
-  if (
-    status === 'ACTIVE' ||
-    status === 'CANCELLED' ||
-    status === 'SERVED' ||
-    status === 'NO_SHOW'
-  ) {
-    return status;
-  }
-  throw new Error('Unknown registration status');
-}
-
 function serializeDelegation(
   delegations: readonly WeekDelegation[] | undefined,
 ): v1.WeekRegistrationDayDelegation | null {
@@ -266,6 +255,74 @@ function serializeDelegation(
     delegateName: hasText(delegation.delegateUser?.name)
       ? delegation.delegateUser.name.trim()
       : null,
+  };
+}
+const registrationActivitySelect = {
+  id: true,
+  mealDate: true,
+  status: true,
+  mealChoice: true,
+  menuRevisionId: true,
+  menuNameSnapshot: true,
+  menuDescriptionSnapshot: true,
+  menuImageSnapshot: true,
+  serviceLocationId: true,
+  serviceLocationAssignmentId: true,
+  serviceLocationCode: true,
+  serviceLocationName: true,
+  serviceLocationAddress: true,
+  serviceLocationEffectiveFrom: true,
+  serviceLocationSnapshotAt: true,
+  registeredAt: true,
+  cancelledAt: true,
+  noShowAt: true,
+  createdAt: true,
+  updatedAt: true,
+  mealServing: { select: { servedAt: true } },
+  penalties: {
+    select: {
+      id: true,
+      userId: true,
+      amount: true,
+      status: true,
+      createdAt: true,
+      paidAt: true,
+      waivedAt: true,
+    },
+  },
+} satisfies Prisma.RegistrationSelect;
+
+function registrationActivitySelectForUser(userId: string) {
+  return {
+    ...registrationActivitySelect,
+    penalties: {
+      ...registrationActivitySelect.penalties,
+      where: { userId },
+    },
+  } satisfies Prisma.RegistrationSelect;
+}
+
+type RegistrationActivityRow = Prisma.RegistrationGetPayload<{
+  select: typeof registrationActivitySelect;
+}>;
+
+function serializeRegistrationActivity(
+  registration: RegistrationActivityRow,
+  userId: string,
+): v1.EmployeeRegistrationActivity {
+  const base = serializeEmployeeRegistrationBase(registration);
+  return {
+    ...base,
+    penalties: registration.penalties
+      .filter((penalty) => penalty.userId === userId)
+      .map((penalty) => ({
+        id: penalty.id,
+        amount: penalty.amount,
+        status: penalty.status,
+        createdAt: penalty.createdAt.toISOString(),
+        paidAt: toNullableIso(penalty.paidAt),
+        waivedAt: toNullableIso(penalty.waivedAt),
+      })),
   };
 }
 
@@ -285,6 +342,87 @@ export class RegistrationsService {
       notificationsService ?? new NotificationsService(this.prisma);
     this.kitchenEventsService = kitchenEventsService;
     this.logger = logger ?? createApiStructuredLogger();
+  }
+  async getHistory(
+    userId: string,
+    query: v1.RegistrationHistoryQuery,
+  ): Promise<v1.RegistrationHistoryResponse> {
+    const businessDate = parseMealDate(getBusinessDate());
+    const where: Prisma.RegistrationWhereInput = {
+      userId,
+      mealDate: { lte: businessDate },
+    };
+    const skip = (query.page - 1) * query.limit;
+    const [rows, total] = await Promise.all([
+      this.prisma.registration.findMany({
+        where,
+        select: registrationActivitySelectForUser(userId),
+        orderBy: [{ mealDate: 'desc' }, { id: 'desc' }],
+        skip,
+        take: query.limit,
+      }),
+      this.prisma.registration.count({ where }),
+    ]);
+    const totalPages = Math.ceil(total / query.limit);
+    return {
+      data: rows.map((row) => serializeRegistrationActivity(row, userId)),
+      meta: {
+        pagination: {
+          page: query.page,
+          limit: query.limit,
+          total,
+          totalPages,
+          hasNextPage: query.page < totalPages,
+        },
+      },
+    };
+  }
+
+  async getStats(
+    userId: string,
+    query: v1.RegistrationStatsQuery,
+  ): Promise<v1.RegistrationStatsResponse> {
+    const businessMonth = getBusinessDate().slice(0, 7);
+    const month = query.month ?? businessMonth;
+    let startDate: Date;
+    let endDate: Date;
+    try {
+      ({ startDate, endDate } = getBusinessMonthRange(month));
+    } catch {
+      throw new BadRequestException();
+    }
+    const rows = await this.prisma.registration.findMany({
+      where: {
+        userId,
+        mealDate: { gte: startDate, lte: endDate },
+      },
+      select: {
+        status: true,
+        mealServing: { select: { id: true } },
+      },
+    });
+    let booked = 0;
+    let enjoyed = 0;
+    for (const row of rows) {
+      const status = projectRegistrationStatus(row.status, row.mealServing);
+      if (status === 'ACTIVE' || status === 'SERVED' || status === 'NO_SHOW') {
+        booked += 1;
+      }
+      if (status === 'SERVED') {
+        enjoyed += 1;
+      }
+    }
+    return {
+      data: {
+        period: {
+          month,
+          startDate: startDate.toISOString().slice(0, 10),
+          endDate: endDate.toISOString().slice(0, 10),
+        },
+        booked,
+        enjoyed,
+      },
+    };
   }
 
   async getWeekData(userId: string, weekStart: string) {

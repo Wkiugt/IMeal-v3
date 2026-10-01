@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import * as Linking from 'expo-linking';
 import { useFonts } from 'expo-font';
@@ -27,6 +27,9 @@ import { DelegationScreen } from './src/screens/delegation/DelegationScreen';
 import { EmployeeCalendarScreen } from './src/screens/employee/EmployeeCalendarScreen';
 import { EmployeeDashboardScreen } from './src/screens/employee/EmployeeDashboardScreen';
 import { EmployeeProfileScreen } from './src/screens/employee/EmployeeProfileScreen';
+import { MealHistoryScreen } from './src/screens/employee/MealHistoryScreen';
+import { PenaltyListScreen } from './src/screens/employee/PenaltyListScreen';
+import { PenaltyDetailScreen } from './src/screens/employee/PenaltyDetailScreen';
 import { NotificationDetailScreen } from './src/screens/notifications/NotificationDetailScreen';
 import { NotificationListScreen } from './src/screens/notifications/NotificationListScreen';
 import { KitchenScannerScreen } from './src/screens/kitchen/KitchenScannerScreen';
@@ -154,6 +157,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function ProfileStackNavigator() {
   return (
     <ProfileStack.Navigator
+      initialRouteName="ProfileHome"
       screenOptions={{ headerShown: false, animation: 'none' }}
     >
       <ProfileStack.Screen
@@ -161,6 +165,12 @@ function ProfileStackNavigator() {
         component={EmployeeProfileScreen}
       />
       <ProfileStack.Screen name="Delegation" component={DelegationScreen} />
+      <ProfileStack.Screen name="MealHistory" component={MealHistoryScreen} />
+      <ProfileStack.Screen name="PenaltyList" component={PenaltyListScreen} />
+      <ProfileStack.Screen
+        name="PenaltyDetail"
+        component={PenaltyDetailScreen}
+      />
     </ProfileStack.Navigator>
   );
 }
@@ -257,6 +267,9 @@ function linkingConfig(): LinkingOptions<RootStackParamList> {
               screens: {
                 ProfileHome: 'profile',
                 Delegation: 'delegations',
+                MealHistory: 'profile/meal-history',
+                PenaltyList: 'profile/penalties',
+                PenaltyDetail: 'profile/penalties/:penaltyId',
               },
             },
             KitchenDashboard: 'kitchen-dashboard',

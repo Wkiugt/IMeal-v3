@@ -25,7 +25,7 @@ const txMock = {
 const prismaMock = {
   appSetting: { findUnique: vi.fn() },
   weeklyMenu: { findFirst: vi.fn() },
-  registration: { findMany: vi.fn() },
+  registration: { findMany: vi.fn(), count: vi.fn() },
   employeeLocationAssignment: { findMany: vi.fn() },
   $transaction: vi.fn(),
 };
@@ -70,9 +70,9 @@ describe('RegistrationsService', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.resetAllMocks();
-    prismaMock.appSetting.findUnique.mockResolvedValue({ value: '14:00' });
     prismaMock.weeklyMenu.findFirst.mockResolvedValue(null);
     prismaMock.registration.findMany.mockResolvedValue([]);
+    prismaMock.registration.count.mockResolvedValue(0);
     prismaMock.employeeLocationAssignment.findMany.mockResolvedValue([]);
     prismaMock.$transaction.mockImplementation(async (callback) =>
       callback(txMock),
@@ -1503,6 +1503,183 @@ describe('RegistrationsService', () => {
         reason: 'database down',
       },
     ]);
+  });
+
+  it('returns owner-scoped historical registrations with deterministic order and projections', async () => {
+    vi.setSystemTime(new Date('2026-09-30T12:00:00.000Z'));
+    const makeRow = (
+      id: string,
+      userId: string,
+      mealDate: string,
+      status: string,
+      mealServing: { servedAt: Date } | null = null,
+    ) => ({
+      id,
+      userId,
+      mealDate: new Date(`${mealDate}T00:00:00.000Z`),
+      status,
+      mealChoice: 'REGULAR',
+      menuRevisionId: id === 'legacy-cancelled' ? null : 'revision-1',
+      menuNameSnapshot: id === 'legacy-cancelled' ? null : 'Lunch',
+      menuDescriptionSnapshot: null,
+      menuImageSnapshot: null,
+      serviceLocationId: id === 'legacy-cancelled' ? null : 'location-1',
+      serviceLocationAssignmentId:
+        id === 'legacy-cancelled' ? null : 'assignment-1',
+      serviceLocationCode: id === 'legacy-cancelled' ? null : 'LOC-A',
+      serviceLocationName: id === 'legacy-cancelled' ? null : 'Main Hall',
+      serviceLocationAddress:
+        id === 'legacy-cancelled' ? null : '1 Main Street',
+      serviceLocationEffectiveFrom:
+        id === 'legacy-cancelled' ? null : new Date('2026-01-01T00:00:00.000Z'),
+      serviceLocationSnapshotAt:
+        id === 'legacy-cancelled' ? null : new Date('2026-09-30T00:00:00.000Z'),
+      registeredAt: new Date('2026-09-29T00:00:00.000Z'),
+      cancelledAt: status === 'CANCELLED' ? new Date() : null,
+      noShowAt: status === 'NO_SHOW' ? new Date() : null,
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-30T00:00:00.000Z'),
+      mealServing,
+      penalties: [
+        {
+          id: `${id}-owner-penalty`,
+          userId,
+          amount: 50000,
+          status: 'PENDING',
+          createdAt: new Date('2026-10-01T00:00:00.000Z'),
+          paidAt: null,
+          waivedAt: null,
+        },
+        {
+          id: `${id}-foreign-penalty`,
+          userId: 'other-user',
+          amount: 99999,
+          status: 'PAID',
+          createdAt: new Date('2026-10-02T00:00:00.000Z'),
+          paidAt: new Date('2026-10-03T00:00:00.000Z'),
+          waivedAt: null,
+        },
+      ],
+    });
+    const rows = [
+      makeRow('served', 'user-1', '2026-09-30', 'ACTIVE', {
+        servedAt: new Date('2026-09-30T05:30:00.000Z'),
+      }),
+      makeRow('no-show', 'user-1', '2026-09-29', 'NO_SHOW'),
+      makeRow('legacy-cancelled', 'user-1', '2026-09-28', 'CANCELLED'),
+      makeRow('future', 'user-1', '2026-10-01', 'ACTIVE'),
+      makeRow('foreign', 'other-user', '2026-09-30', 'ACTIVE'),
+    ];
+    const filteredRows = (where: {
+      userId?: string;
+      mealDate?: { lte?: Date; gte?: Date };
+    }) =>
+      rows.filter(
+        (row) =>
+          row.userId === where.userId &&
+          (!where.mealDate?.lte || row.mealDate <= where.mealDate.lte) &&
+          (!where.mealDate?.gte || row.mealDate >= where.mealDate.gte),
+      );
+    prismaMock.registration.findMany.mockImplementation(async (args) =>
+      filteredRows(args.where)
+        .sort(
+          (left, right) =>
+            right.mealDate.getTime() - left.mealDate.getTime() ||
+            right.id.localeCompare(left.id),
+        )
+        .slice(args.skip, args.skip + args.take),
+    );
+    prismaMock.registration.count.mockImplementation(
+      async ({ where }) => filteredRows(where).length,
+    );
+
+    const result = await createService().getHistory('user-1', {
+      page: 1,
+      limit: 20,
+    });
+
+    expect(result.data.map((item) => item.id)).toEqual([
+      'served',
+      'no-show',
+      'legacy-cancelled',
+    ]);
+    expect(result.data[0]?.status).toBe('SERVED');
+    expect(result.data[0]?.servedAt).toBe('2026-09-30T05:30:00.000Z');
+    expect(result.data[0]?.penalties).toHaveLength(1);
+    expect(result.data[0]?.penalties[0]?.id).toBe('served-owner-penalty');
+    expect(result.data[2]?.menuNameSnapshot).toBeNull();
+    expect(result.meta.pagination).toEqual({
+      page: 1,
+      limit: 20,
+      total: 3,
+      totalPages: 1,
+      hasNextPage: false,
+    });
+  });
+
+  it('counts stats from the selected business month with one lifecycle projection', async () => {
+    vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
+    const rows = [
+      {
+        userId: 'user-1',
+        mealDate: new Date('2026-09-05T00:00:00.000Z'),
+        status: 'ACTIVE',
+        mealServing: null,
+      },
+      {
+        userId: 'user-1',
+        mealDate: new Date('2026-09-06T00:00:00.000Z'),
+        status: 'ACTIVE',
+        mealServing: { id: 'serving-1' },
+      },
+      {
+        userId: 'user-1',
+        mealDate: new Date('2026-09-07T00:00:00.000Z'),
+        status: 'NO_SHOW',
+        mealServing: null,
+      },
+      {
+        userId: 'user-1',
+        mealDate: new Date('2026-09-08T00:00:00.000Z'),
+        status: 'CANCELLED',
+        mealServing: null,
+      },
+      {
+        userId: 'user-1',
+        mealDate: new Date('2026-09-30T00:00:00.000Z'),
+        status: 'ACTIVE',
+        mealServing: null,
+      },
+      {
+        userId: 'other-user',
+        mealDate: new Date('2026-09-05T00:00:00.000Z'),
+        status: 'ACTIVE',
+        mealServing: null,
+      },
+    ];
+    prismaMock.registration.findMany.mockImplementation(async ({ where }) =>
+      rows.filter(
+        (row) =>
+          row.userId === where.userId &&
+          row.mealDate >= where.mealDate.gte &&
+          row.mealDate <= where.mealDate.lte,
+      ),
+    );
+
+    await expect(createService().getStats('user-1', {})).resolves.toEqual({
+      data: {
+        period: {
+          month: '2026-09',
+          startDate: '2026-09-01',
+          endDate: '2026-09-30',
+        },
+        booked: 4,
+        enjoyed: 1,
+      },
+    });
+    await expect(
+      createService().getStats('user-1', { month: '2026-13' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('uses a BadRequestException for malformed week starts', async () => {

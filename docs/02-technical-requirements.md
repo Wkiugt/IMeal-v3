@@ -189,8 +189,10 @@ Canonical v2 endpoint semantics:
 | GET        | `/v1/me/pickup-options`                     | staff                  | Load own + accepted-delegation items eligible for today's pickup intent                                                                             |
 | POST       | `/v1/me/qr`                                 | staff                  | Validate selected registration IDs and issue/refresh 5s signed pickup QR                                                                            |
 | GET        | `/v1/me/delegations`                        | staff                  | Incoming/outgoing delegation list                                                                                                                   |
-| GET        | `/v1/me/history`                            | staff                  | Own registration/serving history with menu snapshot                                                                                                 |
-| GET        | `/v1/me/penalties`                          | staff                  | Own read-only penalty history/detail                                                                                                                |
+| GET        | `/api/registrations/history`               | signed-in self         | Read-only own registration/serving history with immutable menu/location snapshots; page pagination (`page` default 1, `limit` default 20, max 100) |
+| GET        | `/api/registrations/stats`                 | signed-in self         | Read-only own monthly counts (`booked`/`enjoyed`); defaults to the current Vietnam business month and accepts `month=YYYY-MM` |
+| GET        | `/api/penalties`                           | signed-in self         | Read-only own penalty list; page pagination and optional status filter; no admin permission required |
+| GET        | `/api/penalties/:id`                       | signed-in self         | Read-only owner-scoped penalty detail; foreign and missing IDs are indistinguishable; no admin permission required |
 | GET        | `/api/notifications`                       | signed-in owner       | Structured persisted inbox; cursor pagination (`limit` 1–50, default 20) and unread count |
 | GET        | `/api/notifications/:id`                   | notification owner    | Owner-scoped structured notification detail                                             |
 | PATCH      | `/api/notifications/:id/read`              | notification owner    | Idempotently mark own inbox item read                                                   |
@@ -208,7 +210,7 @@ Canonical v2 endpoint semantics:
 | GET        | `/v1/kitchen/days/:date/dashboard`          | kitchen                | Total/served/remaining/list snapshot                                                                                                                |
 | GET/WS     | `/v1/kitchen/days/:date/events`             | kitchen                | Realtime serving log/update                                                                                                                         |
 | POST/PATCH | `/v1/admin/users/*`                         | admin                  | Independent Staff/Kitchen roles + account lifecycle; disable requires preview and confirmed future-commitment cleanup; no Admin-role grant endpoint |
-| GET/PATCH  | `/v1/admin/penalties/*`                     | `penalty.read/resolve` | Penalty reporting/resolve                                                                                                                           |
+| GET/PATCH  | `/v1/admin/penalties/*`                     | `penalty.read/resolve` | Admin penalty reporting/resolve; existing explicit permissions remain unchanged |
 | GET        | `/v1/admin/audit/*`                         | admin                  | Audit lookup                                                                                                                                        |
 
 Exact path spelling may change only with the shared API contract. Mobile, Admin Web, API and worker consume the same versioned contract.
@@ -220,7 +222,7 @@ Exact path spelling may change only with the shared API contract. Mobile, Admin 
 - Every request receives/returns `X-Request-Id`; server replaces malformed/untrusted values.
 - Mutations requiring retry safety use `Idempotency-Key`; the same caller/key/body returns the original successful result, while key reuse with a different body returns `IDEMPOTENCY_CONFLICT`. Multi-item confirm persists a request-level claim only within the main transaction; deterministic `PICKUP_INTENT_CONFLICT` rolls back the claim and every serving/delegation write, so the client must resolve again. Only a committed success is replayable.
 - Canonical conflict codes include `CUTOFF_PASSED`, `ACCOUNT_DISABLED`, `REGISTRATION_CONFLICT`, `DELEGATION_CONFLICT`, `PICKUP_SESSION_EXPIRED`, `PICKUP_INTENT_CONFLICT`, `ALREADY_SERVED`, `REQUEST_IN_PROGRESS` and `OUTSIDE_SERVING_WINDOW`.
-- List APIs use cursor pagination with a bounded server maximum; no unbounded Admin export endpoint.
+- List APIs use the pagination mode defined by each contract (cursor or page) with a bounded server maximum; no unbounded Admin export endpoint.
 - Realtime events carry `{ eventId, eventType, mealDate, occurredAt, requestId, payload }`; clients deduplicate by `eventId` and re-fetch snapshot after reconnect.
 
 ### 8.2 Runtime environment contract

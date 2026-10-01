@@ -22,6 +22,17 @@ export function getBusinessDate(now: Date = new Date()): string {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+export function getBusinessMonthRange(month: string): {
+  startDate: Date;
+  endDate: Date;
+} {
+  const startDate = parseMealDate(`${month}-01`);
+  const endDate = new Date(startDate);
+  endDate.setUTCMonth(endDate.getUTCMonth() + 1);
+  endDate.setUTCDate(0);
+  return { startDate, endDate };
+}
+
 export function parseMealDate(value: string): Date {
   if (!DATE_FORMAT.test(value)) {
     throw new Error('Meal date must use YYYY-MM-DD');

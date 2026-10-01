@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getBusinessDate,
+  getBusinessMonthRange,
   getCutoffInstant,
   isWithinServingWindow,
   parseMealDate,
@@ -33,5 +34,18 @@ describe('business time', () => {
     expect(() => parseMealDate('09/04/2026')).toThrow(
       'Meal date must use YYYY-MM-DD',
     );
+  });
+
+  it.each([
+    ['2024-02', '2024-02-01', '2024-02-29'],
+    ['0000-02', '0000-02-01', '0000-02-29'],
+  ])('returns the UTC calendar range for %s', (month, start, end) => {
+    const range = getBusinessMonthRange(month);
+    expect(range.startDate.toISOString().slice(0, 10)).toBe(start);
+    expect(range.endDate.toISOString().slice(0, 10)).toBe(end);
+  });
+
+  it('rejects invalid business months', () => {
+    expect(() => getBusinessMonthRange('2024-13')).toThrow('Invalid time value');
   });
 });

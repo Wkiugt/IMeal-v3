@@ -39,6 +39,180 @@ describe('Contracts v1', () => {
     });
   });
 
+  describe('Employee activity', () => {
+    const registrationBase = {
+      id: 'registration-1',
+      mealDate: '2026-09-30',
+      status: 'SERVED' as const,
+      mealChoice: 'REGULAR' as const,
+      menuRevisionId: 'revision-1',
+      menuNameSnapshot: 'Cơm gà',
+      menuDescriptionSnapshot: null,
+      menuImageSnapshot: null,
+      serviceLocationId: 'location-1',
+      serviceLocationAssignmentId: 'assignment-1',
+      serviceLocationCode: 'LOC-A',
+      serviceLocationName: 'Main Hall',
+      serviceLocationAddress: '1 Main Street',
+      serviceLocationEffectiveFrom: '2026-01-01T00:00:00.000Z',
+      serviceLocationSnapshotAt: '2026-09-30T00:00:00.000Z',
+      registeredAt: '2026-09-29T07:00:00.000Z',
+      cancelledAt: null,
+      noShowAt: null,
+      servedAt: '2026-09-30T05:30:00.000Z',
+      createdAt: '2026-09-29T07:00:00.000Z',
+      updatedAt: '2026-09-30T05:30:00.000Z',
+    };
+
+    it('validates page pagination defaults and safe maximum', () => {
+      expect(v1.PagePaginationRequestSchema.parse({})).toEqual({
+        page: 1,
+        limit: 20,
+      });
+      expect(
+        v1.PagePaginationRequestSchema.safeParse({
+          page: 21_474_837,
+          limit: 100,
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.PagePaginationRequestSchema.safeParse({
+          page: 21_474_838,
+          limit: 100,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.PagePaginationRequestSchema.safeParse({
+          page: Number.MAX_SAFE_INTEGER + 1,
+          limit: 20,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.PagePaginationRequestSchema.safeParse({ page: 1, limit: 101 })
+          .success,
+      ).toBe(false);
+      expect(
+        v1.PagePaginationRequestSchema.safeParse({
+          page: 1,
+          limit: 20,
+          userId: 'not-accepted',
+        }).success,
+      ).toBe(false);
+    });
+
+    it('validates history snapshots, timestamps, and penalty summaries', () => {
+      const result = v1.EmployeeRegistrationActivitySchema.safeParse({
+        ...registrationBase,
+        penalties: [
+          {
+            id: 'penalty-1',
+            amount: 50000,
+            status: 'PENDING',
+            createdAt: '2026-10-01T06:45:00.000Z',
+            paidAt: null,
+            waivedAt: null,
+          },
+        ],
+      });
+      expect(result.success).toBe(true);
+      expect(
+        v1.EmployeeRegistrationActivitySchema.safeParse({
+          ...registrationBase,
+          status: 'UNKNOWN',
+          penalties: [],
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.EmployeeRegistrationActivitySchema.safeParse({
+          ...registrationBase,
+          menuRevisionId: null,
+          menuNameSnapshot: null,
+          menuDescriptionSnapshot: null,
+          menuImageSnapshot: null,
+          serviceLocationId: null,
+          serviceLocationAssignmentId: null,
+          serviceLocationCode: null,
+          serviceLocationName: null,
+          serviceLocationAddress: null,
+          serviceLocationEffectiveFrom: null,
+          serviceLocationSnapshotAt: null,
+          registeredAt: null,
+          cancelledAt: null,
+          noShowAt: null,
+          servedAt: null,
+          penalties: [],
+        }).success,
+      ).toBe(true);
+    });
+
+    it('validates stats defaults, period metadata, and zero counts', () => {
+      expect(v1.RegistrationStatsQuerySchema.parse({})).toEqual({});
+      expect(
+        v1.RegistrationStatsQuerySchema.safeParse({ month: '2026-13' }).success,
+      ).toBe(false);
+      expect(
+        v1.RegistrationStatsResponseSchema.safeParse({
+          data: {
+            period: {
+              month: '2026-09',
+              startDate: '2026-09-01',
+              endDate: '2026-09-30',
+            },
+            booked: 0,
+            enjoyed: 0,
+          },
+        }).success,
+      ).toBe(true);
+    });
+
+    it('validates self penalty context without nested summaries', () => {
+      const result = v1.SelfPenaltyListResponseSchema.safeParse({
+        data: [
+          {
+            id: 'penalty-1',
+            amount: 50000,
+            reason: 'NO_SHOW_PENALTY_2026-09-30',
+            status: 'WAIVED',
+            mealDate: '2026-09-30',
+            createdAt: '2026-10-01T06:45:00.000Z',
+            paidAt: null,
+            waivedAt: '2026-10-02T06:45:00.000Z',
+            waiveReason: 'Approved leave',
+            registration: {
+              ...registrationBase,
+              status: 'NO_SHOW',
+              servedAt: null,
+            },
+          },
+        ],
+        meta: {
+          pagination: {
+            page: 1,
+            limit: 20,
+            total: 1,
+            totalPages: 1,
+            hasNextPage: false,
+          },
+        },
+      });
+      expect(result.success).toBe(true);
+      expect(
+        v1.SelfPenaltySchema.safeParse({
+          id: 'penalty-legacy',
+          amount: 50000,
+          reason: 'legacy',
+          status: 'PENDING',
+          mealDate: null,
+          createdAt: '2026-10-01T06:45:00.000Z',
+          paidAt: null,
+          waivedAt: null,
+          waiveReason: null,
+          registration: null,
+        }).success,
+      ).toBe(true);
+    });
+  });
+
   describe('Headers', () => {
     it('validates standard headers', () => {
       const result = v1.StandardHeadersSchema.safeParse({

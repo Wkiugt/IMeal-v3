@@ -538,7 +538,7 @@ Bulk/destructive actions require confirmation and visible actor/date/scope.
 
 Admin account disable shows active roles, future registrations and delegations. Admin must confirm one workflow that disables access and cancels/quarantines all future commitments with reason `ACCOUNT_DISABLED`; these rows remain in history but are excluded from Kitchen totals and penalties. Admin Web manages independent `staff`/`kitchen` roles and clearly states that Kitchen does not inherit Staff. It has no control for granting/revoking `admin`. Jobs/Health shows run status, attempts, sanitized errors and a confirmed manual retry action.
 
-Staff Account includes read-only meal history and penalty list/detail; mutation controls for penalty resolution are never shown to Staff.
+Staff Account includes read-only mobile meal history and penalty list/detail views in the Profile stack (`MealHistory`, `PenaltyList`, and `PenaltyDetail`) with profile links, paginated loading, filter selection, retry, and empty/error states; the profile also shows server-backed booked/enjoyed totals for the current Vietnam business month, where a real `0` is distinct from loading or unavailable data and stats failures remain non-blocking with retry; mutation controls for penalty resolution are never shown to Staff.
 
 ## 17. Accessibility
 

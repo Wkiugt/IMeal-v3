@@ -1,10 +1,16 @@
-import { createNavigationContainerRef, type NavigatorScreenParams } from '@react-navigation/native';
+import {
+  createNavigationContainerRef,
+  type NavigatorScreenParams,
+} from '@react-navigation/native';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 export type ProfileStackParamList = {
   ProfileHome: undefined;
   Delegation: undefined;
+  MealHistory: undefined;
+  PenaltyList: undefined;
+  PenaltyDetail: { penaltyId: string };
 };
 
 export type NotificationStackParamList = {
@@ -53,7 +59,10 @@ export function flushPendingNotificationNavigation(): void {
   navigateToNotification(notificationId);
 }
 
-export type AuthScreenProps = NativeStackScreenProps<RootStackParamList, 'Auth'>;
+export type AuthScreenProps = NativeStackScreenProps<
+  RootStackParamList,
+  'Auth'
+>;
 export type AppTabScreenProps<RouteName extends keyof AppTabParamList> =
   BottomTabScreenProps<AppTabParamList, RouteName>;
 export type ProfileStackScreenProps<
