@@ -186,7 +186,7 @@ No published menu:
 - Unsaved changes remain if request partially fails.
 - The weekly display keeps `ACTIVE` selected and mutable while allowed; `SERVED` remains selected as meal received and `NO_SHOW` remains selected with a receipt-not-recorded warning; both finalized states are locked and never become mutation payloads. `CANCELLED` and unregistered dates are not booked.
 - Month booked markers include `ACTIVE`, `SERVED`, and `NO_SHOW`; Home/count semantics remain unchanged.
-- If a save fails because cutoff or authority changed, retain the failed local draft through authoritative refresh. The user can always choose the authoritative active state or meal choice to restore the complete server state locally, even when the choice is no longer offered for new changes; divergent new intent still follows current capability and cutoff rules.
+- If a save fails because cutoff or authority changed, retain the failed local draft through authoritative refresh. The user can always choose the authoritative active state or meal choice to restore the complete server state locally; meal-choice restore is allowed only when the draft has the same authoritative active state, while divergent activation follows current capability and cutoff rules.
 - Unticking a day with active delegation opens confirmation naming the delegate and explains that the delegation will be revoked.
 
 ### 7.3 Feedback

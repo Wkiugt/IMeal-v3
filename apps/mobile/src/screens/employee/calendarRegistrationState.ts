@@ -113,8 +113,9 @@ export function isAuthoritativeCalendarMealChoiceRestore(
 ): boolean {
   const authoritativeDay = serverDay ?? inactiveCalendarDay;
   return (
-    choice === authoritativeDay.mealChoice &&
-    !sameCalendarDay(authoritativeDay, currentDay)
+    currentDay.active === authoritativeDay.active &&
+    currentDay.mealChoice !== authoritativeDay.mealChoice &&
+    choice === authoritativeDay.mealChoice
   );
 }
 
@@ -219,10 +220,7 @@ export function isMealChoiceChangeAllowed(
   nowAt: number,
 ): boolean {
   const authoritativeDay = serverDay ?? inactiveCalendarDay;
-  if (
-    choice === authoritativeDay.mealChoice &&
-    !sameCalendarDay(authoritativeDay, currentDay)
-  ) {
+  if (isAuthoritativeCalendarMealChoiceRestore(serverDay, currentDay, choice)) {
     return true;
   }
   if (!day.availableMealChoices.includes(choice)) return false;

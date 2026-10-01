@@ -211,6 +211,60 @@ describe('calendar lifecycle presentation and authoritative recovery', () => {
     ).toEqual([]);
   });
 
+  it('changing meal choice back to the server default does not discard an activation draft', () => {
+    const serverDay = { active: false, mealChoice: 'REGULAR' as const };
+    const draftDay = { active: true, mealChoice: 'VEGETARIAN' as const };
+    const server: CalendarServerState = { '2026-09-21': serverDay };
+    const draft: CalendarDraftState = { '2026-09-21': draftDay };
+    const beforeCutoff = makeCalendarDayAvailability({
+      availableMealChoices: ['REGULAR', 'VEGETARIAN'],
+    });
+    const beforeCutoffNow = Date.parse('2026-09-20T00:00:00.000Z');
+
+    expect(
+      isAuthoritativeCalendarMealChoiceRestore(serverDay, draftDay, 'REGULAR'),
+    ).toBe(false);
+    expect(
+      isMealChoiceChangeAllowed(
+        beforeCutoff,
+        serverDay,
+        draftDay,
+        'REGULAR',
+        beforeCutoffNow,
+      ),
+    ).toBe(true);
+
+    const selected = setDraftDay(draft, '2026-09-21', {
+      active: draftDay.active,
+      mealChoice: 'REGULAR',
+    });
+    expect(selected['2026-09-21']).toEqual({
+      active: true,
+      mealChoice: 'REGULAR',
+    });
+    expect(getDirtyDates(server, selected)).toEqual(['2026-09-21']);
+    expect(
+      buildDirtyBatchPayload(server, selected, getDirtyDates(server, selected)),
+    ).toEqual([
+      { mealDate: '2026-09-21', status: 'ACTIVE', mealChoice: 'REGULAR' },
+    ]);
+
+    const afterCutoff = makeCalendarDayAvailability({
+      cutoffAt: '2026-09-20T00:00:00.000Z',
+      availableMealChoices: ['REGULAR', 'VEGETARIAN'],
+      canActivate: false,
+    });
+    expect(
+      isMealChoiceChangeAllowed(
+        afterCutoff,
+        serverDay,
+        draftDay,
+        'REGULAR',
+        Date.parse('2026-09-21T00:00:00.000Z'),
+      ),
+    ).toBe(false);
+  });
+
   it('enables only the authoritative meal choice when change permission is revoked', () => {
     const day = makeCalendarDayAvailability({
       cutoffAt: '2026-09-20T00:00:00.000Z',
