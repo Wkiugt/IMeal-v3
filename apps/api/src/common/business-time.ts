@@ -22,6 +22,79 @@ export function getBusinessDate(now: Date = new Date()): string {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+export type RegistrationWeekRestriction =
+  | null
+  | 'REGISTRATION_WEEK_NOT_OPEN'
+  | 'OUTSIDE_REGISTRATION_WINDOW';
+
+export type RegistrationWeekWindow = {
+  businessDate: string;
+  currentWeekStart: string;
+  currentWeekEnd: string;
+  nextWeekStart: string;
+  nextWeekEnd: string;
+  nextWeekOpenAt: Date;
+  nextWeekOpen: boolean;
+};
+
+function addUtcDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+function toMealDateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+export function resolveRegistrationWeekWindow(
+  now: Date,
+): RegistrationWeekWindow {
+  const businessDate = getBusinessDate(now);
+  const businessDateValue = parseMealDate(businessDate);
+  const daysSinceMonday = (businessDateValue.getUTCDay() + 6) % 7;
+  const currentWeekStartValue = addUtcDays(
+    businessDateValue,
+    -daysSinceMonday,
+  );
+  const currentWeekEndValue = addUtcDays(currentWeekStartValue, 6);
+  const nextWeekStartValue = addUtcDays(currentWeekStartValue, 7);
+  const nextWeekEndValue = addUtcDays(nextWeekStartValue, 6);
+  const nextWeekOpenAt = addUtcDays(currentWeekStartValue, 5);
+  // Saturday 17:00 in Vietnam is 10:00 UTC; this is independent of CUTOFF_TIME.
+  nextWeekOpenAt.setUTCHours(10, 0, 0, 0);
+
+  return {
+    businessDate,
+    currentWeekStart: toMealDateKey(currentWeekStartValue),
+    currentWeekEnd: toMealDateKey(currentWeekEndValue),
+    nextWeekStart: toMealDateKey(nextWeekStartValue),
+    nextWeekEnd: toMealDateKey(nextWeekEndValue),
+    nextWeekOpenAt,
+    nextWeekOpen: now >= nextWeekOpenAt,
+  };
+}
+
+export function resolveRegistrationWeekRestriction(
+  window: RegistrationWeekWindow,
+  mealDate: string,
+): RegistrationWeekRestriction {
+  const mealDateKey = toMealDateKey(parseMealDate(mealDate));
+  if (
+    mealDateKey >= window.currentWeekStart &&
+    mealDateKey <= window.currentWeekEnd
+  ) {
+    return null;
+  }
+  if (
+    mealDateKey >= window.nextWeekStart &&
+    mealDateKey <= window.nextWeekEnd
+  ) {
+    return window.nextWeekOpen ? null : 'REGISTRATION_WEEK_NOT_OPEN';
+  }
+  return 'OUTSIDE_REGISTRATION_WINDOW';
+}
+
 export function getBusinessMonthRange(month: string): {
   startDate: Date;
   endDate: Date;

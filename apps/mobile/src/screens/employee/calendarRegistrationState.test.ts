@@ -6,6 +6,8 @@ import {
   createDraftState,
   getCalendarDayLifecycle,
   getCalendarDayPresentation,
+  getCalendarFailureKey,
+  getCalendarReasonKey,
   getDirtyDates,
   getDirtyDatesForWeek,
   isAuthoritativeCalendarMealChoiceRestore,
@@ -58,6 +60,22 @@ function makeCalendarDayAvailability(
     ...overrides,
   };
 }
+
+describe('calendar registration code presentation', () => {
+  it.each([
+    ['REGISTRATION_WEEK_NOT_OPEN', 'calendar.reasonWeekNotOpen'],
+    ['OUTSIDE_REGISTRATION_WINDOW', 'calendar.reasonOutsideRegistrationWindow'],
+  ] as const)('maps unavailable reason %s to %s', (reason, key) => {
+    expect(getCalendarReasonKey(reason)).toBe(key);
+  });
+
+  it.each([
+    ['REGISTRATION_WEEK_NOT_OPEN', 'calendar.reasonWeekNotOpen'],
+    ['OUTSIDE_REGISTRATION_WINDOW', 'calendar.reasonOutsideRegistrationWindow'],
+  ] as const)('maps batch failure %s to %s', (code, key) => {
+    expect(getCalendarFailureKey(code)).toBe(key);
+  });
+});
 
 describe('calendar lifecycle presentation and authoritative recovery', () => {
   it.each([
@@ -161,8 +179,8 @@ describe('calendar lifecycle presentation and authoritative recovery', () => {
         {
           date: '2026-09-21',
           success: false,
-          code: 'CUTOFF_PASSED',
-          reason: 'Cutoff passed',
+          code: 'REGISTRATION_WEEK_NOT_OPEN',
+          reason: 'Registration week is not open',
         },
       ],
     );
@@ -177,10 +195,9 @@ describe('calendar lifecycle presentation and authoritative recovery', () => {
       { '2026-09-21': 'UNREGISTERED' },
     );
     const lockedAvailability = makeCalendarDayAvailability({
-      cutoffAt: '2026-09-20T00:00:00.000Z',
       canActivate: false,
       unavailableReasons: {
-        activate: ['CUTOFF_PASSED'],
+        activate: ['REGISTRATION_WEEK_NOT_OPEN'],
         cancel: ['NOT_ACTIVE'],
         changeMealChoice: ['NOT_ACTIVE'],
       },
@@ -216,17 +233,17 @@ describe('calendar lifecycle presentation and authoritative recovery', () => {
     const draftDay = { active: true, mealChoice: 'VEGETARIAN' as const };
     const server: CalendarServerState = { '2026-09-21': serverDay };
     const draft: CalendarDraftState = { '2026-09-21': draftDay };
-    const beforeCutoff = makeCalendarDayAvailability({
+    const serverEligible = makeCalendarDayAvailability({
       availableMealChoices: ['REGULAR', 'VEGETARIAN'],
     });
-    const beforeCutoffNow = Date.parse('2026-09-20T00:00:00.000Z');
 
+    const beforeCutoffNow = Date.parse('2026-09-20T00:00:00.000Z');
     expect(
       isAuthoritativeCalendarMealChoiceRestore(serverDay, draftDay, 'REGULAR'),
     ).toBe(false);
     expect(
       isMealChoiceChangeAllowed(
-        beforeCutoff,
+        serverEligible,
         serverDay,
         draftDay,
         'REGULAR',
@@ -249,18 +266,22 @@ describe('calendar lifecycle presentation and authoritative recovery', () => {
       { mealDate: '2026-09-21', status: 'ACTIVE', mealChoice: 'REGULAR' },
     ]);
 
-    const afterCutoff = makeCalendarDayAvailability({
-      cutoffAt: '2026-09-20T00:00:00.000Z',
+    const serverBlocked = makeCalendarDayAvailability({
       availableMealChoices: ['REGULAR', 'VEGETARIAN'],
       canActivate: false,
+      unavailableReasons: {
+        activate: ['OUTSIDE_REGISTRATION_WINDOW'],
+        cancel: [],
+        changeMealChoice: ['OUTSIDE_REGISTRATION_WINDOW'],
+      },
     });
     expect(
       isMealChoiceChangeAllowed(
-        afterCutoff,
+        serverBlocked,
         serverDay,
         draftDay,
         'REGULAR',
-        Date.parse('2026-09-21T00:00:00.000Z'),
+        beforeCutoffNow,
       ),
     ).toBe(false);
   });
@@ -468,6 +489,31 @@ describe('calendar draft batch behavior', () => {
         nowAt,
       )['2026-09-21'],
     ).toEqual({ active: true, mealChoice: 'VEGETARIAN' });
+  });
+  it('blocks cancel and meal-choice changes when server eligibility is false', () => {
+    const blockedDay = makeCalendarDayAvailability({
+      availableMealChoices: ['REGULAR', 'VEGETARIAN'],
+      canCancel: false,
+      canChangeMealChoice: false,
+      unavailableReasons: {
+        activate: [],
+        cancel: ['OUTSIDE_REGISTRATION_WINDOW'],
+        changeMealChoice: ['OUTSIDE_REGISTRATION_WINDOW'],
+      },
+    });
+    const activeDay = { active: true, mealChoice: 'REGULAR' as const };
+    const nowAt = Date.parse('2026-09-20T00:00:00.000Z');
+
+    expect(isDateCancelable(blockedDay, nowAt)).toBe(false);
+    expect(
+      isMealChoiceChangeAllowed(
+        blockedDay,
+        activeDay,
+        activeDay,
+        'VEGETARIAN',
+        nowAt,
+      ),
+    ).toBe(false);
   });
   it('allows local activate/cancel undo in either direction', () => {
     const inactiveServer: CalendarServerState = {

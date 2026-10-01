@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { getNotificationPresentation } from './profilePresentation';
+import { initials } from '../../businessDate';
+import {
+  getNotificationPresentation,
+  resolveProfileIdentity,
+} from './profilePresentation';
 
 describe('profile notification presentation', () => {
   const labels = {
@@ -23,5 +27,43 @@ describe('profile notification presentation', () => {
       label: 'Enabled',
       showWarning: false,
     });
+  });
+});
+
+describe('profile identity presentation', () => {
+  it('prefers the trimmed employee name and derives initials from it', () => {
+    const name = resolveProfileIdentity(
+      { name: '  Ada Lovelace  ', email: 'ada@example.test' },
+      'Employee name unavailable',
+    );
+
+    expect(name).toBe('Ada Lovelace');
+    expect(initials(name, '?')).toBe('AL');
+  });
+
+  it.each([
+    ['  ', '  blank@example.test  ', 'blank', 'B'],
+    [undefined, '  staff01@example.test  ', 'staff01', 'S'],
+  ])(
+    'uses the trimmed email local-part when name is %s',
+    (name, email, expectedName, expectedInitials) => {
+      const resolved = resolveProfileIdentity(
+        { name, email },
+        'Employee name unavailable',
+      );
+
+      expect(resolved).toBe(expectedName);
+      expect(initials(resolved, '?')).toBe(expectedInitials);
+    },
+  );
+
+  it('uses the translated identity placeholder and its initials when both are unavailable', () => {
+    const resolved = resolveProfileIdentity(
+      { name: undefined, email: '   ' },
+      'Tên nhân viên chưa có',
+    );
+
+    expect(resolved).toBe('Tên nhân viên chưa có');
+    expect(initials(resolved, '?')).toBe('TN');
   });
 });

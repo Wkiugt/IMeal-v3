@@ -39,13 +39,14 @@ import {
   buildDirtyBatchPayload,
   getCalendarDayLifecycle,
   getCalendarDayPresentation,
+  getCalendarFailureKey,
+  getCalendarReasonKey,
   getDirtyDates,
   getDirtyDatesForWeek,
   isAuthoritativeCalendarMealChoiceRestore,
   isAuthoritativeCalendarRestore,
   isCalendarDayBooked,
   isCalendarDayFinalized,
-  isDateSelectable,
   isDateSelectAllEligible,
   isMealChoiceChangeAllowed,
   mergeAuthoritativeWeek,
@@ -74,7 +75,6 @@ import { useScreenLoadingGate } from '../../ui/useScreenLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { useLanguage } from '../../i18n/LanguageProvider';
 import { getMobileErrorMessage } from '../../api/mobileApiError';
-import type { TranslationKey } from '../../i18n/translations';
 import { ProfileLogoutModal } from '../profile/ProfileComposition';
 import { designTokens } from '../../ui/designTokens';
 
@@ -119,33 +119,6 @@ function createServerState(days: readonly CalendarDay[]): CalendarServerState {
   return state;
 }
 
-function reasonKey(
-  reason: v1.RegistrationDayUnavailableReason,
-): TranslationKey {
-  switch (reason) {
-    case 'HOLIDAY':
-      return 'calendar.reasonHoliday';
-    case 'DISABLED':
-      return 'calendar.reasonDisabled';
-    case 'NO_PUBLISHED_MENU':
-      return 'calendar.reasonNoPublishedMenu';
-    case 'LOCATION_UNAVAILABLE':
-      return 'calendar.reasonLocationUnavailable';
-    case 'LOCATION_AMBIGUOUS':
-      return 'calendar.reasonLocationAmbiguous';
-    case 'CUTOFF_PASSED':
-      return 'calendar.reasonCutoffPassed';
-    case 'REGISTRATION_FINALIZED':
-      return 'calendar.reasonFinalized';
-    case 'ALREADY_ACTIVE':
-      return 'calendar.reasonAlreadyActive';
-    case 'NOT_ACTIVE':
-      return 'calendar.reasonNotActive';
-    case 'NO_ALTERNATIVE_MEAL_CHOICE':
-      return 'calendar.reasonNoAlternativeMealChoice';
-  }
-}
-
 function getDayReason(
   day: CalendarDay,
   serverDay: CalendarDayState,
@@ -158,25 +131,11 @@ function getDayReason(
     : day.unavailableReasons.activate;
   return reasons[0] ?? null;
 }
-
-function failureKey(code: v1.RegistrationFailureCode): TranslationKey {
-  switch (code) {
-    case 'CUTOFF_PASSED':
-      return 'calendar.reasonCutoffPassed';
-    case 'MEAL_CHOICE_UNAVAILABLE':
-      return 'calendar.reasonNoAlternativeMealChoice';
-    case 'REGISTRATION_FINALIZED':
-      return 'calendar.reasonFinalized';
-    case 'INVALID_MEAL_DATE':
-      return 'calendar.reasonInvalidDate';
-    case 'REGISTRATION_FAILED':
-      return 'calendar.reasonRegistrationFailed';
-  }
-}
 function isBeforeCutoff(day: CalendarDay, nowAt: number): boolean {
   const cutoffAt = Date.parse(day.cutoffAt);
   return Number.isFinite(cutoffAt) && nowAt < cutoffAt;
 }
+
 export function EmployeeCalendarScreen({ navigation, route }: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
@@ -433,7 +392,6 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
       };
     }, [refreshCurrentWeek]),
   );
-
   useEffect(() => {
     if (!windowSnapshot || !isFocused || saving || weekLoading) return;
     const estimatedServerNow =
@@ -455,6 +413,10 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
     return () => clearTimeout(timer);
   }, [isFocused, refreshCurrentWeek, saving, weekLoading, windowSnapshot]);
 
+  const nowAt = windowSnapshot
+    ? windowSnapshot.serverNowAt + (Date.now() - windowSnapshot.receiptAt)
+    : Date.now();
+
   const dirtyDates = useMemo(
     () => getDirtyDates(serverState, draftState),
     [draftState, serverState],
@@ -463,9 +425,6 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
     () => dirtyDates.filter((dateKey) => dayByDate[dateKey] !== undefined),
     [dayByDate, dirtyDates],
   );
-  const nowAt = windowSnapshot
-    ? windowSnapshot.serverNowAt + (Date.now() - windowSnapshot.receiptAt)
-    : Date.now();
   const monthRows = useMemo(() => buildMonthRows(month), [month]);
   const hasMonthData = monthDataKey === toDateKey(month);
   const hasInitialWeekResult = Object.keys(dayByDate).length > 0;
@@ -741,7 +700,7 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
         const failureDetails = failures
           .map(
             (failure) =>
-              `${formatDay(parseDateKey(failure.date), locale)}: ${t(failureKey(failure.code))}`,
+              `${formatDay(parseDateKey(failure.date), locale)}: ${t(getCalendarFailureKey(failure.code))}`,
           )
           .join(' · ');
         showNotice({
@@ -1098,7 +1057,9 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
                     nowAt,
                   );
                 const reason = getDayReason(day, serverDay, state);
-                const reasonText = reason ? t(reasonKey(reason)) : undefined;
+                const reasonText = reason
+                  ? t(getCalendarReasonKey(reason))
+                  : undefined;
                 const lifecycleText =
                   presentation.lifecycle === 'SERVED'
                     ? t('dashboard.todayServed')

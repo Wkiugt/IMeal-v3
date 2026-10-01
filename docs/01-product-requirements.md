@@ -144,6 +144,8 @@ Staff mở một tuần và tick từng ngày:
 - Weekly screen là presentation/batch-edit layer; source of truth vẫn là registration từng ngày.
 - Cutoff giữ **14:00 ngày trước meal date**, áp dụng độc lập cho từng ngày. Mutation chỉ hợp lệ khi server time `< 14:00`; đúng `14:00:00` là đã khóa.
 - Server time là nguồn sự thật; mobile không được tự quyết định cutoff.
+- Weekly registration eligibility uses Vietnam Monday–Sunday weeks. Before the current week’s Saturday `17:00`, only current-week dates may mutate. At exactly Saturday `17:00`, next week opens while the current week remains eligible through Sunday, subject to each date’s separate cutoff. On the following Monday, the former week is outside the registration window and the new next week stays closed until its Saturday `17:00`.
+- Dates outside the current and next week are locked by the weekly window. The weekly gate is independent from `CUTOFF_TIME`; both server-authoritative restrictions apply.
 - Một tuần có thể chứa mixed state: ngày đã khóa, ngày còn editable.
 - Batch save trả kết quả từng ngày; ngày không hợp lệ không được làm mất draft của ngày khác.
 - Không persist literal `unregistered`; không có registration row nghĩa là unregistered.

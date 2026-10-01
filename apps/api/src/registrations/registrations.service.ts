@@ -24,6 +24,8 @@ import {
   getBusinessMonthRange,
   getCutoffInstant,
   parseMealDate,
+  resolveRegistrationWeekRestriction,
+  resolveRegistrationWeekWindow,
 } from '../common/business-time.js';
 import {
   serializeEmployeeRegistrationBase,
@@ -37,6 +39,9 @@ import {
 
 const INVALID_MEAL_DATE_MESSAGE = 'Invalid meal date';
 const CUTOFF_PASSED_MESSAGE = 'Cutoff time exceeded';
+const REGISTRATION_WEEK_NOT_OPEN_MESSAGE = 'Registration week is not open';
+const OUTSIDE_REGISTRATION_WINDOW_MESSAGE =
+  'Date is outside the registration window';
 const MEAL_CHOICE_UNAVAILABLE_MESSAGE =
   'Meal choice is unavailable for this date';
 const REGISTRATION_FINALIZED_MESSAGE = 'Registration is finalized';
@@ -460,12 +465,18 @@ export class RegistrationsService {
     endDate.setUTCDate(startDate.getUTCDate() + 6);
     const cutoffSetting = await this.getCutoffTime();
     const serverNow = new Date();
+    const weeklyWindow = resolveRegistrationWeekWindow(serverNow);
     const windowDays = mealDates.map((mealDateKey, index) => {
       const cutoffAt = getCutoffInstant(mealDateKey, cutoffSetting.time);
+      const weeklyRestriction = resolveRegistrationWeekRestriction(
+        weeklyWindow,
+        mealDateKey,
+      );
       return {
         mealDate: mealDateKey,
         cutoffAt: cutoffAt.toISOString(),
-        editable: serverNow < cutoffAt,
+        editable: serverNow < cutoffAt && weeklyRestriction === null,
+        weeklyRestriction,
         lunarDate: lunarDates[index],
         availableMealChoices: getAvailableMealChoices(mealDateKey),
       };
@@ -657,6 +668,12 @@ export class RegistrationsService {
         changeMealChoiceReasons.push('NO_ALTERNATIVE_MEAL_CHOICE');
       }
 
+      if (windowDay.weeklyRestriction !== null) {
+        activateReasons.push(windowDay.weeklyRestriction);
+        cancelReasons.push(windowDay.weeklyRestriction);
+        changeMealChoiceReasons.push(windowDay.weeklyRestriction);
+      }
+
       return {
         mealDate: windowDay.mealDate,
         menu,
@@ -685,7 +702,13 @@ export class RegistrationsService {
         serverNow: serverNow.toISOString(),
         cutoffAt: windowDays[0].cutoffAt,
         timeZone: BUSINESS_TIME_ZONE,
-        days: windowDays,
+        days: windowDays.map((windowDay) => ({
+          mealDate: windowDay.mealDate,
+          cutoffAt: windowDay.cutoffAt,
+          editable: windowDay.editable,
+          lunarDate: windowDay.lunarDate,
+          availableMealChoices: windowDay.availableMealChoices,
+        })),
       },
     });
   }
@@ -868,6 +891,7 @@ export class RegistrationsService {
     const cutoffSetting = await this.getCutoffTime();
     const cutoffTimeStr = cutoffSetting.time;
     const serverNow = new Date();
+    const weeklyWindow = resolveRegistrationWeekWindow(serverNow);
     const results: v1.BatchRegistrationResult[] = [];
 
     // Partial success handling: loop each item independently
@@ -889,6 +913,23 @@ export class RegistrationsService {
       }
 
       try {
+        const weeklyRestriction = resolveRegistrationWeekRestriction(
+          weeklyWindow,
+          mealDateStr,
+        );
+        if (weeklyRestriction !== null) {
+          results.push({
+            date: mealDateStr,
+            success: false,
+            code: weeklyRestriction,
+            reason:
+              weeklyRestriction === 'REGISTRATION_WEEK_NOT_OPEN'
+                ? REGISTRATION_WEEK_NOT_OPEN_MESSAGE
+                : OUTSIDE_REGISTRATION_WINDOW_MESSAGE,
+          });
+          continue;
+        }
+
         const cutoffDate = getCutoffInstant(mealDateStr, cutoffTimeStr);
         if (serverNow >= cutoffDate) {
           results.push({

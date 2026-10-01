@@ -59,6 +59,8 @@ export type BatchRegistrationRequest = z.infer<
 export const RegistrationFailureCodeSchema = z.enum([
   'INVALID_MEAL_DATE',
   'CUTOFF_PASSED',
+  'REGISTRATION_WEEK_NOT_OPEN',
+  'OUTSIDE_REGISTRATION_WINDOW',
   'MEAL_CHOICE_UNAVAILABLE',
   'REGISTRATION_FINALIZED',
   'REGISTRATION_FAILED',
@@ -172,6 +174,8 @@ export const RegistrationDayUnavailableReasonSchema = z.enum([
   'LOCATION_UNAVAILABLE',
   'LOCATION_AMBIGUOUS',
   'CUTOFF_PASSED',
+  'REGISTRATION_WEEK_NOT_OPEN',
+  'OUTSIDE_REGISTRATION_WINDOW',
   'REGISTRATION_FINALIZED',
   'ALREADY_ACTIVE',
   'NOT_ACTIVE',

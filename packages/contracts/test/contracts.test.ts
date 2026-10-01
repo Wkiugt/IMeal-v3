@@ -431,6 +431,35 @@ describe('Contracts v1', () => {
       }
     });
 
+    it('accepts weekly registration restriction failure and day reasons', () => {
+      expect(
+        v1.BatchRegistrationResponseSchema.safeParse([
+          {
+            date: '2026-09-07',
+            success: false,
+            code: 'REGISTRATION_WEEK_NOT_OPEN',
+            reason: 'Registration week is not open',
+          },
+          {
+            date: '2026-09-14',
+            success: false,
+            code: 'OUTSIDE_REGISTRATION_WINDOW',
+            reason: 'Date is outside the registration window',
+          },
+        ]).success,
+      ).toBe(true);
+      expect(
+        v1.RegistrationDayUnavailableReasonSchema.safeParse(
+          'REGISTRATION_WEEK_NOT_OPEN',
+        ).success,
+      ).toBe(true);
+      expect(
+        v1.RegistrationDayUnavailableReasonSchema.safeParse(
+          'OUTSIDE_REGISTRATION_WINDOW',
+        ).success,
+      ).toBe(true);
+    });
+
     it('rejects unknown failure codes and result branch fields', () => {
       expect(
         v1.BatchRegistrationResponseSchema.safeParse([

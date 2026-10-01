@@ -477,16 +477,30 @@ consistent and display-complete. This read-side authority uses the same
 location identity and menu-revision validity checks as activation; it never
 replaces a registered snapshot with current roster data.
 
+Weekly registration eligibility is resolved from one server timestamp in
+`Asia/Ho_Chi_Minh`: Monday–Sunday current and next week boundaries are
+computed from the Vietnam business date. Before the current week’s Saturday
+`17:00`, only current-week dates are eligible; at exactly `17:00`, next week
+opens while the current week remains eligible through Sunday. On the next
+Monday, the former week is outside and the new next week is closed until its
+Saturday `17:00`. Reads remain viewable for historical, current, next, and
+future weeks; `registrationWindow.days[].editable` and action flags/reasons
+combine this weekly result with the independent per-meal cutoff.
+
 `canActivate` is the only action that requires current published-menu and
-effective-location authority. `canCancel` and `canChangeMealChoice` operate
-on the existing registration lifecycle and remain available for complete
-historical rows even when current menu or roster authority is unavailable.
+effective-location authority. For an existing registration,
+`canCancel` and `canChangeMealChoice` use the persisted lifecycle and snapshot
+without requiring current menu or roster authority; they still remain gated by
+the per-meal cutoff, weekly registration eligibility, and finalized state.
+Historical rows remain viewable as read-only data when those mutation gates
+are closed.
 Any linked `meal_servings` row is projected as `SERVED` (including legacy
 `ACTIVE + meal_serving` rows), while finalized serving/no-show/penalty history
 blocks lifecycle mutations. The reason arrays are machine-readable contract
 values (`HOLIDAY`, `DISABLED`, `NO_PUBLISHED_MENU`, `LOCATION_UNAVAILABLE`,
-`LOCATION_AMBIGUOUS`, `CUTOFF_PASSED`, `REGISTRATION_FINALIZED`,
-`ALREADY_ACTIVE`, `NOT_ACTIVE`, and `NO_ALTERNATIVE_MEAL_CHOICE`).
+`LOCATION_AMBIGUOUS`, `CUTOFF_PASSED`, `REGISTRATION_WEEK_NOT_OPEN`,
+`OUTSIDE_REGISTRATION_WINDOW`, `REGISTRATION_FINALIZED`, `ALREADY_ACTIVE`,
+`NOT_ACTIVE`, and `NO_ALTERNATIVE_MEAL_CHOICE`).
 
 ## 9. `pickup_delegations`
 

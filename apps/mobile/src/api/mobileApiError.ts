@@ -47,6 +47,8 @@ const ERROR_MESSAGE_KEYS: Record<MobileApiErrorCode, TranslationKey> = {
   MEAL_CHOICE_UNAVAILABLE: 'errors.mealChoiceUnavailable',
   REGISTRATION_FINALIZED: 'errors.registrationFinalized',
   REGISTRATION_FAILED: 'errors.registrationFailed',
+  REGISTRATION_WEEK_NOT_OPEN: 'errors.registrationWeekNotOpen',
+  OUTSIDE_REGISTRATION_WINDOW: 'errors.outsideRegistrationWindow',
   PICKUP_WINDOW_CLOSED: 'errors.pickupWindowClosed',
   PICKUP_NOT_READY: 'errors.pickupNotReady',
 };

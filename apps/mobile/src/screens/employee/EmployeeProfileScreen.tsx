@@ -40,7 +40,10 @@ import {
   type ProfileStatsState,
 } from './profileStatsState';
 import { designTokens } from '../../ui/designTokens';
-import { getNotificationPresentation } from './profilePresentation';
+import {
+  getNotificationPresentation,
+  resolveProfileIdentity,
+} from './profilePresentation';
 import {
   ProfileIdentity,
   ProfileLanguageSheet,
@@ -232,7 +235,10 @@ export function EmployeeProfileScreen({ navigation }: Props) {
     createProfileStatsState(),
   );
   const statsRequestIdRef = useRef(0);
-  const displayName = profile?.name?.trim() || t('profile.identityUnavailable');
+  const displayName = resolveProfileIdentity(
+    profile,
+    t('profile.identityUnavailable'),
+  );
   const userCode =
     profile?.userId || profile?.id || t('profile.identifierUnavailable');
 
@@ -399,7 +405,7 @@ export function EmployeeProfileScreen({ navigation }: Props) {
       />
 
       <ProfileIdentity
-        initials={initials(profile?.name, '?')}
+        initials={initials(displayName, '?')}
         name={displayName}
         roleLabel={t('profile.employeeAccount')}
         identifier={userCode}

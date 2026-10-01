@@ -177,6 +177,8 @@ Weekly list example:
 - On lunar day 1 or 15, including a leap month, Staff may choose `REGULAR` or `VEGETARIAN`; no other date exposes `VEGETARIAN`.
 - Untick registered editable day → local draft `registered=false`; the existing `meal_choice` remains stored for history.
 - Locked day does not toggle or change its meal choice.
+- Weekly editability follows the server’s Monday–Sunday Vietnam window: before Saturday `17:00`, only the current week is eligible; at exactly Saturday `17:00`, next week becomes eligible without closing the current week until Sunday. The following Monday moves the former week outside the window and leaves the new next week closed until its Saturday `17:00`.
+- A date outside the current or next week remains viewable but cannot mutate. The weekly restriction is separate from that date’s `cutoffAt`; clients use server `editable`, action flags, and reason arrays rather than deriving weekday rules.
 - Day without published menu is disabled and explains why.
 - `Chọn cả tuần` only affects currently editable/published days and uses `REGULAR` unless the Staff chooses otherwise on an eligible lunar date.
 - Unticking a registration with `pending|accepted` delegation warns that the delegation will also be revoked.
@@ -214,6 +216,7 @@ Possible result:
 Do not display success before server confirmation.
 
 Cutoff boundary is strict: request snapshot `< 14:00` is editable; exactly `14:00:00` returns `CUTOFF_PASSED`.
+- Weekly boundary is also strict: current-week mutation closes at Saturday `17:00` while the next week opens at that exact instant; the current week remains eligible through Sunday, and the server returns `REGISTRATION_WEEK_NOT_OPEN` or `OUTSIDE_REGISTRATION_WINDOW` for blocked dates. `CUTOFF_PASSED` remains the independent per-meal result.
 
 ## 5. Staff QR flow
 

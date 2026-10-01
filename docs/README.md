@@ -52,6 +52,7 @@ IMeal v2 là một re-platforming so với hệ thống web Firebase/Firestore h
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | Meal date           | Ngày sử dụng suất ăn theo `Asia/Ho_Chi_Minh`, `YYYY-MM-DD`                                                                         |
 | Week                | Tuần hiển thị trên Staff/Kitchen để quản lý menu và registration                                                                   |
+| Weekly registration window | Monday–Sunday Vietnam week; current week is eligible before Saturday `17:00`, next week opens at exactly that boundary while current week remains eligible through Sunday, and dates outside current/next are locked |
 | Daily menu          | Một món cố định cho một meal date                                                                                                  |
 | Meal choice         | Loại suất `REGULAR` hoặc `VEGETARIAN`; ngày bình thường chỉ `REGULAR`, ngày mùng 1/15 âm lịch (kể cả tháng nhuận) cho phép cả hai  |
 | Cutoff              | 14:00 ngày trước meal date; đúng `14:00:00` là đã khóa                                                                             |
@@ -84,6 +85,7 @@ Nếu implementation và docs v2 khác nhau, thay đổi phải cập nhật c�
 
 - `Asia/Ho_Chi_Minh` là timezone business duy nhất; timestamps are UTC instants.
 - Mobile không được trực tiếp ghi database; server time là nguồn sự thật cho cutoff và meal date.
+- Weekly registration authority is separate from per-meal `CUTOFF_TIME`: server reads remain viewable for any week, while mutation editability and per-action flags/reasons combine both restrictions.
 - `UNIQUE(user_id, meal_date)` ngăn duplicate registration; registration lưu lựa chọn suất và effective location snapshot.
 - QR 5 giây chỉ dùng để xác thực presenter + exact pickup intent; scan QR không tự động đánh dấu `SERVED` trước Kitchen confirmation.
 - If exactly one eligible pickup item exists, mobile auto-selects it. With multiple options, Staff explicitly selects the exact sorted set on the presenter device.

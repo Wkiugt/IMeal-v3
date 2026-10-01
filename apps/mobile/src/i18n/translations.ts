@@ -120,6 +120,9 @@ export const vi = {
   'calendar.reasonAlreadyActive': 'Đã đăng ký',
   'calendar.reasonNotActive': 'Chưa có đăng ký',
   'calendar.reasonNoAlternativeMealChoice': 'Không còn lựa chọn suất thay thế',
+  'calendar.reasonWeekNotOpen': 'Tuần đăng ký chưa mở',
+  'calendar.reasonOutsideRegistrationWindow':
+    'Hiện đang ngoài thời gian đăng ký',
   'calendar.reasonInvalidDate': 'Ngày đăng ký không hợp lệ',
   'calendar.reasonRegistrationFailed': 'Không thể lưu đăng ký',
   'calendar.discardWeekTitle': 'Bỏ thay đổi tuần này?',
@@ -430,6 +433,8 @@ export const vi = {
     'Lựa chọn suất ăn này không khả dụng trong ngày này.',
   'errors.registrationFinalized': 'Đăng ký này đã được chốt.',
   'errors.registrationFailed': 'Không thể cập nhật đăng ký suất ăn.',
+  'errors.registrationWeekNotOpen': 'Tuần đăng ký chưa mở.',
+  'errors.outsideRegistrationWindow': 'Hiện đang ngoài thời gian đăng ký.',
   'errors.pickupWindowClosed': 'Hiện đang ngoài giờ nhận suất.',
   'errors.pickupNotReady': 'Bếp chưa sẵn sàng nhận suất.',
   'errors.loadCalendar': 'Không thể tải lịch suất ăn.',
@@ -629,6 +634,9 @@ export const en: Record<TranslationKey, string> = {
   'calendar.reasonNotActive': 'No active registration',
   'calendar.reasonNoAlternativeMealChoice':
     'No alternative meal choice remains',
+  'calendar.reasonWeekNotOpen': 'Registration for this week is not open yet',
+  'calendar.reasonOutsideRegistrationWindow':
+    'Registration is currently outside the registration window',
   'calendar.reasonInvalidDate': 'Invalid registration date',
   'calendar.discardWeekTitle': 'Discard this week’s changes?',
   'calendar.discardWeekMessage':
@@ -929,6 +937,10 @@ export const en: Record<TranslationKey, string> = {
   'errors.registrationFinalized':
     'This registration has already been finalized.',
   'errors.registrationFailed': 'The meal registration could not be updated.',
+  'errors.registrationWeekNotOpen':
+    'Registration for this week is not open yet.',
+  'errors.outsideRegistrationWindow':
+    'Registration is currently outside the registration window.',
   'errors.pickupWindowClosed': 'Pickup is currently closed.',
   'errors.pickupNotReady': 'The kitchen is not ready for pickup.',
   'errors.loadCalendar': 'Unable to load the meal calendar.',

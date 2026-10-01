@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import { Test, TestingModule } from '@nestjs/testing';
+import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import type { Server } from 'node:http';
 import {
@@ -13,8 +13,8 @@ import {
 } from 'vitest';
 import type { Mock } from 'vitest';
 import { AppModule } from './../src/app.module.js';
+import { PrismaService } from './../src/common/prisma.service.js';
 import { RegistrationsService } from './../src/registrations/registrations.service.js';
-
 describe('RegistrationsController (e2e)', () => {
   let app: INestApplication<Server>;
   let mockRegistrationsService: {
@@ -104,6 +104,8 @@ describe('RegistrationsController (e2e)', () => {
     return Test.createTestingModule({
       imports: [AppModule],
     })
+      .overrideProvider(PrismaService)
+      .useValue({})
       .overrideProvider(RegistrationsService)
       .useValue(mockRegistrationsService)
       .compile()
@@ -239,5 +241,233 @@ describe('RegistrationsController (e2e)', () => {
       });
 
     expect(response.status).toBe(404);
+  });
+});
+
+function createRealPrismaMock() {
+  const txMock = {
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    dailyMenu: {
+      findFirst: vi.fn().mockResolvedValue({ id: 'daily-menu-1' }),
+    },
+    dailyMenuRevision: {
+      findMany: vi.fn().mockResolvedValue([
+        {
+          id: 'revision-1',
+          revision: 1,
+          mealName: 'Lunch',
+          description: 'Verified lunch',
+          imageUrl: null,
+        },
+      ]),
+    },
+    employeeLocationAssignment: {
+      findMany: vi.fn().mockResolvedValue([
+        {
+          id: 'assignment-1',
+          employeeName: 'Test User',
+          employeeCode: 'TEST-1',
+          serviceLocationCode: 'LOC-A',
+          locationId: 'location-1',
+          effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+        },
+      ]),
+    },
+    location: {
+      findFirst: vi.fn().mockResolvedValue({
+        id: 'location-1',
+        shortCode: 'LOC-A',
+        displayName: 'Main Hall',
+        address: '1 Main Street',
+      }),
+    },
+    registration: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      update: vi.fn().mockResolvedValue({}),
+      create: vi.fn().mockResolvedValue({}),
+    },
+    pickupDelegation: {
+      findMany: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue({}),
+    },
+    auditLog: { create: vi.fn().mockResolvedValue({}) },
+    notification: { upsert: vi.fn().mockResolvedValue({}) },
+    outboxEvent: {
+      upsert: vi.fn().mockResolvedValue({}),
+      create: vi.fn().mockResolvedValue({}),
+    },
+  };
+  const prismaMock = {
+    appSetting: {
+      findUnique: vi.fn().mockResolvedValue({ value: '18:00', version: 1 }),
+    },
+    weeklyMenu: { findFirst: vi.fn().mockResolvedValue(null) },
+    registration: {
+      findMany: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
+    },
+    employeeLocationAssignment: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    $transaction: vi.fn(),
+  };
+  prismaMock.$transaction.mockImplementation(
+    async (callback: (tx: typeof txMock) => Promise<unknown>) =>
+      callback(txMock),
+  );
+  return prismaMock;
+}
+
+describe('RegistrationsController weekly window (real service)', () => {
+  let app: INestApplication<Server>;
+  let prismaMock = createRealPrismaMock();
+
+  beforeAll(() => {
+    process.env.REQUIRE_AUTH = 'false';
+  });
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    prismaMock = createRealPrismaMock();
+    const moduleFixture = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideProvider(PrismaService)
+      .useValue(prismaMock)
+      .compile();
+    app = moduleFixture.createNestApplication();
+    await app.init();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    vi.useRealTimers();
+  });
+
+  it('runs real week reads through the route for current, closed next, and outside weeks', async () => {
+    vi.setSystemTime(new Date('2026-09-04T03:00:00.000Z'));
+
+    const current = await request(app.getHttpServer())
+      .get('/api/registrations/week')
+      .query({ startDate: '2026-08-31' })
+      .expect(200);
+    expect(current.body.registrationWindow.days[5].editable).toBe(true);
+
+    const closedNext = await request(app.getHttpServer())
+      .get('/api/registrations/week')
+      .query({ startDate: '2026-09-07' })
+      .expect(200);
+    expect(closedNext.body.registrationWindow.days[0].editable).toBe(false);
+    expect(closedNext.body.days[0].unavailableReasons.activate).toContain(
+      'REGISTRATION_WEEK_NOT_OPEN',
+    );
+
+    const outside = await request(app.getHttpServer())
+      .get('/api/registrations/week')
+      .query({ startDate: '2026-09-14' })
+      .expect(200);
+    expect(outside.body.registrationWindow.days[0].editable).toBe(false);
+    expect(outside.body.days[0].unavailableReasons.activate).toContain(
+      'OUTSIDE_REGISTRATION_WINDOW',
+    );
+  });
+
+  it('opens next week at the exact boundary and preserves mixed batch results', async () => {
+    vi.setSystemTime(new Date('2026-09-05T10:00:00.000Z'));
+
+    const openNext = await request(app.getHttpServer())
+      .get('/api/registrations/week')
+      .query({ startDate: '2026-09-07' })
+      .expect(200);
+    expect(openNext.body.registrationWindow.days[0].editable).toBe(true);
+
+    const exactBoundary = await request(app.getHttpServer())
+      .put('/api/registrations/batch')
+      .send({
+        registrations: [
+          {
+            mealDate: '2026-09-06',
+            status: 'ACTIVE',
+            mealChoice: 'REGULAR',
+          },
+          {
+            mealDate: '2026-09-13',
+            status: 'ACTIVE',
+            mealChoice: 'REGULAR',
+          },
+          {
+            mealDate: '2026-09-14',
+            status: 'ACTIVE',
+            mealChoice: 'REGULAR',
+          },
+        ],
+      })
+      .expect(200);
+    expect(exactBoundary.body).toEqual([
+      { date: '2026-09-06', success: true },
+      { date: '2026-09-13', success: true },
+      {
+        date: '2026-09-14',
+        success: false,
+        code: 'OUTSIDE_REGISTRATION_WINDOW',
+        reason: 'Date is outside the registration window',
+      },
+    ]);
+
+    vi.setSystemTime(new Date('2026-09-04T03:00:00.000Z'));
+    const mixed = await request(app.getHttpServer())
+      .put('/api/registrations/batch')
+      .send({
+        registrations: [
+          {
+            mealDate: '2026-09-06',
+            status: 'ACTIVE',
+            mealChoice: 'REGULAR',
+          },
+          {
+            mealDate: '2026-09-07',
+            status: 'ACTIVE',
+            mealChoice: 'REGULAR',
+          },
+          {
+            mealDate: '2026-09-14',
+            status: 'ACTIVE',
+            mealChoice: 'REGULAR',
+          },
+        ],
+      })
+      .expect(200);
+    expect(mixed.body).toEqual([
+      { date: '2026-09-06', success: true },
+      {
+        date: '2026-09-07',
+        success: false,
+        code: 'REGISTRATION_WEEK_NOT_OPEN',
+        reason: 'Registration week is not open',
+      },
+      {
+        date: '2026-09-14',
+        success: false,
+        code: 'OUTSIDE_REGISTRATION_WINDOW',
+        reason: 'Date is outside the registration window',
+      },
+    ]);
+  });
+
+  it('validates batch bodies before invoking the real service', async () => {
+    const response = await request(app.getHttpServer())
+      .put('/api/registrations/batch')
+      .send({
+        registrations: [
+          {
+            mealDate: '2026-09-06',
+            status: 'ACTIVE',
+            mealChoice: 'REGULAR',
+            locationId: 'client-location',
+          },
+        ],
+      });
+    expect(response.status).toBe(400);
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 });
