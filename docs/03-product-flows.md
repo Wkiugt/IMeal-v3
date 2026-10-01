@@ -150,6 +150,10 @@ sequenceDiagram
     API-->>M: Days + authoritative canActivate/canCancel/canChangeMealChoice, cutoffAt, reasons and choices
 ```
 
+`registrationWindow.nextWeekOpenAt` is the server-authoritative ISO UTC instant
+for the next weekly opening; mobile schedules refresh from this value and does
+not derive the Saturday boundary locally.
+
 Weekly list example:
 
 ```text
@@ -216,7 +220,7 @@ Possible result:
 Do not display success before server confirmation.
 
 Cutoff boundary is strict: request snapshot `< 14:00` is editable; exactly `14:00:00` returns `CUTOFF_PASSED`.
-- Weekly boundary is also strict: current-week mutation closes at Saturday `17:00` while the next week opens at that exact instant; the current week remains eligible through Sunday, and the server returns `REGISTRATION_WEEK_NOT_OPEN` or `OUTSIDE_REGISTRATION_WINDOW` for blocked dates. `CUTOFF_PASSED` remains the independent per-meal result.
+- Weekly boundary is strict: before Saturday `17:00`, the current week is eligible and the next week is closed; from exactly Saturday `17:00` through Sunday, both weeks are eligible subject to each date’s independent per-meal cutoff; on Monday, the former week is outside the window, the new current week is eligible, and the new next week remains closed until its Saturday `17:00`. The server returns `REGISTRATION_WEEK_NOT_OPEN` or `OUTSIDE_REGISTRATION_WINDOW` for blocked dates; `CUTOFF_PASSED` remains the independent per-meal result.
 
 ## 5. Staff QR flow
 

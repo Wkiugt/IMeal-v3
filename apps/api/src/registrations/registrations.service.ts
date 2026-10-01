@@ -700,6 +700,7 @@ export class RegistrationsService {
       days,
       registrationWindow: {
         serverNow: serverNow.toISOString(),
+        nextWeekOpenAt: weeklyWindow.nextWeekOpenAt.toISOString(),
         cutoffAt: windowDays[0].cutoffAt,
         timeZone: BUSINESS_TIME_ZONE,
         days: windowDays.map((windowDay) => ({

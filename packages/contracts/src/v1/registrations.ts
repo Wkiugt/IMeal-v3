@@ -145,6 +145,7 @@ export type RegistrationWindowDay = z.infer<typeof RegistrationWindowDaySchema>;
 export const RegistrationWindowSchema = z
   .object({
     serverNow: UtcDateTimeSchema,
+    nextWeekOpenAt: UtcDateTimeSchema,
     cutoffAt: UtcDateTimeSchema,
     timeZone: z.literal('Asia/Ho_Chi_Minh'),
     days: z.array(RegistrationWindowDaySchema).length(7),

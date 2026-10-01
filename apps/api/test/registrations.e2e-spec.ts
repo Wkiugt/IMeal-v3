@@ -65,6 +65,7 @@ describe('RegistrationsController (e2e)', () => {
         })),
         registrationWindow: {
           serverNow: '2026-09-03T02:00:00.000Z',
+          nextWeekOpenAt: '2026-09-05T10:00:00.000Z',
           cutoffAt: '2026-09-04T07:00:00.000Z',
           timeZone: 'Asia/Ho_Chi_Minh',
           days: [
@@ -123,10 +124,11 @@ describe('RegistrationsController (e2e)', () => {
     const response = await request(app.getHttpServer())
       .get('/api/registrations/week')
       .query({ startDate: '2026-09-05' });
-
     expect(response.status).toBe(200);
     expect(response.body.days).toHaveLength(7);
-    expect(response.body.registrationWindow.timeZone).toBe('Asia/Ho_Chi_Minh');
+    expect(response.body.registrationWindow.timeZone).toBe(
+      'Asia/Ho_Chi_Minh',
+    );
   });
 
   it('validates a batch request and returns each date result', async () => {
@@ -380,6 +382,9 @@ describe('RegistrationsController weekly window (real service)', () => {
       .query({ startDate: '2026-09-07' })
       .expect(200);
     expect(openNext.body.registrationWindow.days[0].editable).toBe(true);
+    expect(openNext.body.registrationWindow.nextWeekOpenAt).toBe(
+      '2026-09-05T10:00:00.000Z',
+    );
 
     const exactBoundary = await request(app.getHttpServer())
       .put('/api/registrations/batch')

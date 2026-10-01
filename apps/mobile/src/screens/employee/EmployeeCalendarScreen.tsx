@@ -58,6 +58,7 @@ import {
   type CalendarServerState,
   type MealChoice,
 } from './calendarRegistrationState';
+import { getCalendarRefreshDelay } from './calendarRefreshSchedule';
 import {
   ActionButton,
   AppText,
@@ -83,6 +84,7 @@ type CalendarDay = v1.WeekRegistrationDay;
 type WindowSnapshot = {
   serverNowAt: number;
   receiptAt: number;
+  nextWeekOpenAt: string;
   days: Record<string, CalendarDay>;
 };
 type CalendarError =
@@ -99,13 +101,19 @@ function getWindowSnapshot(
   receiptAt: number,
 ): WindowSnapshot | null {
   const serverNowAt = Date.parse(response.registrationWindow.serverNow);
-  if (!Number.isFinite(serverNowAt) || response.days.length !== 7) return null;
+  const nextWeekOpenAt = response.registrationWindow.nextWeekOpenAt;
+  if (
+    !Number.isFinite(serverNowAt) ||
+    !Number.isFinite(Date.parse(nextWeekOpenAt)) ||
+    response.days.length !== 7
+  )
+    return null;
   const days: Record<string, CalendarDay> = {};
   for (const day of response.days) {
     if (!Number.isFinite(Date.parse(day.cutoffAt))) return null;
     days[day.mealDate] = day;
   }
-  return { serverNowAt, receiptAt, days };
+  return { serverNowAt, receiptAt, nextWeekOpenAt, days };
 }
 
 function createServerState(days: readonly CalendarDay[]): CalendarServerState {
@@ -394,22 +402,19 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
   );
   useEffect(() => {
     if (!windowSnapshot || !isFocused || saving || weekLoading) return;
-    const estimatedServerNow =
-      windowSnapshot.serverNowAt + (Date.now() - windowSnapshot.receiptAt);
-    const cutoffTimes = Object.values(windowSnapshot.days)
-      .filter(
-        (day) => day.canActivate || day.canCancel || day.canChangeMealChoice,
-      )
-      .map((day) => Date.parse(day.cutoffAt))
-      .filter((value) => Number.isFinite(value) && value > estimatedServerNow);
-    if (cutoffTimes.length === 0) return;
-    const remaining = Math.min(...cutoffTimes) - estimatedServerNow;
-    const timer = setTimeout(
-      () => {
-        if (!savingRef.current) void refreshCurrentWeek();
+    const remaining = getCalendarRefreshDelay(
+      {
+        serverNowAt: windowSnapshot.serverNowAt,
+        receiptAt: windowSnapshot.receiptAt,
+        nextWeekOpenAt: windowSnapshot.nextWeekOpenAt,
+        days: Object.values(windowSnapshot.days),
       },
-      Math.max(0, remaining),
+      Date.now(),
     );
+    if (remaining === null) return;
+    const timer = setTimeout(() => {
+      if (!savingRef.current) void refreshCurrentWeek();
+    }, remaining);
     return () => clearTimeout(timer);
   }, [isFocused, refreshCurrentWeek, saving, weekLoading, windowSnapshot]);
 

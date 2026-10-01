@@ -551,6 +551,48 @@ describe('Contracts v1', () => {
       ).toBe(false);
     });
 
+    it('requires the exact UTC next-week opening timestamp', () => {
+      const window = {
+        serverNow: '2026-09-05T10:00:00.000Z',
+        cutoffAt: '2026-09-04T07:00:00.000Z',
+        timeZone: 'Asia/Ho_Chi_Minh' as const,
+        nextWeekOpenAt: '2026-09-05T10:00:00.000Z',
+        days: Array.from({ length: 7 }, (_, index) => ({
+          mealDate: `2026-09-${String(5 + index).padStart(2, '0')}`,
+          cutoffAt: '2026-09-04T07:00:00.000Z',
+          editable: true,
+          lunarDate: {
+            day: 1,
+            month: 8,
+            year: 2026,
+            isLeapMonth: false,
+          },
+          availableMealChoices: ['REGULAR' as const],
+        })),
+      };
+
+      expect(v1.RegistrationWindowSchema.safeParse(window).success).toBe(true);
+      expect(
+        v1.RegistrationWindowSchema.safeParse({
+          ...window,
+          nextWeekOpenAt: undefined,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.RegistrationWindowSchema.safeParse({
+          ...window,
+          nextWeekOpenAt: '2026-09-05T17:00:00+07:00',
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.RegistrationWindowSchema.safeParse({
+          ...window,
+          nextWeekOpenAt: '2026-09-05T10:00:00.000Z',
+          unknown: true,
+        }).success,
+      ).toBe(false);
+    });
+
     it('validates a complete seven-day response with real menu, location, and lifecycle fields', () => {
       const mealDates = [
         '2026-09-21',
@@ -719,6 +761,7 @@ describe('Contracts v1', () => {
         days,
         registrationWindow: {
           serverNow: '2026-09-20T06:00:00.000Z',
+          nextWeekOpenAt: '2026-09-19T10:00:00.000Z',
           cutoffAt: '2026-09-20T07:00:00.000Z',
           timeZone: 'Asia/Ho_Chi_Minh',
           days: registrationWindowDays,
@@ -838,6 +881,7 @@ describe('Contracts v1', () => {
         days: mealDates.map(validDay),
         registrationWindow: {
           serverNow: '2026-09-20T06:00:00.000Z',
+          nextWeekOpenAt: '2026-09-19T10:00:00.000Z',
           cutoffAt: '2026-09-20T07:00:00.000Z',
           timeZone: 'Asia/Ho_Chi_Minh',
           days: mealDates.map(validWindowDay),

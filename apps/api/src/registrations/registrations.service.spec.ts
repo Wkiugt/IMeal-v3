@@ -310,6 +310,16 @@ describe('RegistrationsService', () => {
     });
   });
 
+  it('exposes the next-week opening instant from the server weekly window', async () => {
+    vi.setSystemTime(new Date('2026-09-05T10:00:00.000Z'));
+
+    const response = await createService().getWeekData('user-1', '2026-09-07');
+
+    expect(response.registrationWindow.nextWeekOpenAt).toBe(
+      '2026-09-05T10:00:00.000Z',
+    );
+  });
+
   it('publishes seven authoritative days with lunar choices and UTC dates', async () => {
     vi.setSystemTime(new Date('2026-09-20T06:00:00.000Z'));
     prismaMock.registration.findMany.mockResolvedValue([
@@ -339,6 +349,7 @@ describe('RegistrationsService', () => {
       ],
       registrationWindow: {
         serverNow: '2026-09-20T06:00:00.000Z',
+        nextWeekOpenAt: '2026-09-19T10:00:00.000Z',
         cutoffAt: '2026-09-20T07:00:00.000Z',
         timeZone: 'Asia/Ho_Chi_Minh',
       },
