@@ -16,8 +16,16 @@ describe('DelegationsService', () => {
 
   beforeEach(async () => {
     prismaMock = {
+      $transaction: vi
+        .fn()
+        .mockImplementation((callback) => callback(prismaMock)),
       $queryRaw: vi.fn(),
-      $transaction: vi.fn().mockImplementation((cb) => cb(prismaMock)),
+      $executeRaw: vi.fn(),
+      user: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValue({ id: 'delegate1', isActive: true }),
+      },
       registration: {
         findUnique: vi.fn(),
       },
@@ -167,6 +175,26 @@ describe('DelegationsService', () => {
         }),
       ).rejects.toThrow('Cannot delegate a meal that has already been served.');
     });
+    it('rejects creating a delegation to a disabled delegate', async () => {
+      prismaMock.registration.findUnique.mockResolvedValue({
+        userId: 'owner1',
+        id: 'reg1',
+        status: 'ACTIVE',
+      });
+      prismaMock.mealServing.findUnique.mockResolvedValue(null);
+      prismaMock.pickupDelegation.findFirst.mockResolvedValue(null);
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'delegate1',
+        isActive: false,
+      });
+
+      await expect(
+        service.createDelegation('owner1', {
+          registrationId: 'reg1',
+          delegateUserId: 'delegate1',
+        }),
+      ).rejects.toThrow('disabled');
+    });
   });
 
   describe('acceptDelegation', () => {
@@ -193,6 +221,27 @@ describe('DelegationsService', () => {
 
       const res = await service.acceptDelegation('delegate1', 'del1');
       expect(res.status).toBe('ACCEPTED');
+    });
+
+    it('rejects accepting a delegation for a disabled delegate', async () => {
+      prismaMock.pickupDelegation.findUnique.mockResolvedValue({
+        id: 'del1',
+        registrationId: 'reg1',
+        delegateUserId: 'delegate1',
+        status: 'PENDING',
+        registration: {
+          userId: 'owner1',
+          mealDate: new Date('2026-09-08T00:00:00.000Z'),
+        },
+      });
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'delegate1',
+        isActive: false,
+      });
+
+      await expect(
+        service.acceptDelegation('delegate1', 'del1'),
+      ).rejects.toThrow('disabled');
     });
 
     it('should reject if not target delegate', async () => {

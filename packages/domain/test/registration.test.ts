@@ -138,7 +138,11 @@ describe('Domain Tests: Registration Rules', () => {
       );
 
       // Delegate
-      await LegacyRegistrationFixtureService.delegatePickup(reg.id, user2.id, current);
+      await LegacyRegistrationFixtureService.delegatePickup(
+        reg.id,
+        user2.id,
+        current,
+      );
 
       // Assert delegation exists
       let dels = await prisma.pickupDelegation.findMany({
@@ -165,188 +169,6 @@ describe('Domain Tests: Registration Rules', () => {
         },
       });
       expect(dels.length).toBe(0);
-    });
-
-    it('Account-disable atomically cancels snapshot-complete future registrations', async () => {
-      const user = await prisma.user.create({
-        data: { email: 'disable@ex.com', name: 'Disabled Owner' },
-      });
-      const admin = await prisma.user.create({
-        data: { email: 'disable-admin@ex.com', name: 'Disable Admin' },
-      });
-      const delegate = await prisma.user.create({
-        data: { email: 'disable-delegate@ex.com', name: 'Delegate' },
-      });
-      const targetDate1 = new Date('2026-08-29T00:00:00.000Z');
-      const targetDate2 = new Date('2026-08-30T00:00:00.000Z');
-      const location = await prisma.location.create({
-        data: {
-          shortCode: 'DISABLE',
-          displayName: 'Disable Kitchen',
-          servingPointName: 'Disable counter',
-          address: '1 Disable Street',
-          building: 'A',
-          floor: '1',
-          roomOrCounter: '1',
-          localContact: 'disable@example.com',
-          isActive: true,
-          effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
-        },
-      });
-      const assignment = await prisma.employeeLocationAssignment.create({
-        data: {
-          userId: user.id,
-          normalizedEmail: user.email,
-          employeeName: 'Disabled Owner',
-          employeeCode: 'DISABLE-001',
-          isActive: true,
-          role: 'STAFF',
-          serviceLocationCode: location.shortCode,
-          locationId: location.id,
-          effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
-        },
-      });
-      const weekly = await prisma.weeklyMenu.create({
-        data: { startDate: targetDate1, endDate: targetDate2 },
-      });
-      const dailyMenu1 = await prisma.dailyMenu.create({
-        data: {
-          date: targetDate1,
-          weeklyMenuId: weekly.id,
-          isEnabled: true,
-          isHoliday: false,
-        },
-      });
-      const dailyMenu2 = await prisma.dailyMenu.create({
-        data: {
-          date: targetDate2,
-          weeklyMenuId: weekly.id,
-          isEnabled: true,
-          isHoliday: false,
-        },
-      });
-      const revision1 = await prisma.dailyMenuRevision.create({
-        data: {
-          dailyMenuId: dailyMenu1.id,
-          revision: 1,
-          mealName: 'Disable lunch 1',
-          content: 'Disable lunch 1',
-        },
-      });
-      const revision2 = await prisma.dailyMenuRevision.create({
-        data: {
-          dailyMenuId: dailyMenu2.id,
-          revision: 1,
-          mealName: 'Disable lunch 2',
-          content: 'Disable lunch 2',
-        },
-      });
-      const current = new Date('2026-08-28T07:01:00.000Z');
-      const snapshot = (
-        revision: { id: string; mealName: string },
-        mealDate: Date,
-      ) => ({
-        userId: user.id,
-        mealDate,
-        status: 'ACTIVE' as const,
-        menuRevisionId: revision.id,
-        ownerNameSnapshot: 'Disabled Owner',
-        employeeCodeSnapshot: 'DISABLE-001',
-        menuNameSnapshot: revision.mealName,
-        registeredAt: current,
-        serviceLocationId: location.id,
-        serviceLocationAssignmentId: assignment.id,
-        serviceLocationCode: location.shortCode,
-        serviceLocationName: location.displayName,
-        serviceLocationAddress: location.address,
-        serviceLocationEffectiveFrom: assignment.effectiveFrom,
-        serviceLocationSnapshotAt: current,
-      });
-      const registration1 = await prisma.registration.create({
-        data: snapshot(
-          { id: revision1.id, mealName: revision1.mealName! },
-          targetDate1,
-        ),
-      });
-      const registration2 = await prisma.registration.create({
-        data: snapshot(
-          { id: revision2.id, mealName: revision2.mealName! },
-          targetDate2,
-        ),
-      });
-      await prisma.pickupDelegation.create({
-        data: {
-          registrationId: registration1.id,
-          delegateUserId: delegate.id,
-          status: 'ACCEPTED',
-        },
-      });
-
-      await expect(
-        RegistrationService.cancelRegistration(registration1.id, current),
-      ).rejects.toThrow('Cutoff time has passed');
-      const cancelled = await RegistrationService.disableUserAccount(
-        user.id,
-        current,
-        admin.id,
-      );
-
-      expect(cancelled).toEqual(
-        expect.arrayContaining([registration1.id, registration2.id]),
-      );
-      const regs = await prisma.registration.findMany({
-        where: { userId: user.id },
-        orderBy: { mealDate: 'asc' },
-      });
-      expect(regs).toHaveLength(2);
-      expect(regs).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            status: 'CANCELLED',
-            cancelReason: 'ACCOUNT_DISABLED',
-            cancelledByUserId: admin.id,
-            cancelledAt: current,
-          }),
-        ]),
-      );
-      expect(
-        (await prisma.user.findUniqueOrThrow({ where: { id: user.id } }))
-          .isActive,
-      ).toBe(false);
-      expect(
-        await prisma.pickupDelegation.findFirstOrThrow({
-          where: { registrationId: registration1.id },
-        }),
-      ).toMatchObject({ status: 'REVOKED' });
-      const notification = await prisma.notification.findFirstOrThrow({
-        where: {
-          userId: delegate.id,
-          kind: 'DELEGATION_REVOKED',
-        },
-      });
-      expect(notification).toMatchObject({
-        payload: expect.objectContaining({ reason: 'ACCOUNT_DISABLED' }),
-      });
-      expect(
-        await prisma.outboxEvent.findFirstOrThrow({
-          where: {
-            aggregateType: 'NOTIFICATION',
-            aggregateId: notification.id,
-            eventType: 'NOTIFICATION_CREATED',
-          },
-        }),
-      ).toMatchObject({
-        payload: JSON.stringify({ notificationId: notification.id }),
-      });
-      expect(
-        await prisma.auditLog.count({
-          where: {
-            action: 'registration_account_disabled',
-            userId: admin.id,
-          },
-        }),
-      ).toBe(2);
-      expect(await prisma.penalty.count({ where: { userId: user.id } })).toBe(0);
     });
 
     it('No-show/penalty idempotency', async () => {
@@ -457,7 +279,10 @@ describe('Domain Tests: Registration Rules', () => {
         current,
       );
 
-      const serving = await LegacyRegistrationFixtureService.serveMeal(reg.id, selfUser.id);
+      const serving = await LegacyRegistrationFixtureService.serveMeal(
+        reg.id,
+        selfUser.id,
+      );
       expect(serving).toBeDefined();
 
       // Cannot serve again (all-or-nothing)

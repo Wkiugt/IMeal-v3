@@ -224,10 +224,7 @@ describe('Employee activity HTTP (disposable PostgreSQL)', () => {
       booked: 3,
       enjoyed: 1,
     });
-    const inverseRegistration = await createRegistration(
-      dateFor(-2),
-      'ACTIVE',
-    );
+    const inverseRegistration = await createRegistration(dateFor(-3), 'ACTIVE');
     const foreignLinkedPenalty = await prisma.penalty.create({
       data: {
         userId: foreignId,

@@ -7,10 +7,12 @@ import { RegistrationsService } from './registrations.service.js';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 const txMock = {
   $queryRaw: vi.fn(),
-  dailyMenu: { findFirst: vi.fn() },
+  $executeRaw: vi.fn(),
   dailyMenuRevision: { findMany: vi.fn() },
+  dailyMenu: { findFirst: vi.fn() },
   employeeLocationAssignment: { findMany: vi.fn() },
   location: { findFirst: vi.fn() },
+  user: { findUnique: vi.fn() },
   registration: {
     findUnique: vi.fn(),
     update: vi.fn(),
@@ -97,6 +99,7 @@ describe('RegistrationsService', () => {
         imageUrl: 'https://example.test/lunch.jpg',
       },
     ]);
+    txMock.user.findUnique.mockResolvedValue({ id: 'user-1', isActive: true });
     txMock.employeeLocationAssignment.findMany.mockResolvedValue([
       {
         id: 'assignment-1',
@@ -155,6 +158,26 @@ describe('RegistrationsService', () => {
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
   });
 
+  it('rechecks the owner account after registration lock before creating', async () => {
+    vi.setSystemTime(new Date('2026-09-04T06:59:59.000Z'));
+    txMock.registration.findUnique.mockResolvedValue(null);
+    txMock.user.findUnique.mockResolvedValue({ id: 'user-1', isActive: false });
+
+    await expect(
+      createService().batchRegister('user-1', [
+        { mealDate: '2026-09-05', status: 'ACTIVE', mealChoice: 'REGULAR' },
+      ]),
+    ).resolves.toEqual([
+      {
+        date: '2026-09-05',
+        success: false,
+        code: 'REGISTRATION_FAILED',
+        reason: 'Account is disabled.',
+      },
+    ]);
+    expect(txMock.registration.create).not.toHaveBeenCalled();
+  });
+
   it('returns per-date weekly restrictions while preserving eligible partial success', async () => {
     vi.setSystemTime(new Date('2026-09-04T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue(null);
@@ -210,14 +233,7 @@ describe('RegistrationsService', () => {
   });
 
   it.each([
-    [
-      'current week',
-      '2026-09-04T03:00:00.000Z',
-      '2026-08-31',
-      5,
-      true,
-      null,
-    ],
+    ['current week', '2026-09-04T03:00:00.000Z', '2026-08-31', 5, true, null],
     [
       'closed next week',
       '2026-09-04T03:00:00.000Z',
@@ -253,10 +269,7 @@ describe('RegistrationsService', () => {
       expectedReason,
     ) => {
       vi.setSystemTime(new Date(instant));
-      const response = await createService().getWeekData(
-        'user-1',
-        weekStart,
-      );
+      const response = await createService().getWeekData('user-1', weekStart);
       expect(response.registrationWindow.days[dayIndex].editable).toBe(
         expectedEditable,
       );
@@ -289,10 +302,7 @@ describe('RegistrationsService', () => {
       },
     ]);
 
-    const response = await createService().getWeekData(
-      'user-1',
-      '2026-09-07',
-    );
+    const response = await createService().getWeekData('user-1', '2026-09-07');
 
     expect(response.registrationWindow.days[0].editable).toBe(false);
     expect(response.days[0]).toMatchObject({

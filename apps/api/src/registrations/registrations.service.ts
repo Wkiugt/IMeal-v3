@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { StructuredLogger } from '@imeal/observability';
 import { PrismaService } from '../common/prisma.service.js';
+import { lockUserLifecycle } from '../common/transaction-locks.js';
 import {
   apiLogFields,
   createApiStructuredLogger,
@@ -947,6 +948,7 @@ export class RegistrationsService {
           try {
             const transactionResult = await this.prisma.$transaction(
               async (tx) => {
+                await lockUserLifecycle(tx);
                 let lifecycleEvent: RegistrationLifecycleEvent | null = null;
                 let registration = await tx.registration.findUnique({
                   where: {
@@ -972,6 +974,18 @@ export class RegistrationsService {
                       penalties: true,
                     },
                   });
+                }
+
+                await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+                const owner = await tx.user.findUnique({
+                  where: { id: userId },
+                  select: { id: true, isActive: true },
+                });
+                if (!owner) {
+                  throw new BadRequestException('Account not found.');
+                }
+                if (!owner.isActive) {
+                  throw new BadRequestException('Account is disabled.');
                 }
 
                 if (

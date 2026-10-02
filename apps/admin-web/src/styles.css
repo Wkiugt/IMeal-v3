@@ -312,7 +312,9 @@ button {
 }
 .table-row {
   display: grid;
-  grid-template-columns: 52px minmax(190px, 1.3fr) minmax(180px, 1fr) 100px minmax(120px, 0.7fr);
+  grid-template-columns:
+    52px minmax(190px, 1.3fr) minmax(180px, 1fr)
+    100px minmax(120px, 0.7fr);
   gap: 10px;
   align-items: center;
   min-width: 680px;
@@ -348,6 +350,50 @@ button {
 }
 .otp-form .button {
   width: 100%;
+}
+.users-view .button,
+.users-view .field input,
+.users-view .field select {
+  min-height: 44px;
+}
+.users-view .check-field {
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid #bdc9d8;
+  border-radius: 7px;
+  background: white;
+  cursor: pointer;
+}
+.users-view .check-field input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+.users-view button:focus-visible,
+.users-view input:focus-visible,
+.users-view select:focus-visible {
+  outline: 3px solid #f2b544;
+  outline-offset: 2px;
+}
+.users-view .toolbar .field {
+  flex: 1 1 180px;
+}
+
+@media (max-width: 720px) {
+  .users-view .toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .users-view .toolbar .field {
+    min-width: 0;
+  }
+  .users-view .toolbar > .button {
+    width: 100%;
+  }
+  .users-view .check-field {
+    width: 100%;
+  }
 }
 
 @media (max-width: 720px) {

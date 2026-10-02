@@ -67,7 +67,9 @@ export class RegistrationService {
       isActive: true,
       AND: [
         {
-          OR: normalizedEmail ? [{ userId }, { normalizedEmail }] : [{ userId }],
+          OR: normalizedEmail
+            ? [{ userId }, { normalizedEmail }]
+            : [{ userId }],
         },
         { effectiveFrom: { lte: targetDate } },
         {
@@ -97,62 +99,6 @@ export class RegistrationService {
       throw new Error('Cannot cancel this registration');
     }
     return result;
-  }
-
-  static async disableUserAccount(
-    userId: string,
-    currentTime: Date,
-    actorUserId = userId,
-    db: typeof prisma = prisma,
-  ) {
-    const vnCurrent = toZonedTime(currentTime, VN_TIMEZONE);
-    const businessDate = new Date(
-      Date.UTC(
-        vnCurrent.getFullYear(),
-        vnCurrent.getMonth(),
-        vnCurrent.getDate(),
-      ),
-    );
-
-    return db.$transaction(async (tx) => {
-      const registrations = await tx.$queryRaw<Array<{ id: string }>>`
-        SELECT id
-        FROM registrations
-        WHERE user_id = ${userId}
-          AND meal_date >= ${businessDate}
-          AND status = 'ACTIVE'
-        ORDER BY meal_date ASC, id ASC
-        FOR UPDATE
-      `;
-      const user = await tx.user.findUnique({
-        where: { id: userId },
-        select: { id: true },
-      });
-      if (!user) throw new Error('Not found');
-
-      await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
-      await tx.user.update({
-        where: { id: userId },
-        data: { isActive: false },
-      });
-
-      const cancelledRegistrationIds: string[] = [];
-      for (const registration of registrations) {
-        const cancelled = await this.transitionRegistrationToCancelled(
-          tx,
-          registration.id,
-          currentTime,
-          {
-            actorUserId,
-            cancelReason: 'ACCOUNT_DISABLED',
-            enforceCutoff: false,
-            skipFinalized: true,
-          },
-        );
-        if (cancelled) cancelledRegistrationIds.push(cancelled.id);
-      }
-      return cancelledRegistrationIds;
-    });
   }
 
   private static async transitionRegistrationToCancelled(
@@ -187,7 +133,10 @@ export class RegistrationService {
       if (options.skipFinalized) return null;
       throw new Error('Cannot cancel this registration');
     }
-    if (options.enforceCutoff && !this.isAllowed(currentReg.mealDate, currentTime)) {
+    if (
+      options.enforceCutoff &&
+      !this.isAllowed(currentReg.mealDate, currentTime)
+    ) {
       throw new Error('Cutoff time has passed for this meal date.');
     }
 
@@ -277,7 +226,6 @@ export class RegistrationService {
     return updatedReg;
   }
 
-
   static async canServe(
     registrationId: string,
     pickerUserId: string,
@@ -303,7 +251,6 @@ export class RegistrationService {
 
     return false;
   }
-
 
   static async getMenuRevision(registrationId: string) {
     const reg = await prisma.registration.findUnique({

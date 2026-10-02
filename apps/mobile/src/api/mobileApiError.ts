@@ -1,7 +1,10 @@
 import type { v1 } from '@imeal/contracts';
 import type { Translate, TranslationKey } from '../i18n/translations';
+import { notifyProtectedAuthInvalid } from '../auth/authInvalidation';
 import { RequestTimeoutError } from './requestWithTimeout';
-
+export interface ProtectedRequestContext {
+  readonly token: string;
+}
 export type MobileApiErrorCode =
   | 'API_TIMEOUT'
   | 'INVALID_RESPONSE'
@@ -139,6 +142,7 @@ export function toMobileApiError(
 export async function throwMobileResponseError(
   response: Response,
   fallbackKey: TranslationKey,
+  protectedRequest?: ProtectedRequestContext,
 ): Promise<never> {
   let cause: unknown;
   try {
@@ -149,6 +153,13 @@ export async function throwMobileResponseError(
   const code = getNestedErrorPayloadCode(cause) ?? 'REQUEST_FAILED';
   const messageKey =
     code === 'REQUEST_FAILED' ? fallbackKey : mobileErrorMessageKey(code);
+  if (
+    response.status === 401 &&
+    code === 'SESSION_INVALID' &&
+    protectedRequest
+  ) {
+    notifyProtectedAuthInvalid(protectedRequest.token);
+  }
   throw new MobileApiError(code, messageKey, cause);
 }
 

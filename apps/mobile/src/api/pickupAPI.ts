@@ -66,6 +66,7 @@ async function fetchOrThrow(
   input: RequestInfo | URL,
   init: RequestInit,
   fallbackKey: PickupFallbackKey,
+  protectedToken: string,
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -74,7 +75,10 @@ async function fetchOrThrow(
     throw toMobileApiError(error, fallbackKey);
   }
 
-  if (!response.ok) await throwMobileResponseError(response, fallbackKey);
+  if (!response.ok)
+    await throwMobileResponseError(response, fallbackKey, {
+      token: protectedToken,
+    });
   return readMobileResponseJson(response, fallbackKey);
 }
 
@@ -131,6 +135,7 @@ export const pickupAPI = {
       `${API_BASE}/me/pickup-options`,
       { headers: authHeaders(token) },
       'errors.loadPickup',
+      token,
     );
     return parseResponse(v1.PickupOptionsResponseSchema, payload);
   },
@@ -161,6 +166,7 @@ export const pickupAPI = {
         body: JSON.stringify(parsedInput.data),
       },
       'errors.generateQr',
+      token,
     );
     const response = parseResponse(GenerateQrResponseSchema, payload);
     return assertExactRegistrationIds(
@@ -189,6 +195,7 @@ export const pickupAPI = {
         body: JSON.stringify(parsedInput.data),
       },
       'errors.resolvePickup',
+      token,
     );
     return parseResponse(v1.ResolveServingResponseSchema, payload);
   },
@@ -213,6 +220,7 @@ export const pickupAPI = {
         body: JSON.stringify(parsedInput.data),
       },
       'errors.confirmPickup',
+      token,
     );
     return parseResponse(ConfirmPickupResponseSchema, payload);
   },

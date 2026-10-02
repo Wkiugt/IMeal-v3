@@ -1,4 +1,6 @@
+import { v1 } from '@imeal/contracts';
 import { z } from 'zod';
+import { renderUsers as renderAdminUsersView } from './admin-users';
 import {
   selectEffectiveLocationPolicy,
   toRosterImportRequest,
@@ -74,10 +76,13 @@ const PenaltyPageSchema = z.object({
   total: z.number().optional(),
 });
 
-const ErrorResponseSchema = z.object({
-  code: z.string().optional(),
-  message: z.string().optional(),
-});
+const ErrorResponseSchema = z
+  .object({
+    error: v1.ErrorDetailSchema.optional(),
+    code: z.string().optional(),
+    message: z.string().optional(),
+  })
+  .passthrough();
 const OtpRequestResponseSchema = z.object({
   accepted: z.literal(true),
   retryAfterSeconds: z.number().optional(),
@@ -203,7 +208,19 @@ function userFacingMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-type ViewName = 'menus' | 'penalties' | 'operations';
+function parseAdminError(payload: unknown): {
+  code?: string;
+  message?: string;
+} {
+  const parsed = ErrorResponseSchema.safeParse(payload);
+  if (!parsed.success) return {};
+  return {
+    code: parsed.data.error?.code ?? parsed.data.code,
+    message: parsed.data.error?.message ?? parsed.data.message,
+  };
+}
+
+type ViewName = 'menus' | 'penalties' | 'operations' | 'users';
 
 const API_URL = (
   import.meta.env.VITE_API_URL || window.location.origin
@@ -245,10 +262,25 @@ function actionButton(
 }
 
 function showError(error: unknown): void {
+  if (error instanceof AdminDisplayError && error.code === 'SESSION_INVALID')
+    return;
   const message = userFacingMessage(error, 'Đã xảy ra lỗi không xác định.');
   document.querySelector('.error')?.remove();
   const target = document.querySelector('.layout') ?? app;
   target.prepend(element('div', 'error', message));
+}
+
+function expireSession(
+  error: AdminDisplayError,
+  offendingToken: string,
+): boolean {
+  if (localToken !== offendingToken) return false;
+  localToken = null;
+  profile = null;
+  auditEntries = [];
+  sessionStorage.removeItem(SESSION_KEY);
+  renderLogin(error);
+  return true;
 }
 
 async function accessToken(): Promise<string> {
@@ -269,13 +301,16 @@ async function api(path: string, init?: RequestInit): Promise<unknown> {
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const parsedError = ErrorResponseSchema.safeParse(payload);
-    throw new AdminDisplayError(
-      parsedError.success && parsedError.data.message
-        ? parsedError.data.message
-        : `Yêu cầu thất bại với mã trạng thái ${response.status}.`,
-      parsedError.success ? parsedError.data.code : undefined,
+    const parsedError = parseAdminError(payload);
+    const error = new AdminDisplayError(
+      parsedError.message ||
+        `Yêu cầu thất bại với mã trạng thái ${response.status}.`,
+      parsedError.code,
     );
+    if (response.status === 401 && error.code === 'SESSION_INVALID') {
+      expireSession(error, token);
+    }
+    throw error;
   }
   return payload;
 }
@@ -291,12 +326,10 @@ async function publicApi(path: string, init: RequestInit): Promise<unknown> {
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const parsedError = ErrorResponseSchema.safeParse(payload);
+    const parsedError = parseAdminError(payload);
     throw new AdminDisplayError(
-      parsedError.success && parsedError.data.message
-        ? parsedError.data.message
-        : 'Không thể hoàn tất yêu cầu OTP.',
-      parsedError.success ? parsedError.data.code : undefined,
+      parsedError.message || 'Không thể hoàn tất yêu cầu OTP.',
+      parsedError.code,
     );
   }
   return payload;
@@ -366,17 +399,39 @@ function renderShell(): HTMLElement {
     nav.append(menuButton);
   }
   if (profile?.permissions.includes('penalty.read')) {
-    const penaltyButton = actionButton('Khoản phạt', () => void renderPenalties());
-    penaltyButton.setAttribute('aria-pressed', String(currentView === 'penalties'));
+    const penaltyButton = actionButton(
+      'Khoản phạt',
+      () => void renderPenalties(),
+    );
+    penaltyButton.setAttribute(
+      'aria-pressed',
+      String(currentView === 'penalties'),
+    );
     nav.append(penaltyButton);
+  }
+  if (profile?.permissions.includes('user.manage')) {
+    const usersButton = actionButton(
+      'Người dùng & vai trò',
+      () => void renderUsers(),
+    );
+    usersButton.setAttribute('aria-pressed', String(currentView === 'users'));
+    nav.append(usersButton);
   }
   if (
     profile?.permissions.some((permission) =>
-      ['location.manage', 'allowlist.manage', 'roster.manage'].includes(permission),
+      ['location.manage', 'allowlist.manage', 'roster.manage'].includes(
+        permission,
+      ),
     )
   ) {
-    const operationsButton = actionButton('Vận hành & kiểm toán', () => void renderOperations());
-    operationsButton.setAttribute('aria-pressed', String(currentView === 'operations'));
+    const operationsButton = actionButton(
+      'Vận hành & kiểm toán',
+      () => void renderOperations(),
+    );
+    operationsButton.setAttribute(
+      'aria-pressed',
+      String(currentView === 'operations'),
+    );
     nav.append(operationsButton);
   }
   layout.append(nav, element('section', 'content'));
@@ -458,9 +513,16 @@ async function renderMenus(): Promise<void> {
       const card = element('article', 'card');
       const heading = element('div', 'week-header');
       heading.append(
-        element('h2', '', `${formatDate(week.startDate)} – ${formatDate(week.endDate)}`),
+        element(
+          'h2',
+          '',
+          `${formatDate(week.startDate)} – ${formatDate(week.endDate)}`,
+        ),
         actionButton('Đăng thực đơn tuần', () => {
-          void api(`/admin/weekly-menus/${week.startDate.slice(0, 10)}/publish`, { method: 'POST' })
+          void api(
+            `/admin/weekly-menus/${week.startDate.slice(0, 10)}/publish`,
+            { method: 'POST' },
+          )
             .then(() => renderMenus())
             .catch(showError);
         }),
@@ -479,25 +541,42 @@ async function renderMenus(): Promise<void> {
         contentInput.rows = 3;
         contentInput.value = day.content || '';
         contentInput.placeholder = 'Mô tả món ăn';
-        contentInput.setAttribute('aria-label', `Mô tả món ăn ngày ${formatDate(day.date)}`);
+        contentInput.setAttribute(
+          'aria-label',
+          `Mô tả món ăn ngày ${formatDate(day.date)}`,
+        );
         const actions = element('div', 'row-actions menu-actions');
         actions.append(
           contentInput,
-          actionButton('Lưu món', () => {
-            void updateDailyMenu(day.date, { content: contentInput.value }).catch(showError);
-          }, 'secondary'),
-          actionButton(day.isEnabled ? 'Tắt' : 'Bật', () => {
-            void updateDailyMenu(day.date, {
-              isEnabled: !day.isEnabled,
-              ...(!day.isEnabled ? { isHoliday: false } : {}),
-            }).catch(showError);
-          }, 'secondary'),
-          actionButton(day.isHoliday ? 'Ngày làm việc' : 'Ngày nghỉ', () => {
-            void updateDailyMenu(day.date, {
-              isHoliday: !day.isHoliday,
-              ...(!day.isHoliday ? { isEnabled: false } : {}),
-            }).catch(showError);
-          }, 'secondary'),
+          actionButton(
+            'Lưu món',
+            () => {
+              void updateDailyMenu(day.date, {
+                content: contentInput.value,
+              }).catch(showError);
+            },
+            'secondary',
+          ),
+          actionButton(
+            day.isEnabled ? 'Tắt' : 'Bật',
+            () => {
+              void updateDailyMenu(day.date, {
+                isEnabled: !day.isEnabled,
+                ...(!day.isEnabled ? { isHoliday: false } : {}),
+              }).catch(showError);
+            },
+            'secondary',
+          ),
+          actionButton(
+            day.isHoliday ? 'Ngày làm việc' : 'Ngày nghỉ',
+            () => {
+              void updateDailyMenu(day.date, {
+                isHoliday: !day.isHoliday,
+                ...(!day.isHoliday ? { isEnabled: false } : {}),
+              }).catch(showError);
+            },
+            'secondary',
+          ),
         );
         row.append(actions);
         days.append(row);
@@ -533,36 +612,70 @@ async function renderPenalties(): Promise<void> {
   root.append(toolbar);
 
   const load = async () => {
-    root.querySelectorAll('.penalty-card, .empty').forEach((node) => node.remove());
-    const query = new URLSearchParams({ status: status.value, search: search.value });
-    const page = PenaltyPageSchema.parse(await api(`/admin/penalties?${query}`));
+    root
+      .querySelectorAll('.penalty-card, .empty')
+      .forEach((node) => node.remove());
+    const query = new URLSearchParams({
+      status: status.value,
+      search: search.value,
+    });
+    const page = PenaltyPageSchema.parse(
+      await api(`/admin/penalties?${query}`),
+    );
     if (page.items.length === 0) {
-      root.append(element('div', 'card empty', 'Không có khoản phạt phù hợp với bộ lọc.'));
+      root.append(
+        element('div', 'card empty', 'Không có khoản phạt phù hợp với bộ lọc.'),
+      );
       return;
     }
     for (const penalty of page.items) {
       const card = element('article', 'card penalty-card row');
       const details = element('div', 'row-main');
       details.append(
-        element('strong', '', penalty.userName || penalty.userEmail || 'Người dùng không xác định'),
-        element('div', 'muted', `${penalty.reason} · ${formatDate(penalty.createdAt)}`),
+        element(
+          'strong',
+          '',
+          penalty.userName || penalty.userEmail || 'Người dùng không xác định',
+        ),
+        element(
+          'div',
+          'muted',
+          `${penalty.reason} · ${formatDate(penalty.createdAt)}`,
+        ),
         element('div', 'amount', `${penalty.amount.toLocaleString('vi-VN')} ₫`),
       );
       const actions = element('div', 'row-actions');
-      actions.append(element('span', `status ${penalty.status.toLowerCase()}`, penaltyStatusLabels[penalty.status]));
-      if (penalty.status === 'PENDING' && profile?.permissions.includes('penalty.resolve')) {
+      actions.append(
+        element(
+          'span',
+          `status ${penalty.status.toLowerCase()}`,
+          penaltyStatusLabels[penalty.status],
+        ),
+      );
+      if (
+        penalty.status === 'PENDING' &&
+        profile?.permissions.includes('penalty.resolve')
+      ) {
         actions.append(
           actionButton('Đánh dấu đã thanh toán', () => {
-            void api(`/admin/penalties/${penalty.id}/paid`, { method: 'POST' }).then(load).catch(showError);
+            void api(`/admin/penalties/${penalty.id}/paid`, { method: 'POST' })
+              .then(load)
+              .catch(showError);
           }),
-          actionButton('Miễn phạt', () => {
-            const reason = window.prompt('Lý do miễn phạt (ít nhất 5 ký tự)');
-            if (!reason || reason.trim().length < 5) return;
-            void api(`/admin/penalties/${penalty.id}/waive`, {
-              method: 'POST',
-              body: JSON.stringify({ reason }),
-            }).then(load).catch(showError);
-          }, 'danger'),
+          actionButton(
+            'Miễn phạt',
+            () => {
+              const reason = window.prompt('Lý do miễn phạt (ít nhất 5 ký tự)');
+              if (!reason || reason.trim().length < 5) return;
+              void api(`/admin/penalties/${penalty.id}/waive`, {
+                method: 'POST',
+                body: JSON.stringify({ reason }),
+              })
+                .then(load)
+                .catch(showError);
+            },
+            'danger',
+          ),
         );
       }
       card.append(details, actions);
@@ -576,13 +689,39 @@ async function renderPenalties(): Promise<void> {
   await load().catch(showError);
 }
 
+async function renderUsers(): Promise<void> {
+  currentView = 'users';
+  app.replaceChildren(renderShell());
+  const root = contentRoot();
+  root.classList.add('users-view');
+  if (!profile?.permissions.includes('user.manage')) {
+    root.append(
+      element(
+        'div',
+        'card empty',
+        'Tài khoản không có quyền quản lý người dùng.',
+      ),
+    );
+    return;
+  }
+  await renderAdminUsersView(root, {
+    api,
+    profile,
+    onRefresh: renderUsers,
+  });
+}
+
 function renderLocationCard(location: Location): HTMLElement {
   const card = element('article', 'card operation-card');
   const policy = selectEffectiveLocationPolicy(location.policies ?? []);
   const title = element('div', 'section-heading');
   title.append(
     element('h3', '', `${location.shortCode} · ${location.displayName}`),
-    element('span', `status ${location.isActive ? 'paid' : 'waived'}`, location.isActive ? 'Đang bật' : 'Đã tắt'),
+    element(
+      'span',
+      `status ${location.isActive ? 'paid' : 'waived'}`,
+      location.isActive ? 'Đang bật' : 'Đã tắt',
+    ),
   );
   const summary = element(
     'p',
@@ -591,23 +730,72 @@ function renderLocationCard(location: Location): HTMLElement {
   );
   const form = element('form', 'operation-form');
   const grid = element('div', 'form-grid');
-  const displayName = inputField('Tên hiển thị', location.displayName, 'text', true);
-  const servingPoint = inputField('Điểm phục vụ', location.servingPointName, 'text', true);
-  const address = inputField('Địa chỉ đã phê duyệt', location.address, 'text', true);
+  const displayName = inputField(
+    'Tên hiển thị',
+    location.displayName,
+    'text',
+    true,
+  );
+  const servingPoint = inputField(
+    'Điểm phục vụ',
+    location.servingPointName,
+    'text',
+    true,
+  );
+  const address = inputField(
+    'Địa chỉ đã phê duyệt',
+    location.address,
+    'text',
+    true,
+  );
   const building = inputField('Tòa nhà', location.building, 'text', true);
   const floor = inputField('Tầng', location.floor, 'text', true);
   const room = inputField('Phòng/quầy', location.roomOrCounter, 'text', true);
-  const localContact = inputField('Liên hệ tại điểm', location.localContact, 'text', true);
-  const effectiveFrom = inputField('Hiệu lực từ', dateTimeInputValue(location.effectiveFrom), 'datetime-local', true);
-  const effectiveTo = inputField('Hiệu lực đến', dateTimeInputValue(location.effectiveTo), 'datetime-local');
+  const localContact = inputField(
+    'Liên hệ tại điểm',
+    location.localContact,
+    'text',
+    true,
+  );
+  const effectiveFrom = inputField(
+    'Hiệu lực từ',
+    dateTimeInputValue(location.effectiveFrom),
+    'datetime-local',
+    true,
+  );
+  const effectiveTo = inputField(
+    'Hiệu lực đến',
+    dateTimeInputValue(location.effectiveTo),
+    'datetime-local',
+  );
   const scannerIds = inputField(
     'Thiết bị scanner được phép (phân cách bằng dấu phẩy)',
     (location.approvedScannerDeviceIds ?? []).join(', '),
   );
-  const radius = inputField('Bán kính geofence (m)', String(policy?.geofenceRadiusMeters ?? ''), 'number', true);
-  const maxAge = inputField('Tuổi fix tối đa (giây)', String(policy?.maxFixAgeSeconds ?? ''), 'number', true);
-  const maxAccuracy = inputField('Độ chính xác tối đa (m)', String(policy?.maxAccuracyMeters ?? ''), 'number', true);
-  const accuracySource = inputField('Nguồn chính sách độ chính xác', policy?.accuracySource ?? '', 'text', true);
+  const radius = inputField(
+    'Bán kính geofence (m)',
+    String(policy?.geofenceRadiusMeters ?? ''),
+    'number',
+    true,
+  );
+  const maxAge = inputField(
+    'Tuổi fix tối đa (giây)',
+    String(policy?.maxFixAgeSeconds ?? ''),
+    'number',
+    true,
+  );
+  const maxAccuracy = inputField(
+    'Độ chính xác tối đa (m)',
+    String(policy?.maxAccuracyMeters ?? ''),
+    'number',
+    true,
+  );
+  const accuracySource = inputField(
+    'Nguồn chính sách độ chính xác',
+    policy?.accuracySource ?? '',
+    'text',
+    true,
+  );
   for (const field of [
     displayName,
     servingPoint,
@@ -623,17 +811,24 @@ function renderLocationCard(location: Location): HTMLElement {
     maxAge,
     maxAccuracy,
     accuracySource,
-  ]) grid.append(field.wrapper);
+  ])
+    grid.append(field.wrapper);
   const active = element('label', 'check-field');
   const activeInput = element('input');
   activeInput.type = 'checkbox';
   activeInput.checked = location.isActive;
-  active.append(activeInput, element('span', '', 'Cho phép phục vụ ở điểm này'));
+  active.append(
+    activeInput,
+    element('span', '', 'Cho phép phục vụ ở điểm này'),
+  );
   const policyActive = element('label', 'check-field');
   const policyActiveInput = element('input');
   policyActiveInput.type = 'checkbox';
   policyActiveInput.checked = policy?.isActive ?? false;
-  policyActive.append(policyActiveInput, element('span', '', 'Chính sách GPS đang hoạt động'));
+  policyActive.append(
+    policyActiveInput,
+    element('span', '', 'Chính sách GPS đang hoạt động'),
+  );
   const policyNote = element(
     'p',
     'notice',
@@ -664,9 +859,15 @@ function renderLocationCard(location: Location): HTMLElement {
       localContact: localContact.input.value.trim(),
       timeZone: 'Asia/Ho_Chi_Minh',
       isActive: activeInput.checked,
-      effectiveFrom: isoOrFallback(effectiveFrom.input.value, location.effectiveFrom),
+      effectiveFrom: isoOrFallback(
+        effectiveFrom.input.value,
+        location.effectiveFrom,
+      ),
       effectiveTo: effectiveTo.input.value
-        ? isoOrFallback(effectiveTo.input.value, location.effectiveTo ?? location.effectiveFrom)
+        ? isoOrFallback(
+            effectiveTo.input.value,
+            location.effectiveTo ?? location.effectiveFrom,
+          )
         : null,
       approvedScannerDeviceIds: scannerIds.input.value
         .split(',')
@@ -703,7 +904,10 @@ function renderLocationCard(location: Location): HTMLElement {
       })
       .then(() => renderOperations())
       .catch((error: unknown) => {
-        feedback.textContent = userFacingMessage(error, 'Không thể lưu cấu hình điểm.');
+        feedback.textContent = userFacingMessage(
+          error,
+          'Không thể lưu cấu hình điểm.',
+        );
       })
       .finally(() => {
         save.disabled = false;
@@ -722,14 +926,25 @@ async function renderLocations(root: HTMLElement): Promise<void> {
     ),
   );
   try {
-    const locations = z.array(LocationSchema).parse(await api('/admin/locations'));
+    const locations = z
+      .array(LocationSchema)
+      .parse(await api('/admin/locations'));
     if (locations.length === 0) {
-      section.append(element('div', 'card empty', 'Chưa có điểm phục vụ được phê duyệt.'));
+      section.append(
+        element('div', 'card empty', 'Chưa có điểm phục vụ được phê duyệt.'),
+      );
     } else {
-      for (const location of locations) section.append(renderLocationCard(location));
+      for (const location of locations)
+        section.append(renderLocationCard(location));
     }
   } catch (error: unknown) {
-    section.append(element('div', 'error', userFacingMessage(error, 'Không thể tải cấu hình điểm phục vụ.')));
+    section.append(
+      element(
+        'div',
+        'error',
+        userFacingMessage(error, 'Không thể tải cấu hình điểm phục vụ.'),
+      ),
+    );
   }
   root.append(section);
 }
@@ -739,33 +954,46 @@ function renderAllowlistEntry(entry: AllowlistEntry): HTMLElement {
   const details = element('div', 'row-main');
   details.append(
     element('strong', '', entry.normalizedEmail),
-    element('div', 'muted', `${entry.purpose} · ${formatDate(entry.effectiveFrom)} – ${entry.effectiveTo ? formatDate(entry.effectiveTo) : 'không hết hạn'}`),
-    entry.reason ? element('div', 'muted', `Lý do: ${entry.reason}`) : element('div', 'muted', 'Không có ghi chú'),
+    element(
+      'div',
+      'muted',
+      `${entry.purpose} · ${formatDate(entry.effectiveFrom)} – ${entry.effectiveTo ? formatDate(entry.effectiveTo) : 'không hết hạn'}`,
+    ),
+    entry.reason
+      ? element('div', 'muted', `Lý do: ${entry.reason}`)
+      : element('div', 'muted', 'Không có ghi chú'),
   );
   const actions = element('div', 'row-actions');
-  const toggle = actionButton(entry.state === 'ACTIVE' ? 'Tắt allowlist' : 'Bật allowlist', () => {
-    void api(`/admin/allowlist/${entry.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        email: entry.normalizedEmail,
-        userId: entry.userId ?? null,
-        state: entry.state === 'ACTIVE' ? 'DISABLED' : 'ACTIVE',
-        effectiveFrom: entry.effectiveFrom,
-        effectiveTo: entry.effectiveTo ?? null,
-        reason: entry.reason ?? null,
-      }),
-    })
-      .then(() => {
-        recordAudit('ALLOWLIST_UPDATED', {
-          result: 'ACCEPTED',
+  const toggle = actionButton(
+    entry.state === 'ACTIVE' ? 'Tắt allowlist' : 'Bật allowlist',
+    () => {
+      void api(`/admin/allowlist/${entry.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          email: entry.normalizedEmail,
+          userId: entry.userId ?? null,
           state: entry.state === 'ACTIVE' ? 'DISABLED' : 'ACTIVE',
-        });
-        return renderOperations();
+          effectiveFrom: entry.effectiveFrom,
+          effectiveTo: entry.effectiveTo ?? null,
+          reason: entry.reason ?? null,
+        }),
       })
-      .catch(showError);
-  });
+        .then(() => {
+          recordAudit('ALLOWLIST_UPDATED', {
+            result: 'ACCEPTED',
+            state: entry.state === 'ACTIVE' ? 'DISABLED' : 'ACTIVE',
+          });
+          return renderOperations();
+        })
+        .catch(showError);
+    },
+  );
   actions.append(
-    element('span', `status ${entry.state === 'ACTIVE' ? 'paid' : 'waived'}`, entry.state === 'ACTIVE' ? 'Đang cho phép' : 'Đã tắt'),
+    element(
+      'span',
+      `status ${entry.state === 'ACTIVE' ? 'paid' : 'waived'}`,
+      entry.state === 'ACTIVE' ? 'Đang cho phép' : 'Đã tắt',
+    ),
     toggle,
   );
   return card;
@@ -787,15 +1015,31 @@ async function renderAllowlist(root: HTMLElement): Promise<void> {
   const stateLabel = element('label', '', 'Trạng thái');
   const state = element('select');
   for (const value of ['ACTIVE', 'DISABLED'] as const) {
-    const option = element('option', '', value === 'ACTIVE' ? 'Đang cho phép' : 'Đã tắt');
+    const option = element(
+      'option',
+      '',
+      value === 'ACTIVE' ? 'Đang cho phép' : 'Đã tắt',
+    );
     option.value = value;
     state.append(option);
   }
   stateField.append(stateLabel, state);
-  const effectiveFrom = inputField('Hiệu lực từ', dateTimeInputValue(new Date()), 'datetime-local', true);
-  const effectiveTo = inputField('Hiệu lực đến', '','datetime-local');
+  const effectiveFrom = inputField(
+    'Hiệu lực từ',
+    dateTimeInputValue(new Date()),
+    'datetime-local',
+    true,
+  );
+  const effectiveTo = inputField('Hiệu lực đến', '', 'datetime-local');
   const reason = inputField('Lý do (tùy chọn)', '');
-  for (const field of [email, userId, stateField, effectiveFrom, effectiveTo, reason]) {
+  for (const field of [
+    email,
+    userId,
+    stateField,
+    effectiveFrom,
+    effectiveTo,
+    reason,
+  ]) {
     grid.append('wrapper' in field ? field.wrapper : field);
   }
   const submit = actionButton('Lưu allowlist', () => undefined);
@@ -811,19 +1055,31 @@ async function renderAllowlist(root: HTMLElement): Promise<void> {
         email: email.input.value,
         userId: userId.input.value.trim() || null,
         state: state.value,
-        effectiveFrom: isoOrFallback(effectiveFrom.input.value, new Date().toISOString()),
-        effectiveTo: effectiveTo.input.value ? isoOrFallback(effectiveTo.input.value, new Date().toISOString()) : null,
+        effectiveFrom: isoOrFallback(
+          effectiveFrom.input.value,
+          new Date().toISOString(),
+        ),
+        effectiveTo: effectiveTo.input.value
+          ? isoOrFallback(effectiveTo.input.value, new Date().toISOString())
+          : null,
         reason: reason.input.value.trim() || null,
       }),
     })
       .then((result) => {
-        recordAudit('ALLOWLIST_UPSERTED', { result: 'ACCEPTED', state: state.value });
-        feedback.textContent = 'Đã lưu allowlist. OTP vẫn không được hiển thị trong Admin Web.';
+        recordAudit('ALLOWLIST_UPSERTED', {
+          result: 'ACCEPTED',
+          state: state.value,
+        });
+        feedback.textContent =
+          'Đã lưu allowlist. OTP vẫn không được hiển thị trong Admin Web.';
         return result;
       })
       .then(() => renderOperations())
       .catch((error: unknown) => {
-        feedback.textContent = userFacingMessage(error, 'Không thể lưu allowlist.');
+        feedback.textContent = userFacingMessage(
+          error,
+          'Không thể lưu allowlist.',
+        );
       })
       .finally(() => {
         submit.disabled = false;
@@ -833,11 +1089,20 @@ async function renderAllowlist(root: HTMLElement): Promise<void> {
 
   const list = element('div', 'stack');
   try {
-    const entries = z.array(AllowlistEntrySchema).parse(await api('/admin/allowlist'));
-    if (entries.length === 0) list.append(element('div', 'card empty', 'Chưa có allowlist record.'));
+    const entries = z
+      .array(AllowlistEntrySchema)
+      .parse(await api('/admin/allowlist'));
+    if (entries.length === 0)
+      list.append(element('div', 'card empty', 'Chưa có allowlist record.'));
     else for (const entry of entries) list.append(renderAllowlistEntry(entry));
   } catch (error: unknown) {
-    list.append(element('div', 'error', userFacingMessage(error, 'Không thể tải allowlist.')));
+    list.append(
+      element(
+        'div',
+        'error',
+        userFacingMessage(error, 'Không thể tải allowlist.'),
+      ),
+    );
   }
   section.append(list);
   root.append(section);
@@ -851,12 +1116,23 @@ function renderRosterPreview(
   const summary = element('div', 'section-heading');
   summary.append(
     element('h3', '', 'Kết quả xem trước'),
-    element('span', `status ${preview.valid ? 'paid' : 'waived'}`, preview.valid ? 'Có thể commit' : 'Cần sửa dữ liệu'),
+    element(
+      'span',
+      `status ${preview.valid ? 'paid' : 'waived'}`,
+      preview.valid ? 'Có thể commit' : 'Cần sửa dữ liệu',
+    ),
   );
-  summary.append(element('p', 'muted', `${preview.acceptedCount} dòng hợp lệ · ${preview.rejectedCount} dòng bị từ chối`));
+  summary.append(
+    element(
+      'p',
+      'muted',
+      `${preview.acceptedCount} dòng hợp lệ · ${preview.rejectedCount} dòng bị từ chối`,
+    ),
+  );
   const table = element('div', 'table-wrap');
   const header = element('div', 'table-row table-header');
-  for (const label of ['Dòng', 'Email', 'Nhân viên', 'Điểm', 'Kết quả']) header.append(element('span', '', label));
+  for (const label of ['Dòng', 'Email', 'Nhân viên', 'Điểm', 'Kết quả'])
+    header.append(element('span', '', label));
   table.append(header);
   for (const row of toRosterPreviewRows(preview)) {
     const line = element('div', 'table-row');
@@ -865,7 +1141,11 @@ function renderRosterPreview(
       element('span', '', row.normalizedEmail),
       element('span', '', `${row.name} · ${row.employeeCode}`),
       element('span', '', row.serviceLocationCode),
-      element('span', `status ${row.outcome === 'ACCEPTED' ? 'paid' : 'waived'}`, row.outcome === 'ACCEPTED' ? 'Hợp lệ' : row.reason || 'Từ chối'),
+      element(
+        'span',
+        `status ${row.outcome === 'ACCEPTED' ? 'paid' : 'waived'}`,
+        row.outcome === 'ACCEPTED' ? 'Hợp lệ' : row.reason || 'Từ chối',
+      ),
     );
     table.append(line);
   }
@@ -873,9 +1153,22 @@ function renderRosterPreview(
   if (preview.valid && preview.batchId) {
     const commit = actionButton('Commit toàn bộ dòng hợp lệ', onCommit);
     commit.classList.add('commit-button');
-    card.append(commit, element('p', 'notice', 'Commit là thao tác all-or-nothing; không có commit một phần hoặc thay thế dòng lỗi.'));
+    card.append(
+      commit,
+      element(
+        'p',
+        'notice',
+        'Commit là thao tác all-or-nothing; không có commit một phần hoặc thay thế dòng lỗi.',
+      ),
+    );
   } else {
-    card.append(element('p', 'notice', 'Chưa thể commit. Sửa tất cả dòng bị từ chối rồi xem trước lại.'));
+    card.append(
+      element(
+        'p',
+        'notice',
+        'Chưa thể commit. Sửa tất cả dòng bị từ chối rồi xem trước lại.',
+      ),
+    );
   }
   return card;
 }
@@ -891,7 +1184,8 @@ async function renderRoster(root: HTMLElement): Promise<void> {
   const form = element('form', 'card operation-form');
   const rows = element('textarea', 'json-input');
   rows.rows = 10;
-  rows.placeholder = '[{"email":"employee@example.test","name":"...","employeeCode":"...","isActive":true,"role":"PRESENTER","serviceLocationCode":"LOC-A","effectiveFrom":"2026-09-24T00:00:00.000Z","effectiveTo":null}]';
+  rows.placeholder =
+    '[{"email":"employee@example.test","name":"...","employeeCode":"...","isActive":true,"role":"PRESENTER","serviceLocationCode":"LOC-A","effectiveFrom":"2026-09-24T00:00:00.000Z","effectiveTo":null}]';
   rows.required = true;
   const label = element('label', '', 'Roster JSON');
   label.append(rows);
@@ -907,12 +1201,17 @@ async function renderRoster(root: HTMLElement): Promise<void> {
     void (async () => {
       try {
         const parsed = JSON.parse(rows.value) as unknown;
-        const inputRows = z.array(RosterInputRowSchema).min(1).parse(parsed) as ReadonlyArray<RosterImportRow>;
+        const inputRows = z
+          .array(RosterInputRowSchema)
+          .min(1)
+          .parse(parsed) as ReadonlyArray<RosterImportRow>;
         const request = toRosterImportRequest(inputRows);
-        const preview = RosterPreviewSchema.parse(await api('/admin/roster/preview', {
-          method: 'POST',
-          body: JSON.stringify(request),
-        }));
+        const preview = RosterPreviewSchema.parse(
+          await api('/admin/roster/preview', {
+            method: 'POST',
+            body: JSON.stringify(request),
+          }),
+        );
         latestPreview = preview;
         previewTarget.replaceChildren(
           renderRosterPreview(preview, () => {
@@ -931,13 +1230,21 @@ async function renderRoster(root: HTMLElement): Promise<void> {
                 return renderOperations();
               })
               .catch((error: unknown) => {
-                feedback.textContent = userFacingMessage(error, 'Import bị từ chối; không có dòng nào được commit.');
+                feedback.textContent = userFacingMessage(
+                  error,
+                  'Import bị từ chối; không có dòng nào được commit.',
+                );
               });
           }),
         );
-        feedback.textContent = preview.valid ? 'Xem trước hoàn tất; hãy kiểm tra trước khi commit.' : 'Có dòng lỗi; chưa cho phép commit.';
+        feedback.textContent = preview.valid
+          ? 'Xem trước hoàn tất; hãy kiểm tra trước khi commit.'
+          : 'Có dòng lỗi; chưa cho phép commit.';
       } catch (error: unknown) {
-        feedback.textContent = error instanceof SyntaxError ? 'JSON không hợp lệ.' : userFacingMessage(error, 'Không thể xem trước roster.');
+        feedback.textContent =
+          error instanceof SyntaxError
+            ? 'JSON không hợp lệ.'
+            : userFacingMessage(error, 'Không thể xem trước roster.');
       } finally {
         previewButton.disabled = false;
       }
@@ -956,22 +1263,39 @@ function renderAudit(): HTMLElement {
     ),
   );
   if (auditEntries.length === 0) {
-    section.append(element('div', 'card empty', 'Chưa có thao tác vận hành trong phiên hiện tại.'));
+    section.append(
+      element(
+        'div',
+        'card empty',
+        'Chưa có thao tác vận hành trong phiên hiện tại.',
+      ),
+    );
     return section;
   }
   const list = element('div', 'stack');
   for (const entry of auditEntries) {
     const card = element('article', 'card audit-card');
     const heading = element('div', 'section-heading');
-    heading.append(element('h3', '', entry.action), element('span', 'muted', formatDateTime(entry.occurredAt ?? '')));
+    heading.append(
+      element('h3', '', entry.action),
+      element('span', 'muted', formatDateTime(entry.occurredAt ?? '')),
+    );
     const details = element('div', 'audit-details');
-    if (entry.result) details.append(element('span', 'status paid', entry.result));
-    if (entry.actorId) details.append(element('span', 'muted', `Actor: ${entry.actorId}`));
+    if (entry.result)
+      details.append(element('span', 'status paid', entry.result));
+    if (entry.actorId)
+      details.append(element('span', 'muted', `Actor: ${entry.actorId}`));
     for (const [key, value] of Object.entries(entry.details)) {
       details.append(element('span', 'muted', `${key}: ${String(value)}`));
     }
     if (entry.redactedFields.length > 0) {
-      details.append(element('span', 'notice', `${entry.redactedFields.length} trường nhạy cảm đã được ẩn.`));
+      details.append(
+        element(
+          'span',
+          'notice',
+          `${entry.redactedFields.length} trường nhạy cảm đã được ẩn.`,
+        ),
+      );
     }
     card.append(heading, details);
     list.append(card);
@@ -985,8 +1309,20 @@ async function renderOperations(): Promise<void> {
   app.replaceChildren(renderShell());
   const root = contentRoot();
   const permissions = profile?.permissions ?? [];
-  if (!permissions.some((permission) => ['location.manage', 'allowlist.manage', 'roster.manage'].includes(permission))) {
-    root.append(element('div', 'card empty', 'Tài khoản không có quyền vận hành được cấp.'));
+  if (
+    !permissions.some((permission) =>
+      ['location.manage', 'allowlist.manage', 'roster.manage'].includes(
+        permission,
+      ),
+    )
+  ) {
+    root.append(
+      element(
+        'div',
+        'card empty',
+        'Tài khoản không có quyền vận hành được cấp.',
+      ),
+    );
     return;
   }
   if (permissions.includes('location.manage')) await renderLocations(root);
@@ -996,10 +1332,12 @@ async function renderOperations(): Promise<void> {
 }
 
 async function verifyOtp(email: string, code: string): Promise<void> {
-  const result = OtpVerifyResponseSchema.parse(await publicApi('/auth/otp/verify', {
-    method: 'POST',
-    body: JSON.stringify({ email, purpose: 'SESSION_LOGIN', code }),
-  }));
+  const result = OtpVerifyResponseSchema.parse(
+    await publicApi('/auth/otp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ email, purpose: 'SESSION_LOGIN', code }),
+    }),
+  );
   localToken = result.sessionToken;
   sessionStorage.setItem(SESSION_KEY, localToken);
   profile = UserProfileSchema.parse(await api('/auth/me'));
@@ -1007,10 +1345,12 @@ async function verifyOtp(email: string, code: string): Promise<void> {
 }
 
 async function requestOtp(email: string): Promise<void> {
-  OtpRequestResponseSchema.parse(await publicApi('/auth/otp/request', {
-    method: 'POST',
-    body: JSON.stringify({ email, purpose: 'SESSION_LOGIN' }),
-  }));
+  OtpRequestResponseSchema.parse(
+    await publicApi('/auth/otp/request', {
+      method: 'POST',
+      body: JSON.stringify({ email, purpose: 'SESSION_LOGIN' }),
+    }),
+  );
 }
 
 async function signOut(error?: unknown): Promise<void> {
@@ -1028,7 +1368,11 @@ async function signOut(error?: unknown): Promise<void> {
   renderLogin(error);
 }
 
-function renderLogin(error?: unknown, requestedEmail = '', codeRequested = false): void {
+function renderLogin(
+  error?: unknown,
+  requestedEmail = '',
+  codeRequested = false,
+): void {
   const login = element('div', 'login');
   const card = element('section', 'card');
   const form = element('form', 'otp-form');
@@ -1039,7 +1383,10 @@ function renderLogin(error?: unknown, requestedEmail = '', codeRequested = false
   code.input.autocomplete = 'one-time-code';
   code.input.maxLength = 6;
   if (!codeRequested) code.wrapper.hidden = true;
-  const submit = actionButton(codeRequested ? 'Xác nhận OTP' : 'Nhận mã OTP', () => undefined);
+  const submit = actionButton(
+    codeRequested ? 'Xác nhận OTP' : 'Nhận mã OTP',
+    () => undefined,
+  );
   submit.type = 'submit';
   const feedback = element('div', 'form-feedback');
   form.append(email.wrapper, code.wrapper, submit, feedback);
@@ -1056,7 +1403,10 @@ function renderLogin(error?: unknown, requestedEmail = '', codeRequested = false
       await verifyOtp(normalizedEmail, code.input.value.trim());
     })()
       .catch((loginError: unknown) => {
-        feedback.textContent = userFacingMessage(loginError, 'Không thể hoàn tất đăng nhập.');
+        feedback.textContent = userFacingMessage(
+          loginError,
+          'Không thể hoàn tất đăng nhập.',
+        );
       })
       .finally(() => {
         submit.disabled = false;
@@ -1064,10 +1414,21 @@ function renderLogin(error?: unknown, requestedEmail = '', codeRequested = false
   });
   card.append(
     element('h1', '', 'Quản trị IMeal'),
-    element('p', 'muted', 'Nhập email công việc trong allowlist A để nhận mã OTP. Trạng thái allowlist không được tiết lộ.'),
+    element(
+      'p',
+      'muted',
+      'Nhập email công việc trong allowlist A để nhận mã OTP. Trạng thái allowlist không được tiết lộ.',
+    ),
     form,
   );
-  if (error) card.append(element('div', 'error', userFacingMessage(error, 'Phiên đăng nhập không còn hợp lệ.')));
+  if (error)
+    card.append(
+      element(
+        'div',
+        'error',
+        userFacingMessage(error, 'Phiên đăng nhập không còn hợp lệ.'),
+      ),
+    );
   login.append(card);
   app.replaceChildren(login);
 }
@@ -1077,7 +1438,15 @@ async function renderDefaultView(): Promise<void> {
     renderLogin();
     return;
   }
-  if (profile.permissions.some((permission) => ['location.manage', 'allowlist.manage', 'roster.manage'].includes(permission))) {
+  if (profile.permissions.includes('user.manage')) {
+    await renderUsers();
+  } else if (
+    profile.permissions.some((permission) =>
+      ['location.manage', 'allowlist.manage', 'roster.manage'].includes(
+        permission,
+      ),
+    )
+  ) {
     await renderOperations();
   } else if (profile.permissions.includes('menu.manage')) {
     await renderMenus();
@@ -1099,6 +1468,13 @@ async function bootstrap(): Promise<void> {
     profile = UserProfileSchema.parse(await api('/auth/me'));
     await renderDefaultView();
   } catch (error: unknown) {
+    if (
+      error instanceof AdminDisplayError &&
+      error.code === 'SESSION_INVALID'
+    ) {
+      if (!document.querySelector('.login')) renderLogin(error);
+      return;
+    }
     await signOut(error);
   }
 }

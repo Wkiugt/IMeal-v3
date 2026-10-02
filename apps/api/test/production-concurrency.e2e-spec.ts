@@ -4,10 +4,14 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { randomUUID } from 'node:crypto';
+import { AdminUsersService } from '../src/admin/users/admin-users.service.js';
+import { DelegationsService } from '../src/delegations/delegations.service.js';
 import { PickupService } from '../src/pickup/pickup.service.js';
 import { RegistrationsService } from '../src/registrations/registrations.service.js';
 import { NotificationsService } from '../src/notifications/notifications.service.js';
 import { WeeklyMenusService } from '../src/admin/weekly-menus/weekly-menus.service.js';
+import { SessionService } from '../src/auth/session.service.js';
+import { AllowlistService } from '../src/auth/allowlist.service.js';
 const MEAL_DATE = new Date('2026-09-28T00:00:00.000Z');
 const MEAL_DATE_KEY = '2026-09-28';
 const SERVING_TIME = new Date('2026-09-28T04:00:00.000Z');
@@ -34,26 +38,13 @@ type NoShowWorker = RealPrismaOwner & {
     options: { force: boolean; currentTime: Date },
   ) => Promise<{ processedCount: number }>;
 };
-type DomainRegistrationService = {
-  disableUserAccount(
-    userId: string,
-    currentTime: Date,
-    actorUserId: string,
-    db: PrismaClient,
-  ): Promise<string[]>;
-};
-
-async function loadDomainRegistrationService() {
-  // The API e2e project has rootDir=apps/api; load the core source through
-  // Vite so this test can exercise the real account-disable transaction.
-  const modulePath = pathToFileURL(
-    resolve(process.cwd(), '../../packages/domain/src/RegistrationService.ts'),
-  ).href;
-  const module = (await import(modulePath)) as {
-    RegistrationService: DomainRegistrationService;
-  };
-  return module.RegistrationService;
+function createAdminUsersService(client: PrismaClient) {
+  return new AdminUsersService(
+    client as never,
+    new NotificationsService(client as never),
+  );
 }
+
 function patchPrisma(service: RealPrismaOwner, client: PrismaClient) {
   const original = service.prisma;
   service.prisma = client;
@@ -61,8 +52,9 @@ function patchPrisma(service: RealPrismaOwner, client: PrismaClient) {
 }
 
 function trackClient(client: PrismaClient): PrismaClient {
-  (globalThis as typeof globalThis & TestPrismaRegistry)
-    .__imealRegisterTestPrismaClient?.(client);
+  (
+    globalThis as typeof globalThis & TestPrismaRegistry
+  ).__imealRegisterTestPrismaClient?.(client);
   return client;
 }
 
@@ -78,7 +70,6 @@ async function createWorkerService(client: PrismaClient) {
   return { service, ownedClient };
 }
 
-
 async function createServingWorld(
   client: PrismaClient,
   options: { registrationCount?: number } = {},
@@ -89,7 +80,11 @@ async function createServingWorld(
     create: { name: 'kitchen.serve' },
   });
   const kitchen = await client.user.create({
-    data: { id: kitchenActor.id, email: kitchenActor.email, name: kitchenActor.name },
+    data: {
+      id: kitchenActor.id,
+      email: kitchenActor.email,
+      name: kitchenActor.name,
+    },
   });
   await client.userPermission.create({
     data: { userId: kitchen.id, permissionId: permission.id },
@@ -256,7 +251,17 @@ async function createServingWorld(
       expiresAt: new Date('2026-09-28T04:00:30.000Z'),
     },
   });
-  return { kitchen, owner, location, policy, revision, dailyMenu, assignment, registrations, session };
+  return {
+    kitchen,
+    owner,
+    location,
+    policy,
+    revision,
+    dailyMenu,
+    assignment,
+    registrations,
+    session,
+  };
 }
 
 function createPickupService(client: PrismaClient) {
@@ -293,7 +298,7 @@ describe('Production PostgreSQL concurrency paths', () => {
     const workerClient = trackClient(new PrismaClient());
     const pickup = createPickupService(pickupClient);
     const worker = await createWorkerService(workerClient);
-    await worker.ownedClient.$disconnect();
+    await worker.ownedClient?.$disconnect();
 
     const pickupPromise = pickup.service.confirmPickup(
       { pickupSessionId: world.session.id, idempotencyKey: 'race-key' },
@@ -341,9 +346,8 @@ describe('Production PostgreSQL concurrency paths', () => {
         options?: unknown,
       ) => Promise<unknown>;
     };
-    const originalTransaction = transactionClient.$transaction.bind(
-      registrationClient,
-    );
+    const originalTransaction =
+      transactionClient.$transaction.bind(registrationClient);
     let transactionEntered!: () => void;
     const transactionStarted = new Promise<void>((resolve) => {
       transactionEntered = resolve;
@@ -353,15 +357,12 @@ describe('Production PostgreSQL concurrency paths', () => {
       releaseTransaction = resolve;
     });
     transactionClient.$transaction = (callback, options) =>
-      originalTransaction(
-        async (tx) => {
-          await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${world.registrations[0].id} FOR UPDATE`;
-          transactionEntered();
-          await transactionRelease;
-          return callback(tx);
-        },
-        options,
-      );
+      originalTransaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${world.registrations[0].id} FOR UPDATE`;
+        transactionEntered();
+        await transactionRelease;
+        return callback(tx);
+      }, options);
 
     vi.setSystemTime(new Date('2026-09-27T06:00:00.000Z'));
     const cancelPromise = registration.service.batchRegister(world.owner.id, [
@@ -443,9 +444,8 @@ describe('Production PostgreSQL concurrency paths', () => {
       ) => Promise<unknown>;
     };
     const pickupTransaction = pickupClient as unknown as TransactionClientOwner;
-    const originalPickupTransaction = pickupTransaction.$transaction.bind(
-      pickupClient,
-    );
+    const originalPickupTransaction =
+      pickupTransaction.$transaction.bind(pickupClient);
     let pickupLockEntered!: () => void;
     const pickupLockStarted = new Promise<void>((resolve) => {
       pickupLockEntered = resolve;
@@ -455,36 +455,30 @@ describe('Production PostgreSQL concurrency paths', () => {
       releasePickupLock = resolve;
     });
     pickupTransaction.$transaction = (callback, options) =>
-      originalPickupTransaction(
-        async (tx) => {
-          await tx.$queryRaw`
+      originalPickupTransaction(async (tx) => {
+        await tx.$queryRaw`
             SELECT id FROM registrations
             WHERE id = ${world.registrations[0].id}
             FOR UPDATE
           `;
-          pickupLockEntered();
-          await pickupLockRelease;
-          return callback(tx);
-        },
-        options,
-      );
+        pickupLockEntered();
+        await pickupLockRelease;
+        return callback(tx);
+      }, options);
 
-    const disableTransaction = disableClient as unknown as TransactionClientOwner;
-    const originalDisableTransaction = disableTransaction.$transaction.bind(
-      disableClient,
-    );
+    const disableTransaction =
+      disableClient as unknown as TransactionClientOwner;
+    const originalDisableTransaction =
+      disableTransaction.$transaction.bind(disableClient);
     let disableTransactionEntered!: () => void;
     const disableTransactionStarted = new Promise<void>((resolve) => {
       disableTransactionEntered = resolve;
     });
     disableTransaction.$transaction = (callback, options) =>
-      originalDisableTransaction(
-        async (tx) => {
-          disableTransactionEntered();
-          return callback(tx);
-        },
-        options,
-      );
+      originalDisableTransaction(async (tx) => {
+        disableTransactionEntered();
+        return callback(tx);
+      }, options);
 
     vi.setSystemTime(SERVING_TIME);
     const pickupPromise = pickup.service.confirmPickup(
@@ -492,12 +486,11 @@ describe('Production PostgreSQL concurrency paths', () => {
       kitchenActor,
     );
     await pickupLockStarted;
-    const domainRegistrationService = await loadDomainRegistrationService();
-    const disablePromise = domainRegistrationService.disableUserAccount(
+    const adminUsersService = createAdminUsersService(disableClient);
+    const disablePromise = adminUsersService.disable(
       world.owner.id,
-      SERVING_TIME,
       world.kitchen.id,
-      disableClient,
+      SERVING_TIME,
     );
     await disableTransactionStarted;
     releasePickupLock();
@@ -510,7 +503,10 @@ describe('Production PostgreSQL concurrency paths', () => {
     ]);
     if (pickupResult.status !== 'fulfilled') throw pickupResult.reason;
     if (disableResult.status !== 'fulfilled') throw disableResult.reason;
-    expect(disableResult.value).toEqual([]);
+    expect(disableResult.value).toMatchObject({
+      changed: true,
+      affected: { registrationsCancelled: 0 },
+    });
 
     const finalRegistration = await client.registration.findUniqueOrThrow({
       where: { id: world.registrations[0].id },
@@ -539,6 +535,46 @@ describe('Production PostgreSQL concurrency paths', () => {
       }),
     ).toBe(0);
   });
+
+  it('preserves existing penalty history and does not create no-show side effects', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client);
+    const registration = world.registrations[0];
+    const penalty = await client.penalty.create({
+      data: {
+        userId: world.owner.id,
+        registrationId: registration.id,
+        mealDate: registration.mealDate,
+        amount: 25,
+        reason: 'Existing history',
+        status: 'PENDING',
+      },
+    });
+    const result = await createAdminUsersService(client).disable(
+      world.owner.id,
+      world.kitchen.id,
+      SERVING_TIME,
+    );
+
+    expect(result.affected.registrationsCancelled).toBe(0);
+    await expect(
+      client.registration.findUniqueOrThrow({
+        where: { id: registration.id },
+        include: { penalties: true, mealServing: true },
+      }),
+    ).resolves.toMatchObject({
+      status: 'ACTIVE',
+      mealServing: null,
+      penalties: [
+        expect.objectContaining({ id: penalty.id, status: 'PENDING' }),
+      ],
+    });
+    await expect(
+      client.auditLog.count({
+        where: { action: 'registration_account_disabled' },
+      }),
+    ).resolves.toBe(0);
+  });
   it('cancels before pickup when account disable owns the registration lock first', async () => {
     const client = trackClient(new PrismaClient());
     const world = await createServingWorld(client);
@@ -552,10 +588,10 @@ describe('Production PostgreSQL concurrency paths', () => {
         options?: unknown,
       ) => Promise<unknown>;
     };
-    const disableTransaction = disableClient as unknown as TransactionClientOwner;
-    const originalDisableTransaction = disableTransaction.$transaction.bind(
-      disableClient,
-    );
+    const disableTransaction =
+      disableClient as unknown as TransactionClientOwner;
+    const originalDisableTransaction =
+      disableTransaction.$transaction.bind(disableClient);
     let disableLockEntered!: () => void;
     const disableLockStarted = new Promise<void>((resolve) => {
       disableLockEntered = resolve;
@@ -565,48 +601,42 @@ describe('Production PostgreSQL concurrency paths', () => {
       releaseDisableLock = resolve;
     });
     disableTransaction.$transaction = (callback, options) =>
-      originalDisableTransaction(
-        async (tx) => {
-          await tx.$queryRaw`
+      originalDisableTransaction(async (tx) => {
+        await tx.$queryRaw`
             SELECT id FROM registrations
             WHERE id = ${world.registrations[0].id}
             FOR UPDATE
           `;
-          disableLockEntered();
-          await disableLockRelease;
-          return callback(tx);
-        },
-        options,
-      );
+        disableLockEntered();
+        await disableLockRelease;
+        return callback(tx);
+      }, options);
 
     const pickupTransaction = pickupClient as unknown as TransactionClientOwner;
-    const originalPickupTransaction = pickupTransaction.$transaction.bind(
-      pickupClient,
-    );
+    const originalPickupTransaction =
+      pickupTransaction.$transaction.bind(pickupClient);
     let pickupTransactionEntered!: () => void;
     const pickupTransactionStarted = new Promise<void>((resolve) => {
       pickupTransactionEntered = resolve;
     });
     pickupTransaction.$transaction = (callback, options) =>
-      originalPickupTransaction(
-        async (tx) => {
-          pickupTransactionEntered();
-          return callback(tx);
-        },
-        options,
-      );
+      originalPickupTransaction(async (tx) => {
+        pickupTransactionEntered();
+        return callback(tx);
+      }, options);
 
-    const domainRegistrationService = await loadDomainRegistrationService();
-    vi.setSystemTime(SERVING_TIME);
-    const disablePromise = domainRegistrationService.disableUserAccount(
+    const adminUsersService = createAdminUsersService(disableClient);
+    const disablePromise = adminUsersService.disable(
       world.owner.id,
-      SERVING_TIME,
       world.kitchen.id,
-      disableClient,
+      SERVING_TIME,
     );
     await disableLockStarted;
     const pickupPromise = pickup.service.confirmPickup(
-      { pickupSessionId: world.session.id, idempotencyKey: 'disable-first-key' },
+      {
+        pickupSessionId: world.session.id,
+        idempotencyKey: 'disable-first-key',
+      },
       kitchenActor,
     );
     await pickupTransactionStarted;
@@ -619,7 +649,10 @@ describe('Production PostgreSQL concurrency paths', () => {
       }),
     ]);
     if (disableResult.status !== 'fulfilled') throw disableResult.reason;
-    expect(disableResult.value).toEqual([world.registrations[0].id]);
+    expect(disableResult.value).toMatchObject({
+      changed: true,
+      affected: { registrationsCancelled: 1 },
+    });
     if (pickupResult.status !== 'rejected') {
       throw new Error('Pickup unexpectedly won the disable-first race');
     }
@@ -682,9 +715,621 @@ describe('Production PostgreSQL concurrency paths', () => {
     expect(
       await client.auditLog.count({
         where: {
-          action: 'registration_account_disabled',
+          action: 'USER_DISABLED',
           userId: world.kitchen.id,
         },
+      }),
+    ).toBe(1);
+  });
+  it('rejects disabling an admin when no other admin has eligible OTP recovery', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client, { registrationCount: 0 });
+    const targetAdmin = await client.user.create({
+      data: { email: 'target-admin@example.test', name: 'Target Admin' },
+    });
+    const otherAdmin = await client.user.create({
+      data: { email: 'other-admin@example.test', name: 'Other Admin' },
+    });
+    const adminRole = await client.role.upsert({
+      where: { name: 'admin' },
+      update: {},
+      create: { name: 'admin' },
+    });
+    await client.userRole.createMany({
+      data: [
+        { userId: targetAdmin.id, roleId: adminRole.id },
+        { userId: otherAdmin.id, roleId: adminRole.id },
+      ],
+    });
+    await client.otpAllowlist.create({
+      data: {
+        normalizedEmail: targetAdmin.email,
+        userId: targetAdmin.id,
+        state: 'ACTIVE',
+        purpose: 'SESSION_LOGIN',
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    });
+    await client.otpAllowlist.create({
+      data: {
+        normalizedEmail: otherAdmin.email,
+        userId: otherAdmin.id,
+        state: 'DISABLED',
+        purpose: 'SESSION_LOGIN',
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    });
+
+    const service = new AdminUsersService(
+      client as never,
+      new NotificationsService(client as never),
+    );
+    await expect(
+      service.disable(targetAdmin.id, world.kitchen.id, SERVING_TIME),
+    ).rejects.toMatchObject({
+      response: { code: 'ADMIN_LAST_ACTIVE_ADMIN' },
+    });
+    await expect(
+      client.user.findUniqueOrThrow({ where: { id: targetAdmin.id } }),
+    ).resolves.toMatchObject({ isActive: true });
+  });
+
+  it('disables an admin when exactly one other admin has eligible OTP recovery', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client, { registrationCount: 0 });
+    const targetAdmin = await client.user.create({
+      data: {
+        email: 'eligible-target-admin@example.test',
+        name: 'Eligible Target Admin',
+      },
+    });
+    const otherAdmin = await client.user.create({
+      data: {
+        email: 'eligible-other-admin@example.test',
+        name: 'Eligible Other Admin',
+      },
+    });
+    const adminRole = await client.role.upsert({
+      where: { name: 'admin' },
+      update: {},
+      create: { name: 'admin' },
+    });
+    await client.userRole.createMany({
+      data: [
+        { userId: targetAdmin.id, roleId: adminRole.id },
+        { userId: otherAdmin.id, roleId: adminRole.id },
+      ],
+    });
+    await client.otpAllowlist.createMany({
+      data: [
+        {
+          normalizedEmail: targetAdmin.email,
+          userId: targetAdmin.id,
+          state: 'ACTIVE',
+          purpose: 'SESSION_LOGIN',
+          effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+        },
+        {
+          normalizedEmail: otherAdmin.email,
+          userId: otherAdmin.id,
+          state: 'ACTIVE',
+          purpose: 'SESSION_LOGIN',
+          effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+        },
+      ],
+    });
+
+    const service = createAdminUsersService(client);
+    await expect(
+      service.disable(targetAdmin.id, world.kitchen.id, SERVING_TIME),
+    ).resolves.toMatchObject({
+      changed: true,
+      affected: { registrationsCancelled: 0 },
+    });
+    await expect(
+      client.user.findUniqueOrThrow({ where: { id: targetAdmin.id } }),
+    ).resolves.toMatchObject({ isActive: false });
+  });
+
+  it('serializes reciprocal admin role updates without deadlock', async () => {
+    const clientA = trackClient(new PrismaClient());
+    const clientB = trackClient(new PrismaClient());
+    const adminRole = await clientA.role.upsert({
+      where: { name: 'admin' },
+      update: {},
+      create: { name: 'admin' },
+    });
+    const staffRole = await clientA.role.upsert({
+      where: { name: 'staff' },
+      update: {},
+      create: { name: 'staff' },
+    });
+    const kitchenRole = await clientA.role.upsert({
+      where: { name: 'kitchen' },
+      update: {},
+      create: { name: 'kitchen' },
+    });
+    const firstAdmin = await clientA.user.create({
+      data: {
+        email: 'reciprocal-first-admin@example.test',
+        name: 'Reciprocal First Admin',
+      },
+    });
+    const secondAdmin = await clientA.user.create({
+      data: {
+        email: 'reciprocal-second-admin@example.test',
+        name: 'Reciprocal Second Admin',
+      },
+    });
+    await clientA.userRole.createMany({
+      data: [
+        { userId: firstAdmin.id, roleId: adminRole.id },
+        { userId: secondAdmin.id, roleId: adminRole.id },
+      ],
+    });
+    const firstService = createAdminUsersService(clientA);
+    const secondService = createAdminUsersService(clientB);
+    const [firstResult, secondResult] = await Promise.race([
+      Promise.allSettled([
+        firstService.updateRoles(secondAdmin.id, ['staff'], firstAdmin.id),
+        secondService.updateRoles(firstAdmin.id, ['kitchen'], secondAdmin.id),
+      ]),
+      sleep(5_000).then(() => {
+        throw new Error('reciprocal admin role updates did not complete');
+      }),
+    ]);
+    expect(firstResult.status).toBe('fulfilled');
+    expect(secondResult.status).toBe('fulfilled');
+    if (firstResult.status === 'fulfilled') {
+      expect(firstResult.value).toMatchObject({
+        managedRoles: ['staff'],
+        changed: true,
+      });
+    }
+    if (secondResult.status === 'fulfilled') {
+      expect(secondResult.value).toMatchObject({
+        managedRoles: ['kitchen'],
+        changed: true,
+      });
+    }
+    await expect(
+      clientA.userRole.findMany({
+        where: {
+          userId: { in: [firstAdmin.id, secondAdmin.id] },
+        },
+        include: { role: true },
+      }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userId: firstAdmin.id,
+          role: expect.objectContaining({ name: 'admin' }),
+        }),
+        expect.objectContaining({
+          userId: firstAdmin.id,
+          role: expect.objectContaining({ name: 'kitchen' }),
+        }),
+        expect.objectContaining({
+          userId: secondAdmin.id,
+          role: expect.objectContaining({ name: 'admin' }),
+        }),
+        expect.objectContaining({
+          userId: secondAdmin.id,
+          role: expect.objectContaining({ name: 'staff' }),
+        }),
+      ]),
+    );
+    void staffRole;
+    void kitchenRole;
+  });
+
+  it('keeps roster assignment role and managed UserRole mutations independent', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client, { registrationCount: 0 });
+    const staff = await client.role.upsert({
+      where: { name: 'staff' },
+      update: {},
+      create: { name: 'staff' },
+    });
+    await client.role.upsert({
+      where: { name: 'kitchen' },
+      update: {},
+      create: { name: 'kitchen' },
+    });
+    await client.userRole.create({
+      data: { userId: world.owner.id, roleId: staff.id },
+    });
+    const service = createAdminUsersService(client);
+
+    await client.employeeLocationAssignment.update({
+      where: { id: world.assignment.id },
+      data: { role: 'KITCHEN' },
+    });
+    await service.updateRoles(world.owner.id, ['kitchen'], world.kitchen.id);
+    await expect(
+      client.employeeLocationAssignment.findUniqueOrThrow({
+        where: { id: world.assignment.id },
+      }),
+    ).resolves.toMatchObject({ role: 'KITCHEN' });
+    await expect(
+      client.userRole.findMany({
+        where: { userId: world.owner.id },
+        include: { role: true },
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        role: expect.objectContaining({ name: 'kitchen' }),
+      }),
+    ]);
+
+    await client.employeeLocationAssignment.update({
+      where: { id: world.assignment.id },
+      data: { role: 'STAFF' },
+    });
+    await service.updateRoles(world.owner.id, ['staff'], world.kitchen.id);
+    await expect(
+      client.employeeLocationAssignment.findUniqueOrThrow({
+        where: { id: world.assignment.id },
+      }),
+    ).resolves.toMatchObject({ role: 'STAFF' });
+    await expect(
+      client.userRole.findMany({
+        where: { userId: world.owner.id },
+        include: { role: true },
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        role: expect.objectContaining({ name: 'staff' }),
+      }),
+    ]);
+  });
+
+  it('matches disable session revocation count to active preview sessions only', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client, { registrationCount: 0 });
+    const target = await client.user.create({
+      data: {
+        email: 'session-count-target@example.test',
+        name: 'Session Count Target',
+      },
+    });
+    const expiredAt = new Date(SERVING_TIME.getTime() - 60_000);
+    const activeUntil = new Date(SERVING_TIME.getTime() + 60 * 60_000);
+    await client.authSession.createMany({
+      data: [
+        {
+          userId: target.id,
+          tokenHash: `runtime-active-${randomUUID()}`,
+          purpose: 'SESSION_LOGIN',
+          authMethod: 'EMAIL_OTP',
+          createdAt: new Date(SERVING_TIME.getTime() - 60_000),
+          lastUsedAt: SERVING_TIME,
+          idleExpiresAt: activeUntil,
+          absoluteExpiresAt: activeUntil,
+          requestId: 'active-session-count',
+        },
+        {
+          userId: target.id,
+          tokenHash: `runtime-expired-${randomUUID()}`,
+          purpose: 'SESSION_LOGIN',
+          authMethod: 'EMAIL_OTP',
+          createdAt: new Date(SERVING_TIME.getTime() - 120_000),
+          lastUsedAt: expiredAt,
+          idleExpiresAt: expiredAt,
+          absoluteExpiresAt: expiredAt,
+          requestId: 'expired-session-count',
+        },
+      ],
+    });
+    const service = createAdminUsersService(client);
+    await expect(
+      service.previewDisable(target.id, SERVING_TIME),
+    ).resolves.toMatchObject({ activeSessionCount: 1 });
+    await expect(
+      service.disable(target.id, world.kitchen.id, SERVING_TIME),
+    ).resolves.toMatchObject({ affected: { sessionsRevoked: 1 } });
+    await expect(
+      client.authSession.count({
+        where: { userId: target.id, revokedReason: 'ACCOUNT_DISABLED' },
+      }),
+    ).resolves.toBe(1);
+  });
+
+  it('rejects OTP session issuance after disable commits', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client, { registrationCount: 0 });
+    const target = await client.user.create({
+      data: {
+        email: 'otp-disabled-target@example.test',
+        name: 'OTP Disabled Target',
+      },
+    });
+    const adminUsers = createAdminUsersService(client);
+    await adminUsers.disable(target.id, world.kitchen.id, SERVING_TIME);
+
+    const sessions = new SessionService(client as never);
+    await expect(
+      sessions.create({
+        userId: target.id,
+        purpose: 'SESSION_LOGIN',
+        requestId: 'otp-after-disable',
+        metadata: {},
+      }),
+    ).rejects.toMatchObject({ response: { code: 'SESSION_INVALID' } });
+    await expect(
+      client.authSession.count({ where: { userId: target.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      client.auditLog.count({
+        where: { action: 'SESSION_CREATED', userId: target.id },
+      }),
+    ).resolves.toBe(0);
+  });
+
+  it('revokes a session when issuance commits before disable', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client, { registrationCount: 0 });
+    const target = await client.user.create({
+      data: { email: 'otp-race-target@example.test', name: 'OTP Race Target' },
+    });
+    const sessions = new SessionService(client as never);
+    await sessions.create({
+      userId: target.id,
+      purpose: 'SESSION_LOGIN',
+      requestId: 'otp-before-disable',
+      metadata: {},
+    });
+
+    const result = await createAdminUsersService(client).disable(
+      target.id,
+      world.kitchen.id,
+      SERVING_TIME,
+    );
+    expect(result.affected.sessionsRevoked).toBe(1);
+    await expect(
+      client.authSession.count({
+        where: { userId: target.id, revokedReason: 'ACCOUNT_DISABLED' },
+      }),
+    ).resolves.toBe(1);
+  });
+
+  it('keeps account disable and OTP allowlist state independent across re-enable', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client, { registrationCount: 0 });
+    const target = await client.user.create({
+      data: {
+        email: 'otp-allowlist-target@example.test',
+        name: 'OTP Allowlist Target',
+      },
+    });
+    const allowlist = await client.otpAllowlist.create({
+      data: {
+        normalizedEmail: target.email,
+        userId: target.id,
+        state: 'ACTIVE',
+        purpose: 'SESSION_LOGIN',
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    });
+    const allowlistService = new AllowlistService(client as never);
+    await expect(
+      allowlistService.findEligible(
+        target.email,
+        'SESSION_LOGIN',
+        SERVING_TIME,
+      ),
+    ).resolves.toMatchObject({ userId: target.id });
+
+    const adminUsers = createAdminUsersService(client);
+    await adminUsers.disable(target.id, world.kitchen.id, SERVING_TIME);
+    await expect(
+      allowlistService.findEligible(
+        target.email,
+        'SESSION_LOGIN',
+        SERVING_TIME,
+      ),
+    ).resolves.toBeNull();
+
+    await client.otpAllowlist.update({
+      where: { id: allowlist.id },
+      data: { state: 'DISABLED' },
+    });
+    await adminUsers.enable(target.id, world.kitchen.id, SERVING_TIME);
+    await expect(
+      client.user.findUniqueOrThrow({ where: { id: target.id } }),
+    ).resolves.toMatchObject({ isActive: true });
+    await expect(
+      allowlistService.findEligible(
+        target.email,
+        'SESSION_LOGIN',
+        SERVING_TIME,
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it('preserves delegation notification and outbox semantics on disable', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client, { registrationCount: 0 });
+    const delegate = await client.user.create({
+      data: {
+        email: 'disable-delegate@example.test',
+        name: 'Disable Delegate',
+      },
+    });
+    const registration = await client.registration.create({
+      data: {
+        userId: world.owner.id,
+        mealDate: MEAL_DATE,
+        status: 'ACTIVE',
+      },
+    });
+    const delegations = new DelegationsService(
+      new NotificationsService(client as never),
+      client as never,
+    );
+    await delegations.createDelegation(world.owner.id, {
+      registrationId: registration.id,
+      delegateUserId: delegate.id,
+    });
+    const service = new AdminUsersService(
+      client as never,
+      new NotificationsService(client as never),
+    );
+
+    const result = await service.disable(
+      world.owner.id,
+      world.kitchen.id,
+      SERVING_TIME,
+    );
+
+    expect(result.affected.delegationsRevoked).toBe(1);
+    expect(
+      await client.pickupDelegation.findFirstOrThrow({
+        where: { registrationId: registration.id },
+      }),
+    ).toMatchObject({ status: 'REVOKED' });
+    const notification = await client.notification.findFirstOrThrow({
+      where: { userId: delegate.id, kind: 'DELEGATION_REVOKED' },
+    });
+    expect(notification.payload).toMatchObject({
+      delegationId: expect.any(String),
+      registrationId: registration.id,
+      reason: 'ACCOUNT_DISABLED',
+    });
+    expect(
+      await client.outboxEvent.count({
+        where: {
+          aggregateType: 'NOTIFICATION',
+          aggregateId: notification.id,
+          eventType: 'NOTIFICATION_CREATED',
+        },
+      }),
+    ).toBe(1);
+  });
+
+  it('does not revoke inbound delegation attached to an ACTIVE served registration', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client, { registrationCount: 1 });
+    const target = await client.user.create({
+      data: { email: 'served-target@example.test', name: 'Served Target' },
+    });
+    const registration = world.registrations[0];
+    await client.pickupDelegation.create({
+      data: {
+        registrationId: registration.id,
+        delegateUserId: target.id,
+        status: 'PENDING',
+      },
+    });
+    const pickup = createPickupService(client).service;
+    await pickup.confirmPickup(
+      {
+        pickupSessionId: world.session.id,
+        idempotencyKey: 'serve-before-disable',
+      },
+      kitchenActor,
+    );
+    const service = new AdminUsersService(
+      client as never,
+      new NotificationsService(client as never),
+    );
+
+    await service.disable(target.id, world.kitchen.id, SERVING_TIME);
+
+    await expect(
+      client.pickupDelegation.findFirstOrThrow({
+        where: { registrationId: registration.id, delegateUserId: target.id },
+      }),
+    ).resolves.toMatchObject({ status: 'PENDING' });
+    await expect(
+      client.registration.findUniqueOrThrow({
+        where: { id: registration.id },
+        include: { mealServing: true },
+      }),
+    ).resolves.toMatchObject({
+      status: 'ACTIVE',
+      mealServing: { id: expect.any(String) },
+    });
+  });
+
+  it('revokes an inbound delegation committed after initial disable discovery', async () => {
+    const client = trackClient(new PrismaClient());
+    const world = await createServingWorld(client, { registrationCount: 0 });
+    const target = await client.user.create({
+      data: { email: 'race-target@example.test', name: 'Race Target' },
+    });
+    const registration = await client.registration.create({
+      data: {
+        userId: world.owner.id,
+        mealDate: MEAL_DATE,
+        status: 'ACTIVE',
+      },
+    });
+    const createClient = trackClient(new PrismaClient());
+    const disableClient = trackClient(new PrismaClient());
+    const delegations = new DelegationsService(
+      new NotificationsService(createClient as never),
+      createClient as never,
+    );
+    const adminUsers = new AdminUsersService(
+      disableClient as never,
+      new NotificationsService(disableClient as never),
+    );
+    type TransactionClientOwner = {
+      $transaction: (
+        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
+        options?: unknown,
+      ) => Promise<unknown>;
+    };
+    const createTransaction = createClient as unknown as TransactionClientOwner;
+    const originalCreateTransaction =
+      createTransaction.$transaction.bind(createClient);
+    let targetLockEntered!: () => void;
+    const targetLockStarted = new Promise<void>((resolve) => {
+      targetLockEntered = resolve;
+    });
+    let releaseTargetLock!: () => void;
+    const targetLockRelease = new Promise<void>((resolve) => {
+      releaseTargetLock = resolve;
+    });
+    createTransaction.$transaction = (callback, options) =>
+      originalCreateTransaction(async (tx) => {
+        await tx.$queryRaw`
+            SELECT id FROM registrations WHERE id = ${registration.id} FOR UPDATE
+          `;
+        await tx.$queryRaw`
+            SELECT id FROM users WHERE id = ${target.id} FOR UPDATE
+          `;
+        targetLockEntered();
+        await targetLockRelease;
+        return callback(tx);
+      }, options);
+
+    const createPromise = delegations.createDelegation(world.owner.id, {
+      registrationId: registration.id,
+      delegateUserId: target.id,
+    });
+    await targetLockStarted;
+    const disablePromise = adminUsers.disable(
+      target.id,
+      world.kitchen.id,
+      SERVING_TIME,
+    );
+    releaseTargetLock();
+    const [created] = await Promise.all([createPromise, disablePromise]);
+
+    expect(created.status).toBe('PENDING');
+    await expect(
+      client.pickupDelegation.findFirstOrThrow({
+        where: { registrationId: registration.id },
+      }),
+    ).resolves.toMatchObject({ status: 'REVOKED' });
+    await expect(
+      client.user.findUniqueOrThrow({ where: { id: target.id } }),
+    ).resolves.toMatchObject({ isActive: false });
+    expect(
+      await client.auditLog.count({
+        where: { action: 'USER_DISABLED', userId: world.kitchen.id },
       }),
     ).toBe(1);
   });
@@ -709,22 +1354,19 @@ describe('Production PostgreSQL concurrency paths', () => {
       resolveTransactionBarrier = resolve;
     });
     for (const clientForRace of clients) {
-      const transactionClient = clientForRace as unknown as TransactionClientOwner;
-      const originalTransaction = transactionClient.$transaction.bind(
-        clientForRace,
-      );
+      const transactionClient =
+        clientForRace as unknown as TransactionClientOwner;
+      const originalTransaction =
+        transactionClient.$transaction.bind(clientForRace);
       transactionClient.$transaction = (callback, options) =>
-        originalTransaction(
-          async (tx) => {
-            enteredCount += 1;
-            if (enteredCount === clients.length) {
-              resolveTransactionBarrier();
-            }
-            await transactionBarrier;
-            return callback(tx);
-          },
-          options,
-        );
+        originalTransaction(async (tx) => {
+          enteredCount += 1;
+          if (enteredCount === clients.length) {
+            resolveTransactionBarrier();
+          }
+          await transactionBarrier;
+          return callback(tx);
+        }, options);
     }
 
     vi.setSystemTime(new Date('2026-09-27T06:00:00.000Z'));
@@ -871,10 +1513,16 @@ describe('Production PostgreSQL concurrency paths', () => {
     const updateClient = trackClient(new PrismaClient());
     const startDate = new Date('2026-10-05T00:00:00.000Z');
     const owner = await client.user.create({
-      data: { email: 'weekly-race-owner@example.test', name: 'Weekly Race Owner' },
+      data: {
+        email: 'weekly-race-owner@example.test',
+        name: 'Weekly Race Owner',
+      },
     });
     const admin = await client.user.create({
-      data: { email: 'weekly-race-admin@example.test', name: 'Weekly Race Admin' },
+      data: {
+        email: 'weekly-race-admin@example.test',
+        name: 'Weekly Race Admin',
+      },
     });
     const location = await client.location.create({
       data: {
@@ -962,80 +1610,70 @@ describe('Production PostgreSQL concurrency paths', () => {
       publicationReadSeen = resolve;
     });
     const publisherTransaction = publishClient as unknown as TransactionOwner;
-    const originalPublisherTransaction = publisherTransaction.$transaction.bind(
-      publishClient,
-    );
+    const originalPublisherTransaction =
+      publisherTransaction.$transaction.bind(publishClient);
     publisherTransaction.$transaction = (callback, options) =>
-      originalPublisherTransaction(
-        async (tx) => {
-          let firstRead = true;
-          const guardedTx = new Proxy(tx, {
-            get(target, property, receiver) {
-              if (property !== 'weeklyMenu') {
-                const value = Reflect.get(target, property, receiver);
+      originalPublisherTransaction(async (tx) => {
+        let firstRead = true;
+        const guardedTx = new Proxy(tx, {
+          get(target, property, receiver) {
+            if (property !== 'weeklyMenu') {
+              const value = Reflect.get(target, property, receiver);
+              return typeof value === 'function' ? value.bind(target) : value;
+            }
+            const delegate = Reflect.get(target, property, receiver);
+            return new Proxy(delegate, {
+              get(delegateTarget, method, delegateReceiver) {
+                const value = Reflect.get(
+                  delegateTarget,
+                  method,
+                  delegateReceiver,
+                );
+                if (method === 'findFirst') {
+                  return async (...args: unknown[]) => {
+                    const result = await value.apply(delegateTarget, args);
+                    if (firstRead) {
+                      firstRead = false;
+                      publicationReadSeen();
+                      await publicationRead;
+                    }
+                    return result;
+                  };
+                }
                 return typeof value === 'function'
-                  ? value.bind(target)
+                  ? value.bind(delegateTarget)
                   : value;
-              }
-              const delegate = Reflect.get(target, property, receiver);
-              return new Proxy(delegate, {
-                get(delegateTarget, method, delegateReceiver) {
-                  const value = Reflect.get(
-                    delegateTarget,
-                    method,
-                    delegateReceiver,
-                  );
-                  if (method === 'findFirst') {
-                    return async (...args: unknown[]) => {
-                      const result = await value.apply(delegateTarget, args);
-                      if (firstRead) {
-                        firstRead = false;
-                        publicationReadSeen();
-                        await publicationRead;
-                      }
-                      return result;
-                    };
-                  }
-                  return typeof value === 'function'
-                    ? value.bind(delegateTarget)
-                    : value;
-                },
-              });
-            },
-          });
-          return callback(guardedTx);
-        },
-        options,
-      );
+              },
+            });
+          },
+        });
+        return callback(guardedTx);
+      }, options);
 
     let updateLockSeen!: () => void;
     const updateLockStarted = new Promise<void>((resolve) => {
       updateLockSeen = resolve;
     });
     const updaterTransaction = updateClient as unknown as TransactionOwner;
-    const originalUpdaterTransaction = updaterTransaction.$transaction.bind(
-      updateClient,
-    );
+    const originalUpdaterTransaction =
+      updaterTransaction.$transaction.bind(updateClient);
     updaterTransaction.$transaction = (callback, options) =>
-      originalUpdaterTransaction(
-        async (tx) => {
-          const guardedTx = new Proxy(tx, {
-            get(target, property, receiver) {
-              const value = Reflect.get(target, property, receiver);
-              if (property === '$queryRaw') {
-                return async (...args: unknown[]) => {
-                  const result = await value.apply(target, args);
-                  updateLockSeen();
-                  return result;
-                };
-              }
-              return typeof value === 'function' ? value.bind(target) : value;
-            },
-          });
-          return callback(guardedTx);
-        },
-        options,
-      );
+      originalUpdaterTransaction(async (tx) => {
+        const guardedTx = new Proxy(tx, {
+          get(target, property, receiver) {
+            const value = Reflect.get(target, property, receiver);
+            if (property === '$queryRaw') {
+              return async (...args: unknown[]) => {
+                const result = await value.apply(target, args);
+                updateLockSeen();
+                return result;
+              };
+            }
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+        return callback(guardedTx);
+      }, options);
 
     const publishPromise = publisher.service.publishWeeklyMenu(
       '2026-10-05',
@@ -1132,9 +1770,8 @@ describe('Production PostgreSQL concurrency paths', () => {
     };
     const transactionClient =
       cancellationClient as unknown as TransactionClientOwner;
-    const originalTransaction = transactionClient.$transaction.bind(
-      cancellationClient,
-    );
+    const originalTransaction =
+      transactionClient.$transaction.bind(cancellationClient);
     let transactionEntered!: () => void;
     const transactionStarted = new Promise<void>((resolve) => {
       transactionEntered = resolve;
@@ -1144,15 +1781,12 @@ describe('Production PostgreSQL concurrency paths', () => {
       releaseTransaction = resolve;
     });
     transactionClient.$transaction = (callback, options) =>
-      originalTransaction(
-        async (tx) => {
-          await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registrationId} FOR UPDATE`;
-          transactionEntered();
-          await transactionRelease;
-          return callback(tx);
-        },
-        options,
-      );
+      originalTransaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registrationId} FOR UPDATE`;
+        transactionEntered();
+        await transactionRelease;
+        return callback(tx);
+      }, options);
 
     vi.setSystemTime(new Date('2026-09-27T06:00:00.000Z'));
     const cancelPromise = cancellation.service.batchRegister(world.owner.id, [
@@ -1322,7 +1956,9 @@ describe('Production PostgreSQL concurrency paths', () => {
     ]);
     expect(activeOld[0]).toMatchObject({ success: true });
     const oldRegistration = await client.registration.findUniqueOrThrow({
-      where: { userId_mealDate: { userId: world.owner.id, mealDate: MEAL_DATE } },
+      where: {
+        userId_mealDate: { userId: world.owner.id, mealDate: MEAL_DATE },
+      },
     });
     const oldSnapshot = {
       menuRevisionId: oldRegistration.menuRevisionId,
@@ -1331,7 +1967,10 @@ describe('Production PostgreSQL concurrency paths', () => {
     };
 
     const served = await pickup.service.confirmPickup(
-      { pickupSessionId: world.session.id, idempotencyKey: 'snapshot-serving-key' },
+      {
+        pickupSessionId: world.session.id,
+        idempotencyKey: 'snapshot-serving-key',
+      },
       kitchenActor,
     );
     expect(served.success).toBe(true);
@@ -1344,14 +1983,15 @@ describe('Production PostgreSQL concurrency paths', () => {
       locationId: oldSnapshot.serviceLocationId,
     });
 
-    const reactivationRegistration = await client.registration.findUniqueOrThrow({
-      where: {
-        userId_mealDate: {
-          userId: world.owner.id,
-          mealDate: new Date(`${reactivationDate}T00:00:00.000Z`),
+    const reactivationRegistration =
+      await client.registration.findUniqueOrThrow({
+        where: {
+          userId_mealDate: {
+            userId: world.owner.id,
+            mealDate: new Date(`${reactivationDate}T00:00:00.000Z`),
+          },
         },
-      },
-    });
+      });
     const delegate = await client.user.create({
       data: {
         email: 'delegate@example.test',
@@ -1412,9 +2052,10 @@ describe('Production PostgreSQL concurrency paths', () => {
       },
     });
 
-    const reactivated = await registration.service.batchRegister(world.owner.id, [
-      { mealDate: reactivationDate, status: 'ACTIVE', mealChoice: 'REGULAR' },
-    ]);
+    const reactivated = await registration.service.batchRegister(
+      world.owner.id,
+      [{ mealDate: reactivationDate, status: 'ACTIVE', mealChoice: 'REGULAR' }],
+    );
     expect(reactivated[0]).toMatchObject({ success: true });
     const finalReactivated = await client.registration.findUniqueOrThrow({
       where: { id: reactivationRegistration.id },
@@ -1451,11 +2092,13 @@ describe('Production PostgreSQL concurrency paths', () => {
     expect(
       await client.outboxEvent.count({
         where: {
-          dedupeKey: `notification-delivery:${(
-            await client.notification.findFirstOrThrow({
-              where: { kind: 'DELEGATION_REVOKED', userId: delegate.id },
-            })
-          ).id}`,
+          dedupeKey: `notification-delivery:${
+            (
+              await client.notification.findFirstOrThrow({
+                where: { kind: 'DELEGATION_REVOKED', userId: delegate.id },
+              })
+            ).id
+          }`,
         },
       }),
     ).toBe(1);
@@ -1532,7 +2175,10 @@ describe('Production PostgreSQL concurrency paths', () => {
     ).toBe(0);
     expect(
       await client.servingConfirmRequest.count({
-        where: { callerUserId: kitchenActor.id, idempotencyKey: 'rollback-key' },
+        where: {
+          callerUserId: kitchenActor.id,
+          idempotencyKey: 'rollback-key',
+        },
       }),
     ).toBe(0);
     expect(
@@ -1542,7 +2188,6 @@ describe('Production PostgreSQL concurrency paths', () => {
     ).toMatchObject({ consumedAt: null });
   });
 
-
   it('confirms duplicate production requests idempotently and rejects a changed body', async () => {
     const client = trackClient(new PrismaClient());
     const world = await createServingWorld(client);
@@ -1551,22 +2196,43 @@ describe('Production PostgreSQL concurrency paths', () => {
     const first = createPickupService(firstClient);
     const retry = createPickupService(retryClient);
 
-    const body = { pickupSessionId: world.session.id, idempotencyKey: 'same-key' };
+    const body = {
+      pickupSessionId: world.session.id,
+      idempotencyKey: 'same-key',
+    };
     const [firstResult, retryResult] = await Promise.all([
       first.service.confirmPickup(body, kitchenActor),
       retry.service.confirmPickup(body, kitchenActor),
     ]);
     expect(retryResult).toEqual(firstResult);
-    expect(await client.mealServing.count({ where: { registrationId: world.registrations[0].id } })).toBe(1);
-    expect(await client.servingConfirmRequest.count({ where: { callerUserId: kitchenActor.id, idempotencyKey: body.idempotencyKey } })).toBe(1);
+    expect(
+      await client.mealServing.count({
+        where: { registrationId: world.registrations[0].id },
+      }),
+    ).toBe(1);
+    expect(
+      await client.servingConfirmRequest.count({
+        where: {
+          callerUserId: kitchenActor.id,
+          idempotencyKey: body.idempotencyKey,
+        },
+      }),
+    ).toBe(1);
 
     await expect(
       retry.service.confirmPickup(
-        { pickupSessionId: 'different-session', idempotencyKey: body.idempotencyKey },
+        {
+          pickupSessionId: 'different-session',
+          idempotencyKey: body.idempotencyKey,
+        },
         kitchenActor,
       ),
     ).rejects.toMatchObject({ response: { code: 'IDEMPOTENCY_CONFLICT' } });
-    expect(await client.mealServing.count({ where: { registrationId: world.registrations[0].id } })).toBe(1);
+    expect(
+      await client.mealServing.count({
+        where: { registrationId: world.registrations[0].id },
+      }),
+    ).toBe(1);
   });
 
   it('rolls back the real confirmation transaction and all side effects for a stale item', async () => {
@@ -1592,7 +2258,9 @@ describe('Production PostgreSQL concurrency paths', () => {
     ).rejects.toMatchObject({ response: { code: 'PICKUP_INTENT_CONFLICT' } });
     expect(
       await client.mealServing.count({
-        where: { registrationId: { in: world.registrations.map(({ id }) => id) } },
+        where: {
+          registrationId: { in: world.registrations.map(({ id }) => id) },
+        },
       }),
     ).toBe(0);
     expect(
@@ -1605,7 +2273,11 @@ describe('Production PostgreSQL concurrency paths', () => {
     ).toBe(0);
     expect(
       await client.mealEvent.count({
-        where: { mealServing: { registrationId: { in: world.registrations.map(({ id }) => id) } } },
+        where: {
+          mealServing: {
+            registrationId: { in: world.registrations.map(({ id }) => id) },
+          },
+        },
       }),
     ).toBe(0);
   });

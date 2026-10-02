@@ -4,7 +4,7 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
 import { DelegationsModule } from './delegations/delegations.module.js';
-import { WeeklyMenusModule } from './admin/weekly-menus/weekly-menus.module.js';
+import { AdminUsersModule } from './admin/users/admin-users.module.js';
 import { PenaltiesModule } from './admin/penalties/penalties.module.js';
 import { EmployeePenaltiesModule } from './penalties/employee-penalties.module.js';
 import { RegistrationsModule } from './registrations/registrations.module.js';
@@ -45,7 +45,7 @@ import { PrismaService } from './common/prisma.service.js';
     ScheduleModule.forRoot(),
     AuthModule,
     DelegationsModule,
-    WeeklyMenusModule,
+    AdminUsersModule,
     PenaltiesModule,
     EmployeePenaltiesModule,
     RegistrationsModule,

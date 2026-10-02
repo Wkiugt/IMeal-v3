@@ -12,3 +12,4 @@ export * from './employee-activity';
 export * from './auth';
 export * from './locations';
 export * from './notifications';
+export * from './admin-users';

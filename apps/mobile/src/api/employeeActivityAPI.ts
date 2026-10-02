@@ -41,7 +41,8 @@ async function request(
   } catch (error: unknown) {
     throw toMobileApiError(error, fallbackKey);
   }
-  if (!response.ok) await throwMobileResponseError(response, fallbackKey);
+  if (!response.ok)
+    await throwMobileResponseError(response, fallbackKey, { token });
   return readMobileResponseJson(response, fallbackKey);
 }
 

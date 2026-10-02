@@ -126,9 +126,7 @@ describe('RegistrationsController (e2e)', () => {
       .query({ startDate: '2026-09-05' });
     expect(response.status).toBe(200);
     expect(response.body.days).toHaveLength(7);
-    expect(response.body.registrationWindow.timeZone).toBe(
-      'Asia/Ho_Chi_Minh',
-    );
+    expect(response.body.registrationWindow.timeZone).toBe('Asia/Ho_Chi_Minh');
   });
 
   it('validates a batch request and returns each date result', async () => {
@@ -248,7 +246,11 @@ describe('RegistrationsController (e2e)', () => {
 
 function createRealPrismaMock() {
   const txMock = {
+    $executeRaw: vi.fn().mockResolvedValue(0),
     $queryRaw: vi.fn().mockResolvedValue([]),
+    user: {
+      findUnique: vi.fn().mockResolvedValue({ id: 'user-1', isActive: true }),
+    },
     dailyMenu: {
       findFirst: vi.fn().mockResolvedValue({ id: 'daily-menu-1' }),
     },

@@ -11,26 +11,40 @@ import {
 export type NotificationItem = v1.NotificationItem;
 export type NotificationListResponse = v1.NotificationListResponse;
 export type NotificationDetailResponse = v1.NotificationDetailResponse;
-export type NotificationPreferences = v1.NotificationPreferencesResponse['data'];
+export type NotificationPreferences =
+  v1.NotificationPreferencesResponse['data'];
 export type RegisterPushDeviceRequest = v1.RegisterPushDeviceRequest;
 export type PushDevicePlatform = v1.PushDevicePlatform;
 
-const PushDeviceResponseSchema = z.object({
-  data: z.object({
-    token: v1.ExpoPushTokenSchema,
-    platform: v1.PushDevicePlatformSchema,
-    lastSeenAt: v1.NotificationTimestampSchema,
-  }).strict(),
-}).strict();
+const PushDeviceResponseSchema = z
+  .object({
+    data: z
+      .object({
+        token: v1.ExpoPushTokenSchema,
+        platform: v1.PushDevicePlatformSchema,
+        lastSeenAt: v1.NotificationTimestampSchema,
+      })
+      .strict(),
+  })
+  .strict();
 
-const PushDeviceRevokeResponseSchema = z.object({
-  data: z.object({ token: v1.ExpoPushTokenSchema }).strict(),
-}).strict();
+const PushDeviceRevokeResponseSchema = z
+  .object({
+    data: z.object({ token: v1.ExpoPushTokenSchema }).strict(),
+  })
+  .strict();
 
 async function request(
   path: string,
   token: string,
-  fallbackKey: 'errors.loadNotifications' | 'errors.loadNotification' | 'errors.updateNotification' | 'errors.loadPreferences' | 'errors.updatePreferences' | 'errors.registerPushDevice' | 'errors.revokePushDevice',
+  fallbackKey:
+    | 'errors.loadNotifications'
+    | 'errors.loadNotification'
+    | 'errors.updateNotification'
+    | 'errors.loadPreferences'
+    | 'errors.updatePreferences'
+    | 'errors.registerPushDevice'
+    | 'errors.revokePushDevice',
   init?: RequestInit,
 ): Promise<unknown> {
   let response: Response;
@@ -46,17 +60,19 @@ async function request(
   } catch (error: unknown) {
     throw toMobileApiError(error, fallbackKey);
   }
-  if (!response.ok) await throwMobileResponseError(response, fallbackKey);
+  if (!response.ok)
+    await throwMobileResponseError(response, fallbackKey, { token });
   return readMobileResponseJson(response, fallbackKey);
 }
 
-function parseOrThrow<T>(
-  schema: z.ZodType<T>,
-  payload: unknown,
-): T {
+function parseOrThrow<T>(schema: z.ZodType<T>, payload: unknown): T {
   const parsed = schema.safeParse(payload);
   if (!parsed.success) {
-    throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
+    throw new MobileApiError(
+      'INVALID_RESPONSE',
+      'errors.invalidResponse',
+      parsed.error,
+    );
   }
   return parsed.data;
 }
@@ -77,10 +93,17 @@ export const notificationAPI = {
     return parseOrThrow(v1.NotificationListResponseSchema, payload);
   },
 
-  getDetail: async (notificationId: string, token: string): Promise<NotificationDetailResponse> => {
+  getDetail: async (
+    notificationId: string,
+    token: string,
+  ): Promise<NotificationDetailResponse> => {
     const id = v1.NotificationIdSchema.safeParse(notificationId);
     if (!id.success) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', id.error);
+      throw new MobileApiError(
+        'INVALID_RESPONSE',
+        'errors.invalidResponse',
+        id.error,
+      );
     }
     const payload = await request(
       `/notifications/${encodeURIComponent(id.data)}`,
@@ -90,10 +113,17 @@ export const notificationAPI = {
     return parseOrThrow(v1.NotificationDetailResponseSchema, payload);
   },
 
-  markRead: async (notificationId: string, token: string): Promise<NotificationDetailResponse> => {
+  markRead: async (
+    notificationId: string,
+    token: string,
+  ): Promise<NotificationDetailResponse> => {
     const id = v1.NotificationIdSchema.safeParse(notificationId);
     if (!id.success) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', id.error);
+      throw new MobileApiError(
+        'INVALID_RESPONSE',
+        'errors.invalidResponse',
+        id.error,
+      );
     }
     const payload = await request(
       `/notifications/${encodeURIComponent(id.data)}/read`,
@@ -105,7 +135,11 @@ export const notificationAPI = {
   },
 
   getPreferences: async (token: string): Promise<NotificationPreferences> => {
-    const payload = await request('/notifications/preferences', token, 'errors.loadPreferences');
+    const payload = await request(
+      '/notifications/preferences',
+      token,
+      'errors.loadPreferences',
+    );
     return parseOrThrow(v1.NotificationPreferencesResponseSchema, payload).data;
   },
 
@@ -115,12 +149,21 @@ export const notificationAPI = {
   ): Promise<NotificationPreferences> => {
     const body = v1.NotificationPreferencesRequestSchema.safeParse(updates);
     if (!body.success) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', body.error);
+      throw new MobileApiError(
+        'INVALID_RESPONSE',
+        'errors.invalidResponse',
+        body.error,
+      );
     }
-    const payload = await request('/notifications/preferences', token, 'errors.updatePreferences', {
-      method: 'PATCH',
-      body: JSON.stringify(body.data),
-    });
+    const payload = await request(
+      '/notifications/preferences',
+      token,
+      'errors.updatePreferences',
+      {
+        method: 'PATCH',
+        body: JSON.stringify(body.data),
+      },
+    );
     return parseOrThrow(v1.NotificationPreferencesResponseSchema, payload).data;
   },
 
@@ -130,24 +173,44 @@ export const notificationAPI = {
   ) => {
     const body = v1.RegisterPushDeviceRequestSchema.safeParse(registration);
     if (!body.success) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', body.error);
+      throw new MobileApiError(
+        'INVALID_RESPONSE',
+        'errors.invalidResponse',
+        body.error,
+      );
     }
-    const payload = await request('/notifications/push-devices', token, 'errors.registerPushDevice', {
-      method: 'POST',
-      body: JSON.stringify(body.data),
-    });
+    const payload = await request(
+      '/notifications/push-devices',
+      token,
+      'errors.registerPushDevice',
+      {
+        method: 'POST',
+        body: JSON.stringify(body.data),
+      },
+    );
     return parseOrThrow(PushDeviceResponseSchema, payload).data;
   },
 
   revokePushDevice: async (pushToken: string, token: string) => {
-    const body = v1.RevokePushDeviceRequestSchema.safeParse({ token: pushToken });
-    if (!body.success) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', body.error);
-    }
-    const payload = await request('/notifications/push-devices', token, 'errors.revokePushDevice', {
-      method: 'DELETE',
-      body: JSON.stringify(body.data),
+    const body = v1.RevokePushDeviceRequestSchema.safeParse({
+      token: pushToken,
     });
+    if (!body.success) {
+      throw new MobileApiError(
+        'INVALID_RESPONSE',
+        'errors.invalidResponse',
+        body.error,
+      );
+    }
+    const payload = await request(
+      '/notifications/push-devices',
+      token,
+      'errors.revokePushDevice',
+      {
+        method: 'DELETE',
+        body: JSON.stringify(body.data),
+      },
+    );
     return parseOrThrow(PushDeviceRevokeResponseSchema, payload).data;
   },
 };

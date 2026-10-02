@@ -29,8 +29,7 @@ const CurrentUserSchema = z
 
 export type MobileProfile = z.infer<typeof CurrentUserSchema>;
 export type VerifyOtpInput =
-  | Pick<v1.VerifyOtpInput, 'email' | 'code'>
-  | v1.VerifyOtpInput;
+  Pick<v1.VerifyOtpInput, 'email' | 'code'> | v1.VerifyOtpInput;
 export type VerifyOtpResponse = v1.VerifyOtpResponse;
 export type RequestOtpResponse = v1.RequestOtpResponse;
 export type LogoutResponse = v1.LogoutResponse;
@@ -39,6 +38,7 @@ async function requestJson(
   path: string,
   init: RequestInit,
   fallbackKey: AuthFallbackKey,
+  protectedToken?: string,
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -46,7 +46,13 @@ async function requestJson(
   } catch (error: unknown) {
     throw toMobileApiError(error, fallbackKey);
   }
-  if (!response.ok) await throwMobileResponseError(response, fallbackKey);
+  if (!response.ok) {
+    await throwMobileResponseError(
+      response,
+      fallbackKey,
+      protectedToken ? { token: protectedToken } : undefined,
+    );
+  }
   return readMobileResponseJson(response, fallbackKey);
 }
 
@@ -134,6 +140,7 @@ export const authAPI = {
         },
       },
       'errors.restoreSession',
+      token,
     );
     const parsed = CurrentUserSchema.safeParse(payload);
     if (!parsed.success) {
@@ -157,6 +164,7 @@ export const authAPI = {
         },
       },
       'errors.logOut',
+      token,
     );
     const parsed = v1.LogoutResponseSchema.safeParse(payload);
     if (!parsed.success) {

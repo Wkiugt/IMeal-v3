@@ -111,6 +111,11 @@ States:
 - Account disabled/session revoked.
 - API or provider unreachable.
 
+An invalid or expired OTP is an operation error: preserve any unrelated
+authenticated session and let the user retry verification. A protected
+`SESSION_INVALID` response is different: clear only the matching opaque session,
+reset navigation to Auth, and show the reason-safe sign-in prompt.
+
 OTP success creates an opaque server session; the mobile client never receives
 identity-provider tokens or chooses a role. Không có federated identity-provider
 email/password fields, signup, forgot-password, email-domain authorization,
@@ -538,6 +543,25 @@ Bulk/destructive actions require confirmation and visible actor/date/scope.
 
 Admin account disable shows active roles, future registrations and delegations. Admin must confirm one workflow that disables access and cancels/quarantines all future commitments with reason `ACCOUNT_DISABLED`; these rows remain in history but are excluded from Kitchen totals and penalties. Admin Web manages independent `staff`/`kitchen` roles and clearly states that Kitchen does not inherit Staff. It has no control for granting/revoking `admin`. Jobs/Health shows run status, attempts, sanitized errors and a confirmed manual retry action.
 
+The Users view is server-authoritative: identity, effective service location, roster
+assignment and Allowlist A state are shown as separate concepts, with no fabricated
+department or location labels. Role controls expose only independently managed
+`staff` and `kitchen` checkboxes; Admin roles are displayed but never grantable or
+revocable from this surface. List filters and detail sessions/audit entries are
+server-paginated.
+
+Account lifecycle is explicit: disabling opens a preview with future registration,
+delegation and active-session counts before a separate confirmation; self-disable is
+blocked. Enabling restores only account `active` status and does not restore
+allowlist state, commitments, delegated authority or revoked sessions. Session
+revocation states the persisted `ADMIN_REVOKED` reason, and audit details preserve
+managed-role before/after arrays in readable form.
+
+If a protected Admin Web request returns structured `SESSION_INVALID`, the client
+clears the matching opaque session and returns to login without calling logout.
+In-flight Users responses are ignored after navigation or logout so protected
+content cannot be reattached to a new or unauthenticated surface.
+
 Staff Account includes read-only mobile meal history and penalty list/detail views in the Profile stack (`MealHistory`, `PenaltyList`, and `PenaltyDetail`) with profile links, paginated loading, filter selection, retry, and empty/error states; the profile also shows server-backed booked/enjoyed totals for the current Vietnam business month, where a real `0` is distinct from loading or unavailable data and stats failures remain non-blocking with retry; mutation controls for penalty resolution are never shown to Staff.
 
 ## 17. Accessibility
@@ -585,6 +609,9 @@ Staff Account includes read-only mobile meal history and penalty list/detail vie
 - Exact 14:00 cutoff, 10:30/13:30 serving boundaries and 30s pickup-session expiry are understandable and testable.
 - Staff can find meal history and penalty details from Account without Admin controls.
 - Admin disable preview and mandatory no-penalty future-commitment cleanup form one confirmed workflow.
+- Admin Users distinguishes account lifecycle, Allowlist A, roster assignment and
+  server-effective location; role, session and persisted-audit pagination remain
+  usable without exposing Admin-role mutation.
 - Kitchen serving authorization is enforced by authentication, `kitchen.serve` permission, and server-side pickup validation.
 - Realtime dashboard updates across two Kitchen devices.
 - Screen reader/large-text/reduced-motion paths remain functional.

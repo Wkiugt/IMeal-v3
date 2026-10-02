@@ -14,19 +14,23 @@ export type KitchenDashboardSnapshot = v1.KitchenDashboardSnapshot;
 
 type KitchenErrorKey = 'errors.loadKitchen' | 'errors.toggleServing';
 
-function isServingSignalResponse(value: unknown): value is { success: boolean; isServingReady: boolean; date?: string } {
+function isServingSignalResponse(
+  value: unknown,
+): value is { success: boolean; isServingReady: boolean; date?: string } {
   if (value === null || typeof value !== 'object') return false;
   if (!('success' in value) || !('isServingReady' in value)) return false;
-  return typeof value.success === 'boolean'
-    && typeof value.isServingReady === 'boolean'
-    && (!('date' in value) || typeof value.date === 'string');
+  return (
+    typeof value.success === 'boolean' &&
+    typeof value.isServingReady === 'boolean' &&
+    (!('date' in value) || typeof value.date === 'string')
+  );
 }
-
 
 async function requestJson(
   input: RequestInfo | URL,
   init: RequestInit,
   fallbackKey: KitchenErrorKey,
+  protectedToken: string,
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -34,7 +38,10 @@ async function requestJson(
   } catch (error: unknown) {
     throw toMobileApiError(error, fallbackKey);
   }
-  if (!response.ok) await throwMobileResponseError(response, fallbackKey);
+  if (!response.ok)
+    await throwMobileResponseError(response, fallbackKey, {
+      token: protectedToken,
+    });
   return readMobileResponseJson(response, fallbackKey);
 }
 
@@ -46,10 +53,19 @@ export const kitchenAPI = {
     const url = date
       ? `${API_BASE}/kitchen/days/${date}/dashboard`
       : `${API_BASE}/kitchen/today/dashboard`;
-    const payload = await requestJson(url, { headers: { Authorization: `Bearer ${token}` } }, 'errors.loadKitchen');
+    const payload = await requestJson(
+      url,
+      { headers: { Authorization: `Bearer ${token}` } },
+      'errors.loadKitchen',
+      token,
+    );
     const parsed = v1.KitchenDashboardSnapshotSchema.safeParse(payload);
     if (!parsed.success) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', parsed.error);
+      throw new MobileApiError(
+        'INVALID_RESPONSE',
+        'errors.invalidResponse',
+        parsed.error,
+      );
     }
     return parsed.data;
   },
@@ -62,16 +78,25 @@ export const kitchenAPI = {
     const url = date
       ? `${API_BASE}/kitchen/days/${date}/signal`
       : `${API_BASE}/kitchen/signal`;
-    const payload = await requestJson(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+    const payload = await requestJson(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ isServingReady: isReady }),
       },
-      body: JSON.stringify({ isServingReady: isReady }),
-    }, 'errors.toggleServing');
+      'errors.toggleServing',
+      token,
+    );
     if (!isServingSignalResponse(payload)) {
-      throw new MobileApiError('INVALID_RESPONSE', 'errors.invalidResponse', payload);
+      throw new MobileApiError(
+        'INVALID_RESPONSE',
+        'errors.invalidResponse',
+        payload,
+      );
     }
     return payload;
   },

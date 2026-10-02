@@ -206,16 +206,28 @@ Admin-role lifecycle is a separately audited server-side operation.
 
 ### 5.1 Account disable transaction
 
-1. Preview active roles plus every unserved registration and active delegation
-   from the current business date onward.
-2. Admin confirms the named account and affected commitment count.
-3. In one transaction, lock the user/registration/delegation/session rows, set
-   `users.status=disabled`, revoke every active `auth_session`, cancel each
-   affected registration with `cancel_reason=account_disabled`, revoke
-   `pending|accepted` delegations, and insert audit/notifications.
-4. Already served rows remain historical and are not rewritten.
-5. `account_disabled` cancellations are excluded from Kitchen preparation/dashboard totals and no-show/penalty selection.
-6. If the preview became stale, return a conflict with a refreshed preview; never apply a partial cleanup.
+1. Preview the authoritative actionable set from the current business date
+   onward: `ACTIVE`, unserved registrations with no existing penalties, and
+   `PENDING|ACCEPTED` delegations in both directions (as owner and delegate).
+2. Admin confirms the named account and the affected commitment/session counts.
+3. In one transaction, acquire the shared PostgreSQL advisory transaction lock
+   `imeal:user-lifecycle`, lock the actionable registration rows, then lock the
+   target user row. Recompute the authoritative actionable set after those
+   locks, set `users.is_active=false`, revoke active sessions with
+   `revoked_reason=ACCOUNT_DISABLED`, cancel actionable registrations with
+   `cancel_reason=ACCOUNT_DISABLED`, revoke actionable `PENDING|ACCEPTED`
+   delegations, and insert audit/notifications.
+4. Role replacement, account enable, and revoke-all-sessions transactions use
+   the same lock order of advisory global lock followed by the target user row
+   lock. This preserves one order when reciprocal admin actions write audit rows
+   for one another or disable publishes notifications to a delegate.
+5. Already served rows and rows with existing penalties remain historical and
+   are not rewritten.
+6. The transaction reports the actual mutation counts after recomputation; it
+   never applies a partial cleanup.
+
+7. `ACCOUNT_DISABLED` cancellations are excluded from Kitchen
+   preparation/dashboard totals and no-show/penalty selection.
 
 ### 5.2 Locations and fixed roster assignments
 

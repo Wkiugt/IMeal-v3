@@ -34,7 +34,9 @@ export const registrationAPI = {
       throw toMobileApiError(error, 'errors.loadCalendar');
     }
     if (!response.ok)
-      await throwMobileResponseError(response, 'errors.loadCalendar');
+      await throwMobileResponseError(response, 'errors.loadCalendar', {
+        token,
+      });
     const payload = await readMobileResponseJson(
       response,
       'errors.loadCalendar',
@@ -72,7 +74,9 @@ export const registrationAPI = {
       throw toMobileApiError(error, 'errors.updateRegistration');
     }
     if (!response.ok)
-      await throwMobileResponseError(response, 'errors.updateRegistration');
+      await throwMobileResponseError(response, 'errors.updateRegistration', {
+        token,
+      });
 
     const payload = await readMobileResponseJson(
       response,

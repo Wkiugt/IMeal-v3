@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { registerAuthInvalidationHandler } from '../auth/authInvalidation';
 import {
   MobileApiError,
   getMobileErrorMessage,
@@ -9,6 +10,11 @@ import {
 import { en, i18n, translate, vi } from '../i18n/translations';
 
 const t = (key: string) => `translated:${key}`;
+let unregisterHandler: (() => void) | null = null;
+afterEach(() => {
+  unregisterHandler?.();
+  unregisterHandler = null;
+});
 
 describe('MobileApiError', () => {
   it('maps known codes to localized message keys', () => {
@@ -84,6 +90,61 @@ describe('MobileApiError', () => {
       messageKey: 'errors.pickupNotReady',
     });
   });
+});
+
+it('notifies the mounted session provider only for a protected 401 SESSION_INVALID response', async () => {
+  const offendingTokens: string[] = [];
+  unregisterHandler = registerAuthInvalidationHandler((token) =>
+    offendingTokens.push(token),
+  );
+
+  const response = new Response(
+    JSON.stringify({
+      error: {
+        code: 'SESSION_INVALID',
+        message: 'Invalid or expired session.',
+      },
+    }),
+    { status: 401 },
+  );
+  await expect(
+    throwMobileResponseError(response, 'errors.loadCalendar', {
+      token: 'expired-token',
+    }),
+  ).rejects.toMatchObject({ code: 'SESSION_INVALID' });
+
+  expect(offendingTokens).toEqual(['expired-token']);
+});
+
+it('does not clear auth for OTP errors or plain unauthorized responses', async () => {
+  const offendingTokens: string[] = [];
+  unregisterHandler = registerAuthInvalidationHandler((token) =>
+    offendingTokens.push(token),
+  );
+
+  const otpResponse = new Response(
+    JSON.stringify({
+      error: { code: 'OTP_INVALID_OR_EXPIRED', message: 'Invalid code.' },
+    }),
+    { status: 401 },
+  );
+  await expect(
+    throwMobileResponseError(otpResponse, 'errors.verifyOtp'),
+  ).rejects.toMatchObject({ code: 'OTP_INVALID_OR_EXPIRED' });
+
+  const unauthorizedResponse = new Response(
+    JSON.stringify({
+      error: { code: 'UNAUTHORIZED', message: 'Unauthorized.' },
+    }),
+    { status: 401 },
+  );
+  await expect(
+    throwMobileResponseError(unauthorizedResponse, 'errors.loadCalendar', {
+      token: 'expired-token',
+    }),
+  ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+
+  expect(offendingTokens).toEqual([]);
 });
 it.each([
   ['vi', 'REGISTRATION_WEEK_NOT_OPEN', 'errors.registrationWeekNotOpen'],

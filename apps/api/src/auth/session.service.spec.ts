@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionService, type SessionMetadata } from './session.service.js';
 
 const prisma = {
+  $executeRaw: vi.fn(),
+  $queryRaw: vi.fn(),
+  user: {
+    findUnique: vi.fn(),
+  },
   authSession: {
     create: vi.fn(),
     findUnique: vi.fn(),
@@ -75,6 +80,9 @@ describe('SessionService', () => {
     prisma.$transaction.mockImplementation(
       async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
     );
+    prisma.$executeRaw.mockResolvedValue(0);
+    prisma.$queryRaw.mockResolvedValue([]);
+    prisma.user.findUnique.mockResolvedValue(activeUser);
     prisma.auditLog.create.mockResolvedValue({ id: 'audit-1' });
     prisma.authSession.create.mockResolvedValue({ id: 'session-1' });
     prisma.authSession.updateMany.mockResolvedValue({ count: 1 });
@@ -114,6 +122,25 @@ describe('SessionService', () => {
     expect(JSON.stringify(prisma.auditLog.create.mock.calls)).not.toContain(
       result.token,
     );
+  });
+
+  it('does not create a session or audit success for a disabled account', async () => {
+    prisma.user.findUnique.mockResolvedValue({ id: 'u1', isActive: false });
+
+    await expect(
+      service.create({
+        userId: 'u1',
+        purpose: 'SESSION_LOGIN',
+        requestId: 'disabled-request',
+        metadata,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'SESSION_INVALID',
+      },
+    });
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(prisma.authSession.create).not.toHaveBeenCalled();
   });
 
   it('rechecks current account status and permissions on every resolve', async () => {

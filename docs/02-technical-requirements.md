@@ -143,7 +143,18 @@ future commitments, revokes active delegations, and revokes sessions.
   require confirmation, cancel/revoke them, persist audit and revoke sessions.
 - API/worker provider calls use outbound HTTPS with secrets injected at runtime;
   clients never call a federated identity service as part of this contract.
-- Account disable is one atomic Admin workflow: preview all unserved registrations/delegations from the current business date onward, require explicit confirmation, set account disabled, cancel those registrations with `account_disabled`, revoke active delegations and persist audit/notifications. These cancellations never enter preparation totals, no-show or penalty processing.
+- Account disable is one atomic Admin workflow: preview current/future
+  `ACTIVE` registrations that are unserved and have no existing penalties,
+  plus `PENDING|ACCEPTED` delegations in both owner and delegate directions;
+  require explicit confirmation; set `users.is_active=false`; cancel
+  actionable registrations with `ACCOUNT_DISABLED`; revoke active sessions with
+  `ACCOUNT_DISABLED` and actionable delegations; persist audit/notifications.
+  `ACCOUNT_DISABLED` cancellations are excluded from Kitchen
+  preparation/dashboard totals and no-show/penalty selection. The transaction
+  recomputes the authoritative actionable set after locks and reports actual
+  mutation counts without partial cleanup. Account role replacement, enable
+  and session revoke-all use the same PostgreSQL advisory lifecycle lock before
+  target-row locking so reciprocal admin actions cannot deadlock.
 
 ## 7. Network topology
 

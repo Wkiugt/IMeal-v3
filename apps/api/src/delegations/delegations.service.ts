@@ -4,10 +4,12 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service.js';
 import { v1 } from '@imeal/contracts';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { displayNotificationName } from '../notifications/notification-copy.js';
+import { lockUserLifecycle } from '../common/transaction-locks.js';
 
 type CreateDelegationRequest = v1.CreateDelegationRequest;
 type DelegationResponse = v1.DelegationResponse;
@@ -41,6 +43,25 @@ export class DelegationsService {
     private readonly prisma: PrismaService,
   ) {}
 
+  private async lockAndRequireActiveUser(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { id: true, isActive: true },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+    if (!user.isActive) {
+      throw new BadRequestException(
+        'Cannot create or accept a delegation for a disabled account.',
+      );
+    }
+  }
+
   async getDelegations(
     userId: string,
     type: 'incoming' | 'outgoing',
@@ -67,6 +88,7 @@ export class DelegationsService {
     }
 
     const delegation = await this.prisma.$transaction(async (tx) => {
+      await lockUserLifecycle(tx);
       await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${data.registrationId} FOR UPDATE`;
       const registration = await tx.registration.findUnique({
         where: { id: data.registrationId },
@@ -86,6 +108,8 @@ export class DelegationsService {
           'Only active registrations can be delegated.',
         );
       }
+
+      await this.lockAndRequireActiveUser(tx, data.delegateUserId);
 
       const serving = await tx.mealServing.findUnique({
         where: { registrationId: data.registrationId },
@@ -139,6 +163,7 @@ export class DelegationsService {
     delegationId: string,
   ): Promise<DelegationResponse> {
     const updated = await this.prisma.$transaction(async (tx) => {
+      await lockUserLifecycle(tx);
       const delegationRef = await tx.pickupDelegation.findUnique({
         where: { id: delegationId },
         select: { registrationId: true },
@@ -169,6 +194,8 @@ export class DelegationsService {
           'Only pending delegations can be accepted.',
         );
       }
+
+      await this.lockAndRequireActiveUser(tx, delegateUserId);
 
       const serving = await tx.mealServing.findUnique({
         where: { registrationId: delegation.registrationId },
