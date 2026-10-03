@@ -12,7 +12,7 @@ describe('mobile location permission configuration', () => {
       'expo-location',
       {
         locationWhenInUsePermission:
-          'IMeal uses your foreground location to verify the presenter pickup site.',
+          'IMeal uses your foreground location to verify your meal check-in location.',
       },
     ]);
   });

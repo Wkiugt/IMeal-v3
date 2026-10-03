@@ -207,21 +207,12 @@ export class NotificationReminderService {
         select: {
           id: true,
           user: { select: { id: true, remindersEnabled: true } },
-          delegations: {
-            where: { status: 'ACCEPTED' },
-            orderBy: { createdAt: 'asc' },
-            take: 1,
-            select: {
-              delegateUser: { select: { id: true, remindersEnabled: true } },
-            },
-          },
         },
       });
 
       const grouped = new Map<string, string[]>();
       for (const registration of registrations) {
-        const recipient =
-          registration.delegations[0]?.delegateUser ?? registration.user;
+        const recipient = registration.user;
         if (!recipient.remindersEnabled) continue;
         const ids = grouped.get(recipient.id) ?? [];
         ids.push(registration.id);

@@ -25,6 +25,7 @@ const LOCATION_OPTIONS: Location.LocationOptions = {
   distanceInterval: 0,
   timeInterval: 1_000,
 };
+const LOCATION_CAPTURE_TIMEOUT_MS = 10_000;
 
 function locationError(
   code: 'GPS_UNAVAILABLE' | 'GPS_INACCURATE',
@@ -59,9 +60,12 @@ function toEvidence(
   return parsed.data;
 }
 
-export function startForegroundLocationCapture(): LocationCapture {
+export function startForegroundLocationCapture(
+  timeoutMs = LOCATION_CAPTURE_TIMEOUT_MS,
+): LocationCapture {
   let settled = false;
   let subscription: Location.LocationSubscription | null = null;
+  let timeoutId: NodeJS.Timeout | undefined;
   let resolvePromise!: (evidence: v1.PresenterLocationEvidence) => void;
   let rejectPromise!: (error: unknown) => void;
   const promise = new Promise<v1.PresenterLocationEvidence>(
@@ -71,9 +75,17 @@ export function startForegroundLocationCapture(): LocationCapture {
     },
   );
 
+  const clearCaptureTimeout = () => {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+      timeoutId = undefined;
+    }
+  };
+
   const stop = () => {
     if (settled) return;
     settled = true;
+    clearCaptureTimeout();
     subscription?.remove();
     subscription = null;
     rejectPromise(new LocationCaptureCancelledError());
@@ -82,10 +94,15 @@ export function startForegroundLocationCapture(): LocationCapture {
   const finish = (callback: () => void) => {
     if (settled) return;
     settled = true;
+    clearCaptureTimeout();
     subscription?.remove();
     subscription = null;
     callback();
   };
+
+  timeoutId = setTimeout(() => {
+    finish(() => rejectPromise(locationError('GPS_UNAVAILABLE')));
+  }, Math.max(1, timeoutMs));
 
   void (async () => {
     try {
@@ -115,12 +132,7 @@ export function startForegroundLocationCapture(): LocationCapture {
   return { promise, stop };
 }
 
-export async function capturePresenterEvidence(): Promise<v1.PresenterLocationEvidence> {
-  const capture = startForegroundLocationCapture();
-  return capture.promise;
-}
 
 export const locationAPI = {
   startForegroundLocationCapture,
-  capturePresenterEvidence,
 };

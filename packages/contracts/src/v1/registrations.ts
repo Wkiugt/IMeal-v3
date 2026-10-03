@@ -197,16 +197,6 @@ export const WeekDayLocationSchema = z
   .strict();
 export type WeekDayLocation = z.infer<typeof WeekDayLocationSchema>;
 
-export const WeekRegistrationDayDelegationSchema = z
-  .object({
-    id: z.string(),
-    status: z.enum(['PENDING', 'ACCEPTED']),
-    delegateName: z.string().nullable(),
-  })
-  .strict();
-export type WeekRegistrationDayDelegation = z.infer<
-  typeof WeekRegistrationDayDelegationSchema
->;
 
 export const WeekRegistrationDaySchema = z
   .object({
@@ -227,7 +217,6 @@ export const WeekRegistrationDaySchema = z
         changeMealChoice: z.array(RegistrationDayUnavailableReasonSchema),
       })
       .strict(),
-    delegation: WeekRegistrationDayDelegationSchema.nullable(),
   })
   .strict();
 export type WeekRegistrationDay = z.infer<typeof WeekRegistrationDaySchema>;

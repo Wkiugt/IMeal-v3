@@ -181,29 +181,38 @@ the final delivery boundary:
 5. Reusing a confirmation idempotency key with the same body returns the stored
    result; changing the intent/body returns a conflict.
 
-## 7. Presenter GPS and Kitchen checks
+## 7. Staff self check-in and Kitchen checks
 
-- Presenter mobile captures a fresh **foreground** fix only during QR generate or
-  refresh and stops collection on blur, completion, cancellation or unmount.
-- GPS policy is resolved from the server-managed employee location. It cannot
-  select a more permissive location or grant entitlement.
-- Unavailable, denied, stale, inaccurate and outside-geofence results expose
-  only `Retry` and `Refresh`; there is no manual fallback.
-- Owner GPS is not collected for proxy pickup. Kitchen resolve receives only the
-  QR; confirm receives only `pickupSessionId` and `idempotencyKey`.
-- The exact sorted registration set is preserved through QR, resolve and the
-  30-second session. Kitchen cannot add/remove items.
-- Serving is only 10:30–13:30 in `Asia/Ho_Chi_Minh`; multi-item confirmation is
-  all-or-nothing and idempotent; successful serving is final.
+- Staff scans the stable shared Kitchen QR for the serving date and location,
+  captures a fresh foreground GPS fix, and resolves eligibility without
+  consuming the registration; the app presents a review step before confirm.
+- Confirm captures a new fresh foreground GPS fix and submits only the
+  server-bound `sessionId`, `intentNonce` and idempotency key for the
+  authenticated user's own registration. Target employee and delegation
+  fields are not accepted.
+- Server time enforces serving only from 10:30–13:30 in `Asia/Ho_Chi_Minh`.
+  A timed-out confirm reconciles with `GET /api/me/check-in` while preserving
+  the confirm body and idempotency key; stale responses cannot replace newer
+  checked-in state.
+- Kitchen displays the shared QR and aggregate dashboard; it does not scan
+  employee QR codes or collect GPS. Dashboard polling runs every 10 seconds
+  only while focused and in the foreground, pauses in the background, and
+  cleans up on blur/unmount. Refresh errors retain the last successful snapshot
+  and show a stale warning.
+- GPS policy is resolved from the server-managed employee location. Unavailable,
+  denied, stale, inaccurate and outside-geofence fixes expose only `Retry` and
+  `Refresh`; there is no manual location fallback or location selection.
 
 Focused checks:
 
 ```powershell
 yarn workspace @imeal/contracts test
-yarn workspace @imeal/api exec vitest run src/pickup src/admin
+yarn workspace @imeal/api exec vitest run src/check-in src/admin
 yarn workspace @imeal/worker exec vitest run src/otp-delivery-worker.service.spec.ts
 yarn workspace @imeal/core test
 ```
+
+PostgreSQL-backed Vitest files serialize schema migrations to avoid database-global advisory-lock contention, while explicit transaction-level `Promise.all` race checks remain concurrent; the API health e2e requires an isolated migration-evidence fixture and does not establish production readiness.
 
 ## 8. Client environment names
 

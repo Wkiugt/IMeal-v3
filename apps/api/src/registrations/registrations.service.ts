@@ -15,7 +15,6 @@ import {
   API_STRUCTURED_LOGGER,
 } from '../common/structured-logger.js';
 import type { Prisma } from '@prisma/client';
-import { NotificationsService } from '../notifications/notifications.service.js';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 import { v1 } from '@imeal/contracts';
 import type { VietnameseLunarDate } from '../common/vietnamese-lunar.js';
@@ -142,11 +141,6 @@ type EffectiveLocationResolution =
   | { kind: 'UNAVAILABLE'; reason: 'LOCATION_UNAVAILABLE' }
   | { kind: 'AMBIGUOUS'; reason: 'LOCATION_AMBIGUOUS' };
 
-type WeekDelegation = {
-  id: string;
-  status: string;
-  delegateUser?: { name: string | null } | null;
-};
 
 function hasText(value: string | null | undefined): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -247,22 +241,6 @@ function isRegistrationFinalized(registration: {
   );
 }
 
-function serializeDelegation(
-  delegations: readonly WeekDelegation[] | undefined,
-): v1.WeekRegistrationDayDelegation | null {
-  const delegation = delegations?.find(
-    (candidate) =>
-      candidate.status === 'PENDING' || candidate.status === 'ACCEPTED',
-  );
-  if (!delegation) return null;
-  return {
-    id: delegation.id,
-    status: delegation.status === 'PENDING' ? 'PENDING' : 'ACCEPTED',
-    delegateName: hasText(delegation.delegateUser?.name)
-      ? delegation.delegateUser.name.trim()
-      : null,
-  };
-}
 const registrationActivitySelect = {
   id: true,
   mealDate: true,
@@ -334,18 +312,14 @@ function serializeRegistrationActivity(
 
 @Injectable()
 export class RegistrationsService {
-  private readonly notificationsService: NotificationsService;
   private readonly kitchenEventsService?: KitchenEventsService;
   private readonly logger: StructuredLogger;
 
   constructor(
     private readonly prisma: PrismaService,
-    @Optional() notificationsService?: NotificationsService,
     @Optional() kitchenEventsService?: KitchenEventsService,
     @Optional() @Inject(API_STRUCTURED_LOGGER) logger?: StructuredLogger,
   ) {
-    this.notificationsService =
-      notificationsService ?? new NotificationsService(this.prisma);
     this.kitchenEventsService = kitchenEventsService;
     this.logger = logger ?? createApiStructuredLogger();
   }
@@ -511,14 +485,6 @@ export class RegistrationsService {
       include: {
         mealServing: { select: { id: true } },
         penalties: { select: { id: true } },
-        delegations: {
-          where: { status: { in: ['PENDING', 'ACCEPTED'] } },
-          orderBy: { id: 'asc' },
-          take: 1,
-          include: {
-            delegateUser: { select: { name: true } },
-          },
-        },
       },
     });
     const rosterAssignments =
@@ -691,7 +657,6 @@ export class RegistrationsService {
           cancel: cancelReasons,
           changeMealChoice: changeMealChoiceReasons,
         },
-        delegation: serializeDelegation(registration?.delegations),
       };
     });
 
@@ -958,7 +923,6 @@ export class RegistrationsService {
                     },
                   },
                   include: {
-                    user: true,
                     mealServing: true,
                     penalties: true,
                   },
@@ -969,7 +933,6 @@ export class RegistrationsService {
                   registration = await tx.registration.findUnique({
                     where: { id: registration.id },
                     include: {
-                      user: true,
                       mealServing: true,
                       penalties: true,
                     },
@@ -1100,15 +1063,6 @@ export class RegistrationsService {
                     },
                   });
 
-                  const activeDelegations = (
-                    (await tx.pickupDelegation.findMany({
-                      where: {
-                        registrationId: registration.id,
-                        status: { in: ['PENDING', 'ACCEPTED'] },
-                      },
-                      orderBy: { id: 'asc' },
-                    })) ?? []
-                  ).sort((left, right) => left.id.localeCompare(right.id));
                   const audit = await tx.auditLog.create({
                     data: {
                       userId,
@@ -1124,34 +1078,6 @@ export class RegistrationsService {
                       registrationId: registration.id,
                       status: 'CANCELLED',
                     };
-                  }
-                  for (const delegation of activeDelegations) {
-                    await tx.pickupDelegation.update({
-                      where: { id: delegation.id },
-                      data: { status: 'REVOKED' },
-                    });
-                    await tx.auditLog.create({
-                      data: {
-                        userId,
-                        action: 'delegation_revoked',
-                        details: `Delegation ${delegation.id} revoked because registration ${registration.id} was cancelled`,
-                      },
-                    });
-                    await this.notificationsService.publish(tx, {
-                      userId: delegation.delegateUserId,
-                      kind: 'DELEGATION_REVOKED',
-                      payload: {
-                        delegationId: delegation.id,
-                        registrationId: registration.id,
-                        mealDate: mealDate.toISOString().slice(0, 10),
-                        counterpartName:
-                          registration.user?.name?.trim() ||
-                          registration.user?.email?.trim() ||
-                          'nhân viên',
-                        reason: 'REGISTRATION_CANCELLED',
-                      },
-                      dedupeKey: `delegation-revoked:${delegation.delegateUserId}:${delegation.id}`,
-                    });
                   }
                 }
                 return lifecycleEvent;

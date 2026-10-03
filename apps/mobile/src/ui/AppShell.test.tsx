@@ -8,19 +8,20 @@ const labels = {
   vi: {
     'nav.dashboard': 'Bảng điều khiển',
     'nav.calendar': 'Lịch',
+    'nav.checkIn': 'Nhận suất',
     'nav.notifications': 'Thông báo',
     'nav.profile': 'Hồ sơ',
-    'nav.scanner': 'Máy quét',
+    'nav.kitchenQr': 'Mã QR bếp',
   },
   en: {
     'nav.dashboard': 'Dashboard',
     'nav.calendar': 'Calendar',
+    'nav.checkIn': 'Check-in',
     'nav.notifications': 'Notifications',
     'nav.profile': 'Profile',
-    'nav.scanner': 'Scanner',
+    'nav.kitchenQr': 'Kitchen QR',
   },
 } as const;
-
 function nativeComponent(name: string) {
   function Component({ children, ...props }: { children?: React.ReactNode; [key: string]: unknown }) {
     return React.createElement(name, props, children);
@@ -132,14 +133,14 @@ describe('AppTabBar', () => {
   it('renders icon-only equal-footprint targets while keeping active accessibility state', () => {
     const { pressables } = renderTabBar();
     for (const [navItems, expectedCount] of [
-      [employeeNav, 4],
+      [employeeNav, 5],
       [hybridEmployeeNav, 5],
       [kitchenNav, 3],
     ] as const) {
       expect(renderTabBar(navItems).pressables).toHaveLength(expectedCount);
     }
 
-    expect(pressables).toHaveLength(4);
+    expect(pressables).toHaveLength(5);
     expect(pressables.every((pressable) => elementsOfType(pressable, 'Text').length === 0)).toBe(true);
 
     const styles = pressables.map((pressable) => flattenStyle(pressable.props.style));
@@ -160,8 +161,8 @@ describe('AppTabBar', () => {
   });
 
   it.each([
-    ['vi', ['Bảng điều khiển', 'Lịch', 'Thông báo', 'Hồ sơ']],
-    ['en', ['Dashboard', 'Calendar', 'Notifications', 'Profile']],
+    ['vi', ['Bảng điều khiển', 'Lịch', 'Nhận suất', 'Thông báo', 'Hồ sơ']],
+    ['en', ['Dashboard', 'Calendar', 'Check-in', 'Notifications', 'Profile']],
   ] as const)('resolves %s accessibility labels and preserves profile nesting', (language, expectedLabels) => {
     languageMock.language = language;
     const { navigation, pressables } = renderTabBar();
@@ -169,27 +170,27 @@ describe('AppTabBar', () => {
     expect(pressables.map((pressable) => pressable.props.accessibilityLabel)).toEqual(expectedLabels);
     pressables[1].props.onPress();
     expect(navigation.navigate).toHaveBeenCalledWith('EmployeeCalendar');
-    pressables[3].props.onPress();
+    pressables[4].props.onPress();
     expect(navigation.navigate).toHaveBeenCalledWith('EmployeeProfile', { screen: 'ProfileHome' });
   });
 
   it.each([
-    ['vi', ['Bảng điều khiển', 'Máy quét', 'Hồ sơ']],
-    ['en', ['Dashboard', 'Scanner', 'Profile']],
+    ['vi', ['Bảng điều khiển', 'Mã QR bếp', 'Hồ sơ']],
+    ['en', ['Dashboard', 'Kitchen QR', 'Profile']],
   ] as const)('resolves %s kitchen-only labels and direct profile navigation', (language, expectedLabels) => {
     languageMock.language = language;
     const { navigation, pressables } = renderTabBar(kitchenNav);
 
     expect(pressables.map((pressable) => pressable.props.accessibilityLabel)).toEqual(expectedLabels);
     pressables[1].props.onPress();
-    expect(navigation.navigate).toHaveBeenCalledWith('KitchenScanner');
+    expect(navigation.navigate).toHaveBeenCalledWith('KitchenQr');
     pressables[2].props.onPress();
     expect(navigation.navigate).toHaveBeenCalledWith('KitchenProfile');
   });
 
   it('does not show a false selected tab when the active route is hidden from the dock', () => {
-    const pickupRoute: AppNavItem = { ...employeeNav[0], route: 'PickupIntent' };
-    const { pressables } = renderTabBar(employeeNav, 4, [...employeeNav, pickupRoute]);
+    const hiddenRoute: AppNavItem = { ...kitchenNav[1], route: 'KitchenQr' };
+    const { pressables } = renderTabBar(employeeNav, 5, [...employeeNav, hiddenRoute]);
 
     expect(pressables.every((pressable) => pressable.props.accessibilityState.selected === false)).toBe(true);
     expect(elementsOfType(pressables[0], 'Home')[0].props.color).toBe(designTokens.color.text.tertiary);
@@ -199,7 +200,7 @@ describe('AppTabBar', () => {
     notificationMock.unreadCount = 7;
     const { pressables } = renderTabBar();
 
-    expect(elementsOfType(pressables[2], 'AppText')[0].props.children).toBe(7);
+    expect(elementsOfType(pressables[3], 'AppText')[0].props.children).toBe(7);
     notificationMock.unreadCount = 0;
   });
 });

@@ -69,14 +69,14 @@ const METRIC_LABELS = Object.freeze({
     le: HISTOGRAM_BUCKET_PATTERN,
   }),
   imeal_worker_runs_total: Object.freeze({
-    job: /^(?:otp_delivery|notification_dispatch|registration_reminder|pickup_reminder|cutoff_lock|pickup_session_cleanup|no_show)$/,
+    job: /^(?:otp_delivery|notification_dispatch|registration_reminder|pickup_reminder|cutoff_lock|no_show)$/,
     status: /^(?:success|failure|skipped)$/,
   }),
   imeal_worker_job_last_success_timestamp_seconds: Object.freeze({
-    job: /^(?:otp_delivery|notification_dispatch|registration_reminder|pickup_reminder|cutoff_lock|pickup_session_cleanup|no_show)$/,
+    job: /^(?:otp_delivery|notification_dispatch|registration_reminder|pickup_reminder|cutoff_lock|no_show)$/,
   }),
   imeal_worker_job_lag_seconds: Object.freeze({
-    job: /^(?:otp_delivery|notification_dispatch|registration_reminder|pickup_reminder|cutoff_lock|pickup_session_cleanup|no_show)$/,
+    job: /^(?:otp_delivery|notification_dispatch|registration_reminder|pickup_reminder|cutoff_lock|no_show)$/,
   }),
   imeal_postgres_connection_usage_ratio: Object.freeze({
     pool: /^(?:pgbouncer_client|postgres_backend)$/,

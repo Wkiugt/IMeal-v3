@@ -116,7 +116,6 @@ export class RegistrationService {
     const currentReg = await tx.registration.findUnique({
       where: { id: registrationId },
       include: {
-        user: { select: { name: true, email: true } },
         mealServing: { select: { id: true } },
         penalties: { select: { id: true } },
       },
@@ -152,66 +151,6 @@ export class RegistrationService {
       },
     });
 
-    const activeDelegations = await tx.pickupDelegation.findMany({
-      where: {
-        registrationId,
-        status: { in: ['PENDING', 'ACCEPTED'] },
-      },
-      orderBy: { id: 'asc' },
-      select: { id: true, delegateUserId: true },
-    });
-    const counterpartName =
-      currentReg.user.name?.trim() ||
-      currentReg.user.email?.trim() ||
-      'nhân viên';
-    for (const delegation of activeDelegations) {
-      await tx.pickupDelegation.update({
-        where: { id: delegation.id },
-        data: { status: 'REVOKED' },
-      });
-      await tx.auditLog.create({
-        data: {
-          userId: actorUserId,
-          action: 'delegation_revoked',
-          details: `Delegation ${delegation.id} revoked because registration ${registrationId} was cancelled with reason ${options.cancelReason}`,
-        },
-      });
-
-      const mealDate = currentReg.mealDate.toISOString().slice(0, 10);
-      const notification = await tx.notification.upsert({
-        where: {
-          dedupeKey: `delegation-revoked:${delegation.delegateUserId}:${delegation.id}`,
-        },
-        update: {},
-        create: {
-          userId: delegation.delegateUserId,
-          kind: 'DELEGATION_REVOKED',
-          payload: {
-            delegationId: delegation.id,
-            registrationId,
-            mealDate,
-            counterpartName,
-            reason: options.cancelReason,
-          },
-          titleVi: 'Ủy quyền đã thu hồi',
-          bodyVi: `Yêu cầu nhận hộ từ ${counterpartName} cho ngày ${mealDate} đã được thu hồi.`,
-          titleEn: 'Pickup delegation revoked',
-          bodyEn: `The pickup request from ${counterpartName} for ${mealDate} was revoked.`,
-          dedupeKey: `delegation-revoked:${delegation.delegateUserId}:${delegation.id}`,
-        },
-      });
-      await tx.outboxEvent.upsert({
-        where: { dedupeKey: `notification-delivery:${notification.id}` },
-        update: {},
-        create: {
-          aggregateType: 'NOTIFICATION',
-          aggregateId: notification.id,
-          eventType: 'NOTIFICATION_CREATED',
-          payload: JSON.stringify({ notificationId: notification.id }),
-          dedupeKey: `notification-delivery:${notification.id}`,
-        },
-      });
-    }
 
     await tx.auditLog.create({
       data: {
@@ -226,31 +165,6 @@ export class RegistrationService {
     return updatedReg;
   }
 
-  static async canServe(
-    registrationId: string,
-    pickerUserId: string,
-    tx: Prisma.TransactionClient | typeof prisma = prisma,
-  ) {
-    const reg = await tx.registration.findUnique({
-      where: { id: registrationId },
-      include: {
-        delegations: { where: { status: 'ACCEPTED' } },
-        mealServing: true,
-      },
-    });
-
-    if (!reg || reg.status !== 'ACTIVE' || reg.mealServing) return false;
-    if (reg.userId === pickerUserId) return true;
-
-    if (
-      reg.delegations.length > 0 &&
-      reg.delegations[0].delegateUserId === pickerUserId
-    ) {
-      return true;
-    }
-
-    return false;
-  }
 
   static async getMenuRevision(registrationId: string) {
     const reg = await prisma.registration.findUnique({

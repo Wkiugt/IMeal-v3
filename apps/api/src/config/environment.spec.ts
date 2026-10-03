@@ -33,9 +33,6 @@ function setValidProductionEnvironment() {
   process.env.SERVING_WINDOW_START = '10:30';
   process.env.SERVING_WINDOW_END = '13:30';
   process.env.NO_SHOW_PROCESSING_TIME = '13:45';
-  process.env.QR_TTL_SECONDS = '5';
-  process.env.QR_CLOCK_SKEW_SECONDS = '2';
-  process.env.PICKUP_SESSION_TTL_SECONDS = '30';
   process.env.RELEASE_VERSION = 'release-1';
   process.env.API_METRICS_EVIDENCE_DIGEST = `sha256:${'a'.repeat(64)}`;
   process.env.LOG_LEVEL = 'info';
@@ -278,9 +275,6 @@ describe('API environment validation', () => {
     'SERVING_WINDOW_START',
     'SERVING_WINDOW_END',
     'NO_SHOW_PROCESSING_TIME',
-    'QR_TTL_SECONDS',
-    'QR_CLOCK_SKEW_SECONDS',
-    'PICKUP_SESSION_TTL_SECONDS',
   ])('rejects production when %s is missing', (name) => {
     setValidProductionEnvironment();
     delete process.env[name];

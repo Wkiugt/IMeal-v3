@@ -176,10 +176,6 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
     new Set(),
   );
   const [refreshIssue, setRefreshIssue] = useState(false);
-  const [delegationWarning, setDelegationWarning] = useState<{
-    dateKey: string;
-    delegateName: string;
-  } | null>(null);
   const [weekDiscardWarning, setWeekDiscardWarning] = useState<Date | null>(
     null,
   );
@@ -525,47 +521,11 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
       if (!allowed) return;
       const apply = () =>
         updateDraftDay(dateKey, { ...currentDay, active: nextActive });
-      const delegation = day.delegation;
-      if (
-        serverDay.active &&
-        currentDay.active &&
-        !nextActive &&
-        delegation &&
-        (delegation.status === 'PENDING' || delegation.status === 'ACCEPTED')
-      ) {
-        setDelegationWarning({
-          dateKey,
-          delegateName:
-            delegation.delegateName || t('calendar.unknownDelegate'),
-        });
-        return;
-      }
       apply();
     },
-    [dayByDate, t, updateDraftDay, windowSnapshot],
+    [dayByDate, updateDraftDay, windowSnapshot],
   );
 
-  const confirmDelegationCancel = useCallback(() => {
-    const warning = delegationWarning;
-    if (!warning || savingRef.current) return;
-    const day = dayByDate[warning.dateKey];
-    const serverDay =
-      serverStateRef.current[warning.dateKey] ?? EMPTY_DAY_STATE;
-    const currentDay = draftStateRef.current[warning.dateKey] ?? serverDay;
-    const estimatedNowAt = windowSnapshot
-      ? windowSnapshot.serverNowAt + (Date.now() - windowSnapshot.receiptAt)
-      : Date.now();
-    if (
-      day &&
-      serverDay.active &&
-      currentDay.active &&
-      day.canCancel &&
-      isBeforeCutoff(day, estimatedNowAt)
-    ) {
-      updateDraftDay(warning.dateKey, { ...currentDay, active: false });
-    }
-    setDelegationWarning(null);
-  }, [dayByDate, delegationWarning, updateDraftDay, windowSnapshot]);
 
   const selectMealChoice = useCallback(
     (dateKey: string, choice: MealChoice) => {
@@ -1205,20 +1165,6 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
           </>
         )}
       </StateTransition>
-      <ProfileLogoutModal
-        visible={delegationWarning !== null}
-        title={t('calendar.cancelDelegationTitle')}
-        message={t('calendar.cancelDelegationMessage', {
-          delegate:
-            delegationWarning?.delegateName ?? t('calendar.unknownDelegate'),
-        })}
-        cancelLabel={t('common.cancel')}
-        confirmLabel={t('common.confirm')}
-        processingLabel={t('common.processing')}
-        processing={false}
-        onClose={() => setDelegationWarning(null)}
-        onConfirm={confirmDelegationCancel}
-      />
       <ProfileLogoutModal
         visible={weekDiscardWarning !== null}
         title={t('calendar.discardWeekTitle')}

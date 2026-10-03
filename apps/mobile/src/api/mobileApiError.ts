@@ -5,15 +5,43 @@ import { RequestTimeoutError } from './requestWithTimeout';
 export interface ProtectedRequestContext {
   readonly token: string;
 }
+type MobileHttpErrorCode =
+  | 'BAD_REQUEST'
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'NOT_FOUND'
+  | 'CONFLICT'
+  | 'INTERNAL_SERVER_ERROR'
+  | 'VALIDATION_ERROR'
+  | 'RATE_LIMITED';
+
+type MobileLegacyErrorCode =
+  | 'OTP_REQUEST_ACCEPTED'
+  | 'OTP_INVALID_OR_EXPIRED'
+  | 'SESSION_REVOKED'
+  | 'GPS_RETRY_REQUIRED'
+  | 'GPS_UNAVAILABLE'
+  | 'PICKUP_INTENT_REQUIRED'
+  | 'PICKUP_INTENT_CONFLICT'
+  | 'PICKUP_SESSION_EXPIRED'
+  | 'GPS_SESSION_REQUIRED'
+  | 'SERVING_WINDOW_CLOSED'
+  | 'QR_EXPIRED'
+  | 'QR_INVALID'
+  | 'SESSION_INVALID'
+  | 'OTP_RATE_LIMITED'
+  | 'PICKUP_WINDOW_CLOSED'
+  | 'PICKUP_NOT_READY';
+
 export type MobileApiErrorCode =
+  | MobileHttpErrorCode
+  | MobileLegacyErrorCode
   | 'API_TIMEOUT'
   | 'INVALID_RESPONSE'
   | 'REQUEST_FAILED'
   | 'DUPLICATE_SERVING'
-  | v1.ErrorCode
   | v1.RegistrationFailureCode
-  | v1.PickupAvailabilityCode
-  | v1.PickupErrorCode;
+  | v1.CheckInErrorCode;
 
 const ERROR_MESSAGE_KEYS: Record<MobileApiErrorCode, TranslationKey> = {
   API_TIMEOUT: 'errors.apiTimeout',
@@ -54,6 +82,15 @@ const ERROR_MESSAGE_KEYS: Record<MobileApiErrorCode, TranslationKey> = {
   OUTSIDE_REGISTRATION_WINDOW: 'errors.outsideRegistrationWindow',
   PICKUP_WINDOW_CLOSED: 'errors.pickupWindowClosed',
   PICKUP_NOT_READY: 'errors.pickupNotReady',
+  INVALID_QR: 'errors.checkInInvalidQr',
+  INACTIVE_CHECKIN_SESSION: 'errors.checkInSessionInactive',
+  NO_REGISTRATION: 'errors.checkInNoRegistration',
+  REGISTRATION_CANCELLED: 'errors.checkInRegistrationCancelled',
+  ALREADY_CHECKED_IN: 'errors.checkInAlreadyCheckedIn',
+  OUTSIDE_CHECKIN_WINDOW: 'errors.checkInOutsideWindow',
+  LOCATION_MISMATCH: 'errors.checkInLocationMismatch',
+  GPS_REQUIRED: 'errors.checkInGpsRequired',
+  OUTSIDE_GEOFENCE: 'errors.checkInOutsideGeofence',
 };
 
 export class MobileApiError extends Error {

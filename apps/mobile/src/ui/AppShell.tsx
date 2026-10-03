@@ -39,19 +39,16 @@ export type AppNavItem = {
 export const employeeNav: AppNavItem[] = [
   { labelKey: 'nav.dashboard', route: 'EmployeeDashboard', icon: Home },
   { labelKey: 'nav.calendar', route: 'EmployeeCalendar', icon: CalendarDays },
+  { labelKey: 'nav.checkIn', route: 'SelfCheckIn', icon: ScanLine },
   { labelKey: 'nav.notifications', route: 'Notifications', icon: Bell },
   { labelKey: 'nav.profile', route: 'EmployeeProfile', icon: UserRound },
 ];
 
-export const hybridEmployeeNav: AppNavItem[] = [
-  ...employeeNav.slice(0, 3),
-  { labelKey: 'nav.checkIn', route: 'KitchenScanner', icon: ScanLine },
-  employeeNav[3],
-];
+export const hybridEmployeeNav: AppNavItem[] = employeeNav;
 
 export const kitchenNav: AppNavItem[] = [
   { labelKey: 'nav.dashboard', route: 'KitchenDashboard', icon: Home },
-  { labelKey: 'nav.scanner', route: 'KitchenScanner', icon: QrCode },
+  { labelKey: 'nav.kitchenQr', route: 'KitchenQr', icon: QrCode },
   { labelKey: 'nav.profile', route: 'KitchenProfile', icon: UserRound },
 ];
 

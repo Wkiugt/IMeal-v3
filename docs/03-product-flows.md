@@ -21,7 +21,7 @@ Home | Tuần ăn | Check-in | Thông báo | Tài khoản
 Kitchen-only:
 
 ```text
-Dashboard | Máy quét | Tài khoản
+Dashboard | Shared QR | Tài khoản
 ```
 
 Kitchen role không thay thế hoặc kế thừa Staff role. Nhân sự Kitchen chỉ đăng ký suất của chính mình khi Admin cấp thêm role `staff`.
@@ -33,7 +33,7 @@ Dashboard
 Users & Staff/Kitchen Roles
 Penalties
 Serving Audit
-Delegations
+Historical Delegation Audit (read-only)
 Jobs / Health
 ```
 
@@ -88,10 +88,14 @@ Home receives the VN-business-date day from the authoritative seven-day registra
 
 The today card shows:
 
-- `ACTIVE`, `SERVED`, `NO_SHOW`, `CANCELLED`, `UNREGISTERED`, or `NO_MENU` as distinct localized lifecycle states.
-- The published menu name/description and that day’s location when available.
-- The pickup QR action only when lifecycle is `ACTIVE`, the menu is complete/published, and the server allows `canOpenQr`.
-- A weekly count of `ACTIVE`, `SERVED`, and `NO_SHOW` registrations over the enabled published-menu denominator; cancelled and unregistered days are excluded.
+- `ACTIVE`, `CHECKED_IN`/served, `NO_SHOW`, `CANCELLED`, `UNREGISTERED`, or
+  `NO_MENU` remain distinct localized lifecycle states.
+- The published menu name/description and that day's location when available.
+- The Staff self check-in action appears only when lifecycle is `ACTIVE`, the
+  menu is complete/published, and the server allows current own check-in.
+- A weekly count of `ACTIVE`, `CHECKED_IN`/served and `NO_SHOW` registrations
+  uses the enabled published-menu denominator; canceled and unregistered days
+  are excluded.
 
 Suggested content:
 
@@ -101,35 +105,29 @@ Xin chào, Minh
 HÔM NAY
 Cơm gà xối mỡ
 ✓ Bạn đã đăng ký
-[ Mở mã nhận suất ]
+[ MỞ SELF CHECK-IN ]
 
 TUẦN NÀY
-<registered active/served/no-show> / <enabled published days> ngày đã đăng ký
+<registered active/checked-in/no-show> / <enabled published days> ngày đã đăng ký
 [ Quản lý tuần ăn ]
-
-ỦY QUYỀN
-1 yêu cầu đang chờ
 
 Thông báo gần đây
 ```
 
-If today is already served:
+If today is already checked in:
 
 ```text
-✓ Suất hôm nay đã được nhận lúc 12:08
-```
-
-If served by delegate:
-
-```text
-✓ Nguyễn Văn B đã nhận hộ suất của bạn lúc 12:08
+✓ Bạn đã check-in lúc 12:08
+Serving: <servingId>
 ```
 
 ### 3.1 Staff history and penalties
 
 `Tài khoản` links to meal history and penalties:
 
-- History lists meal date, menu snapshot, registration state, owner/receiver and serving time.
+- History lists meal date, menu snapshot, own registration state, `CHECKED_IN`/
+  serving time and penalty context. Retained owner/receiver fields are
+  historical read-only data.
 - Penalties show `open|paid|waived`, amount, reason and resolution note/time.
 - Staff may view but cannot mutate penalty state; support/dispute contact is an informational next action.
 
@@ -185,7 +183,9 @@ Weekly list example:
 - A date outside the current or next week remains viewable but cannot mutate. The weekly restriction is separate from that date’s `cutoffAt`; clients use server `editable`, action flags, and reason arrays rather than deriving weekday rules.
 - Day without published menu is disabled and explains why.
 - `Chọn cả tuần` only affects currently editable/published days and uses `REGULAR` unless the Staff chooses otherwise on an eligible lunar date.
-- Unticking a registration with `pending|accepted` delegation warns that the delegation will also be revoked.
+- Unticking a registration with a final serving/no-show or cancellation state
+  is blocked by the authoritative server; retained delegation rows are
+  historical and do not create an active prompt.
 - The API is authoritative for all seven returned dates, including weekends, holidays, menu publication, location eligibility, cutoff and registration lifecycle; the client does not infer editability from weekday.
 - `canActivate`, `canCancel`, and `canChangeMealChoice` are independent server flags. A day may remain visible with `menu=null` or an unavailable location while its local draft stays unchanged.
 - Every activation/cancellation/change is retained as a local draft until the batch response reconciles it. Successful dates commit immediately; failed dates retain their requested draft and show every date-specific failure reason.
@@ -204,7 +204,7 @@ sequenceDiagram
     M->>API: PUT weekly registration changes (status + meal choice)
     API->>API: Resolve VN server time
     API->>DB: Validate menu/cutoff/current state and meal-choice policy per date
-    API->>DB: Apply valid changes; cancel also revokes active delegation atomically
+    API->>DB: Apply valid changes; quarantine any retained historical delegation context
     DB-->>API: Authoritative day results, including stored meal choice
     API-->>M: Success/failure per day
     M->>M: Reconcile server state, retain failed drafts
@@ -222,144 +222,117 @@ Do not display success before server confirmation.
 Cutoff boundary is strict: request snapshot `< 14:00` is editable; exactly `14:00:00` returns `CUTOFF_PASSED`.
 - Weekly boundary is strict: before Saturday `17:00`, the current week is eligible and the next week is closed; from exactly Saturday `17:00` through Sunday, both weeks are eligible subject to each date’s independent per-meal cutoff; on Monday, the former week is outside the window, the new current week is eligible, and the new next week remains closed until its Saturday `17:00`. The server returns `REGISTRATION_WEEK_NOT_OPEN` or `OUTSIDE_REGISTRATION_WINDOW` for blocked dates; `CUTOFF_PASSED` remains the independent per-meal result.
 
-## 5. Staff QR flow
+## 5. Staff self check-in flow
 
-### 5.1 Open and refresh QR
+Staff checks in only their own registration by scanning the shared QR displayed
+by Kitchen. Staff does not generate a QR and Kitchen does not scan employees.
 
-Preconditions:
-
-- Today has an active registration or accepted delegation eligible today.
-- The presenter account/session is active and current permissions allow pickup.
-- Employee-to-location assignment and an effective imported location policy exist.
-
-Flow:
+### 5.1 Status and scan
 
 ```mermaid
 sequenceDiagram
-    actor S as Presenter
+    actor S as Staff
     participant M as Mobile
     participant API as API
+    participant K as Kitchen display
+
+    S->>M: Mở Self check-in
+    M->>API: GET /api/me/check-in
+    API-->>M: Own status, menu, location, window and action flags
+    K->>API: GET /api/kitchen/check-in/qr
+    API-->>K: Stable day/location QR + activeFrom/expiresAt
+    S->>M: Quét shared QR trên Kitchen display
+```
+
+The Kitchen QR has no employee identity and remains stable for the active
+meal-date/location session. The server selects Kitchen's active roster
+location; neither client selects a location or target user.
+
+### 5.2 Resolve with a fresh foreground GPS sample
+
+```mermaid
+sequenceDiagram
+    actor S as Staff
+    participant M as Mobile
     participant GPS as Expo foreground GPS
+    participant API as API
 
-    S->>M: Mở mã nhận suất
-    M->>API: GET /me/pickup-options
-    API-->>M: Own + accepted-delegation eligible items
-    alt Exactly one eligible item
-        M->>M: Auto-select item
-    else Multiple eligible items
-        S->>M: Chọn exact set các suất sẽ lấy
-    end
-    M->>GPS: Request fresh foreground presenter fix
-    GPS-->>M: capturedAt + coordinates + accuracy
-    M->>API: POST /me/qr { sorted IDs, presenterEvidence }
-    API-->>M: Signed QR + 5s expiry
-    loop while focused and refreshing
-        M->>GPS: Capture a new foreground fix
-        M->>API: POST /me/qr with same exact intent + new evidence
-        API-->>M: New signed QR + 5s expiry
-    end
+    S->>M: Scan QR
+    M->>GPS: Capture fresh foreground fix
+    GPS-->>M: capturedAt + latitude + longitude + accuracyMeters
+    M->>API: POST /api/me/check-in/resolve { qr, gps }
+    API-->>M: Own employee/menu/location/registration/eligibility + intentNonce when eligible
 ```
 
-Before showing the QR, mobile builds a **sorted, unique, non-empty exact pickup
-intent**:
+The sample shape is:
 
-- One eligible item is selected automatically; no extra tap is required.
-- Multiple eligible items require explicit selection on the presenter phone, not
-  on the Kitchen scanner.
-- Selection, focus, eligibility, delegation or GPS verification changes clear
-  the QR. Refresh preserves the exact set only after a fresh presenter fix.
-
-The server resolves the presenter's fixed roster location and evaluates
-freshness, accuracy and geofence policy. Presenter coordinates cannot select a
-different site or grant entitlement. Owner GPS is never collected merely because
-the presenter is receiving a delegated item.
-
-If GPS is unavailable, denied, stale, inaccurate or outside the geofence, the
-screen exposes only **Retry** and **Refresh**. There is no manual bypass, silent
-fallback, automatic site substitution or alternate item set. Collection stops
-when the screen loses focus, QR generation completes/cancels, or the screen
-unmounts.
-
-The refreshed QR preserves the exact intent. QR TTL is exactly 5 seconds and
-accepted clock skew is at most 2 seconds. QR availability and serving remain
-restricted to the 10:30–13:30 `Asia/Ho_Chi_Minh` serving window.
-
-## 6. Delegation / nhận hộ flow
-
-### 6.1 A requests B
-
-From A's selected meal date:
-
-```text
-Thứ Ba · 18/08
-Bún bò Huế
-✓ Đã đăng ký
-
-[ Ủy quyền nhận hộ ]
+```json
+{
+  "qr": "<scanned-shared-qr>",
+  "gps": {
+    "capturedAt": "<UTC ISO instant>",
+    "latitude": 10.77,
+    "longitude": 106.69,
+    "accuracyMeters": 12
+  }
+}
 ```
 
-A searches B by name/employee code and confirms:
+Coordinates are illustrative only and must not be copied into source control
+or staging evidence. Resolve returns only the authenticated caller's normalized
+own registration and, when eligible, an opaque signed `intentNonce` scoped to
+caller/session/registration/location; it is nullable when `eligibility=false`.
+An eligible resolve persists a `VALID` `ServingVerification` bound to that
+nonce and scope. GPS is checked against the server-resolved roster location,
+freshness, accuracy and geofence policy.
 
-```text
-Nguyễn Văn B · NV105
+### 5.3 Explicit confirm with a second fresh GPS sample
 
-[ Gửi yêu cầu ]
+```mermaid
+sequenceDiagram
+    actor S as Staff
+    participant M as Mobile
+    participant GPS as Expo foreground GPS
+    participant API as API
+    participant DB as PostgreSQL
+
+    S->>M: Review own registration and tap Confirm
+    M->>GPS: Capture a new fresh foreground fix
+    GPS-->>M: capturedAt + latitude + longitude + accuracyMeters
+    M->>API: POST /api/me/check-in/confirm { sessionId, intentNonce, idempotencyKey, gps }
+    API->>DB: Validate nonce/caller/session/registration/location + window/GPS/own registration
+    API->>DB: Insert or replay one unique MealServing + Staff event
+    DB-->>API: CHECKED_IN + registrationId + servingId + servedAt
+    API-->>M: Confirmed result
 ```
 
-Backend checks:
+Confirm is explicit: scanning and resolve never mark a meal received. The
+server validates the non-empty `intentNonce` against the persisted `VALID`
+`ServingVerification`, authenticated caller, check-in session, own registration
+and location, then revalidates date/window, fresh GPS and own active
+registration inside one transaction. Retrying the same caller/key/body replays
+the committed result; a lost response is reconciled through
+`GET /api/me/check-in`, not a guessed local success.
 
-- A owns active registration.
-- Registration not served.
-- B exists, active and is not A.
-- No other active delegation for same registration.
+Public state is `CHECKED_IN`. The canonical outcome remains one immutable
+`MealServing` with unique `registrationId`; `CheckInSession` and verification
+metadata are additive context. No active delegation, proxy pickup,
+multi-registration intent or Kitchen employee scanner exists in this flow.
 
-Result: `pending`.
+If GPS is unavailable, denied, stale, inaccurate or outside the geofence, show
+only **Retry**/**Refresh**. There is no manual-code, manual-coordinate,
+background-tracking or alternate-location bypass. Raw coordinates are not
+logged or retained as GPS history; only safe verification result/timestamp,
+accuracy and location ID are retained.
+## 6. Historical delegation / nhận hộ (retained only)
 
-### 6.2 B receives request
+> The current self-check-in cutover is own-user only. Delegation request,
+> accept, decline, revoke, proxy pickup and delegate selection are not active
+> APIs or UI. Existing delegation tables, notifications and meal-serving
+> context remain readable for historical compatibility/audit only. The retained
+> design is not a current staging acceptance path.
 
-Persisted notification/inbox item:
-
-```text
-Nguyễn Văn A muốn bạn nhận hộ suất ăn
-Thứ Ba · 18/08 · Bún bò Huế
-
-[ Từ chối ] [ Chấp nhận ]
-```
-
-- Accept → delegation `accepted`.
-- Decline → `declined`.
-- A receives updated notification/state.
-
-### 6.3 A revokes
-
-Before serving:
-
-```text
-Nguyễn Văn B sẽ nhận hộ
-[ Hủy ủy quyền ]
-```
-
-Tapping `Hủy ủy quyền` opens a confirmation that names B and explains that B will immediately lose pickup permission. Backend then rechecks serving/delegation transactionally.
-
-- Revoke wins first → B loses pickup permission.
-- Serving already committed first → revoke returns `ALREADY_SERVED`.
-
-### 6.4 Delegation constraints
-
-- No delegation chain.
-- One active delegate per registration.
-- B cannot transfer A's registration to C.
-- Accepted delegation does not itself mark meal received.
-
-### 6.5 Owner cancels registration
-
-If A unticks a registration that has `pending|accepted` delegation:
-
-1. UI names B and asks A to confirm cancellation.
-2. Backend locks registration/delegation and atomically sets registration `canceled` plus delegation `revoked`.
-3. A and B receive authoritative state; B receives a persisted notification.
-4. Accept committed first does not block cancellation: cancellation still atomically revokes the accepted delegation. Only a serving already committed first returns `ALREADY_SERVED`; no partial cancellation is shown.
-
+## 6.1 Staff notification flow
 ## 6.6 Staff notification flow
 
 Notification is created in the same transaction as the authoritative business change and
@@ -374,11 +347,11 @@ read are owner-scoped; a foreign notification ID is indistinguishable from a mis
 | --------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------ |
 | `REGISTRATION_OPENED`                         | First publish only; initializes missing daily revisions and marks weekly menu published. | Every active Staff user, independent of reminder opt-out.                                       | Calendar.                |
 | `REGISTRATION_REMINDER`                       | Sunday 10:00 VN for next Monday's published menu; one per Staff/week.                    | Active Staff missing at least one enabled, non-holiday registration and with reminders enabled. | Calendar.                |
-| `PICKUP_REMINDER`                             | Daily 11:30 VN for today's active unserved registrations.                                | Accepted delegate, otherwise owner; one grouped item per recipient/date when reminders enabled. | Pickup Intent.           |
-| `DELEGATION_REQUESTED`                        | Owner sends pending request.                                                             | Delegate.                                                                                       | Delegation.              |
-| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` | Delegate responds.                                                                       | Owner.                                                                                          | Delegation.              |
-| `DELEGATION_REVOKED`                          | Owner revokes, or owner cancellation revokes the active delegation.                      | Delegate, with reason `OWNER_REVOKED` or `REGISTRATION_CANCELLED`.                              | Delegation.              |
-| `PROXY_PICKUP_COMPLETED`                      | Accepted delegate successfully receives the meal for the owner.                          | Owner only; self pickup creates no notification.                                                | Readable detail, no CTA. |
+| `PICKUP_REMINDER`                             | Daily 11:30 VN for today's active unserved registrations.                                | Registration owner; one grouped item per owner/date when reminders enabled.                    | Current Staff check-in. |
+| `DELEGATION_REQUESTED` **(Historical only)**  | Retained legacy delegation request.                                                       | Historical delegate record.                                                                     | Read-only history; no current action. |
+| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` **(Historical only)** | Retained legacy response.                               | Historical owner record.                                                                       | Read-only history; no current action. |
+| `DELEGATION_REVOKED` **(Historical only)**    | Retained legacy revoke/cancellation record.                                               | Historical delegate record.                                                                     | Read-only history; no current action. |
+| `PROXY_PICKUP_COMPLETED` **(Historical only)** | Retained legacy proxy serving record.                                                     | Historical owner record.                                                                        | Readable detail; no current action. |
 | `NO_SHOW_PENALTY_CREATED`                     | No-show worker at 13:45 VN after the 13:30 service end.                                  | Registration owner.                                                                             | Readable detail, no CTA. |
 
 Published-menu edits use `REGISTERED_MENU_CHANGED`, never `REGISTRATION_OPENED`. Admin
@@ -407,10 +380,11 @@ copies. A mobile language change updates the local UI immediately and best-effor
 `locale` through `/api/notifications/preferences`; if that PATCH fails, the local language
 and inbox remain usable, while only the locale used for future push delivery stays at the
 previous server value. Push chooses the stored copy using the server locale (default `vi`),
-and dates in copy use `Asia/Ho_Chi_Minh`. The one
-`remindersEnabled` preference (default `true`) opts out of both weekly registration and
-same-day pickup reminders; it does not suppress transactional delegation/menu/pickup/no-show
-events. The reminder switch changes only after its PATCH succeeds.
+and dates in copy use `Asia/Ho_Chi_Minh`. The one `remindersEnabled`
+preference (default `true`) opts out of both weekly registration and same-day
+Staff check-in reminders; it does not suppress transactional menu or no-show
+events. Retained delegation/proxy kinds are historical and are not emitted by
+the current flow.
 
 After first authenticated native login, show one contextual explainer. `Enable` is the only
 action that invokes the OS prompt; `Not now` dismisses and records the one-time state.
@@ -422,8 +396,8 @@ reminder switch.
 ### Deep-link destinations
 
 - Registration/menu (`REGISTRATION_OPENED`, `REGISTRATION_REMINDER`, `REGISTERED_MENU_CHANGED`) → Calendar, with an optional meal date/week handoff.
-- Pickup (`PICKUP_REMINDER`) → Pickup Intent.
-- Delegation lifecycle → Delegation.
+- `PICKUP_REMINDER` → current Staff self check-in.
+- Retained delegation/proxy kinds → readable history only; no active Delegation destination.
 - No-show and migrated legacy items remain readable without claiming an unavailable action.
 
 ## 7. Kitchen menu management
@@ -461,185 +435,187 @@ Rules:
 - Editing a published menu before cutoff creates a revision, preserves registrations and notifies registered Staff.
 - Daily menu with active registrations cannot be unpublished/deleted.
 
-## 8. Kitchen Check-in / Serving screen
+## 8. Kitchen shared QR and aggregate dashboard
 
-This is the primary Kitchen operational screen.
-
-### 8.1 Dashboard
-
-```text
-Cơm gà xối mỡ · 17/08
-
-ĐÃ GIAO       CÒN LẠI
-127 / 220        93
-██████████░░   57.7%
-
-[ CAMERA SCANNER ]
-
-Đã nhận (127) | Chưa nhận (93) | Tất cả (220)
-
-VỪA CHECK-IN
-12:08:31  Nguyễn Văn A   Chính chủ
-12:08:25  Trần Văn B     Nhận hộ A
-12:08:13  Lê Văn C       Chính chủ
-```
-
-### 8.2 Serving state
-
-Before 10:30 or at/after 13:30, scanner/confirm is disabled with `Ngoài khung giờ phục vụ 10:30–13:30`; menu/dashboard remain readable.
-
-## 9. Kitchen QR resolve flow
+Kitchen owns the display surface, not employee scanning. The screen shows the
+active meal date/location, one stable QR and aggregate progress:
 
 ```mermaid
 sequenceDiagram
     actor K as Kitchen
-    participant SC as Scanner
+    participant UI as Kitchen display
     participant API as API
-    participant DB as PostgreSQL
 
-    K->>SC: Scan QR của presenter
-    SC->>API: /pickup/resolve { qr } + authenticated Kitchen session
-    API->>API: Verify Kitchen permission + QR signature + 5s expiry/skew
-    API->>DB: Revalidate presenter, exact intent, registrations, delegation, location/GPS context
-    DB-->>API: Validated immutable exact pickup set
-    API-->>SC: 30s pickup session + intended items + safe verification status
+    K->>UI: Mở dashboard khi app foreground + screen focused
+    UI->>API: GET /api/kitchen/check-in/qr
+    API-->>UI: { qr, date, location, activeFrom, expiresAt }
+    UI->>API: GET /api/kitchen/check-in/dashboard?date=YYYY-MM-DD
+    API-->>UI: Aggregate counts + lastUpdated
+    loop while focused and foregrounded
+        UI->>API: Poll dashboard every 10 seconds
+        API-->>UI: New aggregate snapshot or temporary error
+    end
 ```
 
-Kitchen sends only the raw QR to resolve and never sends GPS/evidence. A valid
-resolve binds the exact sorted registration set, presenter, effective location,
-GPS verification result and nonce to a pickup session lasting exactly 30 seconds.
+`GET /api/kitchen/check-in/qr` requires an authenticated Kitchen principal
+with `kitchen.serve`; the server selects that caller's active roster location
+and lazily creates/reuses one stable day/location session. The QR contains no
+employee identity, does not rotate per Staff and is active only during the
+server-provided `activeFrom`/`expiresAt` window.
 
-### Normal case: one meal
+The dashboard response is aggregate-only:
 
 ```text
-Nguyễn Văn B · NV105
-
-1 SUẤT · CHÍNH CHỦ
-Cơm gà
-
-[ XÁC NHẬN GIAO 1 SUẤT ]
+{
+  date,
+  location,
+  window,
+  lastUpdated,
+  counts: {
+    registered,
+    checkedIn,
+    pending,
+    noShow,
+    regular,
+    vegetarian
+  }
+}
 ```
 
-### Proxy/multi-item case
+The UI renders the shared QR, menu/date, `Registered`, `Checked in`, `Pending`,
+`No-show` after reconciliation, dietary totals and server `lastUpdated`. It
+does not render a camera scanner, employee names, employee search, per-person
+registration list, delegation/proxy detail or serving log.
 
-B selected the exact B + A set on B's phone before presenting the QR:
+Poll only while the app is foregrounded and the dashboard is focused, at
+10-second intervals and immediately on re-entry. On a temporary error, retain
+the last good snapshot indefinitely and mark it stale until a successful
+refresh; never replace it with `0 / 0` or an invented empty state. Under healthy
+polling, the visible snapshot normally converges within approximately 15
+seconds. The current contract has no SSE/WebSocket dependency. Counts must
+satisfy:
+`checkedIn + pending + noShow = registered` and
+`regular + vegetarian = registered`.
 
-```text
-Nguyễn Văn B · NV105
-
-2 SUẤT
-• Nguyễn Văn B · Chính chủ
-• Nguyễn Văn A · Nhận hộ
-
-[ XÁC NHẬN GIAO 2 SUẤT ]
-```
-
-**Happy path:** Kitchen verifies presenter/names/count against the trays being
-handed over and presses one confirm action. Kitchen cannot tick, add, remove or
-replace items. If intent changes, the presenter updates mobile selection and
-shows a refreshed QR before resolve.
-
-## 10. Kitchen serving confirmation
+## 9. Staff scan, resolve and confirm
 
 ```mermaid
 sequenceDiagram
-    actor K as Kitchen
-    participant UI as Kitchen UI
+    actor S as Staff
+    participant M as Staff mobile
+    participant GPS as Foreground GPS
     participant API as API
     participant DB as PostgreSQL
-    participant RT as Realtime
 
-    K->>UI: Confirm resolved exact pickup intent
-    UI->>API: { pickupSessionId, idempotencyKey }
-    API->>DB: BEGIN + deterministic locks
-    API->>DB: Revalidate exact set, actor/account/delegation, location/GPS context, 30s session and serving window
-    API->>DB: Insert immutable meal_servings + meal_events, consume proxy delegation
-    API->>DB: COMMIT
-    API->>RT: Publish serving events after commit
-    API-->>UI: Confirmed all-or-nothing result
+    S->>M: Mở self check-in và quét shared Kitchen QR
+    M->>GPS: Fresh foreground sample
+    GPS-->>M: capturedAt + latitude + longitude + accuracyMeters
+    M->>API: POST /api/me/check-in/resolve { qr, gps }
+    API-->>M: Own employee/menu/location/registration/eligibility + sessionId
+    S->>M: Review own registration and tap Confirm
+    M->>GPS: New fresh foreground sample
+    GPS-->>M: capturedAt + latitude + longitude + accuracyMeters
+    M->>API: POST /api/me/check-in/confirm { sessionId, idempotencyKey, gps }
+    API->>DB: Lock session + own registration + idempotency claim
+    API->>DB: Revalidate GPS/window/location/own registration
+    API->>DB: Insert/replay unique MealServing + Staff event
+    DB-->>API: CHECKED_IN, registrationId, servingId, servedAt
+    API-->>M: Confirmed result
 ```
 
-Confirm accepts only the resolved `pickupSessionId` and an idempotency key.
-Kitchen sends no registration IDs, coordinates or GPS. The API loads the exact
-session set and revalidates every item, current account/permission state,
-delegation acceptance, registration/location snapshot, presenter verification,
-30-second session and 10:30–13:30 `Asia/Ho_Chi_Minh` window.
+`GET /api/me/check-in` is the authoritative own-user status endpoint. Staff
+uses it before or after the flow and after timeout/lost response. It returns
+public state such as `UNREGISTERED`, `ACTIVE`, `CHECKED_IN`, `CANCELLED`,
+`NO_SHOW` or `OUTSIDE_WINDOW` plus server action flags.
 
-Confirmation is all-or-nothing and idempotent. If any item is stale/ineligible,
-the transaction rolls back every serving, delegation, and request-claim write
-and returns `PICKUP_INTENT_CONFLICT`; Kitchen must resolve again. The same
-caller/key/body returns the original successful result, while key reuse with
-another body/intent returns `IDEMPOTENCY_CONFLICT`.
+Resolve request:
 
-### Outcomes
+```json
+{
+  "qr": "<scanned-shared-qr>",
+  "gps": {
+    "capturedAt": "<UTC ISO instant>",
+    "latitude": 10.77,
+    "longitude": 106.69,
+    "accuracyMeters": 12
+  }
+}
+```
 
-| Outcome                               | Kitchen UI                                                                  |
-| ------------------------------------- | --------------------------------------------------------------------------- |
-| Self serving success                  | Green success with owner/name/time                                          |
-| Proxy success                         | Green success: “B đã nhận hộ A”                                             |
-| Already served/delegation revoked     | Conflict; do not serve; resolve again                                       |
-| QR expired at resolve                 | Ask presenter to show refreshed QR                                          |
-| Pickup session expired before confirm | Re-scan/re-resolve                                                          |
-| Any selected item changed             | `PICKUP_INTENT_CONFLICT`; no item or request claim committed; resolve again |
-| GPS verification invalid              | Safe Retry/Refresh status; Kitchen cannot bypass                            |
-| Outside 10:30–13:30                   | Disable serving and show canonical service window                           |
-| Account disabled after resolve        | No serving; refresh authoritative state                                     |
-| Network/database failure              | No success display; retry same idempotency key                              |
+The coordinates are an illustrative sample only; do not copy real coordinates
+into source control or evidence. Resolve verifies the stable QR/session, current
+window, active assignment and GPS policy, then returns only the authenticated
+caller's normalized employee/menu/location/registration/eligibility. It does
+not consume a registration or create `MealServing`.
 
-## 11. Recovery boundaries
+Confirm sends a **new** fresh foreground GPS sample:
 
-There is no employee-code, username/password, local-login or manual location
-bypass in production. If QR/GPS verification fails, the presenter receives only
-the approved Retry/Refresh recovery. If the exact intent becomes stale, the
-presenter must select/refresh again; Kitchen cannot substitute an item.
+```json
+{
+  "sessionId": "<resolved-session-id>",
+  "idempotencyKey": "<caller-generated-retry-key>",
+  "gps": {
+    "capturedAt": "<new-UTC ISO instant>",
+    "latitude": 10.77,
+    "longitude": 106.69,
+    "accuracyMeters": 12
+  }
+}
+```
 
-## 12. Kitchen lists and realtime log
+Confirm revalidates authenticated caller, session/date/location/window,
+freshness/accuracy/geofence and the caller's own active registration in one
+transaction. It returns `CHECKED_IN` plus registration/serving IDs and
+timestamp. Retrying the same caller/key/body replays the committed result;
+different body for that key returns `IDEMPOTENCY_CONFLICT`. A lost response is
+reconciled with `GET /api/me/check-in`, never guessed locally.
 
-### Chưa nhận (PENDING)
+The active flow has no delegation, owner/delegate selection, multi-registration
+intent, proxy pickup, Staff-generated QR, Kitchen employee resolve/confirm or
+manual-code bypass. Existing delegation/pickup tables and old serving context
+remain retained for history/compatibility only.
 
-`PENDING` contains only `ACTIVE` registrations without a valid
-`meal_servings` row. A registration remains in the authoritative total after
-serving; the UI moves it to `Đã nhận` from the serving projection rather than
-depending on a duplicate `SERVED` registration status.
+## 10. Check-in transaction and serving finality
 
-### Đã nhận (SERVED projection)
+The confirm transaction:
 
-Show every registration with a valid `meal_servings` row, including an
-`ACTIVE + meal_serving` row and a legacy `SERVED + meal_serving` row. The
-client projection exposes the owner identity (`userId`, `userName`,
-`userEmail`), `mealChoice`, `servedAt`, and `isProxy` in recent serving logs;
-immutable menu/location snapshots remain server-side history and are not
-dashboard response fields.
+1. Locks the idempotency claim for `(authenticated caller, idempotencyKey)`.
+2. Replays the committed result or rejects a different body for that key.
+3. Locks the stable `CheckInSession` and caller-owned registration.
+4. Revalidates date, session, active location, serving window, GPS policy,
+   account status and registration state.
+5. Inserts one immutable `MealServing` linked to the check-in session and
+   inserts the Staff-owned canonical meal event.
+6. Commits; only then does any aggregate refresh observe the new count.
 
-### Vắng mặt (NO_SHOW)
+`MealServing.registrationId` remains unique and is the sole serving outcome
+source. `CheckInSession`, confirm request metadata and safe GPS verification
+context are additive compatibility fields, not a second outcome table.
+Successful confirm is final: no reversal/re-serve endpoint or UI exists. Raw
+latitude/longitude is not logged or retained; only safe verification result,
+timestamp, accuracy and location ID are retained.
 
-After no-show reconciliation, show `NO_SHOW` registrations without a serving.
-Do not relabel users as absent while the serving window is still open.
-`CANCELLED` and account-disabled rows are not listed or counted.
+## 11. Recovery and boundary states
 
-### Projection safety
+| Condition | Staff/Kitchen behavior |
+| --- | --- |
+| Invalid/expired/wrong-location QR | Staff rescans the current shared QR; no manual code or fallback |
+| Missing/no own registration | Show authoritative status; do not substitute another user |
+| GPS denied/unavailable/stale/inaccurate/outside geofence | Retry/Refresh only; no background or manual coordinate bypass |
+| Session/window closed | Show server window and retry during 10:30–13:30 |
+| Already checked in | Reconcile with `GET /api/me/check-in`; do not create another serving |
+| Confirm timeout/network/5xx or unknown outcome | Reconcile with `GET /api/me/check-in`; show checked-in only for authoritative `CHECKED_IN`. If still unknown, retry the same preserved body/key idempotently after reconciliation; an expired intent may still GET status before deciding whether confirm can retry |
+| Temporary Kitchen dashboard error | Keep last aggregate snapshot indefinitely, mark stale until successful refresh; healthy polling normally converges within ~15 seconds |
 
-The `pending`, `served`, `noShow` and `all` lists and counters come from one
-consistent server snapshot. `SERVED` without a serving, `NO_SHOW` with a
-serving, or `CANCELLED` with a serving is an internal data invariant failure:
-the server returns the generic `INTERNAL_SERVER_ERROR` envelope with a request
-ID and no partial counters. The UI must show recovery, not a fabricated list.
+Staff GPS collection stops when the check-in screen loses focus, leaves the
+foreground, completes/cancels, or unmounts. Kitchen sends no GPS. Kitchen
+dashboard remains readable outside the serving window but shows the server
+window/state; the QR is not an employee authorization token.
+Late resolve, confirm or status replies are ignored after a newer operation, a
+focus/foreground transition, or a session-token change; they never overwrite the
+current Staff check-in state.
 
-### Realtime behavior
-
-1. Initial snapshot from API/DB.
-2. Subscribe to committed serving/registration events.
-3. After another device commits, append the event or refetch the snapshot.
-4. On reconnect, fetch a fresh authoritative snapshot before continuing.
-
-## 13. Serving finality
-
-- Kitchen verifies presenter, selected items and tray count before pressing confirm.
-- After a successful confirm, serving is final in core v2 and cannot be reversed from Kitchen or Admin UI.
-- If fewer trays are immediately available than the confirmed count, Kitchen completes the physical handover by supplying the missing trays; it does not edit serving history.
-- Original serving events remain immutable during the 1-year retention window.
-
-## 14. End-of-day no-show
+## 12. End-of-day no-show
 
 The transaction becomes eligible at **13:30** VN, after the serving window
 ends; the normal scheduler first runs at **13:45** VN:
@@ -657,25 +633,29 @@ with `no_show_at`, and commits the penalty, audit, notification and dashboard
 outbox event atomically. A failed candidate rolls back without partial side
 effects; a retry is a no-op and never reopens `PAID` or `WAIVED`.
 
-Delegation status does not replace serving: accepted but unused delegation can
-still result in owner no-show.
+There is no active delegation status in the current flow. Retained historical
+delegation rows do not replace a serving and do not authorize current check-in;
+the canonical no-show decision remains registration-without-`MealServing`.
 
 ### Legacy snapshot cutover behavior
 
-Registration create/reactivation resolves the immutable menu and roster/location
+Registration create/reactivation resolves immutable menu and roster/location
 facts server-side. Legacy rows missing required snapshot fields remain readable
-for historical accounting but are never made pickup-eligible: registration
-update/reactivation returns `REGISTRATION_FAILED`, pickup options/resolve/confirm
-return `PICKUP_INTENT_CONFLICT`, and no current location/menu fallback exists.
-The exact routes and request authority remain unchanged:
-`PUT /api/registrations/batch`;
-`POST /internal/api/v1/pickup/resolve`,
-`POST /v1/internal/pickup/resolve` and `POST /api/serving/resolve` with QR
-only; and `POST /internal/api/v1/pickup/confirm`,
-`POST /v1/internal/pickup/confirm` and `POST /api/serving/confirm` with
-`pickupSessionId` plus `idempotencyKey`.
-Kitchen cannot add or replace an item, and an incomplete/mismatch row never
-causes a partial confirm.
+for historical accounting but are never made current check-in-eligible:
+registration update/reactivation returns `REGISTRATION_FAILED`, and the current
+self check-in endpoints return the canonical own-user status/error without
+falling back to a current location/menu.
+
+The current route authority is:
+
+- `GET /api/me/check-in` for Staff own-user status/reconciliation;
+- `POST /api/me/check-in/resolve` with shared QR + fresh GPS; an eligible preview returns a signed `intentNonce`, with no consumption;
+- `POST /api/me/check-in/confirm` with session ID + required signed `intentNonce` + idempotency key + fresh GPS;
+- `GET /api/kitchen/check-in/qr` for Kitchen stable day/location QR; and
+- `GET /api/kitchen/check-in/dashboard?date=YYYY-MM-DD` for aggregate counts.
+
+Historical pickup/delegation routes are not active client endpoints. Kitchen
+cannot add/replace an item, resolve a Staff member or confirm a Staff serving.
 
 ## 15. Admin flows
 
@@ -696,7 +676,11 @@ causes a partial confirm.
 - Admin-role lifecycle is handled outside Admin Web by audited server-side operations.
 - Admin does not gain Kitchen serving permission implicitly.
 - Assign/revoke `penalty.read`, `penalty.resolve` with audit.
-- Disable flow must preview future registrations/delegations and require Admin confirmation. The same workflow cancels them with `ACCOUNT_DISABLED`, excludes them from Kitchen totals and penalties, and preserves audit history.
+- Disable flow must preview future registrations and any retained historical
+  delegation rows, require Admin confirmation, cancel/quarantine them with
+  `ACCOUNT_DISABLED`, exclude them from Kitchen totals and penalties, and
+  preserve audit history. Historical delegation rows do not authorize current
+  self check-in.
 
 ### Penalties
 
@@ -711,17 +695,18 @@ Search by user/date to see:
 
 ```text
 Registration owner: A
-Delegated to: B
-Requested: 10:21
-Accepted: 10:23
-Served to: B
-Kitchen actor: C
-Served: 12:08:31
+Check-in actor: A
+Meal date: 2026-09-30
+Location: server-resolved location snapshot
+Check-in state: CHECKED_IN
+Serving ID: immutable MealServing identifier
+Confirmed: 12:08:31
 ```
 
 ### Jobs / Health
 
-- View menu-lock, delegation-expiry, no-show, notification and reconciliation runs.
+- View menu-lock, no-show, notification and reconciliation runs. Retained
+  delegation history is audit data, not an active expiry workflow.
 - Show status, started/finished time, attempt, sanitized error and retry chain.
 - Manual retry requires confirmation naming job/date/scope and records actor/request ID.
 
@@ -730,38 +715,54 @@ Served: 12:08:31
 | State                  | Requirement                                                                   |
 | ---------------------- | ----------------------------------------------------------------------------- |
 | Loading                | Never render false empty/unchecked state                                      |
-| Draft                  | Preserve weekly tick/delegation inputs until server response                  |
+| Draft                  | Preserve weekly registration inputs until server response                  |
 | Validation             | Show date/person/action-specific message                                      |
 | Pending                | Disable duplicate submit but keep context visible                             |
 | Success                | State server-confirmed, include date/person/outcome                           |
 | Error                  | Safe message + concrete retry/recovery                                        |
-| Expired QR             | Visually invalid; refresh/retry                                               |
+| Shared QR invalid      | Staff rescans current Kitchen QR; no manual-code fallback                     |
+| GPS recovery           | Retry/Refresh only; no manual coordinates or background tracking             |
 | Offline                | Distinguish OTP/session/API/provider connectivity failure                     |
-| Destructive            | Revoke/role/waive/account-disable cleanup confirm where appropriate           |
-| Realtime reconnect     | Re-fetch authoritative snapshot                                               |
+| Destructive            | Role/waive/account-disable cleanup confirm where appropriate                  |
+| Dashboard refresh      | Poll only while focused/foreground; retain last snapshot and mark stale       |
 | Account disabled       | Block protected actions and explain that Admin controls account state         |
-| Batch pickup conflict  | Commit nothing; retain context, disable confirm and require re-resolve        |
-| Outside service window | Keep dashboard readable; disable scanner/confirm with 10:30–13:30 explanation |
+| Check-in conflict      | Reconcile own status and retry; never show local success before server result |
+| Reconciliation race  | Ignore late authoritative replies after a newer flow generation, focus transition, or session-token change; only the current reconciliation updates the Staff check-in surface |
+| Outside service window | Keep dashboard readable; disable Staff resolve/confirm with 10:30–13:30 copy |
 
 ## 17. Acceptance tests
 
 - Weekly tick/untick before/at/after cutoff for mixed week states.
 - Exact cutoff boundary: 13:59:59 accepted, 14:00:00 denied using server clock.
 - Two concurrent weekly saves do not create duplicate registration.
-- QR valid/expired/forged/wrong-day.
-- QR expires after resolve but Kitchen confirm succeeds only within valid pickup session.
-- QR skew >2s rejected; pickup session succeeds before 30s and fails at/after expiry.
-- A→B delegation pending/accept/decline/revoke/expire/consume.
-- Prevent A→A and A→B→C chain.
-- Owner vs delegate simultaneous pickup → exactly one serving.
-- Two Kitchen scanners same registration → exactly one serving.
-- Staff preselects multi-item pickup intent; Kitchen happy path confirms without ticking; one stale intended item → entire batch rolls back.
-- Cancel registration with pending/accepted delegation atomically revokes it; cancel/accept/serve races have one valid winner.
-- Disabled owner/receiver/actor cannot use protected API; disable requires preview + confirmed cleanup, and quarantined cancellations never become no-show/penalty.
-- Menu revision preserves registration, sends persisted notification and cannot unpublish a registered day.
-- Successful serving confirm is final; Kitchen verifies intended items/count before confirm and completes any missing physical handover without rewriting history.
-- Realtime dashboard converges across multiple devices.
-- A valid authenticated Kitchen caller with `kitchen.serve` can resolve and confirm regardless of client network location; QR, pickup-session, serving-window and database eligibility checks still apply.
-- Public weekly/delegation APIs work outside IEC network with valid auth.
-- No-show job skips served registrations and does not duplicate penalty.
-- No-show starts 13:45, creates exactly one 50,000 VND penalty and never reopens paid/waived state.
+- Kitchen `GET /api/kitchen/check-in/qr` returns/reuses one stable
+  day/location QR without employee identity.
+- Staff `GET /api/me/check-in` returns authoritative own status and action flags.
+- Staff scans the shared QR and resolves with a fresh foreground GPS sample;
+  resolve returns own normalized employee/menu/location/registration/eligibility
+  and creates no serving.
+- Staff confirm sends a second fresh foreground GPS sample and an idempotency
+  key; success is `CHECKED_IN` and creates one unique `MealServing`.
+- Same caller/key/body confirm retries replay the result; different body returns
+  `IDEMPOTENCY_CONFLICT`; lost responses reconcile through status.
+- Invalid/stale QR, missing registration, wrong location/window and all GPS
+  failures produce the canonical safe error/recovery states.
+- Kitchen dashboard `GET /api/kitchen/check-in/dashboard?date=YYYY-MM-DD`
+  returns aggregate-only counts plus `lastUpdated`; it polls every 10 seconds
+  only while focused/foregrounded, normally converges within approximately
+  15 seconds, and retains a stale last-good snapshot indefinitely on refresh
+  failure; no SSE requirement.
+- Dashboard invariants hold: `checkedIn + pending + noShow = registered` and
+  `regular + vegetarian = registered`; canceled/account-disabled rows are
+  excluded.
+- Concurrent confirms for one own registration create at most one
+  `MealServing`; `MealServing.registrationId` remains unique.
+- Historical pickup/delegation tables remain readable but no active proxy or
+  delegation check-in, Kitchen employee scan, or old pickup endpoint is used.
+- Disabled accounts cannot use protected API; disable still requires preview +
+  confirmed cleanup and preserves admin/audit semantics.
+- Menu revision preserves registration, sends persisted notification and cannot
+  unpublish a registered day.
+- No-show starts 13:45 after the 13:30 window, skips checked-in/served
+  registrations, creates exactly one 50,000 VND penalty and never reopens
+  paid/waived state.

@@ -23,7 +23,6 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LanguageProvider, useLanguage } from './src/i18n/LanguageProvider';
 import { SessionProvider, useSession } from './src/auth/session';
 import { translate } from './src/i18n/translations';
-import { DelegationScreen } from './src/screens/delegation/DelegationScreen';
 import { EmployeeCalendarScreen } from './src/screens/employee/EmployeeCalendarScreen';
 import { EmployeeDashboardScreen } from './src/screens/employee/EmployeeDashboardScreen';
 import { EmployeeProfileScreen } from './src/screens/employee/EmployeeProfileScreen';
@@ -32,10 +31,10 @@ import { PenaltyListScreen } from './src/screens/employee/PenaltyListScreen';
 import { PenaltyDetailScreen } from './src/screens/employee/PenaltyDetailScreen';
 import { NotificationDetailScreen } from './src/screens/notifications/NotificationDetailScreen';
 import { NotificationListScreen } from './src/screens/notifications/NotificationListScreen';
-import { KitchenScannerScreen } from './src/screens/kitchen/KitchenScannerScreen';
+import { KitchenQrScreen } from './src/screens/kitchen/KitchenQrScreen';
 import { KitchenDashboardScreen } from './src/screens/kitchen/KitchenDashboardScreen';
 import { KitchenProfileScreen } from './src/screens/kitchen/KitchenProfileScreen';
-import { PickupIntentScreen } from './src/screens/pickup/PickupIntentScreen';
+import { SelfCheckInScreen } from './src/screens/checkIn/SelfCheckInScreen';
 import { EmailOtpScreen } from './src/screens/auth/EmailOtpScreen';
 import {
   flushPendingNotificationNavigation,
@@ -164,7 +163,6 @@ function ProfileStackNavigator() {
         name="ProfileHome"
         component={EmployeeProfileScreen}
       />
-      <ProfileStack.Screen name="Delegation" component={DelegationScreen} />
       <ProfileStack.Screen name="MealHistory" component={MealHistoryScreen} />
       <ProfileStack.Screen name="PenaltyList" component={PenaltyListScreen} />
       <ProfileStack.Screen
@@ -215,17 +213,11 @@ function AppTabsNavigator() {
             name="EmployeeCalendar"
             component={EmployeeCalendarScreen}
           />
-          <Tabs.Screen name="PickupIntent" component={PickupIntentScreen} />
+          <Tabs.Screen name="SelfCheckIn" component={SelfCheckInScreen} />
           <Tabs.Screen
             name="Notifications"
             component={NotificationStackNavigator}
           />
-          {canUseKitchen && (
-            <Tabs.Screen
-              name="KitchenScanner"
-              component={KitchenScannerScreen}
-            />
-          )}
           <Tabs.Screen
             name="EmployeeProfile"
             component={ProfileStackNavigator}
@@ -238,7 +230,7 @@ function AppTabsNavigator() {
             name="KitchenDashboard"
             component={KitchenDashboardScreen}
           />
-          <Tabs.Screen name="KitchenScanner" component={KitchenScannerScreen} />
+          <Tabs.Screen name="KitchenQr" component={KitchenQrScreen} />
           <Tabs.Screen name="KitchenProfile" component={KitchenProfileScreen} />
         </>
       )}
@@ -256,7 +248,7 @@ function linkingConfig(): LinkingOptions<RootStackParamList> {
           screens: {
             EmployeeDashboard: 'dashboard',
             EmployeeCalendar: 'calendar',
-            PickupIntent: 'pickup',
+            SelfCheckIn: 'check-in',
             Notifications: {
               screens: {
                 NotificationList: 'notifications',
@@ -266,14 +258,13 @@ function linkingConfig(): LinkingOptions<RootStackParamList> {
             EmployeeProfile: {
               screens: {
                 ProfileHome: 'profile',
-                Delegation: 'delegations',
                 MealHistory: 'profile/meal-history',
                 PenaltyList: 'profile/penalties',
                 PenaltyDetail: 'profile/penalties/:penaltyId',
               },
             },
             KitchenDashboard: 'kitchen-dashboard',
-            KitchenScanner: 'scanner',
+            KitchenQr: 'kitchen-qr',
             KitchenProfile: 'kitchen-profile',
           },
         },

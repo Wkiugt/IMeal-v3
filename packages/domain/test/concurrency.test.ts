@@ -177,7 +177,7 @@ describe('Domain Tests: Concurrency', () => {
     );
   });
 
-  it('two scanners same registration: only one succeeds, the other throws', async () => {
+  it('two self confirmations same registration: only one succeeds', async () => {
     const user = await prisma.user.create({
       data: { email: 'user_conc2@test.com' },
     });
@@ -220,49 +220,8 @@ describe('Domain Tests: Concurrency', () => {
     expect(dbReg?.mealServing?.registrationId).toBe(reg.id);
   });
 
-  it('owner vs delegate simultaneous serving: only one succeeds', async () => {
-    const owner = await prisma.user.create({
-      data: { email: 'owner_conc3@test.com' },
-    });
-    const delegate = await prisma.user.create({
-      data: { email: 'delegate_conc3@test.com' },
-    });
-    const menuDate = new Date('2026-09-07T12:00:00.000Z');
 
-    const reg = await prisma.registration.create({
-      data: {
-        userId: owner.id,
-        mealDate: menuDate,
-        status: 'ACTIVE',
-      },
-    });
-
-    await prisma.pickupDelegation.create({
-      data: {
-        registrationId: reg.id,
-        delegateUserId: delegate.id,
-        status: 'PENDING',
-      },
-    });
-
-    const results = await Promise.allSettled([
-      LegacyRegistrationFixtureService.serveMeal(reg.id, owner.id),
-      LegacyRegistrationFixtureService.serveMeal(reg.id, delegate.id),
-    ]);
-
-    const successes = results.filter((r) => r.status === 'fulfilled');
-    const failures = results.filter((r) => r.status === 'rejected');
-
-    expect(successes.length).toBe(1);
-    expect(failures.length).toBe(1);
-
-    const servingCount = await prisma.mealServing.count({
-      where: { registrationId: reg.id },
-    });
-    expect(servingCount).toBe(1);
-  });
-
-  it('revoke vs serve race: if canceled, serve fails; if served, cancel fails', async () => {
+  it('cancel vs self-serving race commits one terminal outcome', async () => {
     const user = await prisma.user.create({
       data: { email: 'user_conc4@test.com' },
     });
@@ -392,89 +351,6 @@ describe('Domain Tests: Concurrency', () => {
       where: { registrationId: { in: [reg1.id, reg2.id, reg3.id] } },
     });
     expect(servingCount).toBe(1); // Only the manual serve of reg2
-  });
-  it('serializes accepted delegation revoke/serve and commits one winner', async () => {
-    const owner = await prisma.user.create({
-      data: { email: `owner-${randomUUID()}@example.test`, name: 'Owner' },
-    });
-    const delegate = await prisma.user.create({
-      data: {
-        email: `delegate-${randomUUID()}@example.test`,
-        name: 'Delegate',
-      },
-    });
-    const registration = await prisma.registration.create({
-      data: {
-        userId: owner.id,
-        mealDate: new Date('2026-09-24T00:00:00.000Z'),
-        status: 'ACTIVE',
-      },
-    });
-    const delegation = await prisma.pickupDelegation.create({
-      data: {
-        registrationId: registration.id,
-        delegateUserId: delegate.id,
-        status: 'ACCEPTED',
-      },
-    });
-
-    const serve = prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registration.id} FOR UPDATE`;
-      const current = await tx.pickupDelegation.findUnique({
-        where: { id: delegation.id },
-      });
-      if (current?.status !== 'ACCEPTED') return 'LOST';
-      await tx.pickupDelegation.update({
-        where: { id: delegation.id },
-        data: { status: 'COMPLETED' },
-      });
-      await tx.mealServing.create({
-        data: {
-          registrationId: registration.id,
-          ownerUserId: owner.id,
-          receiverType: 'PROXY',
-          delegationId: delegation.id,
-        },
-      });
-      // Serving state is derived from mealServing; registration stays ACTIVE.
-      return 'SERVED';
-    });
-
-    const revoke = prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registration.id} FOR UPDATE`;
-      const current = await tx.pickupDelegation.findUnique({
-        where: { id: delegation.id },
-      });
-      if (current?.status !== 'ACCEPTED') return 'LOST';
-      await tx.pickupDelegation.update({
-        where: { id: delegation.id },
-        data: { status: 'REVOKED' },
-      });
-      return 'REVOKED';
-    });
-
-    const results = await Promise.all([serve, revoke]);
-    expect(results.filter((result) => result !== 'LOST')).toHaveLength(1);
-
-    const finalDelegation = await prisma.pickupDelegation.findUniqueOrThrow({
-      where: { id: delegation.id },
-    });
-    const finalRegistration = await prisma.registration.findUniqueOrThrow({
-      where: { id: registration.id },
-    });
-    const serving = await prisma.mealServing.findUnique({
-      where: { registrationId: registration.id },
-    });
-
-    if (finalDelegation.status === 'COMPLETED') {
-      expect(finalRegistration.status).not.toBe('CANCELLED');
-      expect(finalRegistration.status).not.toBe('NO_SHOW');
-      expect(serving).toMatchObject({ delegationId: delegation.id });
-    } else {
-      expect(finalDelegation.status).toBe('REVOKED');
-      expect(finalRegistration.status).toBe('ACTIVE');
-      expect(serving).toBeNull();
-    }
   });
 
   it('rolls back every serving when a later locked registration is stale', async () => {

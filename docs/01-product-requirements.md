@@ -4,7 +4,7 @@
 
 IMeal v2 là ứng dụng nội bộ IEC giúp quản lý vòng đời suất ăn cho khoảng **200–300 nhân sự** theo mô hình:
 
-**Kitchen publish menu tuần → Staff tick ngày muốn ăn và chọn loại suất phù hợp → cutoff từng ngày → Kitchen chuẩn bị suất → Kitchen xác nhận giao suất → no-show/penalty/audit**.
+**Kitchen publish menu tuần → Staff tick ngày muốn ăn và chọn loại suất phù hợp → cutoff từng ngày → Kitchen chuẩn bị suất → Kitchen mở shared QR ổn định theo ngày/location → Staff scan, gửi GPS mới để resolve, xem chính đăng ký của mình và explicit confirm bằng GPS mới → no-show/penalty/audit**.
 
 V2 chuyển trọng tâm từ web “đăng ký ngày mai + chọn món” sang **mobile-first weekly registration**. Mỗi ngày chỉ có **một món cố định do Kitchen quản lý**; ngày service bình thường chỉ nhận loại `REGULAR`, còn ngày mùng 1 hoặc 15 âm lịch (kể cả tháng nhuận) cho phép Staff chọn `REGULAR` hoặc `VEGETARIAN`.
 
@@ -14,17 +14,17 @@ V2 chuyển trọng tâm từ web “đăng ký ngày mai + chọn món” sang 
 
 - Cần đăng ký nhiều ngày trong tuần nhanh, không phải lặp lại từng ngày.
 - Cần nhìn rõ menu tuần và deadline của từng ngày.
-- Cần nhận suất nhanh bằng QR nhưng vẫn hạn chế screenshot/share gian lận.
-- Cần quy trình nhận hộ chính thức thay vì gửi QR cho nhau.
-- Cần dùng các tính năng đăng ký/lịch sử/delegation kể cả khi không ở mạng nội bộ IEC.
+- Cần check-in nhanh bằng cách quét shared QR của Kitchen, gửi foreground GPS mới ở bước resolve và confirm, nhưng chỉ có thể xác nhận đăng ký của chính mình.
+- Không có active proxy/delegation check-in trong current cutover; dữ liệu nhận hộ cũ chỉ còn để đọc lịch sử/audit.
+- Cần dùng các tính năng đăng ký/lịch sử/penalty kể cả khi không ở mạng nội bộ IEC.
 
 ### 2.2 Kitchen
 
 - Cần tạo/publish menu tuần, một món/ngày.
 - Cần biết tổng số suất phải chuẩn bị sau cutoff.
-- Cần giao suất nhanh tại giờ cao điểm, tránh double-serving.
-- Cần dashboard realtime biết `đã giao / tổng đăng ký`, ai vừa nhận và ai chưa nhận.
-- Cần phân biệt nhận chính chủ và nhận hộ có ủy quyền.
+- Cần tránh double-serving trong giờ cao điểm bằng transaction/idempotency, nhưng Kitchen không quét hay tra cứu nhân viên.
+- Cần dashboard aggregate-only về `registered / checked-in / pending / no-show` và shared QR theo ngày/location.
+- Kitchen dashboard cần hội tụ bằng polling foreground/focus 10 giây, giữ snapshot cũ khi lỗi tạm thời; không yêu cầu SSE.
 
 ### 2.3 Admin/Finance
 
@@ -37,10 +37,10 @@ V2 chuyển trọng tâm từ web “đăng ký ngày mai + chọn món” sang 
 1. Staff có thể hoàn tất đăng ký cả tuần trong dưới một phút với thao tác tick/untick.
 2. Kitchen có menu tuần rõ ràng và tổng số suất từng ngày sau cutoff.
 3. Một registration không thể bị duplicate hoặc serve hai lần dưới concurrency.
-4. Serving/check-in chỉ được xác nhận bởi Kitchen tại điểm giao suất và sau khi server kiểm tra authentication/authorization.
-5. QR động TTL 5 giây làm giảm replay/screenshot reuse.
-6. Nhận hộ có consent hai phía và audit; không cần chia sẻ QR của owner.
-7. Kitchen dashboard cập nhật realtime số đã giao, còn lại và log serving.
+4. Staff self check-in chỉ được xác nhận bởi authenticated Staff caller sau khi server kiểm tra own registration, GPS/location/window và authorization.
+5. Shared QR ổn định theo meal date/location không chứa employee identity và không xoay theo từng Staff; Staff vẫn phải gửi GPS foreground mới khi resolve và confirm.
+6. Một `MealServing` duy nhất cho mỗi registration; confirm transaction/idempotency không tạo double-serving hoặc duplicate outcome.
+7. Kitchen dashboard aggregate-only hội tụ qua focused/foreground polling 10 giây; UI giữ snapshot gần nhất và đánh dấu stale khi tạm mất API, không phụ thuộc SSE.
 8. No-show tự động sau meal day nếu registration chưa có serving hợp lệ.
 9. Hệ thống vận hành ổn định cho 200–300 user trên Linux self-host.
 
@@ -48,8 +48,8 @@ V2 chuyển trọng tâm từ web “đăng ký ngày mai + chọn món” sang 
 
 | Role      | Quyền chính                                                                                                                                            |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `staff`   | Xem menu tuần, tick/untick registration, QR cá nhân, lịch sử, penalty, gửi/nhận delegation                                                             |
-| `kitchen` | Quản lý/publish weekly menu; mở scanner; xác nhận serving; xem realtime dashboard/list/log; không tự có quyền Staff                                    |
+| `staff`   | Xem menu tuần, tick/untick registration, scan shared Kitchen QR, resolve/confirm own check-in, lịch sử và penalty; không có active delegation/check-in hộ |
+| `kitchen` | Quản lý/publish weekly menu; phát shared QR ổn định theo ngày/location; xem aggregate dashboard; không quét/resolve/confirm nhân viên và không tự có quyền Staff |
 | `admin`   | Quản lý user + role `staff`/`kitchen`, penalty, audit, jobs/config; không thể cấp `admin` qua Admin Web và không tự động có Kitchen serving capability |
 
 ### Role policy
@@ -63,7 +63,8 @@ V2 chuyển trọng tâm từ web “đăng ký ngày mai + chọn món” sang 
   no email-domain, client-role, username/password or manual-code login path
   exists.
 - A user may have `staff + kitchen` or `staff + admin`. Kitchen staff need the
-  explicit `staff` assignment to use Staff registration and pickup surfaces.
+  explicit `staff` assignment to use Staff registration and self check-in
+  surfaces; Kitchen assignment alone cannot check in an employee.
 - No `finance` or `kitchen_lead` role exists in MVP; sensitive capability uses
   `penalty.read` and `penalty.resolve`.
 - Finance workflow uses Admin Web with the appropriate penalty/report
@@ -83,12 +84,13 @@ V2 chuyển trọng tâm từ web “đăng ký ngày mai + chọn món” sang 
 - There is no federated identity-provider login, username/password login,
   authorization, manual-code login, client-supplied role or local production
   bypass.
-- Before disabling an account, Admin must preview future registrations and
-  delegations and confirm cleanup in one audited workflow.
+- Before disabling an account, Admin must preview future registrations and any
+  retained historical delegation context and confirm cleanup in one audited
+  workflow.
 - Cleanup changes future registrations to `canceled` with reason
-  `ACCOUNT_DISABLED`, revokes related delegations, excludes them from Kitchen
-  preparation totals and prevents no-show/penalty creation; history, actor,
-  time and reason remain auditable.
+  `ACCOUNT_DISABLED`, quarantines related historical delegation rows, excludes
+  them from Kitchen preparation totals and prevents no-show/penalty creation;
+  history, actor, time and reason remain auditable.
 
 ## 6. Weekly menu
 
@@ -150,40 +152,107 @@ Staff mở một tuần và tick từng ngày:
 - Batch save trả kết quả từng ngày; ngày không hợp lệ không được làm mất draft của ngày khác.
 - Không persist literal `unregistered`; không có registration row nghĩa là unregistered.
 - `active registration` nghĩa là row có `status=registered` và chưa có active serving.
-- Cancel registration phải atomically revoke delegation `pending|accepted`, ghi audit và tạo notification cho các bên.
-- Race cancel/accept/revoke/serve được serialize; transaction thắng quyết định outcome, transaction còn lại nhận canonical conflict.
+- Cancel registration atomically quarantines any retained historical delegation
+  context, writes audit/notification and never grants current check-in access.
+  Historical rows remain readable but are not active authorization.
 
-## 8. QR and serving/check-in
+## 8. Staff self check-in
 
-### 8.1 QR
+The current serving flow is **Staff scan → resolve → explicit confirm**. The
+Kitchen device does not scan employees or resolve/confirm employee records.
 
-- Mỗi Staff có QR động cho meal date hiện tại.
-- TTL/refresh: **5 giây**; allowed clock skew tối đa **2 giây**.
-- QR phải được ký server-side và chống replay ngoài thời gian hợp lệ.
-- QR xác định presenter và pickup intent đã được Staff chọn trước; **scan QR không tự động tạo serving**.
-- Nếu presenter chỉ có một suất eligible, app mặc định intent là suất đó và không yêu cầu Staff tick.
-- Nếu presenter có nhiều suất eligible (own + accepted delegations), Staff chọn trên mobile các suất dự định lấy trước khi đưa QR cho Kitchen.
-- Pickup intent không tạo quyền mới: resolve/confirm luôn revalidate registration/delegation hiện tại trong DB.
-- Nếu Kitchen đã resolve QR hợp lệ, UI dùng pickup session TTL **30 giây** để Kitchen kịp confirm dù QR gốc vừa hết 5 giây.
+### 8.1 Shared Kitchen QR
 
-### 8.2 Serving semantics
+- Kitchen calls `GET /api/kitchen/check-in/qr` with its authenticated
+  `kitchen.serve` session. The server chooses the caller's active roster
+  location; the request has no employee or registration body.
+- The response is `{ data: { qr, date, location, activeFrom, expiresAt } }`.
+  The QR is stable for the active meal date/location check-in session: it does
+  not rotate per Staff and contains no employee identity.
+- The server lazily creates or reuses one practical active session for the meal
+  date and assigned location. `activeFrom`/`expiresAt` and the
+  `10:30–13:30` `Asia/Ho_Chi_Minh` window are server-authoritative.
+- Kitchen displays the shared QR and an aggregate dashboard. It does not expose
+  a camera scanner, employee lookup, per-employee list or SSE dependency.
 
-Trong UI Kitchen có thể tiếp tục gọi thao tác là **Check-in**, nhưng canonical backend event là **Serving / SERVED**:
+### 8.2 Staff resolve and confirm
 
-> Kitchen xác nhận suất đã thực sự được giao tại quầy.
+1. Staff opens the self check-in screen, scans the shared Kitchen QR and
+   optionally calls `GET /api/me/check-in` to reconcile current status.
+2. Staff captures a **fresh foreground** GPS sample and calls
+   `POST /api/me/check-in/resolve` with:
 
-- Không có mandatory check-out trong core flow.
-- `SERVED` là bằng chứng một suất đã rời Kitchen để giao cho receiver.
-- Check-out/exit canteen không được dùng để xác định no-show hoặc penalty.
-- Kitchen serving endpoint yêu cầu Kitchen authentication và permission; server-side pickup rules remain authoritative.
-- Serving chỉ hợp lệ trong window mặc định **10:30–13:30** của meal date.
-- Happy path Kitchen không tick từng item: scan → xem presenter + danh sách/số suất Staff đã chọn → confirm giao.
-- Kitchen không được thêm/bớt item; nếu Staff đổi ý, Staff cập nhật pickup intent trên mobile và đưa QR mới trước khi Kitchen resolve/confirm.
-- Multi-item confirmation là all-or-nothing; conflict ở một item rollback toàn batch và Kitchen phải resolve lại.
-- No manual-code recovery or manual serving bypass exists. QR/GPS failures
-  expose only Retry/Refresh and require a fresh server-validated flow.
+   ```json
+   {
+     "qr": "<scanned-shared-qr>",
+     "gps": {
+       "capturedAt": "<UTC ISO instant>",
+       "latitude": 10.77,
+       "longitude": 106.69,
+       "accuracyMeters": 12
+     }
+   }
+   ```
 
-## 9. Pickup delegation / nhận hộ
+   The sample above is illustrative only; no real coordinates belong in
+   source control or evidence. Resolve returns the authenticated caller's
+   normalized employee/menu/location/registration/eligibility and, when
+   `eligibility=true`, an opaque signed `intentNonce` scoped to caller,
+   registration, session and location. It persists a `VALID`
+   `ServingVerification` for that scope; `intentNonce` is nullable when
+   `eligibility=false`. Resolve does not consume the registration or create a
+   serving.
+3. Staff reviews the returned own-registration result and explicitly confirms.
+   The app captures a **new fresh foreground** GPS sample and calls
+   `POST /api/me/check-in/confirm` with
+   `{ sessionId, intentNonce, idempotencyKey, gps }`. `intentNonce` is required
+   and non-empty for an eligible confirm.
+4. Confirm validates the non-empty nonce against the persisted `VALID`
+   `ServingVerification`, authenticated caller, session, registration and
+   location, then revalidates date/window and fresh GPS policy in one
+   transaction. A committed result is
+   `{ data: { status: "CHECKED_IN", registrationId, servingId, servedAt } }`;
+   retrying the same caller/key/body replays the result without a duplicate.
+5. After a timeout, network error or app restart, Staff calls
+   `GET /api/me/check-in` and trusts its authoritative state rather than
+   displaying local success.
+
+The active flow is own-user only. There is no active delegation, proxy
+pickup, owner/delegate selection, multi-item intent or Kitchen employee scan.
+Historical delegation tables/events remain retained for read-only history and
+compatibility, but they do not authorize current check-in.
+
+### 8.3 Check-in and serving semantics
+
+- Public check-in state is `CHECKED_IN`; the canonical compatibility outcome is
+  one immutable `MealServing` row with unique `registrationId`. Registration
+  source and registration uniqueness remain unchanged.
+- The new `CheckInSession` and confirm metadata are additive context linking the
+  stable QR/session to the canonical `MealServing`; they do not create a second
+  serving source.
+- Confirm is valid only during `10:30–13:30` on the meal date. There is no
+  mandatory check-out, reversal or re-serve endpoint.
+- Resolve and confirm evaluate the active roster location and configured GPS
+  freshness/accuracy/geofence policy. GPS cannot grant entitlement, switch
+  location, bypass authorization or replace an ineligible registration.
+- GPS collection is foreground/focus-bound to the Staff screen. On denied,
+  unavailable, stale, inaccurate or outside-geofence fixes, expose only
+  `Retry`/`Refresh`; there is no manual coordinate or manual-code bypass.
+- Persist only the safe verification result, verification timestamp, accuracy
+  and resolved location ID. Raw latitude/longitude, QR payloads and session
+  tokens are not normal logs or retained GPS history.
+- Canonical errors include `INVALID_QR`, `INACTIVE_CHECKIN_SESSION`,
+  `NO_REGISTRATION`, `REGISTRATION_CANCELLED`, `ALREADY_CHECKED_IN`,
+  `OUTSIDE_CHECKIN_WINDOW`, `LOCATION_MISMATCH`, `GPS_REQUIRED`, `GPS_STALE`,
+  `GPS_INACCURATE` and `OUTSIDE_GEOFENCE`.
+
+## 9. Historical pickup delegation / nhận hộ
+
+> **Historical design, not current product behavior.** The tables and immutable
+> records remain for compatibility, audit and read-only history. The current
+> Staff self check-in cutover has no delegation request/accept/revoke API, no
+> proxy pickup authorization and no active delegation UI. Do not use the
+> following retained rules as staging acceptance criteria.
 
 ### 9.1 Product flow
 
@@ -216,24 +285,34 @@ Trong UI Kitchen có thể tiếp tục gọi thao tác là **Check-in**, nhưng
 - `active delegation` nghĩa là `pending` hoặc `accepted`.
 - Penalty/no-show luôn gắn với registration owner.
 
-## 10. Kitchen realtime dashboard
+## 10. Kitchen aggregate dashboard
 
-Màn hình Kitchen chính phải hiển thị tối thiểu:
+The Kitchen screen displays the shared QR and aggregate state only. It calls
+`GET /api/kitchen/check-in/dashboard?date=YYYY-MM-DD`, which returns
+`{ data: { date, location, window, lastUpdated, counts } }` where `counts`
+contains `registered`, `checkedIn`, `pending`, `noShow`, `regular` and
+`vegetarian`.
 
-- Menu hôm nay.
-- `Total registered`: tất cả registration hợp lệ, không tính `canceled`/`account_disabled`.
-- `Served`: số registration đã có serving, ví dụ `127 / 220`.
-- `Remaining = total_registered - served_total` trong serving window.
-- Sau no-show reconciliation, hiển thị thêm `Vắng mặt` để không nhầm với người chưa đến nhận trong giờ phục vụ.
-- Progress percentage.
-- Scanner QR.
-- Search/check bằng mã nhân viên như audited recovery path.
-- Trong giờ phục vụ dùng `Chưa nhận`, `Đã nhận`, `Tất cả`; sau reconciliation thêm `Vắng mặt`.
-- Realtime log các serving mới.
-- Log phân biệt `SELF` và `PROXY`.
-- Duplicate scan phải hiển thị ai đã nhận, thời điểm và không tạo serving thứ hai.
+The screen must show:
 
-Nhiều Kitchen device phải nhìn cùng số liệu sau khi một serving commit.
+- Today's menu/date, the stable shared QR and its server-provided active window.
+- `Registered`, `Checked in`, `Pending` and (after reconciliation) `No-show`.
+- Dietary totals where applicable; `checkedIn + pending + noShow = registered`
+  and `regular + vegetarian = registered`.
+- A server `lastUpdated` value and a clear stale/offline indicator when the
+  retained snapshot is not fresh.
+
+Kitchen polls the dashboard every **10 seconds** only while the dashboard is
+focused and the app is foregrounded. Under healthy polling, the dashboard
+normally converges within approximately **15 seconds**. A temporary request
+failure retains the last good aggregate snapshot indefinitely, marks it stale
+and never resets counts to zero. Re-entering focus/foreground triggers an
+immediate refresh. The active contract has no SSE/WebSocket requirement,
+scanner, employee search, per-employee list or serving log.
+
+Multiple Kitchen devices converge by reading the same committed aggregate
+snapshot. Staff confirm is the only check-in mutation; Kitchen never confirms
+on behalf of Staff.
 
 ## 11. No-show and penalty
 
@@ -247,7 +326,9 @@ AND no valid serving exists
 AND server time >= 13:30 của meal date
 ```
 
-Delegation pending/accepted nhưng không có serving vẫn không được tính là đã nhận suất.
+Current check-in has no active delegation. Any retained delegation row without
+a valid `MealServing` is not a received meal and does not alter the canonical
+no-show rule.
 
 No-show worker bắt đầu lúc **13:45** và retry/recovery phải idempotent.
 
@@ -261,21 +342,28 @@ No-show worker bắt đầu lúc **13:45** và retry/recovery phải idempotent.
 
 ## 12. Serving finality
 
-- Kitchen chỉ confirm sau khi đã kiểm tra presenter, danh sách suất Staff chọn trước và đủ số khay chuẩn bị giao.
-- Confirm thành công là kết quả cuối cùng trong core v2; không có reversal/re-serve API hoặc UI.
-- Nếu quầy đang thiếu khay so với số suất đã confirm, Kitchen giao bổ sung đủ khay thay vì sửa ngược dữ liệu.
-- Serving evidence không bị sửa/xóa trong retention window.
+- Staff confirms only their own registration after the server revalidates
+  session, location/GPS evidence, registration and serving window.
+- Confirm success creates the final immutable `MealServing` outcome; there is no
+  reversal/re-serve API or UI.
+- If Kitchen physically has fewer trays, it completes the handover without
+  rewriting the committed serving history.
+- Serving evidence is not edited/deleted during the retention window.
 
-## 13. Pickup serving authorization policy
+## 13. Self check-in authorization policy
 
-Pickup resolve/confirm authorization does not depend on client network location.
-Requests require an active opaque session for a Kitchen principal with
-`kitchen.serve` permission plus all QR, pickup-session, serving-window and
-database eligibility checks.
+Self check-in authorization does not depend on client network location.
+`GET /api/kitchen/check-in/qr` requires an authenticated Kitchen principal with
+`kitchen.serve` and chooses that principal's active roster location. Staff
+resolve/confirm requires an authenticated Staff principal and is always scoped
+to the caller's own registration.
 
-There is no manual-code recovery or manual serving bypass. Login, menu,
-registration, history, penalty, delegation and notification flows use the
-allowlist-A OTP/opaque-session API path and retain server-side authorization.
+Resolve/confirm require the shared QR/session, the server check-in window,
+fresh foreground GPS policy, current location assignment and database
+eligibility. There is no manual-code recovery, manual serving bypass, Kitchen
+employee scan or delegation bypass. Login, menu, registration, history,
+penalty and notification flows retain their existing allowlist-A
+OTP/opaque-session authorization.
 
 ## 14. Notifications
 
@@ -286,16 +374,20 @@ device proof trong product requirement.
 
 ### 14.1 Canonical event matrix
 
+The inbox remains active and authoritative. The rows marked **Historical only**
+are retained for old records/audit compatibility and are not emitted by the
+current own-user check-in flow.
+
 | Kind | Trigger/timing | Recipient (exact) | Payload/semantics |
 | ---- | -------------- | ----------------- | ----------------- |
 | `REGISTRATION_OPENED` | Kitchen **first-publish** weekly menu; publish initializes missing revisions and sets `publishedAt`. Repeated/concurrent publish is a no-op. | Tất cả Staff đang active của IMeal (không phụ thuộc `remindersEnabled`). | `{ weekStart, weekEnd }`; registration/menu action deep-links tới Calendar. |
 | `REGISTRATION_REMINDER` | Worker mỗi Chủ nhật **10:00** (`Asia/Ho_Chi_Minh`) cho menu đã publish của thứ Hai tuần kế tiếp; tối đa một item/user/week. | Staff active có ít nhất một enabled, non-holiday meal date chưa có registration `ACTIVE` và `remindersEnabled=true`. | `{ weekStart, weekEnd, remainingMealDates }`; deep-links tới Calendar. |
-| `PICKUP_REMINDER` | Worker mỗi ngày **11:30** giờ Việt Nam, cho các registration `ACTIVE`, chưa có serving của ngày hiện tại. | Với mỗi registration, delegate `ACCEPTED` nhận thay owner; nếu không có delegate accepted thì owner. Bỏ qua recipient có `remindersEnabled=false`; gom tất cả registration cùng recipient/date thành một item. | `{ mealDate, registrationIds, registrationCount }`; deep-links tới Pickup Intent. |
-| `DELEGATION_REQUESTED` | A tạo delegation pending. | Delegate B. | `{ delegationId, registrationId, mealDate, counterpartName }`; action tới Delegation. |
-| `DELEGATION_ACCEPTED` | B accept request. | Owner A. | Cùng payload delegation; action tới Delegation. |
-| `DELEGATION_DECLINED` | B decline request. | Owner A. | Cùng payload delegation; action tới Delegation. |
-| `DELEGATION_REVOKED` | A revoke trước serving, hoặc registration của A bị cancel và active delegation bị revoke trong cùng transaction. | Delegate B. | `{ delegationId, registrationId, mealDate, counterpartName, reason }`, với `reason` là `OWNER_REVOKED` hoặc `REGISTRATION_CANCELLED`; action tới Delegation. |
-| `PROXY_PICKUP_COMPLETED` | Serving commit thành công với accepted delegate và pickup user khác owner. Self pickup không tạo item. | Owner A (chỉ owner). | `{ servingId, registrationId, mealDate, delegateName }`; đọc được trong inbox, không có CTA. |
+| `PICKUP_REMINDER` | Worker mỗi ngày **11:30** giờ Việt Nam, cho các registration `ACTIVE`, chưa có serving của ngày hiện tại. | Registration owner only; bỏ qua recipient có `remindersEnabled=false`. | `{ mealDate, registrationIds, registrationCount }`; deep-links tới current Staff check-in. |
+| `DELEGATION_REQUESTED` **(Historical only)** | Retained legacy delegation request. | Historical delegate record. | Read-only history/audit; not emitted by current API. |
+| `DELEGATION_ACCEPTED` **(Historical only)** | Retained legacy delegation acceptance. | Historical owner record. | Read-only history/audit; not emitted by current API. |
+| `DELEGATION_DECLINED` **(Historical only)** | Retained legacy delegation response. | Historical owner record. | Read-only history/audit; not emitted by current API. |
+| `DELEGATION_REVOKED` **(Historical only)** | Retained legacy delegation revoke/cancellation record. | Historical delegate record. | Read-only history/audit; not emitted by current API. |
+| `PROXY_PICKUP_COMPLETED` **(Historical only)** | Retained legacy proxy serving record. | Historical owner record. | Read-only history/audit; current check-in is own-user only. |
 | `REGISTERED_MENU_CHANGED` | Kitchen sửa **published** menu date và có actual tracked change (content, meal type, holiday hoặc enabled). No-op không tạo revision/notification. | Mỗi Staff đang có registration `ACTIVE` cho meal date đó. | `{ dailyMenuRevisionId, mealDate }`; registration/menu action tới Calendar. |
 | `NO_SHOW_PENALTY_CREATED` | No-show worker lúc **13:45** VN, sau serving window 10:30–13:30; transaction tạo no-show và penalty idempotently. | Registration owner. | `{ penaltyId, registrationId, mealDate, amount: 50000 }`; readable trong inbox, không có CTA. |
 
@@ -355,9 +447,10 @@ inbox vẫn dùng được. System-notification status/Settings CTA độc lập
 
 Push data dùng URL chính xác `imeal://notifications/<notificationId UUID>` và mở
 `NotificationDetail`. CTA trong detail: registration/menu (`REGISTRATION_OPENED`,
-`REGISTRATION_REMINDER`, `REGISTERED_MENU_CHANGED`) → Calendar; pickup
-(`PICKUP_REMINDER`) → Pickup Intent; delegation kinds → Delegation.
-No-show và legacy vẫn đọc được trong inbox; push delivery không được coi là authoritative.
+`REGISTRATION_REMINDER`, `REGISTERED_MENU_CHANGED`) → Calendar; `PICKUP_REMINDER`
+→ current Staff check-in. Delegation kinds are historical read-only records and
+have no current CTA. No-show và legacy vẫn đọc được trong inbox; push delivery
+không được coi là authoritative.
 
 ### 14.4 Delivery reliability
 
@@ -394,12 +487,12 @@ Khuyến nghị giữ **Admin Web** cho workflow bảng/bulk/report; mobile tậ
 | Weekly registration completion     | P95 ≤60 giây từ lúc mở tuần đã load đến response save authoritative, đo trên tuần có 5 service dates |
 | Duplicate registration             | 0                                                                                                    |
 | Double-serving cùng registration   | 0                                                                                                    |
-| Kitchen serving API availability   | ≥99.9% trong serving window 10:30–13:30, đo theo tháng                                               |
-| Serving response P95                  | <1 giây                                                                                              |
-| QR expired/replay tạo serving sai  | 0                                                                                                    |
-| No-show/penalty duplicate          | 0                                                                                                    |
-| Kitchen realtime count drift       | 0 sau snapshot/reconciliation; reconnect phải hội tụ ≤5 giây                                         |
-| Delegation without consent         | 0                                                                                                    |
+| Check-in API availability             | ≥99.9% trong serving window 10:30–13:30, đo theo tháng                                       |
+| Staff confirm response P95            | <1 giây                                                                                      |
+| Invalid/stale QR or GPS creates serving sai | 0                                                                                         |
+| No-show/penalty duplicate             | 0                                                                                             |
+| Kitchen aggregate snapshot drift      | 0 after reconciliation; focused/foreground poll normally converges within approximately 15 seconds; refresh failures retain stale last-good data indefinitely |
+| Active proxy/delegation check-in      | 0 (current flow is own-user only)                                                            |
 
 ## 17. Non-goals v2 MVP
 
@@ -407,22 +500,26 @@ Khuyến nghị giữ **Admin Web** cho workflow bảng/bulk/report; mobile tậ
 - Không cho Staff chọn nhiều món trong cùng ngày.
 - Không dùng check-out để chứng minh user đã ăn hết suất.
 - Không tự động dự báo giảm số suất nấu bằng ML ở MVP.
-- Không cho Staff tự xác nhận “đã nhận suất”.
-- Không cho nhận hộ chỉ bằng chia sẻ QR của owner.
+- Staff không được xác nhận thay cho người khác; self check-in chỉ xác nhận
+  registration của authenticated caller sau server revalidation.
+- Không có active proxy/delegation check-in; retained legacy delegation records
+  remain read-only and cannot authorize a current check-in.
 
 ## 18. Canonical implementation policy
 
-| Policy                | Canonical value                                                                          |
-| --------------------- | ---------------------------------------------------------------------------------------- |
-| Pickup recovery      | No manual-code bypass; refresh QR and re-resolve exact intent             |
-| Cutoff boundary       | `server_now < 14:00` ngày trước; đúng 14:00 đã khóa                                      |
-| Serving/no-show       | Serving 10:30–13:30; no-show worker bắt đầu 13:45 VN                                     |
-| QR/pickup session     | QR TTL 5s; skew 2s; pickup session TTL 30s                                               |
-| Push provider         | Persisted inbox + Expo Push delivery                                                     |
-| Pickup intent         | Staff chọn trước các suất sẽ lấy; Kitchen happy path scan + confirm, không tick item     |
-| Serving finality      | Confirm là cuối cùng; Kitchen chỉ confirm khi đủ khay và giao bổ sung nếu thiếu          |
-| Batch serving         | All-or-nothing transaction                                                               |
-| Penalty               | Mỗi no-show tạo 50.000 VND; ngoại lệ dùng audited waive                                  |
-| Menu image storage    | Object/file storage; không lưu binary trong PostgreSQL                                   |
-| Data retention        | Meal lifecycle/business audit history giữ 1 năm rồi purge theo retention policy          |
-| Legacy data           | Firebase legacy bỏ ngay từ khi bắt đầu re-development; không migrate/dual-write/rollback |
+| Policy                | Canonical value                                                                                           |
+| --------------------- | --------------------------------------------------------------------------------------------------------- |
+| Check-in recovery     | No manual-code/GPS bypass; rescan shared QR, capture fresh GPS and retry/reconcile authoritative status  |
+| Cutoff boundary       | `server_now < 14:00` ngày trước; đúng 14:00 đã khóa                                                       |
+| Serving/no-show       | Serving/check-in 10:30–13:30; no-show worker bắt đầu 13:45 VN                                             |
+| Shared QR             | Stable per active meal date/location; Kitchen `GET /api/kitchen/check-in/qr`; no employee identity      |
+| Staff flow            | `GET /api/me/check-in` → scan → `POST /api/me/check-in/resolve` + fresh GPS → eligible `intentNonce` → explicit `POST /api/me/check-in/confirm` + same nonce + fresh GPS |
+| Confirm outcome       | One unique `MealServing.registrationId`; caller/key/body idempotent replay; no reversal/re-serve       |
+| Kitchen dashboard     | `GET /api/kitchen/check-in/dashboard?date=YYYY-MM-DD`; aggregate-only, focused/foreground polling 10s, normally converge ~15s, retain stale snapshot indefinitely on refresh failure, no SSE |
+| Push provider         | Persisted inbox + Expo Push delivery                                                                        |
+| Serving finality      | Confirm là cuối cùng; Staff xác nhận own registration, không có Kitchen employee confirm                 |
+| Penalty               | Mỗi no-show tạo 50.000 VND; ngoại lệ dùng audited waive                                                   |
+| Menu image storage    | Object/file storage; không lưu binary trong PostgreSQL                                                     |
+| Data retention        | Meal lifecycle/business audit history giữ 1 năm rồi purge theo retention policy                            |
+| Migration compatibility| `MealServing` remains sole serving source; `CheckInSession`/confirm metadata additive; historical pickup/delegation tables retained; no raw GPS logs |
+| Legacy data           | Firebase legacy bỏ ngay từ khi bắt đầu re-development; không migrate/dual-write/rollback                  |

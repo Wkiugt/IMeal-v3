@@ -14,7 +14,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       'expo-location',
       {
         locationWhenInUsePermission:
-          'IMeal uses your foreground location to verify the presenter pickup site.',
+          'IMeal uses your foreground location to verify your meal check-in location.',
       },
     ],
   ],

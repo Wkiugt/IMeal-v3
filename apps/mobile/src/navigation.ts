@@ -7,7 +7,6 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 export type ProfileStackParamList = {
   ProfileHome: undefined;
-  Delegation: undefined;
   MealHistory: undefined;
   PenaltyList: undefined;
   PenaltyDetail: { penaltyId: string };
@@ -21,11 +20,11 @@ export type NotificationStackParamList = {
 export type AppTabParamList = {
   EmployeeDashboard: undefined;
   EmployeeCalendar: { mealDate?: string } | undefined;
-  PickupIntent: undefined;
+  SelfCheckIn: undefined;
   Notifications: NavigatorScreenParams<NotificationStackParamList> | undefined;
   EmployeeProfile: NavigatorScreenParams<ProfileStackParamList> | undefined;
   KitchenDashboard: undefined;
-  KitchenScanner: undefined;
+  KitchenQr: undefined;
   KitchenProfile: undefined;
 };
 

@@ -29,6 +29,20 @@ describe('MobileApiError', () => {
     );
   });
 
+  it('keeps canonical HTTP envelope codes available to mobile screens', () => {
+    const notFound = new MobileApiError(
+      'NOT_FOUND',
+      mobileErrorMessageKey('NOT_FOUND'),
+    );
+    const badRequest = new MobileApiError(
+      'BAD_REQUEST',
+      mobileErrorMessageKey('BAD_REQUEST'),
+    );
+
+    expect(notFound.messageKey).toBe('errors.requestFailed');
+    expect(badRequest.messageKey).toBe('errors.requestFailed');
+  });
+
   it('uses the operation fallback for unknown failures while retaining the cause', () => {
     const cause = new Error('raw server detail');
     const error = new MobileApiError(

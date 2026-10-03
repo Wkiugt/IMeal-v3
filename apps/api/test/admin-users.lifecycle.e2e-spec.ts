@@ -395,10 +395,50 @@ describe('Admin user lifecycle with real opaque SessionGuard', () => {
       .get('/admin/users')
       .set(targetHeaders);
     expect(deniedKitchenUnprefixed.status).toBe(403);
-    const kitchenDashboard = await request(app.getHttpServer())
+    const checkInLocation = await prisma.location.create({
+      data: {
+        shortCode: 'LIFECYCLE-CHECKIN',
+        displayName: 'Lifecycle Check-in',
+        servingPointName: 'Lifecycle Counter',
+        address: '1 Lifecycle Street',
+        building: 'A',
+        floor: '1',
+        roomOrCounter: '1',
+        localContact: 'lifecycle-checkin@example.test',
+        isActive: true,
+        effectiveFrom: dateOnly(-10),
+      },
+    });
+    await prisma.locationPolicy.create({
+      data: {
+        locationId: checkInLocation.id,
+        latitude: 10.77,
+        longitude: 106.69,
+        accuracySource: 'LIFECYCLE_TEST',
+        geofenceRadiusMeters: 100,
+        maxFixAgeSeconds: 60,
+        maxAccuracyMeters: 50,
+        effectiveFrom: dateOnly(-10),
+        isActive: true,
+      },
+    });
+    await prisma.employeeLocationAssignment.create({
+      data: {
+        userId: fixture.targetId,
+        normalizedEmail: fixture.targetEmail,
+        employeeName: 'Lifecycle Target',
+        employeeCode: 'LIFECYCLE-CHECKIN-001',
+        isActive: true,
+        role: 'STAFF',
+        serviceLocationCode: checkInLocation.shortCode,
+        locationId: checkInLocation.id,
+        effectiveFrom: dateOnly(-10),
+      },
+    });
+    const removedLegacyKitchenRoute = await request(app.getHttpServer())
       .get('/v1/kitchen/today/dashboard')
       .set(targetHeaders);
-    expect(kitchenDashboard.status).toBe(200);
+    expect(removedLegacyKitchenRoute.status).toBe(404);
     const deniedManageKitchen = await request(app.getHttpServer())
       .put(`/v1/admin/users/${fixture.targetId}/roles`)
       .set(targetHeaders)
@@ -409,6 +449,10 @@ describe('Admin user lifecycle with real opaque SessionGuard', () => {
       .set(adminHeaders)
       .send({ roles: ['kitchen'] });
     expect(onlyKitchen.status).toBe(200);
+    const canonicalKitchenDashboard = await request(app.getHttpServer())
+      .get('/api/kitchen/check-in/dashboard')
+      .set(targetHeaders);
+    expect(canonicalKitchenDashboard.status).toBe(200);
     const onlyKitchenProfile = await request(app.getHttpServer())
       .get('/auth/me')
       .set(targetHeaders);
@@ -428,10 +472,6 @@ describe('Admin user lifecycle with real opaque SessionGuard', () => {
       .set(targetHeaders)
       .send({ roles: ['kitchen'] });
     expect(deniedOnlyKitchenManage.status).toBe(403);
-    const onlyKitchenDashboard = await request(app.getHttpServer())
-      .get('/v1/kitchen/today/dashboard')
-      .set(targetHeaders);
-    expect(onlyKitchenDashboard.status).toBe(200);
 
     const removedKitchen = await request(app.getHttpServer())
       .put(`/v1/admin/users/${fixture.targetId}/roles`)
@@ -446,7 +486,11 @@ describe('Admin user lifecycle with real opaque SessionGuard', () => {
     const deniedKitchenAfterRemoval = await request(app.getHttpServer())
       .get('/v1/kitchen/today/dashboard')
       .set(targetHeaders);
-    expect(deniedKitchenAfterRemoval.status).toBe(403);
+    expect(deniedKitchenAfterRemoval.status).toBe(404);
+    const canonicalKitchenAfterRemoval = await request(app.getHttpServer())
+      .get('/api/kitchen/check-in/dashboard')
+      .set(targetHeaders);
+    expect(canonicalKitchenAfterRemoval.status).toBe(403);
     expect(
       (
         await request(app.getHttpServer())

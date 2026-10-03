@@ -18,7 +18,7 @@ const composeText = composeFiles
 const stagingComposeText = readFileSync(
   resolve(root, 'docker-compose.staging.yml'),
   'utf8',
-);
+).replaceAll('\r\n', '\n');
 const caddyText = readFileSync(
   resolve(root, 'infra/staging/Caddyfile'),
   'utf8',
@@ -26,7 +26,7 @@ const caddyText = readFileSync(
 const productionComposeText = readFileSync(
   resolve(root, 'docker-compose.production.yml'),
   'utf8',
-);
+).replaceAll('\r\n', '\n');
 const productionCaddyText = readFileSync(
   resolve(root, 'Caddyfile.production'),
   'utf8',
@@ -107,9 +107,6 @@ function fixtureValues() {
     SERVING_WINDOW_START: '10:30',
     SERVING_WINDOW_END: '13:30',
     NO_SHOW_PROCESSING_TIME: '13:45',
-    QR_TTL_SECONDS: '5',
-    QR_CLOCK_SKEW_SECONDS: '2',
-    PICKUP_SESSION_TTL_SECONDS: '30',
   });
   return values;
 }

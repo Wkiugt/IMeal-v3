@@ -61,7 +61,6 @@ describe('RegistrationsController (e2e)', () => {
             cancel: ['NOT_ACTIVE'],
             changeMealChoice: ['NOT_ACTIVE'],
           },
-          delegation: null,
         })),
         registrationWindow: {
           serverNow: '2026-09-03T02:00:00.000Z',

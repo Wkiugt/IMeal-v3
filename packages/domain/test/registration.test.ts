@@ -109,67 +109,6 @@ describe('Domain Tests: Registration Rules', () => {
   });
 
   describe('Integration with DB', () => {
-    it('Cancel registration atomically revokes active delegation', async () => {
-      const user1 = await prisma.user.create({ data: { email: 'u1@ex.com' } });
-      const user2 = await prisma.user.create({ data: { email: 'u2@ex.com' } });
-
-      const targetDate = new Date('2026-08-30T00:00:00.000Z'); // Dummy date
-
-      // Create weekly & daily menu
-      const weekly = await prisma.weeklyMenu.create({
-        data: { startDate: targetDate, endDate: targetDate },
-      });
-      await prisma.dailyMenu.create({
-        data: {
-          date: targetDate,
-          weeklyMenuId: weekly.id,
-          isEnabled: true,
-          isHoliday: false,
-        },
-      });
-
-      const current = new Date('2026-08-28T00:00:00.000Z');
-
-      // Register
-      const reg = await LegacyRegistrationFixtureService.registerMeal(
-        user1.id,
-        targetDate,
-        current,
-      );
-
-      // Delegate
-      await LegacyRegistrationFixtureService.delegatePickup(
-        reg.id,
-        user2.id,
-        current,
-      );
-
-      // Assert delegation exists
-      let dels = await prisma.pickupDelegation.findMany({
-        where: {
-          registrationId: reg.id,
-          status: { in: ['PENDING', 'ACCEPTED'] },
-        },
-      });
-      expect(dels.length).toBe(1);
-
-      // Cancel
-      await RegistrationService.cancelRegistration(reg.id, current);
-
-      // Assert registration is canceled and delegation revoked
-      const updatedReg = await prisma.registration.findUnique({
-        where: { id: reg.id },
-      });
-      expect(updatedReg?.status).toBe('CANCELLED');
-
-      dels = await prisma.pickupDelegation.findMany({
-        where: {
-          registrationId: reg.id,
-          status: { in: ['PENDING', 'ACCEPTED'] },
-        },
-      });
-      expect(dels.length).toBe(0);
-    });
 
     it('No-show/penalty idempotency', async () => {
       const user = await prisma.user.create({
@@ -195,64 +134,6 @@ describe('Domain Tests: Registration Rules', () => {
       expect(penalties[0].amount).toBe(50000);
     });
 
-    it('Serving eligibility self/proxy', async () => {
-      const selfUser = await prisma.user.create({
-        data: { email: 'self@ex.com' },
-      });
-      const proxyUser = await prisma.user.create({
-        data: { email: 'proxy@ex.com' },
-      });
-      const randomUser = await prisma.user.create({
-        data: { email: 'random@ex.com' },
-      });
-
-      const targetDate = new Date('2026-08-30T00:00:00.000Z');
-      const weekly = await prisma.weeklyMenu.create({
-        data: { startDate: targetDate, endDate: targetDate },
-      });
-      await prisma.dailyMenu.create({
-        data: {
-          date: targetDate,
-          weeklyMenuId: weekly.id,
-          isEnabled: true,
-          isHoliday: false,
-        },
-      });
-
-      const current = new Date('2026-08-28T00:00:00.000Z');
-      const reg = await LegacyRegistrationFixtureService.registerMeal(
-        selfUser.id,
-        targetDate,
-        current,
-      );
-
-      // Self can serve
-      expect(await RegistrationService.canServe(reg.id, selfUser.id)).toBe(
-        true,
-      );
-
-      // Random cannot serve
-      expect(await RegistrationService.canServe(reg.id, randomUser.id)).toBe(
-        false,
-      );
-
-      const delegation = await LegacyRegistrationFixtureService.delegatePickup(
-        reg.id,
-        proxyUser.id,
-        current,
-      );
-      expect(await RegistrationService.canServe(reg.id, proxyUser.id)).toBe(
-        false,
-      );
-
-      await prisma.pickupDelegation.update({
-        where: { id: delegation.id },
-        data: { status: 'ACCEPTED' },
-      });
-      expect(await RegistrationService.canServe(reg.id, proxyUser.id)).toBe(
-        true,
-      );
-    });
 
     it('Final serving and all-or-nothing multi-item serving', async () => {
       // Create serving record idempotently

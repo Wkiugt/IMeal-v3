@@ -336,49 +336,6 @@ describe('Contracts v1', () => {
       ).toBe(true);
     });
   });
-  describe('Pickup availability', () => {
-    const details = {
-      availableFrom: '10:30' as const,
-      availableUntil: '13:30' as const,
-      timeZone: 'Asia/Ho_Chi_Minh' as const,
-    };
-
-    it('validates the closed-window error with its exact details', () => {
-      const result = v1.PickupAvailabilityErrorSchema.safeParse({
-        code: 'PICKUP_WINDOW_CLOSED',
-        message:
-          'Meal pickup is only available from 10:30 through 13:30 Vietnam time.',
-        details,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.success && result.data.code).toBe('PICKUP_WINDOW_CLOSED');
-      expect(result.success && result.data.details).toEqual(details);
-    });
-
-    it('validates the not-ready error with its exact details', () => {
-      const result = v1.PickupAvailabilityErrorSchema.safeParse({
-        code: 'PICKUP_NOT_READY',
-        message:
-          'Meal pickup is not currently available. Please wait for the kitchen signal.',
-        details,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.success && result.data.code).toBe('PICKUP_NOT_READY');
-      expect(result.success && result.data.details).toEqual(details);
-    });
-
-    it('rejects missing or incorrect availability details', () => {
-      expect(
-        v1.PickupAvailabilityErrorSchema.safeParse({
-          code: 'PICKUP_WINDOW_CLOSED',
-          message: 'closed',
-          details: { ...details, availableUntil: '14:00' },
-        }).success,
-      ).toBe(false);
-    });
-  });
   describe('Registrations', () => {
     it('validates meal choices and strict status-specific batch items', () => {
       expect(
@@ -730,14 +687,6 @@ describe('Contracts v1', () => {
             changeMealChoice:
               registration?.status === 'ACTIVE' ? [] : ['NOT_ACTIVE'],
           },
-          delegation:
-            registration?.status === 'ACTIVE'
-              ? {
-                  id: 'delegation-1',
-                  status: 'PENDING',
-                  delegateName: 'Delegate',
-                }
-              : null,
         };
       });
       const registrationWindowDays = mealDates.map((mealDate, index) => ({
@@ -814,7 +763,6 @@ describe('Contracts v1', () => {
           cancel: ['NOT_ACTIVE'],
           changeMealChoice: ['NOT_ACTIVE'],
         },
-        delegation: null,
       };
 
       expect(v1.WeekRegistrationDaySchema.safeParse(day).success).toBe(false);
@@ -861,7 +809,6 @@ describe('Contracts v1', () => {
           cancel: ['NOT_ACTIVE'],
           changeMealChoice: ['NOT_ACTIVE'],
         },
-        delegation: null,
       });
       const validWindowDay = (mealDate: string) => ({
         mealDate,
@@ -936,268 +883,6 @@ describe('Contracts v1', () => {
     });
   });
 
-  describe('Pickup and kitchen meal choice transport', () => {
-    const owner = {
-      id: 'owner-1',
-      name: 'Meal Owner',
-      email: 'owner@example.com',
-    };
-    const pickupOption = {
-      type: 'DELEGATED' as const,
-      registrationId: 'registration-1',
-      delegationId: 'delegation-1',
-      mealDate: '2026-09-25',
-      mealChoice: 'VEGETARIAN' as const,
-      owner,
-    };
-
-    it('requires mealChoice on pickup options and serving intent items', () => {
-      expect(
-        v1.PickupOptionsResponseSchema.safeParse({
-          options: [pickupOption],
-        }).success,
-      ).toBe(true);
-      expect(
-        v1.PickupOptionsResponseSchema.safeParse({
-          options: [{ ...pickupOption, mealChoice: undefined }],
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.ServingIntentItemSchema.safeParse({
-          id: 'registration-1',
-          itemName: 'Lunch',
-          quantity: 1,
-          mealChoice: 'VEGETARIAN',
-        }).success,
-      ).toBe(true);
-      expect(
-        v1.PickupOptionsResponseSchema.safeParse({
-          options: [{ ...pickupOption, owner: undefined }],
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.PickupOptionsResponseSchema.safeParse({
-          options: [
-            {
-              ...pickupOption,
-              type: 'OWN',
-              delegationId: 'delegation-1',
-              owner,
-            },
-          ],
-        }).success,
-      ).toBe(false);
-    });
-
-    it('validates resolved serving payloads with choice on every item', () => {
-      const payload = {
-        session: {
-          id: 'session-1',
-          userId: 'delegate-1',
-          registrationIds: ['registration-1'],
-          expiresAt: '2026-09-04T04:00:30.000Z',
-          createdAt: '2026-09-04T04:00:00.000Z',
-        },
-        items: [pickupOption],
-        pickupSessionToken: 'session-1',
-        intent: {
-          userId: 'delegate-1',
-          items: [
-            {
-              id: 'registration-1',
-              itemName: 'Lunch',
-              quantity: 1,
-              mealChoice: 'VEGETARIAN',
-            },
-          ],
-          totalCount: 1,
-          isProxy: true,
-        },
-      };
-      expect(v1.ResolveServingResponseSchema.safeParse(payload).success).toBe(
-        true,
-      );
-      expect(
-        v1.ResolveServingResponseSchema.safeParse({
-          ...payload,
-          intent: {
-            ...payload.intent,
-            items: [{ ...payload.intent.items[0], mealChoice: undefined }],
-          },
-        }).success,
-      ).toBe(false);
-    });
-
-    it('requires meal choice and partitions kitchen counters', () => {
-      expect(
-        v1.KitchenDashboardCountersSchema.parse({
-          totalRegistered: 3,
-          regularTotal: 2,
-          vegetarianTotal: 1,
-          servedTotal: 1,
-          remaining: 2,
-          noShowTotal: 0,
-        }),
-      ).toMatchObject({ regularTotal: 2, vegetarianTotal: 1 });
-      expect(
-        v1.KitchenDashboardCountersSchema.safeParse({
-          totalRegistered: 3,
-          regularTotal: 3,
-          vegetarianTotal: 1,
-          servedTotal: 1,
-          remaining: 2,
-          noShowTotal: 0,
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.KitchenRegistrationItemSchema.safeParse({
-          registrationId: 'registration-1',
-          userId: 'user-1',
-          userName: 'Meal Owner',
-          userEmail: 'owner@example.com',
-          mealChoice: 'VEGETARIAN',
-          state: 'PENDING',
-          isServed: false,
-          servedAt: null,
-        }).success,
-      ).toBe(true);
-      expect(
-        v1.ServingLogItemSchema.safeParse({
-          id: 'serving-1',
-          registrationId: 'registration-1',
-          userId: 'user-1',
-          userName: 'Meal Owner',
-          userEmail: 'owner@example.com',
-          mealChoice: 'VEGETARIAN',
-          servedAt: '2026-09-25T04:00:00.000Z',
-          isProxy: false,
-        }).success,
-      ).toBe(true);
-    });
-    it('parses_dashboard_pending_served_and_no_show_states', () => {
-      const baseItem = {
-        registrationId: 'registration-1',
-        userId: 'user-1',
-        userName: 'Meal Owner',
-        userEmail: 'owner@example.com',
-        mealChoice: 'REGULAR' as const,
-      };
-
-      expect(
-        v1.KitchenRegistrationItemSchema.safeParse({
-          ...baseItem,
-          state: 'PENDING',
-          isServed: false,
-          servedAt: null,
-        }).success,
-      ).toBe(true);
-      expect(
-        v1.KitchenRegistrationItemSchema.safeParse({
-          ...baseItem,
-          state: 'SERVED',
-          isServed: true,
-          servedAt: '2026-09-25T04:00:00.000Z',
-        }).success,
-      ).toBe(true);
-      expect(
-        v1.KitchenRegistrationItemSchema.safeParse({
-          ...baseItem,
-          state: 'NO_SHOW',
-          isServed: false,
-          servedAt: null,
-        }).success,
-      ).toBe(true);
-    });
-
-    it('rejects dashboard state when isServed does not match', () => {
-      expect(
-        v1.KitchenRegistrationItemSchema.safeParse({
-          registrationId: 'registration-1',
-          userId: 'user-1',
-          userName: 'Meal Owner',
-          userEmail: 'owner@example.com',
-          mealChoice: 'REGULAR',
-          state: 'SERVED',
-          isServed: false,
-          servedAt: null,
-        }).success,
-      ).toBe(false);
-    });
-
-    it('rejects unknown fields in all kitchen response objects and lists', () => {
-      const counters = {
-        totalRegistered: 1,
-        regularTotal: 1,
-        vegetarianTotal: 0,
-        servedTotal: 1,
-        remaining: 0,
-        noShowTotal: 0,
-      };
-      const registrationItem = {
-        registrationId: 'registration-1',
-        userId: 'user-1',
-        userName: 'Meal Owner',
-        userEmail: 'owner@example.com',
-        mealChoice: 'REGULAR' as const,
-        state: 'SERVED' as const,
-        isServed: true,
-        servedAt: '2026-09-25T04:00:00.000Z',
-      };
-      const servingLog = {
-        id: 'serving-1',
-        registrationId: 'registration-1',
-        userId: 'user-1',
-        userName: 'Meal Owner',
-        userEmail: 'owner@example.com',
-        mealChoice: 'REGULAR' as const,
-        servedAt: '2026-09-25T04:00:00.000Z',
-        isProxy: false,
-      };
-      const snapshot = {
-        date: '2026-09-25',
-        isServingReady: true,
-        counters,
-        recentLogs: [servingLog],
-        lists: {
-          served: [registrationItem],
-          pending: [],
-          all: [registrationItem],
-          noShow: [],
-        },
-      };
-
-      expect(
-        v1.KitchenDashboardCountersSchema.safeParse({
-          ...counters,
-          extra: true,
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.ServingLogItemSchema.safeParse({
-          ...servingLog,
-          extra: true,
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.KitchenRegistrationItemSchema.safeParse({
-          ...registrationItem,
-          extra: true,
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.KitchenDashboardSnapshotSchema.safeParse({
-          ...snapshot,
-          extra: true,
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.KitchenDashboardSnapshotSchema.safeParse({
-          ...snapshot,
-          lists: { ...snapshot.lists, extra: true },
-        }).success,
-      ).toBe(false);
-    });
-  });
 
   describe('Notifications', () => {
     const id = '11111111-1111-4111-8111-111111111111';
@@ -1442,107 +1127,7 @@ describe('Contracts v1', () => {
       ).toThrow();
     });
 
-    it('requires canonical sorted unique registration IDs for Generate QR', () => {
-      const evidence = {
-        capturedAt: '2026-09-24T03:00:00.000Z',
-        latitude: 10.77,
-        longitude: 106.69,
-        accuracyMeters: 12,
-      };
-      expect(
-        v1.GenerateQrSchema.parse({
-          registrationIds: ['a', 'b'],
-          presenterEvidence: evidence,
-        }).registrationIds,
-      ).toEqual(['a', 'b']);
-      expect(() =>
-        v1.GenerateQrSchema.parse({
-          registrationIds: ['a', 'a'],
-          presenterEvidence: evidence,
-        }),
-      ).toThrow();
-      expect(() =>
-        v1.GenerateQrSchema.parse({
-          registrationIds: ['b', 'a'],
-          presenterEvidence: evidence,
-        }),
-      ).toThrow();
-      expect(() =>
-        v1.GenerateQrSchema.parse({
-          registrationIds: ['a', ''],
-          presenterEvidence: evidence,
-        }),
-      ).toThrow();
-    });
 
-    it('keeps resolve QR-only and confirm session-only', () => {
-      expect(v1.ResolvePickupSchema.parse({ qr: 'signed-qr' })).toEqual({
-        qr: 'signed-qr',
-      });
-      expect(() =>
-        v1.ResolvePickupSchema.parse({
-          qr: 'signed-qr',
-          presenterEvidence: {},
-        }),
-      ).toThrow();
-      expect(
-        v1.ConfirmPickupSchema.parse({
-          pickupSessionId: 's',
-          idempotencyKey: 'k',
-        }),
-      ).toEqual({
-        pickupSessionId: 's',
-        idempotencyKey: 'k',
-      });
-      expect(() =>
-        v1.ConfirmPickupSchema.parse({
-          pickupSessionId: '',
-          idempotencyKey: 'k',
-        }),
-      ).toThrow();
-      expect(() =>
-        v1.ErrorDetailSchema.parse({
-          code: 'BAD_REQUEST',
-          message: 'bad request',
-          details: { reason: 'invalid input' },
-          legacyField: 'preserved',
-        }),
-      ).not.toThrow();
-      expect(
-        v1.ErrorDetailSchema.parse({
-          code: 'GPS_STALE',
-          message: 'retry location',
-          details: { action: 'RETRY' },
-        }).details,
-      ).toEqual({ action: 'RETRY' });
-      expect(() =>
-        v1.ErrorDetailSchema.parse({
-          code: 'GPS_STALE',
-          message: 'retry location',
-          details: { action: 'RETRY', latitude: 10.77 },
-        }),
-      ).toThrow();
-      expect(() =>
-        v1.ErrorDetailSchema.parse({
-          code: 'GPS_INACCURATE',
-          message: 'refresh location',
-          details: { action: 'REFRESH', distanceMeters: 2 },
-        }),
-      ).toThrow();
-      expect(() =>
-        v1.ConfirmPickupSchema.parse({
-          pickupSessionId: 's',
-          idempotencyKey: '',
-        }),
-      ).toThrow();
-      expect(() =>
-        v1.ConfirmPickupSchema.parse({
-          pickupSessionId: 's',
-          idempotencyKey: 'k',
-          registrationIds: ['r'],
-        }),
-      ).toThrow();
-    });
 
     it('accepts safe GPS recovery details and canonical stable error codes', () => {
       expect(v1.GpsFailureDetailsSchema.parse({ action: 'RETRY' })).toEqual({
@@ -1571,7 +1156,7 @@ describe('Contracts v1', () => {
           distanceMeters: 1,
         }),
       ).toThrow();
-      expect(v1.PickupErrorCodeSchema.options).toEqual(
+      expect(v1.OperationalErrorCodeSchema.options).toEqual(
         expect.arrayContaining([
           'OTP_REQUEST_ACCEPTED',
           'OTP_INVALID_OR_EXPIRED',
@@ -1580,19 +1165,142 @@ describe('Contracts v1', () => {
           'GPS_UNAVAILABLE',
           'GPS_STALE',
           'GPS_INACCURATE',
-          'PICKUP_INTENT_REQUIRED',
-          'PICKUP_INTENT_CONFLICT',
-          'PICKUP_SESSION_EXPIRED',
+          'INVALID_QR',
+          'INACTIVE_CHECKIN_SESSION',
           'IDEMPOTENCY_CONFLICT',
         ]),
       );
-      expect(v1.PickupErrorCodeSchema.options).not.toEqual(
+      expect(v1.OperationalErrorCodeSchema.options).not.toEqual(
         expect.arrayContaining([
+          'PICKUP_INTENT_REQUIRED',
+          'PICKUP_INTENT_CONFLICT',
+          'PICKUP_SESSION_EXPIRED',
           'EXACT_INTENT_REQUIRED',
           'GPS_FIX_TOO_OLD',
           'GPS_ACCURACY_TOO_LOW',
         ]),
       );
     });
+  describe('Self check-in contracts', () => {
+    const location = {
+      id: 'location-1',
+      shortCode: 'LOC-A',
+      displayName: 'Main Hall',
+      servingPointName: 'Lunch counter',
+      address: '1 Main Street',
+    } as const;
+    const window = {
+      opensAt: '2026-09-30T03:30:00.000Z',
+      closesAt: '2026-09-30T06:30:00.000Z',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    } as const;
+
+    it('requires GPS evidence when resolving a shared QR', () => {
+      expect(
+        v1.ResolveCheckInSchema.safeParse({
+          qr: 'opaque-shared-qr',
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.ResolveCheckInSchema.safeParse({
+          qr: 'opaque-shared-qr',
+          gps: {
+            capturedAt: '2026-09-30T03:35:00.000Z',
+            latitude: 10.77,
+            longitude: 106.69,
+            accuracyMeters: 12,
+          },
+        }).success,
+      ).toBe(true);
+    });
+
+    it('requires the resolved intent nonce for confirmation', () => {
+      const gps = {
+        capturedAt: '2026-09-30T03:35:00.000Z',
+        latitude: 10.77,
+        longitude: 106.69,
+        accuracyMeters: 12,
+      };
+      expect(
+        v1.ConfirmCheckInSchema.safeParse({
+          sessionId: 'check-in-session-1',
+          idempotencyKey: 'idempotency-1',
+          gps,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.ConfirmCheckInSchema.safeParse({
+          sessionId: 'check-in-session-1',
+          intentNonce: 'opaque-resolve-intent',
+          idempotencyKey: 'idempotency-1',
+          gps,
+        }).success,
+      ).toBe(true);
+    });
+
+    it('accepts stable location QR and enforces aggregate counter invariants', () => {
+      expect(
+        v1.KitchenCheckInQrResponseSchema.safeParse({
+          data: {
+            qr: 'opaque-shared-qr',
+            date: '2026-09-30',
+            location,
+            activeFrom: window.opensAt,
+            expiresAt: window.closesAt,
+          },
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.KitchenCheckInDashboardSchema.safeParse({
+          date: '2026-09-30',
+          location,
+          window,
+          lastUpdated: '2026-09-30T04:00:00.000Z',
+          counts: {
+            registered: 4,
+            checkedIn: 2,
+            pending: 1,
+            noShow: 1,
+            regular: 3,
+            vegetarian: 1,
+          },
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.KitchenCheckInDashboardSchema.safeParse({
+          date: '2026-09-30',
+          location,
+          window,
+          lastUpdated: '2026-09-30T04:00:00.000Z',
+          counts: {
+            registered: 4,
+            checkedIn: 3,
+            pending: 1,
+            noShow: 1,
+            regular: 3,
+            vegetarian: 1,
+          },
+        }).success,
+      ).toBe(false);
+    });
+
+    it('exposes only the requested stable check-in error codes', () => {
+      expect(v1.CheckInErrorCodeSchema.options).toEqual(
+        expect.arrayContaining([
+          'INVALID_QR',
+          'INACTIVE_CHECKIN_SESSION',
+          'NO_REGISTRATION',
+          'REGISTRATION_CANCELLED',
+          'ALREADY_CHECKED_IN',
+          'OUTSIDE_CHECKIN_WINDOW',
+          'LOCATION_MISMATCH',
+          'GPS_REQUIRED',
+          'GPS_STALE',
+          'GPS_INACCURATE',
+          'OUTSIDE_GEOFENCE',
+        ]),
+      );
+    });
+  });
   });
 });

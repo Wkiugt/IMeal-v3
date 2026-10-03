@@ -4,11 +4,16 @@
 
 IMeal v2 là mobile-first operational product. UI phải ưu tiên:
 
-1. **Nhanh** — Staff đăng ký cả tuần và Kitchen giao suất trong ít thao tác.
-2. **Rõ trạng thái** — đã đăng ký/chưa đăng ký/đã khóa/đã nhận/nhận hộ phải khác nhau rõ ràng.
-3. **Chống thao tác sai** — serving chỉ thành công sau Kitchen confirmation và server commit.
-4. **Recovery** — QR hết hạn, mất mạng, camera lỗi, delegation thay đổi đều có next action.
-5. **Audit-friendly** — tên owner/receiver/date/action không được mơ hồ.
+1. **Nhanh** — Staff đăng ký cả tuần, quét QR Kitchen và xác nhận chính suất
+   của mình trong ít thao tác.
+2. **Rõ trạng thái** — chưa đăng ký/đã đăng ký/đã check-in/đã khóa/NO_SHOW
+   phải khác nhau rõ ràng.
+3. **Chống thao tác sai** — chỉ Staff xác nhận đăng ký của chính mình sau
+   resolve và confirm đều có GPS foreground mới, rồi server commit.
+4. **Recovery** — QR shared không hợp lệ, mất mạng, GPS/camera lỗi đều có
+   next action; không có delegation active.
+5. **Audit-friendly** — actor/date/registration/serving outcome không mơ hồ;
+   Kitchen chỉ thấy aggregate.
 6. Accessibility và operational safety ưu tiên hơn hiệu ứng thị giác.
 
 ## 2. Primary devices
@@ -16,14 +21,14 @@ IMeal v2 là mobile-first operational product. UI phải ưu tiên:
 | Role    | Primary device                                                        |
 | ------- | --------------------------------------------------------------------- |
 | Staff   | iOS/Android phone                                                     |
-| Kitchen | Android/iOS phone hoặc tablet có camera; landscape tablet phải usable |
+| Kitchen | Android/iOS phone hoặc tablet làm màn hình QR/dashboard; không cần camera |
 | Admin   | Desktop web; mobile admin chỉ là optional secondary                   |
 
 ## 3. Visual direction
 
 Giữ IEC brand nhưng redesign thành native-mobile system, không port nguyên web shell.
 
-Visual-system authority now lives in [`08-imeal-design-system.md`](./08-imeal-design-system.md). Use that guideline for visual tokens, surfaces, reusable component contracts, semantic indicators, motion, and accessibility consistency. This document remains authoritative for workflow and recovery behavior, including cutoff, QR expiry, service-window, mutation rollback, delegation, scanner, and permission states. `docs/System-design-UI/DESIGN.md` remains preserved prototype provenance rather than a new runtime contract.
+Visual-system authority now lives in [`08-imeal-design-system.md`](./08-imeal-design-system.md). Use that guideline for visual tokens, surfaces, reusable component contracts, semantic indicators, motion, and accessibility consistency. This document remains authoritative for current Staff scan→resolve→explicit-confirm, foreground-GPS recovery, Kitchen shared QR/aggregate polling, cutoff, service-window, notification and permission states. Historical delegation/scanner/pickup visuals are retained only as provenance, not as a runtime contract. `docs/System-design-UI/DESIGN.md` remains preserved prototype provenance rather than a new runtime contract.
 
 ### 3.1 Palette baseline
 
@@ -52,7 +57,8 @@ Không giữ exception Fraunces/Inter của login legacy trừ khi brand review 
 ### 3.4 Touch and geometry
 
 - Touch target tối thiểu 44×44.
-- Primary Kitchen confirm target lớn hơn mức tối thiểu.
+- Primary Staff Confirm target and Kitchen QR display target are larger than
+  the minimum; Kitchen has no employee scanner/confirm control.
 - Default radius khoảng 10–14px phù hợp mobile card.
 - Không lồng card nhiều tầng.
 - Safe-area bắt buộc trên iOS/Android gesture navigation.
@@ -80,10 +86,12 @@ Home | Tuần ăn | Check-in | Thông báo | Tài khoản
 ### Kitchen-only
 
 ```text
-Dashboard | Máy quét | Tài khoản
+Dashboard | Shared QR | Tài khoản
 ```
 
-Kitchen check-in phải discoverable trong 1 tap sau login.
+Kitchen check-in dashboard/QR must be discoverable in 1 tap after login. There
+is no Kitchen scanner navigation item.
+
 
 Do not use web-style module dropdown as primary mobile navigation.
 
@@ -126,10 +134,9 @@ manual-code login hoặc local production bypass.
 Hierarchy:
 
 1. Today meal/status.
-2. QR primary action if eligible.
+2. Own Staff check-in action if the caller has an active registration.
 3. Weekly registration summary.
-4. Delegation pending actions.
-5. Notifications.
+4. Notifications.
 
 Example:
 
@@ -140,14 +147,11 @@ HÔM NAY
 Cơm gà xối mỡ
 ✓ Đã đăng ký
 
-[ MỞ MÃ NHẬN SUẤT ]
+[ MỞ SELF CHECK-IN ]
 
 TUẦN NÀY
 4/5 ngày đã đăng ký
 [ Quản lý tuần ăn ]
-
-ỦY QUYỀN
-1 yêu cầu đang chờ
 ```
 
 ## 7. Weekly registration screen
@@ -192,7 +196,8 @@ No published menu:
 - The weekly display keeps `ACTIVE` selected and mutable while allowed; `SERVED` remains selected as meal received and `NO_SHOW` remains selected with a receipt-not-recorded warning; both finalized states are locked and never become mutation payloads. `CANCELLED` and unregistered dates are not booked.
 - Month booked markers include `ACTIVE`, `SERVED`, and `NO_SHOW`; Home/count semantics remain unchanged.
 - If a save fails because cutoff or authority changed, retain the failed local draft through authoritative refresh. The user can always choose the authoritative active state or meal choice to restore the complete server state locally; meal-choice restore is allowed only when the draft has the same authoritative active state, while divergent activation follows current capability and cutoff rules.
-- Unticking a day with active delegation opens confirmation naming the delegate and explains that the delegation will be revoked.
+- Unticking a day with a serving or finalized state is blocked by the
+  authoritative registration state; there is no active delegation prompt.
 
 ### 7.3 Feedback
 
@@ -213,91 +218,69 @@ Do not use optimistic “saved” state before API success.
 
 - Pending opacity and toggle animation belong only to the day currently being saved. Other days may be interaction-disabled while requests serialize, but must not receive the visual saving state.
 
-## 8. QR screen
+## 8. Staff self check-in screen
 
-QR is visually dominant but status context remains visible.
-
-If there is only one eligible meal, it is selected automatically and the QR is shown immediately. If there are multiple eligible meals, Staff chooses pickup intent before presenting the QR:
+The Staff app scans the Kitchen's stable shared QR. Staff does not generate a
+QR and does not select another person or multiple registrations.
 
 ```text
-MÃ NHẬN SUẤT
-Nguyễn Văn B · NV105
+SELF CHECK-IN
 
-Bạn sẽ nhận hôm nay:
-☑ Suất của bạn
-☑ Nhận hộ Nguyễn Văn A
-☐ Nhận hộ Nguyễn Văn C
+Đăng ký hôm nay
+Cơm gà xối mỡ · Địa điểm do server xác định
 
-       [ QR NHẬN 2 SUẤT ]
+[ QUÉT QR KITCHEN ]
 
-Mã tự làm mới mỗi 5 giây
+Camera: foreground only
+GPS: cần mẫu mới khi resolve và mẫu mới lần nữa khi xác nhận
 ```
+
+After scanning, capture a fresh foreground GPS sample and call
+`POST /api/me/check-in/resolve` with `{ qr, gps }`. When eligible, the
+response includes an opaque signed `intentNonce` scoped to the caller,
+session, own registration and location; it is nullable when
+`eligibility=false`. Show only the authenticated caller's own
+employee/menu/location/registration/eligibility.
+Require an explicit review and Confirm action:
+
+```text
+Bạn: Nguyễn Văn A
+Món: Cơm gà
+Đăng ký: ACTIVE
+Địa điểm: [server value]
+
+[ XÁC NHẬN CHECK-IN ]
+```
+
+Confirm captures a **new** fresh foreground GPS sample and calls
+`POST /api/me/check-in/confirm` with
+`{ sessionId, intentNonce, idempotencyKey, gps }`. A non-empty `intentNonce`
+is required for an eligible confirm; the server validates its caller/session/
+registration/location scope. Success is `CHECKED_IN` with server serving
+ID/time. `GET /api/me/check-in` reconciles initial state, timeout/lost response
+and already-checked-in state.
 
 Requirements:
 
-- Staff-side item selection appears only when more than one eligible pickup item exists; one-item pickup requires no extra selection step.
-- QR refresh preserves the current pickup intent.
-- Visible countdown/progress optional; avoid distracting animation.
-- Expired QR visibly invalidates rather than silently remaining on screen.
-- Refresh should not jump layout.
-- Screenshot-sharing disclaimer can be subtle; system design should not depend on copy alone.
-- Reduced-motion users still receive clear expiry state.
-- QR TTL is 5 seconds with at most 2 seconds server-validated skew; countdown/expiry changes use an accessible live announcement.
-- Outside 10:30–13:30, show the service window and do not present QR as currently usable for serving.
+- The Kitchen QR is stable for one day/location session and displays
+  server-provided `activeFrom`/`expiresAt`; it contains no employee data.
+- GPS denied/stale/inaccurate/outside-geofence states expose Retry/Refresh only;
+  no manual coordinates or background tracking.
+- Stop camera/GPS collection on blur, background, completion, cancellation or
+  unmount. Do not retain raw coordinates in UI logs/evidence.
+- Retry the same idempotency key after a lost confirm response; never show local
+  success before server confirmation.
+- No Staff-generated QR, delegation/proxy flow, multi-item intent or manual
+  code bypass exists in the current UI.
 
-## 9. Delegation UX
+## 9. Historical delegation UX
 
-### 9.1 Owner request
+The old owner/delegate request, accept, revoke and proxy-pickup surfaces are
+not part of the current navigation or acceptance flow. Historical records may
+remain readable in owner-scoped history/notifications for audit and migration
+compatibility, with no current action CTA. They must never authorize current
+Staff check-in or appear as Kitchen dashboard controls.
 
-From meal detail:
-
-```text
-[ Ủy quyền nhận hộ ]
-```
-
-Search result card includes:
-
-- Display name.
-- Employee code.
-- Masked/secondary email if useful to disambiguate.
-
-Confirmation copy names both date and delegate.
-
-### 9.2 Pending state
-
-```text
-Đang chờ Nguyễn Văn B xác nhận
-[ Hủy yêu cầu ]
-```
-
-### 9.3 Incoming request
-
-```text
-Nguyễn Văn A muốn bạn nhận hộ
-Thứ Ba · 18/08
-Bún bò Huế
-
-[ Từ chối ]  [ Chấp nhận ]
-```
-
-### 9.4 Accepted
-
-Owner:
-
-```text
-✓ Nguyễn Văn B sẽ nhận hộ
-[ Hủy ủy quyền ]
-```
-
-`Hủy ủy quyền` opens a confirmation naming the delegate and explaining that pickup permission ends immediately. No local success state appears before the server confirms revoke.
-
-Delegate:
-
-```text
-✓ Bạn đã nhận lời nhận hộ Nguyễn Văn A
-```
-
-If revoked/served concurrently, UI must reconcile backend result instead of assuming local state wins.
 
 ## 10. Notification inbox
 
@@ -332,13 +315,12 @@ the push language.
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
 | `REGISTRATION_OPENED`                         | Every active Staff user when Kitchen first publishes a week; repeat publish is a no-op.                                        | Calendar.                |
 | `REGISTRATION_REMINDER`                       | Staff missing enabled non-holiday registrations, Sunday 10:00 VN for next week, only when reminders are enabled.               | Calendar.                |
-| `PICKUP_REMINDER`                             | Accepted delegate or owner for today's active unserved meals, 11:30 VN, grouped by recipient/date, when reminders are enabled. | Pickup Intent.           |
-| `DELEGATION_REQUESTED`                        | Delegate when owner creates a pending request.                                                                                 | Delegation.              |
-| `DELEGATION_ACCEPTED` / `DELEGATION_DECLINED` | Owner after delegate response.                                                                                                 | Delegation.              |
-| `DELEGATION_REVOKED`                          | Delegate after owner revoke or registration cancellation; show reason.                                                         | Delegation.              |
-| `PROXY_PICKUP_COMPLETED`                      | Owner after successful proxy serving; self pickup has no item.                                                                 | Readable detail, no CTA. |
+| `PICKUP_REMINDER`                             | Owner's active unserved registration, daily 11:30 VN, when reminders are enabled.                                              | Staff Check-in.          |
 | `REGISTERED_MENU_CHANGED`                     | Active registrants after an actual edit to a published date; no-op has no item.                                                | Calendar/date.           |
 | `NO_SHOW_PENALTY_CREATED`                     | Owner after 13:45 VN no-show processing, with 50,000 VND amount.                                                               | Readable detail, no CTA. |
+
+Delegation/proxy kinds remain readable historical notification rows with no
+current CTA and are not emitted by the current self check-in flow.
 
 First publish emits `REGISTRATION_OPENED`; an edit to an already-published registered date
 emits `REGISTERED_MENU_CHANGED`, not another opened item. Admin account-disable notification
@@ -349,7 +331,7 @@ is future scope only and has no current UI kind.
 On first authenticated native login, show one contextual explainer:
 
 ```text
-Nhận thông báo để không bỏ lỡ đăng ký, nhận suất và ủy quyền
+Nhận thông báo để không bỏ lỡ đăng ký và self check-in
 [ Bật thông báo ] [ Để sau ]
 ```
 
@@ -361,146 +343,131 @@ simulators show that a physical device is required; missing EAS configuration sh
 registration error while inbox remains usable. Avoid claiming native-device proof in this UI
 spec.
 
-The shared reminder switch defaults on and controls both scheduled reminder kinds. It changes
-only after `PATCH /api/notifications/preferences` succeeds; on failure restore the confirmed
-server value and show recovery copy. Locale PATCH is best effort and must preserve VI/EN key
-parity. Transactional delegation, menu, proxy-completion, and no-show notifications are not
-silenced by this switch.
+The shared reminder switch defaults on and controls weekly registration and
+owner-only same-day Staff check-in reminders. It changes only after
+`PATCH /api/notifications/preferences` succeeds; on failure restore the
+confirmed server value and show recovery copy. Locale PATCH is best effort and
+must preserve VI/EN key parity. Transactional menu, cancellation and no-show
+notifications are not silenced by this switch; historical delegation/proxy
+rows are not emitted.
 
 ### 10.3 Push tap and screen states
 
-Push data uses the exact `imeal://notifications/<validated UUID>` URL. Foreground and
-background/cold-start responses navigate through the authenticated navigation ref to
-`NotificationDetail`; if auth/navigation is not ready, queue the UUID until ready. Ignore
-malformed or mismatched payloads. Detail actions go to Calendar, Pickup Intent, or Delegation
-as listed above. Proxy, no-show, and legacy items remain readable even without an action.
+Push data uses the exact `imeal://notifications/<validated UUID>` URL. Foreground
+and background/cold-start responses navigate through the authenticated
+navigation ref to `NotificationDetail`; if auth/navigation is not ready, queue
+the UUID until ready. Ignore malformed or mismatched payloads. Detail actions go
+to Calendar or current Staff Check-in as listed above. Historical
+delegation/proxy, no-show and legacy items remain readable without a current CTA.
 System push is best effort; tapping/opening the inbox is authoritative.
 
-## 11. Kitchen Check-in screen
+## 11. Kitchen shared QR and aggregate dashboard
 
 ### 11.1 Priority layout
 
 On phone/tablet:
 
-1. Today/date/menu.
-2. Large `Served / Total` KPI.
-3. Scanner area.
-4. Current resolved pickup card.
-5. Recent log.
-6. Tabs/list.
+1. Meal date/menu and server-resolved location.
+2. Large shared QR with `activeFrom`/`expiresAt`.
+3. Aggregate `Registered / Checked in / Pending / No-show` KPIs.
+4. Dietary totals `Regular / Vegetarian`.
+5. Server `lastUpdated` and stale/recovery indicator.
 
-For the compact summary metrics, normal phones use a deliberately non-mirrored 40/60 two-column bento: the total-meals tile is the narrow standalone column, while dietary breakdown and check-in progress stack in the wider column. Below 350px or above 1.2 font scale, the columns stack into one full-width column so labels and controls remain accessible.
-
-The scan guide is centered in the remaining camera viewport and transparent over the live preview. The viewport scrim remains in place to preserve title, hint, and bracket contrast.
+The Kitchen surface is a display and monitoring surface. It has no camera
+scanner, employee search, employee names, per-person list, delegation/proxy
+control or serving log.
 
 Example:
 
 ```text
-Cơm gà xối mỡ
-17/08
+Cơm gà xối mỡ · 17/08
+Địa điểm: Kitchen A
 
-127 / 220 ĐÃ GIAO
-93 còn lại
-██████████░░ 57.7%
+[        STABLE SHARED QR        ]
+Hoạt động: 10:30–13:30
 
-[ CAMERA SCANNER ]
+ĐĂNG KÝ       ĐÃ CHECK-IN       CÒN CHỜ       VẮNG MẶT
+220            127               93             0
 
-VỪA CHECK-IN
-12:08:31 Nguyễn Văn A · Chính chủ
-12:08:25 Nguyễn Văn B · Nhận hộ A
+THƯỜNG 190 · CHAY 30
+Cập nhật máy chủ: 12:08:31
 ```
 
-### 11.2 Serving window state
+### 11.2 Serving-window state
 
-Outside the 10:30–13:30 serving window, use a distinct time state—not a network error—and keep dashboard/menu readable.
+Outside 10:30–13:30, keep the menu/dashboard readable and show the server
+window/state distinctly from a network error. Do not present the QR as an
+employee authorization result outside its server-provided active window.
 
-## 12. Pickup resolution card
+## 12. Kitchen polling and stale snapshot
 
-After QR scan, do not auto-serve and do not make Kitchen repeat the Staff selection in the happy path.
+The dashboard calls
+`GET /api/kitchen/check-in/dashboard?date=YYYY-MM-DD` only while the app is
+foregrounded and the dashboard is focused. Poll every 10 seconds and fetch
+immediately on re-entry. The QR is loaded from
+`GET /api/kitchen/check-in/qr` and remains stable for the active day/location
+session.
 
-### One item
+On temporary request failure, retain the last good snapshot and mark it stale
+until a successful refresh. Under healthy polling, the visible snapshot normally
+converges within approximately 15 seconds. Never replace a snapshot with
+`0 / 0`, an empty employee list or invented success. There is no SSE/WebSocket
+dependency. Multiple Kitchen displays converge by fetching the same
+server-derived aggregate state.
 
 ```text
-Nguyễn Văn B · NV105
-
-1 SUẤT · CHÍNH CHỦ
-Cơm gà
-
-[ XÁC NHẬN GIAO 1 SUẤT ]
+CHECK-IN DASHBOARD · STALE
+Last server update: 12:08:31
+Retrying when focused...
+[ Registered 220 ] [ Checked in 127 ] [ Pending 93 ]
 ```
 
-### Multiple intended items
+The server invariants shown by the UI are
+`checkedIn + pending + noShow = registered` and
+`regular + vegetarian = registered`. An invariant/error response shows safe
+recovery without partial counters.
+
+## 13. Staff resolve/confirm result card
+
+The Staff app owns the only current scan/resolve/confirm surface. After resolve,
+render the authenticated caller's own result:
 
 ```text
-Nguyễn Văn B · NV105
+SELF CHECK-IN
+Bạn: Nguyễn Văn A
+Đăng ký: ACTIVE
+Món: Cơm gà
+Địa điểm: Kitchen A
+GPS: Đã xác minh · mẫu mới
 
-2 SUẤT
-• Nguyễn Văn B · Chính chủ
-• Nguyễn Văn A · Nhận hộ
-
-[ XÁC NHẬN GIAO 2 SUẤT ]
+[ XÁC NHẬN CHECK-IN ]
 ```
 
-Design requirements:
-
-- Staff chooses the intended multi-item set before showing QR; Kitchen sees that validated set directly.
-- Owner vs receiver remains visually explicit.
-- Kitchen has one large confirm action and **no item checkbox list or item-edit action**; the Staff-selected QR intent is authoritative subject to server revalidation.
-- Confirm button includes count and is optimized for repeated high-throughput scanning.
-- If pickup session expires, keep names visible but disable confirm and ask re-scan.
-- Pickup session expires after 30 seconds; display remaining validity without relying on animation alone.
-- Multi-item confirm remains all-or-nothing. `PICKUP_INTENT_CONFLICT` means no serving or request claim was committed; discard the stale resolve and require a fresh resolve before retrying.
-
-## 13. Serving feedback
-
-Success self:
+Confirm takes a new foreground GPS sample and sends the same
+`idempotencyKey` on retry. On success:
 
 ```text
-✓ Đã giao suất
-Nguyễn Văn B · NV105
-12:08:31
+✓ CHECKED_IN
+Đăng ký: <registrationId>
+Serving: <servingId>
+Thời gian: 12:08:31
 ```
 
-Success proxy:
+If already checked in, resolve/status reconciliation shows the existing
+server state instead of creating another serving. If resolve or confirm fails
+for invalid QR, inactive session, missing/canceled registration, window,
+location or GPS policy, show the canonical safe error and Retry/Refresh only.
 
-```text
-✓ Đã giao suất nhận hộ
-Suất của: Nguyễn Văn A
-Người nhận: Nguyễn Văn B
-12:08:31
-```
+## 14. Kitchen aggregate data surface
 
-Duplicate:
+The response is aggregate-only and may contain `date`, `location`, `window`,
+`lastUpdated`, `registered`, `checkedIn`, `pending`, `noShow`, `regular` and
+`vegetarian` counts. Do not add client-side employee data, owner/receiver names,
+delegation state, QR payloads, raw GPS or per-serving event logs.
 
-```text
-⚠ Suất đã được nhận
-Người nhận: Nguyễn Văn B
-12:04:18
-```
-
-Do not use generic “OK”.
-
-Kitchen verifies the displayed Staff-selected names/count and sufficient trays before confirmation. After successful confirmation, serving is final and neither Kitchen nor Admin UI exposes reversal. If trays are temporarily short, Kitchen completes the handover by supplying the missing trays rather than changing application history.
-
-## 14. Kitchen lists
-
-Tabs:
-
-```text
-Đã nhận (127) | Chưa nhận (93) | Tất cả (220)
-```
-
-During service, `Chưa nhận` means a valid registration that has not been served yet. After no-show reconciliation, add a separate `Vắng mặt` tab/count so absence is not confused with someone who simply has not arrived yet.
-
-Rows must support:
-
-- Search name/employee code.
-- Owner.
-- Receiver if proxy.
-- Serving time.
-- Source/audit detail on expansion.
-
-Initial loading must not appear as `0 / 0` or empty.
+`MealServing.registrationId` remains the unique canonical outcome. Historical
+pickup/delegation tables and notification rows can remain readable in Admin or
+owner history but never become Kitchen controls or current Staff authorization.
 
 ## 15. Weekly menu management UX
 
@@ -541,7 +508,14 @@ Desktop-first tables/cards for:
 
 Bulk/destructive actions require confirmation and visible actor/date/scope.
 
-Admin account disable shows active roles, future registrations and delegations. Admin must confirm one workflow that disables access and cancels/quarantines all future commitments with reason `ACCOUNT_DISABLED`; these rows remain in history but are excluded from Kitchen totals and penalties. Admin Web manages independent `staff`/`kitchen` roles and clearly states that Kitchen does not inherit Staff. It has no control for granting/revoking `admin`. Jobs/Health shows run status, attempts, sanitized errors and a confirmed manual retry action.
+Admin account disable shows active roles, future registrations and retained
+historical delegation rows. Admin must confirm one workflow that disables access
+and cancels/quarantines future commitments with reason `ACCOUNT_DISABLED`; these
+rows remain in history but are excluded from Kitchen totals and penalties. Admin
+Web manages independent `staff`/`kitchen` roles and clearly states that Kitchen
+does not inherit Staff. It has no control for granting/revoking `admin`.
+Jobs/Health shows run status, attempts, sanitized errors and a confirmed manual
+retry action.
 
 The Users view is server-authoritative: identity, effective service location, roster
 assignment and Allowlist A state are shown as separate concepts, with no fabricated
@@ -551,11 +525,12 @@ revocable from this surface. List filters and detail sessions/audit entries are
 server-paginated.
 
 Account lifecycle is explicit: disabling opens a preview with future registration,
-delegation and active-session counts before a separate confirmation; self-disable is
-blocked. Enabling restores only account `active` status and does not restore
-allowlist state, commitments, delegated authority or revoked sessions. Session
-revocation states the persisted `ADMIN_REVOKED` reason, and audit details preserve
-managed-role before/after arrays in readable form.
+retained historical delegation and active-session counts before a separate
+confirmation; self-disable is blocked. Enabling restores only account `active`
+status and does not restore allowlist state, commitments, historical delegated
+authority or revoked sessions. Session revocation states the persisted
+`ADMIN_REVOKED` reason, and audit details preserve managed-role before/after
+arrays in readable form.
 
 If a protected Admin Web request returns structured `SESSION_INVALID`, the client
 clears the matching opaque session and returns to login without calling logout.
@@ -573,45 +548,50 @@ Staff Account includes read-only mobile meal history and penalty list/detail vie
 - Dynamic serving result uses accessible live announcement.
 - Reduced motion supported.
 - Text scales without losing action controls.
-- Camera/manual recovery does not require gestures inaccessible to keyboard/switch control where platform supports alternatives.
+- Camera/GPS recovery does not require gestures inaccessible to
+  keyboard/switch control where platform supports alternatives.
 
 ## 18. Error/recovery matrix
 
-| Flow             | Error                            | Required recovery                                                                  |
-| ---------------- | -------------------------------- | ---------------------------------------------------------------------------------- |
-| Email OTP        | invalid/expired/network/disabled | Generic reason-safe copy; retry request or verification without account disclosure |
-| Weekly load      | API fail                         | Preserve last safe view where possible + retry                                     |
-| Weekly save      | partial cutoff/conflict          | Per-day result + retain failed draft                                               |
-| QR               | issue/refresh fail               | Expired state + retry                                                              |
-| Delegation       | target/revoke conflict           | Server message + refresh authoritative state                                       |
-| Scanner          | camera/GPS denied or unavailable | Show safe state with `Retry`/`Refresh`; no manual location or manual-code fallback |
-| Resolve          | QR expired/forged                | Ask user show current QR                                                           |
-| Confirm          | DB/network fail                  | Retry with idempotency key, never fake success                                     |
-| Confirm batch    | any selected item stale          | Commit none; show changed item and require re-resolve                              |
-| Pickup session   | reaches 30s expiry               | Disable confirm; preserve names; re-scan/re-resolve                                |
-| Service window   | before 10:30 or at/after 13:30   | Keep dashboard readable; disable serving with exact window                         |
-| Account disabled | any protected action             | Stop action, clear sensitive session state and show account-support path           |
-| Menu revision    | registered date changed          | Preserve registration; show revision notice from persisted inbox                   |
-| Realtime         | socket disconnect                | Re-fetch snapshot and reconnect                                                    |
-| Menu upload      | file/upload fail                 | Retry without losing text fields                                                   |
+| Flow                  | Error                                  | Required recovery                                                                  |
+| --------------------- | -------------------------------------- | ---------------------------------------------------------------------------------- |
+| Email OTP             | invalid/expired/network/disabled       | Generic reason-safe copy; retry request or verification without account disclosure |
+| Weekly load           | API fail                               | Preserve last safe view where possible + retry                                     |
+| Weekly save           | partial cutoff/conflict                | Per-day result + retain failed draft                                               |
+| Shared QR             | invalid/expired/wrong location        | Staff rescans current Kitchen QR; no manual-code fallback                         |
+| GPS                   | denied/stale/inaccurate/geofence       | Foreground Retry/Refresh only; no manual coordinates or background tracking       |
+| Resolve               | no registration/canceled/window error  | Show canonical own-user state/error; do not substitute another user                |
+| Confirm               | DB/network/already checked-in          | Retry same idempotency key or call own status; never fake success                  |
+| Dashboard poll        | temporary request error                | Retain last good aggregate snapshot indefinitely, mark stale until successful refresh; healthy polling normally converges within ~15 seconds |
+| Service window        | before 10:30 or at/after 13:30         | Keep dashboard readable; disable Staff resolve/confirm with exact window           |
+| Account disabled      | any protected action                   | Stop action, clear sensitive session state and show account-support path           |
+| Menu revision         | registered date changed                | Preserve registration; show revision notice from persisted inbox                   |
+| Menu upload           | file/upload fail                       | Retry without losing text fields                                                   |
 
 ## 19. UX acceptance tests
 
 - Staff can register five-day week one-handed on common phone sizes.
 - Mixed locked/editable week is understood without explanation.
-- QR refresh every 5s does not cause distracting layout jumps.
-- Kitchen can process 20 consecutive self/proxy/duplicate scans without losing context.
-- Kitchen can distinguish owner and receiver under time pressure.
-- Staff can preselect a multi-item pickup intent without forcing Kitchen to tick those items again.
-- Kitchen can process the scan → final-confirm flow with one confirm action and no item-edit control.
-- Multi-item proxy pickup does not accidentally serve unselected registrations.
-- Multi-item conflict commits zero servings and clearly requires re-resolve.
-- Exact 14:00 cutoff, 10:30/13:30 serving boundaries and 30s pickup-session expiry are understandable and testable.
-- Staff can find meal history and penalty details from Account without Admin controls.
-- Admin disable preview and mandatory no-penalty future-commitment cleanup form one confirmed workflow.
+- Staff scans a stable shared Kitchen QR, sees only own registration and
+  explicitly confirms after resolve.
+- Resolve captures fresh foreground GPS; confirm captures a second fresh sample.
+- Invalid QR, missing/canceled/already-checked-in registration, window/location
+  and GPS errors show safe canonical recovery.
+- Lost confirm response retries the same idempotency key or reconciles own
+  status, with exactly one unique `MealServing`.
+- Kitchen displays the stable QR and aggregate counts with no employee scanner,
+  search, list, names, delegation/proxy control or serving log.
+- Kitchen dashboard polls every 10 seconds only while focused/foreground and
+  normally converges within approximately 15 seconds; on errors it keeps a
+  stale last-good snapshot indefinitely until a successful refresh.
+- Dashboard invariants hold and two Kitchen devices converge through snapshots;
+  no SSE/WebSocket is required.
+- Exact 14:00 cutoff and 10:30/13:30 service boundaries are understandable.
+- Staff can find meal history and penalty details from Account without Admin
+  controls.
+- Admin disable preview and mandatory no-penalty future-commitment cleanup form
+  one confirmed workflow.
 - Admin Users distinguishes account lifecycle, Allowlist A, roster assignment and
   server-effective location; role, session and persisted-audit pagination remain
   usable without exposing Admin-role mutation.
-- Kitchen serving authorization is enforced by authentication, `kitchen.serve` permission, and server-side pickup validation.
-- Realtime dashboard updates across two Kitchen devices.
 - Screen reader/large-text/reduced-motion paths remain functional.

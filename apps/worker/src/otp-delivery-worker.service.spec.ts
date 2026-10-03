@@ -60,9 +60,6 @@ function validWorkerEnvironment(): NodeJS.ProcessEnv {
     SERVING_WINDOW_START: '10:30',
     SERVING_WINDOW_END: '13:30',
     NO_SHOW_PROCESSING_TIME: '13:45',
-    QR_TTL_SECONDS: '5',
-    QR_CLOCK_SKEW_SECONDS: '2',
-    PICKUP_SESSION_TTL_SECONDS: '30',
     RELEASE_VERSION: 'release-1',
     LOG_LEVEL: 'info',
     SHUTDOWN_TIMEOUT_SECONDS: '30',
@@ -234,9 +231,6 @@ describe('OtpDeliveryWorker', () => {
     'SERVING_WINDOW_START',
     'SERVING_WINDOW_END',
     'NO_SHOW_PROCESSING_TIME',
-    'QR_TTL_SECONDS',
-    'QR_CLOCK_SKEW_SECONDS',
-    'PICKUP_SESSION_TTL_SECONDS',
   ])('rejects production when %s is missing', (name) => {
     const env = validWorkerEnvironment();
     delete env[name];
@@ -286,14 +280,6 @@ describe('OtpDeliveryWorker', () => {
     );
   });
 
-  it('rejects production when serving invariants drift', () => {
-    const env = validWorkerEnvironment();
-    env.QR_TTL_SECONDS = '30';
-
-    expect(() => validateWorkerEnvironment(env)).toThrow(
-      'QR_TTL_SECONDS must be 5',
-    );
-  });
 
   it('rejects a retry ceiling below the retry base', () => {
     const env = validWorkerEnvironment();

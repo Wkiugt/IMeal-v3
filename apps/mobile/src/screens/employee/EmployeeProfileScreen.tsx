@@ -8,7 +8,6 @@ import {
   Clock3,
   Languages,
   ReceiptText,
-  UsersRound,
   type LucideIcon,
 } from 'lucide-react-native';
 import { useSession } from '../../auth/session';
@@ -568,20 +567,6 @@ export function EmployeeProfileScreen({ navigation }: Props) {
         />
       </ProfileSettingsGroup>
 
-      <ProfileSettingsGroup
-        label={t('profile.groupPermissionsSharing')}
-        surfacePadding="sm"
-        surfaceStyle={styles.settingsGroupSurface}
-      >
-        <ProfileNavigationSettingRow
-          icon={UsersRound}
-          title={t('profile.delegations')}
-          supportingText={t('profile.delegationsHint')}
-          onPress={() => navigation.navigate('Delegation')}
-          compactLayout={compactLayout}
-          tallLayout
-        />
-      </ProfileSettingsGroup>
       <View style={styles.logoutSection}>
         <ProfileSignOutEntry
           label={t('profile.signOut')}

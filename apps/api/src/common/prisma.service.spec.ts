@@ -7,16 +7,12 @@ import { PrismaService } from './prisma.service.js';
 import { AllowlistController } from '../admin/allowlist/allowlist.controller.js';
 import { PenaltiesService } from '../admin/penalties/penalties.service.js';
 import { RosterImportService } from '../admin/roster/roster-import.service.js';
-import { WeeklyMenusService } from '../admin/weekly-menus/weekly-menus.service.js';
 import { OtpService } from '../auth/otp.service.js';
 import { SessionService } from '../auth/session.service.js';
-import { DelegationsService } from '../delegations/delegations.service.js';
-import { KitchenDashboardService } from '../kitchen/kitchen-dashboard.service.js';
 import { LocationsService } from '../locations/locations.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { PushDevicesService } from '../notifications/push-devices.service.js';
 import { OtpOutboxService } from '../otp/otp-outbox.service.js';
-import { PickupService } from '../pickup/pickup.service.js';
 import { RegistrationsService } from '../registrations/registrations.service.js';
 
 type PrismaLifecycleHarness = {
@@ -104,13 +100,9 @@ describe('PrismaService', () => {
       AllowlistController,
       PenaltiesService,
       RosterImportService,
-      WeeklyMenusService,
-      DelegationsService,
-      KitchenDashboardService,
       LocationsService,
       NotificationsService,
       PushDevicesService,
-      PickupService,
       RegistrationsService,
     ];
     for (const Owner of owners) {

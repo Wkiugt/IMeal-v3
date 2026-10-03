@@ -210,13 +210,28 @@ Flow này cần allowlist-A emails, role/location/roster assignments và OTP
 provider configuration được provisioned ngoài repository; không có account mẫu:
 
 1. Staff request OTP bằng email allowlist-A và verify code nhận qua provider.
-2. Tạo đăng ký và mở QR pickup intent.
-3. Logout; Kitchen request/verify OTP bằng email đã được cấp
-   `kitchen.serve`.
-4. Mở scanner và cấp quyền camera khi được hỏi.
-5. Quét QR nhận suất của Staff.
-6. Kiểm tra presenter, danh sách pickup intent và pickup session trong review.
-7. Xác nhận serving và kiểm tra trạng thái thành công.
+2. Tạo đăng ký cho ngày đang phục vụ; mở Kitchen bằng tài khoản có
+   `kitchen.serve` và hiển thị `GET /api/kitchen/check-in/qr` — một QR dùng
+   chung cho ngày/địa điểm, không chứa danh tính Staff.
+3. Staff mở self check-in, quét QR Kitchen và cấp quyền camera/foreground GPS
+   khi được hỏi; kiểm tra `POST /api/me/check-in/resolve` trả đúng đăng ký của
+   chính mình và `intentNonce` opaque khi eligible (nullable khi
+   `eligibility=false`).
+4. Staff review món/địa điểm/đăng ký, lấy một GPS foreground mới và bấm xác
+   nhận qua `POST /api/me/check-in/confirm` với cùng `sessionId`, non-empty
+   `intentNonce` và idempotency key.
+5. Cố ý retry cùng idempotency key sau timeout (hoặc gọi
+   `GET /api/me/check-in`); kiểm tra kết quả `CHECKED_IN` và chỉ một
+   `MealServing` cho đăng ký.
+6. Trên Kitchen, kiểm tra dashboard aggregate cập nhật; dashboard chỉ poll
+   khi focused/foreground mỗi 10 giây; dưới điều kiện bình thường snapshot
+   hội tụ trong khoảng 15 giây. Nếu request lỗi, giữ snapshot tốt cuối cùng
+   vô thời hạn và đánh dấu stale cho tới khi refresh thành công.
+
+Không có Kitchen employee scanner, delegation/proxy pickup, danh sách nhân viên,
+hay SSE trong flow hiện hành. Các identity, role/location/roster assignment và
+OTP provider phải được provision ngoài repository; không được coi là đã hoàn
+thành nếu chưa có evidence độc lập.
 
 Không dùng username/password, local credentials hoặc client-supplied role để
 thay thế flow trên. Với test tự động không có provider, xem
@@ -274,7 +289,11 @@ Chế độ remote cần hai endpoint độc lập: ngrok v3 do người dùng s
    corepack yarn workspace @imeal/mobile start:remote
    ```
 
-Giữ cả hai tunnel sống suốt session và restart `start:remote` khi URL thay đổi. Cloudflare Quick Tunnel chỉ dùng cho Metro; không dùng cho API vì IMeal kitchen realtime dùng SSE. Nếu không dùng được `cloudflared`, thay bằng public HTTP/WebSocket reverse proxy do người dùng sở hữu trỏ tới `localhost:8081`.
+Giữ cả hai tunnel sống suốt session và restart `start:remote` khi URL thay đổi.
+Luồng check-in hiện dùng HTTPS request/poll aggregate, không yêu cầu SSE hay
+WebSocket cho Kitchen; Metro proxy vẫn chỉ trỏ tới `localhost:8081`. Nếu không
+dùng được `cloudflared`, thay bằng public HTTP reverse proxy do người dùng sở
+hữu trỏ tới `localhost:8081`.
 
 Với Expo SDK 51, Android device/emulator phải cài đúng Expo Go SDK 51 từ [expo.dev/go](https://expo.dev/go); store build hiện tại có thể chỉ hỗ trợ SDK mới nhất. Không trộn nâng cấp Expo vào networking fix này.
 
@@ -389,8 +408,10 @@ Các cài đặt bắt buộc cần rà soát/provision gồm:
 - Các giá trị business cố định phải đúng và sẽ được startup/config validation
   kiểm tra: `SERVING_TIME_ZONE=Asia/Ho_Chi_Minh`,
   `SERVING_WINDOW_START=10:30`, `SERVING_WINDOW_END=13:30`,
-  `NO_SHOW_PROCESSING_TIME=13:45`, `QR_TTL_SECONDS=5`,
-  `QR_CLOCK_SKEW_SECONDS=2`, `PICKUP_SESSION_TTL_SECONDS=30`.
+  `NO_SHOW_PROCESSING_TIME=13:45`.
+- Current shared QR has no `QR_TTL_SECONDS`, `QR_CLOCK_SKEW_SECONDS` or
+  `PICKUP_SESSION_TTL_SECONDS` environment setting. The practical
+  day/location `CheckInSession` uses server-issued `activeFrom`/`expiresAt`.
 
 Không đặt secret, PII, email thật hoặc tọa độ thật trong README. Mobile và
 Admin client chỉ nhận public API URL; tuyệt đối không đưa database, OTP,

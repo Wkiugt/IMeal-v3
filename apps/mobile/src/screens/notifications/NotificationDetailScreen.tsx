@@ -21,8 +21,7 @@ type TabNavigation = BottomTabNavigationProp<AppTabParamList>;
 
 type NotificationAction =
   | { type: 'calendar'; mealDate?: string }
-  | { type: 'pickup' }
-  | { type: 'delegation' }
+  | { type: 'checkIn' }
   | null;
 
 function actionFor(item: NotificationItem): NotificationAction {
@@ -34,12 +33,12 @@ function actionFor(item: NotificationItem): NotificationAction {
     case 'REGISTERED_MENU_CHANGED':
       return { type: 'calendar', mealDate: item.payload.mealDate };
     case 'PICKUP_REMINDER':
-      return { type: 'pickup' };
+      return { type: 'checkIn' };
     case 'DELEGATION_REQUESTED':
     case 'DELEGATION_ACCEPTED':
     case 'DELEGATION_DECLINED':
     case 'DELEGATION_REVOKED':
-      return { type: 'delegation' };
+      return null;
     default:
       return null;
   }
@@ -87,19 +86,19 @@ export function NotificationDetailScreen({ navigation, route }: Props) {
   const performAction = () => {
     if (!action) return;
     if (action.type === 'calendar') {
-      tabNavigation.navigate('EmployeeCalendar', action.mealDate ? { mealDate: action.mealDate } : undefined);
-    } else if (action.type === 'pickup') {
-      tabNavigation.navigate('PickupIntent');
+      tabNavigation.navigate(
+        'EmployeeCalendar',
+        action.mealDate ? { mealDate: action.mealDate } : undefined,
+      );
     } else {
-      tabNavigation.navigate('EmployeeProfile', { screen: 'Delegation' });
+      tabNavigation.navigate('SelfCheckIn');
     }
   };
-  const actionLabel = action?.type === 'calendar'
-    ? t('notifications.openCalendar')
-    : action?.type === 'pickup'
-      ? t('notifications.openPickup')
-      : action?.type === 'delegation'
-        ? t('notifications.openDelegation')
+  const actionLabel =
+    action?.type === 'calendar'
+      ? t('notifications.openCalendar')
+      : action?.type === 'checkIn'
+        ? t('checkIn.title')
         : null;
 
   return (

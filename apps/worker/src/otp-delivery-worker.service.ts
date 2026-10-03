@@ -183,9 +183,6 @@ const FIXED_OPERATIONAL_SETTINGS = [
   ['SERVING_WINDOW_START', '10:30'],
   ['SERVING_WINDOW_END', '13:30'],
   ['NO_SHOW_PROCESSING_TIME', '13:45'],
-  ['QR_TTL_SECONDS', '5'],
-  ['QR_CLOCK_SKEW_SECONDS', '2'],
-  ['PICKUP_SESSION_TTL_SECONDS', '30'],
 ] as const;
 
 function requireFixedSetting(

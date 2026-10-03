@@ -52,7 +52,7 @@ const EXPECTED_GRAPH_COUNTS = {
   menuRevisions: 7,
   appSettings: 1,
   registrations: 126,
-  delegations: 16,
+  delegations: 0,
   penalties: 10,
   servingVerifications: 40,
   pickupSessions: 40,
@@ -482,17 +482,7 @@ describe('local seed transactional writer', () => {
         registration: { select: { status: true, userId: true } },
       },
     });
-    expect(delegations.filter(({ status }) => status === 'PENDING')).toHaveLength(4);
-    expect(delegations.filter(({ status }) => status === 'ACCEPTED')).toHaveLength(4);
-    expect(delegations.filter(({ status }) => status === 'COMPLETED')).toHaveLength(8);
-    expect(
-      delegations.every(({ delegateUserId, registration }) => delegateUserId !== registration.userId),
-    ).toBe(true);
-    expect(
-      delegations
-        .filter(({ status }) => status === 'PENDING' || status === 'ACCEPTED')
-        .every(({ registration }) => registration.status === 'ACTIVE'),
-    ).toBe(true);
+    expect(delegations).toHaveLength(0);
 
     const servings = await prisma.mealServing.findMany({
       orderBy: { id: 'asc' },
@@ -531,8 +521,8 @@ describe('local seed transactional writer', () => {
       },
     });
     expect(servings).toHaveLength(40);
-    expect(servings.filter(({ receiverType }) => receiverType === 'SELF')).toHaveLength(32);
-    expect(servings.filter(({ receiverType }) => receiverType === 'PROXY')).toHaveLength(8);
+    expect(servings.filter(({ receiverType }) => receiverType === 'SELF')).toHaveLength(40);
+    expect(servings.filter(({ receiverType }) => receiverType === 'PROXY')).toHaveLength(0);
     for (const serving of servings) {
       expect(serving.registration.status).toBe('SERVED');
       expect(serving.ownerUserId).not.toBeNull();
@@ -554,20 +544,10 @@ describe('local seed transactional writer', () => {
         registrationIds: [serving.registrationId],
         intentRegistrationIds: [serving.registrationId],
       });
-      if (serving.receiverType === 'SELF') {
-        expect(serving.ownerUserId).toBe(serving.presenterUserId);
-        expect(serving.delegationId).toBeNull();
-        expect(serving.delegation).toBeNull();
-      } else {
-        expect(serving.ownerUserId).not.toBe(serving.presenterUserId);
-        expect(serving.delegationId).not.toBeNull();
-        expect(serving.delegation).toMatchObject({
-          id: serving.delegationId,
-          registrationId: serving.registrationId,
-          delegateUserId: serving.presenterUserId,
-          status: 'COMPLETED',
-        });
-      }
+      expect(serving.receiverType).toBe('SELF');
+      expect(serving.ownerUserId).toBe(serving.presenterUserId);
+      expect(serving.delegationId).toBeNull();
+      expect(serving.delegation).toBeNull();
     }
 
     const requests = await prisma.servingConfirmRequest.findMany({

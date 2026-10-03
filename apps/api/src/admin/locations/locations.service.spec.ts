@@ -198,6 +198,7 @@ describe('LocationsService', () => {
       expect(result.details).toEqual({ action: expect.any(String) });
       if (_reason === 'outside') {
         expect(result.code).toBe('GPS_RETRY_REQUIRED');
+        expect(result.safeVerificationCode).toBe('OUTSIDE_GEOFENCE');
       }
       expect(JSON.stringify(result)).not.toContain('distance');
       expect(JSON.stringify(result)).not.toContain('latitude');

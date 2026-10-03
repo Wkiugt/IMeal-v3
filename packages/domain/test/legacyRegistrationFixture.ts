@@ -85,37 +85,6 @@ export class LegacyRegistrationFixtureService {
     });
   }
 
-  static async delegatePickup(
-    registrationId: string,
-    delegateUserId: string,
-    currentTime: Date,
-  ) {
-    const reg = await prisma.registration.findUnique({
-      where: { id: registrationId },
-    });
-    if (!reg) throw new Error('Not found');
-    if (reg.status !== 'ACTIVE') {
-      throw new Error('Can only delegate registered meals');
-    }
-
-    if (!RegistrationService.isAllowed(reg.mealDate, currentTime)) {
-      throw new Error('Cutoff time has passed for this meal date.');
-    }
-
-    return prisma.$transaction(async (tx) => {
-      await tx.pickupDelegation.updateMany({
-        where: { registrationId, status: { in: ['PENDING', 'ACCEPTED'] } },
-        data: { status: 'REVOKED' },
-      });
-      return tx.pickupDelegation.create({
-        data: {
-          registrationId,
-          delegateUserId,
-          status: 'PENDING',
-        },
-      });
-    });
-  }
 
   static async applyNoShowPenalty(
     userId: string,
@@ -177,18 +146,17 @@ export class LegacyRegistrationFixtureService {
 
       const currentReg = await tx.registration.findUnique({
         where: { id: registrationId },
-        select: { status: true, mealServing: { select: { id: true } } },
+        select: {
+          userId: true,
+          status: true,
+          mealServing: { select: { id: true } },
+        },
       });
       if (currentReg?.status === 'SERVED' || currentReg?.mealServing) {
         throw new Error('Already served');
       }
 
-      const can = await RegistrationService.canServe(
-        registrationId,
-        pickerUserId,
-        tx,
-      );
-      if (!can) {
+      if (currentReg?.userId !== pickerUserId) {
         throw new Error('Not eligible to serve');
       }
 
@@ -252,18 +220,17 @@ export class LegacyRegistrationFixtureService {
       for (const registrationId of registrationIds) {
         const currentReg = await tx.registration.findUnique({
           where: { id: registrationId },
-          select: { status: true, mealServing: { select: { id: true } } },
+          select: {
+            userId: true,
+            status: true,
+            mealServing: { select: { id: true } },
+          },
         });
         if (currentReg?.status === 'SERVED' || currentReg?.mealServing) {
           throw new Error(`Already served ${registrationId}`);
         }
 
-        const can = await RegistrationService.canServe(
-          registrationId,
-          pickerUserId,
-          tx,
-        );
-        if (!can) {
+        if (currentReg?.userId !== pickerUserId) {
           throw new Error(`Not eligible to serve ${registrationId}`);
         }
 

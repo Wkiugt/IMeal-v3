@@ -156,6 +156,7 @@ model User {
   ownedMealServings      MealServing[] @relation("MealServingOwner")
   presentedMealServings  MealServing[] @relation("MealServingPresenter")
   kitchenMealServings    MealServing[] @relation("MealServingKitchen")
+  checkInSessions       CheckInSession[] @relation("CheckInSessionCreatedBy")
 
   @@map("users")
 }
@@ -349,6 +350,7 @@ model ServingConfirmRequest {
   requestBodyHash       String?  @map("request_body_hash")
   intentHash            String?  @map("intent_hash")
   pickupSessionId       String?  @map("pickup_session_id")
+  checkInSessionId       String?  @map("check_in_session_id")
   resultServingIds      String[] @default([]) @map("result_serving_ids")
   resultSnapshot        Json?    @map("result_snapshot")
   originalResultRequestId String? @map("original_result_request_id")
@@ -357,11 +359,13 @@ model ServingConfirmRequest {
   createdAt             DateTime @default(now()) @map("created_at")
 
   pickupSession        PickupSession?         @relation("ServingConfirmPickupSession", fields: [pickupSessionId], references: [id], onDelete: SetNull)
+  checkInSession       CheckInSession?         @relation("ServingConfirmCheckInSession", fields: [checkInSessionId], references: [id], onDelete: SetNull)
   originalResultRequest ServingConfirmRequest? @relation("ServingConfirmOriginalResult", fields: [originalResultRequestId], references: [id], onDelete: SetNull)
   replayedRequests     ServingConfirmRequest[] @relation("ServingConfirmOriginalResult")
 
   @@unique([callerUserId, idempotencyKey])
   @@index([pickupSessionId])
+  @@index([checkInSessionId])
   @@index([intentHash])
   @@map("serving_confirm_requests")
 }
@@ -388,6 +392,7 @@ model MealServing {
   menuImageSnapshot        String?             @map("menu_image_snapshot")
   requestId                String?             @map("request_id")
   pickupSessionId          String?             @map("pickup_session_id")
+  checkInSessionId         String?             @map("check_in_session_id")
   intentHash               String?             @map("intent_hash")
   verificationOutcome      String?             @map("verification_outcome")
   servingVerificationId    String?             @map("serving_verification_id")
@@ -400,6 +405,7 @@ model MealServing {
   kitchenUser          User?                 @relation("MealServingKitchen", fields: [kitchenUserId], references: [id], onDelete: SetNull)
   serviceLocation      Location?             @relation("MealServingLocation", fields: [locationId], references: [id], onDelete: SetNull)
   pickupSession         PickupSession?        @relation("PickupSessionServings", fields: [pickupSessionId], references: [id], onDelete: SetNull)
+  checkInSession         CheckInSession?       @relation("CheckInSessionServings", fields: [checkInSessionId], references: [id], onDelete: SetNull)
   servingVerification  ServingVerification?  @relation("ServingVerificationServings", fields: [servingVerificationId], references: [id], onDelete: SetNull)
   delegation           PickupDelegation?     @relation(fields: [delegationId], references: [id], onDelete: SetNull)
   events               MealEvent[]
@@ -409,6 +415,7 @@ model MealServing {
   @@index([kitchenUserId, servedAt])
   @@index([locationId, mealDate])
   @@index([pickupSessionId])
+  @@index([checkInSessionId])
   @@index([requestId])
   @@index([intentHash])
   @@index([servedAt])
@@ -553,6 +560,27 @@ model AppSetting {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("app_settings")
+}
+
+model CheckInSession {
+  id            String   @id @default(uuid())
+  mealDate      DateTime @db.Date @map("meal_date")
+  locationId    String   @map("location_id")
+  qrHash        String   @unique @map("qr_hash")
+  activeFrom    DateTime @map("active_from")
+  expiresAt     DateTime @map("expires_at")
+  createdByUserId String? @map("created_by_user_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  location      Location @relation("CheckInSessionLocation", fields: [locationId], references: [id], onDelete: Restrict)
+  createdByUser  User? @relation("CheckInSessionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  servings      MealServing[] @relation("CheckInSessionServings")
+  confirmRequests ServingConfirmRequest[] @relation("ServingConfirmCheckInSession")
+
+  @@unique([mealDate, locationId])
+  @@index([expiresAt])
+  @@map("check_in_sessions")
 }
 
 model PickupSession {
@@ -714,6 +742,7 @@ model Location {
   pickupSessions        PickupSession[] @relation("PickupSessionLocation")
   servingVerifications  ServingVerification[]
   mealServings          MealServing[] @relation("MealServingLocation")
+  checkInSessions       CheckInSession[] @relation("CheckInSessionLocation")
 
   @@index([isActive, effectiveFrom, effectiveTo])
   @@map("locations")

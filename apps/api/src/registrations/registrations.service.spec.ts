@@ -1,7 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { v1 } from '@imeal/contracts';
-import { NotificationsService } from '../notifications/notifications.service.js';
 import { PrismaService } from '../common/prisma.service.js';
 import { RegistrationsService } from './registrations.service.js';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
@@ -18,10 +17,7 @@ const txMock = {
     update: vi.fn(),
     create: vi.fn(),
   },
-  pickupDelegation: { findMany: vi.fn(), update: vi.fn() },
   auditLog: { create: vi.fn() },
-  notification: { upsert: vi.fn() },
-  outboxEvent: { upsert: vi.fn(), create: vi.fn() },
 };
 
 const prismaMock = {
@@ -58,12 +54,10 @@ vi.mock('@prisma/client', () => ({
 }));
 
 function createService(
-  notificationsService?: NotificationsService,
   kitchenEventsService?: KitchenEventsService,
 ): RegistrationsService {
   return new RegistrationsService(
     new PrismaService(),
-    notificationsService,
     kitchenEventsService,
   );
 }
@@ -80,15 +74,8 @@ describe('RegistrationsService', () => {
       callback(txMock),
     );
     txMock.$queryRaw.mockResolvedValue([]);
-    txMock.pickupDelegation.findMany.mockResolvedValue([]);
     txMock.registration.update.mockResolvedValue({});
     txMock.registration.create.mockResolvedValue({});
-    txMock.pickupDelegation.update.mockResolvedValue({});
-    txMock.auditLog.create.mockResolvedValue({});
-    txMock.notification.upsert.mockResolvedValue({
-      id: '55555555-5555-4555-8555-555555555555',
-    });
-    txMock.outboxEvent.upsert.mockResolvedValue({});
     txMock.dailyMenu.findFirst.mockResolvedValue({ id: 'daily-menu-1' });
     txMock.dailyMenuRevision.findMany.mockResolvedValue([
       {
@@ -100,6 +87,7 @@ describe('RegistrationsService', () => {
       },
     ]);
     txMock.user.findUnique.mockResolvedValue({ id: 'user-1', isActive: true });
+    txMock.auditLog.create.mockResolvedValue({ id: 'audit-1' });
     txMock.employeeLocationAssignment.findMany.mockResolvedValue([
       {
         id: 'assignment-1',
@@ -1401,52 +1389,6 @@ describe('RegistrationsService', () => {
     expect(txMock.dailyMenu.findFirst).not.toHaveBeenCalled();
   });
 
-  it('cancels active registrations and revokes delegations transactionally', async () => {
-    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
-    txMock.registration.findUnique.mockResolvedValue({
-      id: 'registration-1',
-      status: 'ACTIVE',
-      mealChoice: 'REGULAR',
-      user: { name: 'Owner', email: 'owner@example.com' },
-      delegations: [
-        {
-          id: 'delegation-1',
-          delegateUserId: 'delegate-1',
-          status: 'PENDING',
-        },
-      ],
-    });
-    txMock.pickupDelegation.findMany.mockResolvedValueOnce([
-      {
-        id: 'delegation-1',
-        delegateUserId: 'delegate-1',
-        status: 'PENDING',
-      },
-    ]);
-    const service = createService();
-
-    await expect(
-      service.batchRegister('user-1', [
-        { mealDate: '2026-09-24', status: 'CANCELLED' },
-      ]),
-    ).resolves.toEqual([{ date: '2026-09-24', success: true }]);
-    expect(txMock.registration.update).toHaveBeenCalledWith({
-      where: { id: 'registration-1' },
-      data: {
-        status: 'CANCELLED',
-        version: { increment: 1 },
-        cancelledAt: new Date('2026-09-20T03:00:00.000Z'),
-        cancelReason: 'REGISTRATION_CANCELLED',
-        cancelledByUserId: 'user-1',
-      },
-    });
-    expect(txMock.pickupDelegation.update).toHaveBeenCalledWith({
-      where: { id: 'delegation-1' },
-      data: { status: 'REVOKED' },
-    });
-    expect(txMock.notification.upsert).toHaveBeenCalled();
-    expect(txMock.outboxEvent.create).not.toHaveBeenCalled();
-  });
   it('emits cancellation lifecycle events only after the transaction commits', async () => {
     vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue({
@@ -1466,7 +1408,7 @@ describe('RegistrationsService', () => {
       return result;
     });
 
-    const result = await createService(undefined, eventsService).batchRegister(
+    const result = await createService(eventsService).batchRegister(
       'user-1',
       [{ mealDate: '2026-09-24', status: 'CANCELLED' }],
     );
@@ -1493,7 +1435,7 @@ describe('RegistrationsService', () => {
     const eventsService = new KitchenEventsService();
     const emitEvent = vi.spyOn(eventsService, 'emitEvent');
 
-    await createService(undefined, eventsService).batchRegister('user-1', [
+    await createService(eventsService).batchRegister('user-1', [
       {
         mealDate: '2026-09-25',
         status: 'ACTIVE',
@@ -1514,39 +1456,6 @@ describe('RegistrationsService', () => {
     });
   });
 
-  it('registration_changed_event_is_not_visible_when_registration_transaction_rolls_back', async () => {
-    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
-    txMock.registration.findUnique.mockResolvedValue({
-      id: 'registration-1',
-      status: 'ACTIVE',
-      mealChoice: 'REGULAR',
-      user: { name: 'Owner', email: 'owner@example.com' },
-      delegations: [{ id: 'delegation-1', delegateUserId: 'delegate-1' }],
-    });
-    txMock.pickupDelegation.findMany.mockResolvedValueOnce([
-      { id: 'delegation-1', delegateUserId: 'delegate-1', status: 'PENDING' },
-    ]);
-    txMock.auditLog.create.mockResolvedValueOnce({ id: 'audit-rollback' });
-    const publishError = new Error('notification write failed');
-    const notifications = new NotificationsService(new PrismaService());
-    vi.spyOn(notifications, 'publish').mockRejectedValueOnce(publishError);
-    const eventsService = new KitchenEventsService();
-    const emitEvent = vi.spyOn(eventsService, 'emitEvent');
-
-    await expect(
-      createService(notifications, eventsService).batchRegister('user-1', [
-        { mealDate: '2026-09-24', status: 'CANCELLED' },
-      ]),
-    ).resolves.toEqual([
-      {
-        date: '2026-09-24',
-        success: false,
-        code: 'REGISTRATION_FAILED',
-        reason: 'notification write failed',
-      },
-    ]);
-    expect(emitEvent).not.toHaveBeenCalled();
-  });
 
   it('makes cancellation of missing or already cancelled registrations idempotent', async () => {
     vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));

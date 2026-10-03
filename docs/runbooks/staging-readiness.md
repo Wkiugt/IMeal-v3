@@ -395,6 +395,55 @@ must provide separately reviewed, target-bound PASS artifacts named
 `smoke-auth-rbac.json`, `smoke-business.json`, `smoke-mobile-admin.json`, and
 `smoke-worker.json` for the corresponding identity, business, client, and
 worker paths. Do not turn local test mode into staging evidence.
+
+### 5.1 Current Staff self check-in qualification (external UAT gate)
+
+The following checklist is required for the current cutover and is **not**
+evidence that staging has been provisioned. Each box must be independently
+observed against the target release and recorded in the target-bound
+`smoke-business.json`/`smoke-mobile-admin.json` artifacts. Never mark a box
+PASS from a local seed, a mocked provider, a guessed endpoint or source review.
+
+- [ ] Product operations provision approved staging identities, `staff` and
+  `kitchen` roles, `kitchen.serve`, active roster/location assignments, menus
+  and registrations; record the approval outside this repository.
+- [ ] Kitchen `GET /api/kitchen/check-in/qr` returns the same stable day/location
+  QR on repeated reads, exposes only server `date`/`location`/window metadata,
+  and contains no employee identity. Confirm it is not a rotating per-Staff QR.
+- [ ] Staff `GET /api/me/check-in` shows the authenticated caller's own
+  registration/status only. Staff scans the shared Kitchen QR and
+  `POST /api/me/check-in/resolve` accepts a fresh foreground GPS sample and
+  returns only that caller's normalized registration/menu/location/eligibility;
+  when eligible it persists a `VALID` `ServingVerification` and returns a
+  scoped opaque `intentNonce` bound to caller/session/registration/location,
+  nullable when `eligibility=false`.
+- [ ] Staff reviews the result, captures a **new** fresh foreground GPS sample,
+  and `POST /api/me/check-in/confirm` with the same `sessionId`, non-empty
+  `intentNonce` and unique idempotency key; confirm validates the persisted
+  verification and returns `CHECKED_IN` plus one
+  `registrationId`/`servingId`/`servedAt`.
+- [ ] Retry the same confirm after an intentionally lost/timeout response;
+  verify the same caller/key/body replays safely or `GET /api/me/check-in`
+  reconciles to `CHECKED_IN`, with no second `MealServing`.
+- [ ] Independently exercise wrong/expired QR, no own registration, canceled
+  registration, already checked-in, outside window, wrong location and each
+  GPS failure (`GPS_REQUIRED`, `GPS_STALE`, `GPS_INACCURATE`,
+  `OUTSIDE_GEOFENCE`) and capture the canonical safe recovery behavior.
+- [ ] Kitchen `GET /api/kitchen/check-in/dashboard?date=YYYY-MM-DD` returns
+  aggregate-only counts and `lastUpdated`; verify focused/foreground polling
+  every 10 seconds, immediate refresh on re-entry, normal visible convergence
+  within approximately 15 seconds under healthy polling, and indefinite
+  retention/`stale` marking of the last good snapshot after a refresh failure.
+- [ ] Confirm there is no Kitchen employee scanner, employee search/list,
+  per-person serving log, delegation/proxy check-in or SSE/WebSocket
+  requirement in the current staging surface.
+- [ ] Verify `MealServing.registrationId` is the unique canonical outcome
+  source, concurrent/retried confirm creates at most one serving, historical
+  pickup/delegation tables remain retained/readable, and raw GPS coordinates
+  do not appear in logs or evidence.
+
+Until every applicable box has target-bound evidence and independent review,
+the staging qualification remains **CONDITIONAL / NO-GO**.
 The protected workflow invokes `runRuntimeIntegration` from
 `scripts/staging/runtime-integration.mjs` after deployment and before it records
 `runtimeIntegration: PASS`. A qualification PASS requires API and worker live

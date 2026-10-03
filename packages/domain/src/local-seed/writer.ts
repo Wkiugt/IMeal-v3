@@ -6,7 +6,6 @@ import type {
   SeedAppSettingRow,
   SeedAssignmentRow,
   SeedDailyMenuRow,
-  SeedDelegationRow,
   SeedLocationPolicyRow,
   SeedLocationRow,
   SeedMealDayRow,
@@ -291,21 +290,6 @@ export async function writeTransaction(
     );
   }
 
-  for (const row of plan.delegations) {
-    await upsertRow(
-      stats,
-      'delegations',
-      row.id,
-      () => tx.pickupDelegation.findUnique({ where: { id: row.id } }),
-      () =>
-        tx.pickupDelegation.upsert({
-          where: { id: row.id },
-          create: delegationCreate(row),
-          update: delegationUpdate(row),
-        }),
-      () => delegationUpdate(row),
-    );
-  }
 
   for (const row of plan.penalties) {
     await upsertRow(
@@ -800,25 +784,6 @@ function registrationUpdate(row: SeedRegistrationRow) {
   };
 }
 
-function delegationCreate(row: SeedDelegationRow) {
-  return {
-    id: row.id,
-    registrationId: row.registrationId,
-    delegateUserId: row.delegateUserId,
-    status: row.status,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  };
-}
-
-function delegationUpdate(row: SeedDelegationRow) {
-  return {
-    registrationId: row.registrationId,
-    delegateUserId: row.delegateUserId,
-    status: row.status,
-    createdAt: row.createdAt,
-  };
-}
 
 function penaltyCreate(row: SeedPenaltyRow) {
   return {

@@ -64,12 +64,50 @@ if (!baseDbUrl) {
     await pgClient.connect();
     await pgClient.query(`CREATE SCHEMA "${schemaName}"`);
 
-    // Apply the production migrations to a disposable schema.
-    execSync('npm exec -- prisma migrate deploy', {
-      env: { ...process.env, DATABASE_URL: dynamicDbUrl },
-      cwd: join(__dirname, '..'),
-      stdio: 'ignore',
-    });
+    // Apply the production migrations to a disposable schema. Keep command
+    // output available: concurrent test workers can contend on Prisma's
+    // database-wide migration advisory lock, and a silent failure hides the
+    // distinction between contention and a broken migration.
+    const migrationCwd = join(__dirname, '..');
+    const migrationCommand = 'npm exec -- prisma migrate deploy';
+    try {
+      execSync(migrationCommand, {
+        env: { ...process.env, DATABASE_URL: dynamicDbUrl },
+        cwd: migrationCwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        encoding: 'utf8',
+      });
+    } catch (error: unknown) {
+      const commandError = error as {
+        status?: number | null;
+        signal?: string | null;
+        stdout?: string | Buffer;
+        stderr?: string | Buffer;
+      };
+      const stdout = (
+        Buffer.isBuffer(commandError.stdout)
+          ? commandError.stdout.toString('utf8')
+          : (commandError.stdout ?? '')
+      ).trim();
+      const stderr = (
+        Buffer.isBuffer(commandError.stderr)
+          ? commandError.stderr.toString('utf8')
+          : (commandError.stderr ?? '')
+      ).trim();
+      const diagnostics = [
+        `Failed to deploy Prisma migrations for disposable schema "${schemaName}"`,
+        `command: ${migrationCommand}`,
+        `cwd: ${migrationCwd}`,
+        commandError.status != null
+          ? `exit code: ${commandError.status}`
+          : commandError.signal
+            ? `signal: ${commandError.signal}`
+            : undefined,
+        stdout ? `stdout:\n${stdout}` : undefined,
+        stderr ? `stderr:\n${stderr}` : undefined,
+      ].filter((line): line is string => Boolean(line));
+      throw new Error(diagnostics.join('\n'), { cause: error });
+    }
   }, 120_000);
 
   afterAll(async () => {
