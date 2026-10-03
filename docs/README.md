@@ -32,7 +32,7 @@ IMeal v2 là một re-platforming so với hệ thống web Firebase/Firestore h
 
 The active contract is a **Staff self check-in** flow, not a Kitchen scanner flow:
 
-1. Kitchen requests `GET /api/kitchen/check-in/qr`. The server lazily creates or reuses the stable QR session for the authenticated Kitchen user's assigned location and current meal date. The QR carries no employee identity and is active only for the server-authoritative check-in window.
+1. Kitchen requests `GET /api/kitchen/check-in/qr`. The server lazily creates or reuses the stable QR session for the authenticated Kitchen user's assigned location and current meal date; it may prepare/display that QR before 10:30, while the QR remains usable only for the server-authoritative check-in window. A persisted hash/signing mismatch (including same-day signing-secret rotation) fails closed with a generic internal error; the API never rotates or returns a replacement session.
 2. Staff scans the shared QR and calls `POST /api/me/check-in/resolve` with the
    QR and a fresh foreground GPS sample (`capturedAt`, `latitude`, `longitude`,
    `accuracyMeters`). When eligible, resolve returns an opaque signed

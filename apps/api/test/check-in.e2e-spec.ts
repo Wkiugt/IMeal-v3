@@ -7,6 +7,7 @@ import type { Mock } from 'vitest';
 import { AppModule } from '../src/app.module.js';
 import { PrismaService } from '../src/common/prisma.service.js';
 import { CheckInService } from '../src/check-in/check-in.service.js';
+import { LocationsService } from '../src/locations/locations.service.js';
 
 describe('Check-in controller (e2e)', () => {
   let app: INestApplication<Server>;
@@ -146,5 +147,129 @@ describe('Check-in controller (e2e)', () => {
 
     expect(response.status).toBe(201);
     expect(response.body.data.status).toBe('CHECKED_IN');
+  });
+});
+
+const REAL_QR_SECRET = 'real-http-check-in-secret-at-least-32-characters';
+const REAL_LOCATION = {
+  id: 'location-real-http',
+  shortCode: 'HTTP',
+  displayName: 'HTTP Kitchen',
+  servingPointName: 'HTTP counter',
+  address: '1 HTTP Street',
+};
+const REAL_ASSIGNMENT = {
+  id: 'assignment-real-http',
+  userId: 'test-user-id',
+  employeeName: 'Test User',
+  employeeCode: 'HTTP-1',
+  locationId: REAL_LOCATION.id,
+  serviceLocationCode: REAL_LOCATION.shortCode,
+  effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+  effectiveTo: null,
+  isActive: true,
+  location: REAL_LOCATION,
+};
+
+describe('Check-in real-service HTTP boundaries (e2e)', () => {
+  let app: INestApplication<Server>;
+  let sessionFindUnique: Mock;
+
+  beforeAll(() => {
+    process.env.NODE_ENV = 'test';
+    process.env.REQUIRE_AUTH = 'false';
+  });
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-30T03:00:00.000Z'));
+    vi.stubEnv('QR_SIGNING_SECRET', REAL_QR_SECRET);
+    sessionFindUnique = vi.fn().mockResolvedValue(null);
+    const prisma = {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({ isActive: true }),
+      },
+      employeeLocationAssignment: {
+        findMany: vi.fn().mockResolvedValue([REAL_ASSIGNMENT]),
+      },
+      checkInSession: {
+        findUnique: sessionFindUnique,
+        create: vi.fn().mockImplementation(
+          async ({ data }: { data: Record<string, unknown> }) => ({
+            ...data,
+            location: REAL_LOCATION,
+          }),
+        ),
+      },
+    };
+    const locations = {
+      resolveEffectiveLocation: vi.fn().mockResolvedValue({
+        ...REAL_LOCATION,
+        locationPolicy: {
+          id: 'policy-real-http',
+          locationId: REAL_LOCATION.id,
+          latitude: 10,
+          longitude: 106,
+          geofenceRadiusMeters: 100,
+          maxFixAgeSeconds: 30,
+          maxAccuracyMeters: 50,
+          effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+          effectiveTo: null,
+          isActive: true,
+          updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+        },
+      }),
+    };
+
+    const moduleFixture = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideProvider(PrismaService)
+      .useValue(prisma)
+      .overrideProvider(LocationsService)
+      .useValue(locations)
+      .compile();
+
+    app = moduleFixture.createNestApplication();
+    await app.init();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  it('prepares a shared QR before 10:30 through the real HTTP service path', async () => {
+    const response = await request(app.getHttpServer()).get('/api/kitchen/check-in/qr');
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      date: '2026-09-30',
+      activeFrom: '2026-09-30T03:30:00.000Z',
+      expiresAt: '2026-09-30T06:30:00.000Z',
+    });
+    expect(response.body.data.qr).toMatch(/^imeal-checkin-v1\./);
+  });
+
+  it('returns the generic safe 500 envelope for a persisted QR hash mismatch', async () => {
+    sessionFindUnique.mockResolvedValue({
+      id: 'session-real-http',
+      mealDate: new Date('2026-09-30T00:00:00.000Z'),
+      locationId: REAL_LOCATION.id,
+      qrHash: 'unexpected-hash',
+      activeFrom: new Date('2026-09-30T03:30:00.000Z'),
+      expiresAt: new Date('2026-09-30T06:30:00.000Z'),
+      location: REAL_LOCATION,
+    });
+
+    const response = await request(app.getHttpServer()).get('/api/kitchen/check-in/qr');
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toEqual({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Internal server error',
+    });
+    expect(JSON.stringify(response.body)).not.toContain('unexpected-hash');
   });
 });

@@ -227,7 +227,7 @@ Canonical v2 endpoint semantics:
 | GET        | `/v1/kitchen/menu/weeks/:weekStart`         | kitchen                | Draft/read weekly menu                                                                                                                              |
 | PUT        | `/v1/kitchen/menu/weeks/:weekStart`         | kitchen                | Edit weekly menu                                                                                                                                    |
 | POST       | `/v1/kitchen/menu/weeks/:weekStart/publish` | kitchen                | Publish weekly menu                                                                                                                                 |
-| GET        | `/api/kitchen/check-in/qr`                  | `kitchen.serve`        | Lazily create/reuse stable day/location QR; no body; response includes `qr`, `date`, `location`, `activeFrom`, `expiresAt`                         |
+| GET        | `/api/kitchen/check-in/qr`                  | `kitchen.serve`        | Lazily create/reuse stable day/location QR (may prepare/display before 10:30; never usable at/after 13:30); no body; response includes `qr`, `date`, `location`, `activeFrom`, `expiresAt`                         |
 | GET        | `/api/kitchen/check-in/dashboard?date=YYYY-MM-DD` | `kitchen.serve`   | Aggregate-only counts + `lastUpdated`; poll focused/foreground every 10 seconds, retain stale snapshot, no SSE                                     |
 | POST/PATCH | `/v1/admin/users/*`                         | admin                  | Independent Staff/Kitchen roles + account lifecycle; disable requires preview and confirmed future-commitment cleanup; no Admin-role grant endpoint |
 | GET/PATCH  | `/v1/admin/penalties/*`                     | `penalty.read/resolve` | Admin penalty reporting/resolve; existing explicit permissions remain unchanged |
@@ -281,10 +281,13 @@ The serving/check-in contract is fixed and validated at startup:
 `SERVING_WINDOW_END=13:30` and `NO_SHOW_PROCESSING_TIME=13:45`.
 
 The current shared QR is stable for the active meal date/location window and
-does not rotate per Staff. No `QR_TTL_SECONDS`, `QR_CLOCK_SKEW_SECONDS` or
-`PICKUP_SESSION_TTL_SECONDS` environment setting is part of the current
-contract. The practical day/location check-in session uses server-issued
-`activeFrom`/`expiresAt`.
+does not rotate per Staff. Kitchen may prepare/display it before 10:30, but it
+is not usable at or after 13:30. No `QR_TTL_SECONDS`,
+`QR_CLOCK_SKEW_SECONDS` or `PICKUP_SESSION_TTL_SECONDS` environment setting is
+part of the current contract. A persisted hash/signing mismatch (including
+same-day signing-secret rotation) fails closed with a generic internal error;
+the session is never replaced. The practical day/location check-in session uses
+server-issued `activeFrom`/`expiresAt`.
 
 Worker startup additionally requires `DATABASE_URL`, the encrypted OTP delivery
 key, HTTPS provider settings and every `OTP_DELIVERY_*` batch/retry/claim setting.
@@ -441,9 +444,11 @@ is:
 ```
 
 The server lazily creates or reuses one stable QR session per active
-meal-date/location pair. The QR contains no employee identity and does not
-rotate per Staff. `activeFrom`/`expiresAt` and the 10:30–13:30
-`Asia/Ho_Chi_Minh` window are authoritative. Historical five-second
+meal-date/location pair and may prepare/display it before 10:30. The QR remains
+usable only during the server-provided `activeFrom`/`expiresAt` window; a
+persisted hash/signing mismatch (including same-day signing-secret rotation)
+fails closed with a generic internal error and never creates a replacement
+session. Historical five-second
 presenter/pickup QR settings do not define this flow.
 
 ### 10.2 Staff resolve and explicit confirm

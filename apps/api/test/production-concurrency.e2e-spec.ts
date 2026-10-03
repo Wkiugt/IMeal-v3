@@ -403,6 +403,102 @@ describe('Production PostgreSQL staff self check-in paths', () => {
     ).resolves.toBe(1);
   });
 
+  it('fails closed on same-day QR signing rotation without mutating the existing session', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client, 'HQ-QR-ROTATION');
+    const service = createCheckInService(client);
+    await qrFor(service, world, SERVING_TIME);
+    const storedBefore = await client.checkInSession.findUniqueOrThrow({
+      where: {
+        mealDate_locationId: {
+          mealDate: MEAL_DATE,
+          locationId: world.location.id,
+        },
+      },
+    });
+    process.env.QR_SIGNING_SECRET = `${QR_SIGNING_SECRET}-rotated`;
+
+    await expect(
+      qrFor(service, world, SERVING_TIME),
+    ).rejects.toMatchObject({
+      status: 500,
+      message: 'Internal server error',
+    });
+
+    const storedAfter = await client.checkInSession.findUniqueOrThrow({
+      where: { id: storedBefore.id },
+    });
+    expect(storedAfter).toEqual(storedBefore);
+    await expect(
+      client.checkInSession.count({ where: { locationId: world.location.id } }),
+    ).resolves.toBe(1);
+  });
+
+  it('prepares one QR before 10:30, then rejects the early staff resolve without a serving', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client, 'HQ-PREWINDOW');
+    const service = createCheckInService(client);
+    const beforeWindow = new Date(`${MEAL_DATE_KEY}T03:00:00.000Z`);
+
+    const prepared = await qrFor(service, world, beforeWindow);
+    expect(prepared.data).toMatchObject({
+      date: MEAL_DATE_KEY,
+      activeFrom: `${MEAL_DATE_KEY}T03:30:00.000Z`,
+      expiresAt: `${MEAL_DATE_KEY}T06:30:00.000Z`,
+    });
+    const activeQr = await qrFor(service, world, SERVING_TIME);
+    expect(activeQr.data.qr).toBe(prepared.data.qr);
+
+    await expectCode(
+      service.resolve(
+        world.ownerActor,
+        { qr: prepared.data.qr, gps: gps(beforeWindow) },
+        beforeWindow,
+      ),
+      'OUTSIDE_CHECKIN_WINDOW',
+    );
+    await expect(
+      client.mealServing.count({ where: { registrationId: world.ownerRegistration.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      client.servingVerification.count({ where: { presenterUserId: world.owner.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      client.checkInSession.count({
+        where: { mealDate: MEAL_DATE, locationId: world.location.id },
+      }),
+    ).resolves.toBe(1);
+  });
+
+  it('rejects the Kitchen QR at the global close boundary without changing the stored session', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client, 'HQ-QR-CLOSE');
+    const service = createCheckInService(client);
+    const prepared = await qrFor(service, world, SERVING_TIME);
+    const storedBefore = await client.checkInSession.findUniqueOrThrow({
+      where: {
+        mealDate_locationId: {
+          mealDate: MEAL_DATE,
+          locationId: world.location.id,
+        },
+      },
+    });
+
+    await expectCode(qrFor(service, world, AFTER_WINDOW), 'OUTSIDE_CHECKIN_WINDOW');
+
+    const storedAfter = await client.checkInSession.findUniqueOrThrow({
+      where: { id: storedBefore.id },
+    });
+    expect(storedAfter).toMatchObject({
+      id: storedBefore.id,
+      qrHash: storedBefore.qrHash,
+      expiresAt: storedBefore.expiresAt,
+    });
+    await expect(
+      client.checkInSession.count({ where: { locationId: world.location.id } }),
+    ).resolves.toBe(1);
+  });
+
   it('resolves only the authenticated owner and persists verification without consuming registration', async () => {
     const client = trackedClient();
     const world = await createWorld(client);
@@ -688,6 +784,43 @@ describe('Production PostgreSQL staff self check-in paths', () => {
       ),
       'INACTIVE_CHECKIN_SESSION',
     );
+  });
+
+  it('rejects new confirmations before and at/after close without creating a serving', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client, 'HQ-CONFIRM-WINDOW');
+    const service = createCheckInService(client);
+    const resolved = await resolveFor(service, world);
+
+    await expectCode(
+      service.confirm(
+        world.ownerActor,
+        {
+          sessionId: resolved.data.sessionId,
+          intentNonce: resolved.data.intentNonce!,
+          idempotencyKey: `before-confirm-${randomUUID()}`,
+          gps: gps(BEFORE_WINDOW, { ageSeconds: 2 }),
+        },
+        BEFORE_WINDOW,
+      ),
+      'OUTSIDE_CHECKIN_WINDOW',
+    );
+    await expectCode(
+      service.confirm(
+        world.ownerActor,
+        {
+          sessionId: resolved.data.sessionId,
+          intentNonce: resolved.data.intentNonce!,
+          idempotencyKey: `after-confirm-${randomUUID()}`,
+          gps: gps(AFTER_WINDOW, { ageSeconds: 2 }),
+        },
+        AFTER_WINDOW,
+      ),
+      'OUTSIDE_CHECKIN_WINDOW',
+    );
+    await expect(
+      client.mealServing.count({ where: { registrationId: world.ownerRegistration.id } }),
+    ).resolves.toBe(0);
   });
 
   it('confirms one MealServing and exposes consumed history and stats', async () => {

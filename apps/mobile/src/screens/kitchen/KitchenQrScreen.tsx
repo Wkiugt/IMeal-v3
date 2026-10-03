@@ -32,13 +32,16 @@ function timeLabel(value: string, locale: string): string {
 }
 
 function qrDateAndExpiryAreCurrent(qr: CheckInQr, now: number): boolean {
+  const activeFrom = Date.parse(qr.activeFrom);
   const expiresAt = Date.parse(qr.expiresAt);
   return (
     qr.date === toBusinessDateKey(new Date(now).toISOString()) &&
+    Number.isFinite(activeFrom) &&
     Number.isFinite(expiresAt) &&
     expiresAt > now
   );
 }
+
 
 
 export function KitchenQrScreen(_props: Props): React.JSX.Element {
@@ -236,16 +239,7 @@ export function KitchenQrScreen(_props: Props): React.JSX.Element {
   }, [clearQr, qr]);
 
   const now = Date.now();
-  const startsAt = qr ? Date.parse(qr.activeFrom) : Number.NaN;
-  const expiresAt = qr ? Date.parse(qr.expiresAt) : Number.NaN;
-  const qrActive = Boolean(
-    qr &&
-      qrDateAndExpiryAreCurrent(qr, now) &&
-      Number.isFinite(startsAt) &&
-      Number.isFinite(expiresAt) &&
-      now >= startsAt &&
-      now < expiresAt,
-  );
+  const qrActive = Boolean(qr && qrDateAndExpiryAreCurrent(qr, now));
 
   if (screenLoading) return <ScreenLoading label={t('kitchenQr.loading')} />;
 

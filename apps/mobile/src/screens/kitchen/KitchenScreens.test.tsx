@@ -230,6 +230,72 @@ describe('KitchenDashboardScreen', () => {
 });
 
 describe('KitchenQrScreen', () => {
+  it('renders today’s QR before the service window opens', async () => {
+    vi.setSystemTime(new Date('2026-09-30T03:00:00.000Z'));
+    apiMock.getKitchenQr.mockResolvedValueOnce({
+      data: {
+        ...validQr,
+        date: '2026-09-30',
+        activeFrom: '2026-09-30T03:30:00.000Z',
+        expiresAt: '2026-09-30T06:30:00.000Z',
+      },
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <KitchenQrScreen
+          {...({} as React.ComponentProps<typeof KitchenQrScreen>)}
+        />,
+      );
+      await flushPromises();
+    });
+
+    expect(renderer.root.findByType('QRCode' as never).props.value).toBe(
+      'stable-kitchen-qr',
+    );
+    expect(
+      renderer.root
+        .findAllByType('AppText' as never)
+        .some((node) => node.props.children === 'kitchenQr.window'),
+    ).toBe(true);
+    renderer.unmount();
+  });
+
+  it('removes a cached QR at its exact expiry boundary and after', async () => {
+    vi.setSystemTime(new Date('2026-09-30T06:29:59.000Z'));
+    apiMock.getKitchenQr.mockResolvedValueOnce({
+      data: {
+        ...validQr,
+        date: '2026-09-30',
+        activeFrom: '2026-09-30T03:30:00.000Z',
+        expiresAt: '2026-09-30T06:30:00.000Z',
+      },
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <KitchenQrScreen
+          {...({} as React.ComponentProps<typeof KitchenQrScreen>)}
+        />,
+      );
+      await flushPromises();
+    });
+    expect(renderer.root.findAllByType('QRCode' as never)).toHaveLength(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+      await flushPromises();
+    });
+    expect(renderer.root.findAllByType('QRCode' as never)).toHaveLength(0);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+      await flushPromises();
+    });
+    expect(renderer.root.findAllByType('QRCode' as never)).toHaveLength(0);
+    renderer.unmount();
+  });
+
   it('clears an expired QR instead of rendering an unsafe cached value', async () => {
     apiMock.getKitchenQr.mockResolvedValueOnce({
       data: {

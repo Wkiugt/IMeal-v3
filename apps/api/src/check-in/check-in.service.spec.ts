@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { CheckInService } from './check-in.service.js';
 import type { AuthenticatedUser } from '../auth/authenticated-user.js';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 
 const NOW = new Date('2026-09-30T04:00:00.000Z');
 const LOCATION = {
@@ -76,7 +76,9 @@ const SESSION = {
   id: 'check-in-session-1',
   mealDate: new Date('2026-09-30T00:00:00.000Z'),
   locationId: 'location-1',
-  qrHash: 'qr-hash',
+  qrHash: createHash('sha256')
+    .update(stableQr('2026-09-30', 'location-1'), 'utf8')
+    .digest('hex'),
   activeFrom: new Date('2026-09-30T03:30:00.000Z'),
   expiresAt: new Date('2026-09-30T06:30:00.000Z'),
   location: LOCATION,
@@ -105,6 +107,17 @@ const GPS = {
   longitude: 106.69,
   accuracyMeters: 12,
 };
+
+function stableQr(dateKey: string, locationId: string): string {
+  const digest = createHmac(
+    'sha256',
+    'test-check-in-secret-at-least-32-characters',
+  )
+    .update(`check-in:v1:${dateKey}:${locationId}`, 'utf8')
+    .digest('base64url');
+  return `imeal-checkin-v1.${digest}`;
+}
+
 const RESOLVE_INTENT = (() => {
   const payload = {
     version: 1,
@@ -231,12 +244,124 @@ describe('CheckInService', () => {
     ]);
     prisma.checkInSession.findUnique.mockResolvedValue(SESSION);
 
-    const first = await service.getKitchenQr(KITCHEN, undefined, NOW);
+    const first = await service.getKitchenQr(
+      KITCHEN,
+      undefined,
+      new Date('2026-09-30T03:00:00.000Z'),
+    );
     const second = await service.getKitchenQr(KITCHEN, undefined, NOW);
 
     expect(first).toEqual(second);
     expect(first.data.qr).not.toContain('kitchen-1');
     expect(first.data.qr).not.toContain('staff-1');
+  });
+
+  it('creates the canonical shared QR before 10:30 with Vietnam window timestamps', async () => {
+    prisma.employeeLocationAssignment.findMany.mockResolvedValue([
+      { ...ASSIGNMENT, userId: 'kitchen-1' },
+    ]);
+    prisma.checkInSession.findUnique.mockResolvedValue(null);
+    prisma.checkInSession.create.mockImplementation(
+      async ({ data }: { data: Record<string, unknown> }) => ({
+        ...SESSION,
+        ...data,
+      }),
+    );
+
+    const response = await service.getKitchenQr(
+      KITCHEN,
+      undefined,
+      new Date('2026-09-30T03:00:00.000Z'),
+    );
+
+    expect(response.data).toMatchObject({
+      qr: stableQr('2026-09-30', 'location-1'),
+      date: '2026-09-30',
+      activeFrom: '2026-09-30T03:30:00.000Z',
+      expiresAt: '2026-09-30T06:30:00.000Z',
+    });
+    expect(prisma.checkInSession.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          qrHash: createHash('sha256')
+            .update(stableQr('2026-09-30', 'location-1'), 'utf8')
+            .digest('hex'),
+          activeFrom: new Date('2026-09-30T03:30:00.000Z'),
+          expiresAt: new Date('2026-09-30T06:30:00.000Z'),
+        }),
+      }),
+    );
+  });
+
+  it('rejects an already-expired stored session without returning its QR', async () => {
+    prisma.employeeLocationAssignment.findMany.mockResolvedValue([
+      { ...ASSIGNMENT, userId: 'kitchen-1' },
+    ]);
+    prisma.checkInSession.findUnique.mockResolvedValue({
+      ...SESSION,
+      expiresAt: new Date('2026-09-30T04:30:00.000Z'),
+    });
+
+    await expect(
+      service.getKitchenQr(KITCHEN, undefined, new Date('2026-09-30T05:00:00.000Z')),
+    ).rejects.toMatchObject({
+      response: { code: 'INACTIVE_CHECKIN_SESSION' },
+    });
+  });
+
+  it('rejects Kitchen QR requests at and after the exact global close boundary', async () => {
+    prisma.employeeLocationAssignment.findMany.mockResolvedValue([
+      { ...ASSIGNMENT, userId: 'kitchen-1' },
+    ]);
+    prisma.checkInSession.findUnique.mockResolvedValue(SESSION);
+
+    for (const checkInAt of [
+      new Date('2026-09-30T06:30:00.000Z'),
+      new Date('2026-09-30T06:30:01.000Z'),
+    ]) {
+      await expect(
+        service.getKitchenQr(KITCHEN, undefined, checkInAt),
+      ).rejects.toMatchObject({
+        response: { code: 'OUTSIDE_CHECKIN_WINDOW' },
+      });
+    }
+    expect(prisma.checkInSession.create).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a stored QR hash does not match the deterministic QR', async () => {
+    prisma.employeeLocationAssignment.findMany.mockResolvedValue([
+      { ...ASSIGNMENT, userId: 'kitchen-1' },
+    ]);
+    prisma.checkInSession.findUnique.mockResolvedValue({
+      ...SESSION,
+      qrHash: 'unexpected-hash',
+    });
+
+    await expect(
+      service.getKitchenQr(KITCHEN, undefined, NOW),
+    ).rejects.toMatchObject({
+      status: 500,
+      message: 'Internal server error',
+    });
+    expect(prisma.checkInSession.create).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a concurrent create winner has a mismatched QR hash', async () => {
+    prisma.employeeLocationAssignment.findMany.mockResolvedValue([
+      { ...ASSIGNMENT, userId: 'kitchen-1' },
+    ]);
+    prisma.checkInSession.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ ...SESSION, qrHash: 'unexpected-hash' });
+    prisma.checkInSession.create.mockRejectedValue({ code: 'P2002' });
+
+    await expect(
+      service.getKitchenQr(KITCHEN, undefined, NOW),
+    ).rejects.toMatchObject({
+      status: 500,
+      message: 'Internal server error',
+    });
+    expect(prisma.checkInSession.create).toHaveBeenCalledTimes(1);
   });
 
   it('resolves only the authenticated owner and does not consume the shared session', async () => {
@@ -260,6 +385,64 @@ describe('CheckInService', () => {
       NOW,
     );
   });
+
+  it('rejects an early staff resolve before 10:30 without writing a serving', async () => {
+    prisma.checkInSession.findUnique.mockResolvedValue(SESSION);
+
+    await expect(
+      service.resolve(
+        STAFF,
+        { qr: 'imeal-checkin-v1.shared-token', gps: GPS },
+        new Date('2026-09-30T03:29:59.000Z'),
+      ),
+    ).rejects.toMatchObject({
+      response: { code: 'OUTSIDE_CHECKIN_WINDOW' },
+    });
+    expect(prisma.servingVerification.create).not.toHaveBeenCalled();
+    expect(prisma.tx.mealServing.create).not.toHaveBeenCalled();
+  });
+  it('rejects new confirms before opening and at or after close without creating a serving', async () => {
+    const boundaryTimes = [
+      new Date('2026-09-30T03:29:59.000Z'),
+      new Date('2026-09-30T06:30:00.000Z'),
+      new Date('2026-09-30T06:30:01.000Z'),
+    ];
+
+    for (const [index, checkInAt] of boundaryTimes.entries()) {
+      prisma.tx.$queryRaw.mockReset();
+      prisma.tx.$queryRaw
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          {
+            id: `confirm-request-boundary-${index}`,
+            callerUserId: 'staff-1',
+            idempotencyKey: `boundary-${index}`,
+            status: 'PROCESSING',
+            requestBodyHash: 'hash',
+            checkInSessionId: 'check-in-session-1',
+            resultSnapshot: null,
+          },
+        ]);
+
+      await expect(
+        service.confirm(
+          STAFF,
+          {
+            sessionId: 'check-in-session-1',
+            intentNonce: RESOLVE_INTENT,
+            idempotencyKey: `boundary-${index}`,
+            gps: GPS,
+          },
+          checkInAt,
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'OUTSIDE_CHECKIN_WINDOW' },
+      });
+    }
+
+    expect(prisma.tx.mealServing.create).not.toHaveBeenCalled();
+  });
+
   it('does not treat a shared session id alone as confirmation authority', async () => {
     prisma.tx.$queryRaw
       .mockResolvedValueOnce([])
@@ -382,6 +565,31 @@ describe('CheckInService', () => {
       NOW,
     );
     expect(replay).toEqual(first);
+    expect(prisma.tx.mealServing.create).toHaveBeenCalledTimes(1);
+
+    prisma.tx.$queryRaw.mockReset();
+    prisma.tx.$queryRaw.mockResolvedValueOnce([
+      {
+        id: 'confirm-request-1',
+        callerUserId: 'staff-1',
+        idempotencyKey: 'idem-1',
+        status: 'SUCCESS',
+        requestBodyHash,
+        checkInSessionId: 'check-in-session-1',
+        resultSnapshot: first,
+      },
+    ]);
+    const replayAfterClose = await service.confirm(
+      STAFF,
+      {
+        sessionId: 'check-in-session-1',
+        intentNonce: RESOLVE_INTENT,
+        idempotencyKey: 'idem-1',
+        gps: GPS,
+      },
+      new Date('2026-09-30T06:30:01.000Z'),
+    );
+    expect(replayAfterClose).toEqual(first);
     expect(prisma.tx.mealServing.create).toHaveBeenCalledTimes(1);
   });
 

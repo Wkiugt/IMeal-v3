@@ -739,14 +739,15 @@ export class CheckInService {
     at: Date = new Date(),
   ): Promise<v1.KitchenCheckInQrResponse> {
     const dateKey = getBusinessDate(at);
-    this.assertWithinWindow(at, dateKey);
+    const { opensAt, closesAt } = servingWindow(dateKey);
+    if (at >= closesAt) this.assertWithinWindow(at, dateKey);
     const { assignment, location } = await this.kitchenLocation(
       kitchenActor,
       at,
       requestedLocationId,
     );
-    const { opensAt, closesAt } = servingWindow(dateKey);
     const qr = this.stableQr(dateKey, location.id);
+    const qrHash = this.qrHash(qr);
     const sessionWhere = {
       mealDate_locationId: {
         mealDate: parseMealDate(dateKey),
@@ -775,7 +776,7 @@ export class CheckInService {
             id: randomUUID(),
             mealDate: parseMealDate(dateKey),
             locationId: location.id,
-            qrHash: this.qrHash(qr),
+            qrHash,
             activeFrom: opensAt,
             expiresAt: closesAt,
             createdByUserId: assignment.userId ?? kitchenActor.id,
@@ -790,6 +791,17 @@ export class CheckInService {
         });
         if (!session) throw new InternalServerErrorException('Internal server error');
       }
+    }
+
+    if (session.qrHash !== qrHash) {
+      throw new InternalServerErrorException('Internal server error');
+    }
+    if (safeDate(session.expiresAt) <= at) {
+      throw checkInError(
+        'INACTIVE_CHECKIN_SESSION',
+        'The check-in QR is not active now.',
+        403,
+      );
     }
     return v1.KitchenCheckInQrResponseSchema.parse({
       data: {
