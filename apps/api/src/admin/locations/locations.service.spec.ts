@@ -71,13 +71,6 @@ const prisma = {
   $transaction: vi.fn(),
 };
 
-vi.mock('@prisma/client', () => ({
-  PrismaClient: class {
-    constructor() {
-      return prisma;
-    }
-  },
-}));
 
 describe('LocationsService', () => {
   let service: LocationsService;

@@ -91,13 +91,32 @@ import {
   type AppNavItem,
 } from './AppShell';
 
-function elementsOfType(node: React.ReactNode, displayName: string): React.ReactElement[] {
-  if (!React.isValidElement(node)) return [];
-  const matches = node.type && (node.type as { displayName?: string }).displayName === displayName
+type TestElementProps = {
+  accessibilityLabel?: string;
+  accessibilityRole?: string;
+  accessibilityState: { selected?: boolean };
+  children?: React.ReactNode;
+  color?: string;
+  contentContainerStyle?: unknown;
+  onPress: () => void;
+  strokeWidth?: number;
+  style?: unknown;
+};
+function elementsOfType(
+  node: React.ReactNode,
+  displayName: string,
+): Array<React.ReactElement<TestElementProps>> {
+  if (!React.isValidElement<TestElementProps>(node)) return [];
+  const componentType = node.type;
+  const typeDisplayName =
+    typeof componentType === 'function' && 'displayName' in componentType
+      ? componentType.displayName
+      : undefined;
+  const matches = typeDisplayName === displayName
     ? [node]
     : [];
   return matches.concat(
-    React.Children.toArray(node.props.children).flatMap((child) => elementsOfType(child, displayName)),
+    React.Children.toArray(node.props.children as React.ReactNode).flatMap((child) => elementsOfType(child, displayName)),
   );
 }
 

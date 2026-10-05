@@ -31,19 +31,6 @@ const mockTx = {
   },
 };
 
-vi.mock('@prisma/client', () => ({
-  PrismaClient: class {
-    constructor() {
-      return mockPrisma;
-    }
-  },
-  Prisma: {
-    sql: vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => ({
-      strings,
-      values,
-    })),
-  },
-}));
 
 describe('PenaltiesService', () => {
   let service: PenaltiesService;

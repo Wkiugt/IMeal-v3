@@ -1,15 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
-import { RegistrationService } from '../src/RegistrationService';
-import { LegacyRegistrationFixtureService } from './legacyRegistrationFixture';
-import { prisma } from '../src/db';
+import { createPrismaClient, type PrismaClient } from '../src/prisma.js';
+import { RegistrationService } from '../src/RegistrationService.js';
+import { LegacyRegistrationFixtureService } from './legacyRegistrationFixture.js';
+import { prisma } from '../src/db.js';
 import { randomUUID } from 'node:crypto';
-import { registerTestPrismaClient } from './setup';
+import { registerTestPrismaClient } from './setup.js';
 
 const disposableClients: PrismaClient[] = [];
 
 function createDisposableClient() {
-  const client = new PrismaClient();
+  const client = createPrismaClient(process.env.DATABASE_URL ?? '');
   disposableClients.push(client);
   registerTestPrismaClient(client);
   return client;

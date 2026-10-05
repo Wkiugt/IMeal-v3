@@ -200,7 +200,7 @@ function AppTabsNavigator() {
 
   return (
     <Tabs.Navigator
-      screenOptions={{ headerShown: false, unmountOnBlur: false }}
+      screenOptions={{ headerShown: false }}
       tabBar={(props) => <AppTabBar {...props} navItems={navItems} />}
     >
       {canUseEmployee && (

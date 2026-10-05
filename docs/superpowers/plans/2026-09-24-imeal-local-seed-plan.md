@@ -6,7 +6,7 @@
 
 **Architecture:** Keep pure configuration, deterministic ID, and plan construction modules separate from a Prisma transaction writer. The CLI performs fail-closed environment checks, builds and validates a complete in-memory plan, then invokes one serializable transaction with deterministic upserts; `--dry-run` stops before Prisma client creation. Unit tests run in a Vitest config without the existing PostgreSQL setup, while disposable-database tests reuse the repository's migration setup and exercise reruns, constraints, rollback, and unrelated-row isolation.
 
-**Tech Stack:** Yarn 4.18.0 workspaces; package folder `packages/domain` with package name `@imeal/core`; TypeScript ES2022/ESNext; Node.js >=18; Prisma 5.22/PostgreSQL; existing `ts-node` ESM runner; Vitest 4.1.11; existing `packages/domain/test/setup.ts` for disposable DB tests; existing Prisma schema/migrations.
+**Tech Stack:** Yarn 4.18.0 workspaces; package folder `packages/domain` with package name `@imeal/core`; TypeScript ES2022/ESNext; Node.js 24; Prisma 7.10.0/PostgreSQL; existing `tsx` ESM runner; Vitest 4.1.11; existing `packages/domain/test/setup.ts` for disposable DB tests; existing Prisma schema/migrations.
 
 **Spec:** `docs/superpowers/specs/2026-09-24-imeal-local-seed-design.md`
 

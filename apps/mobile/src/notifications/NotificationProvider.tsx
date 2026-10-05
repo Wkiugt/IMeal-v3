@@ -15,7 +15,6 @@ import { ActionButton } from '../ui/components';
 
 const EXPLAINER_KEY = 'imeal.notification-explainer-seen.v1';
 const FOREGROUND_NOTIFICATION_BEHAVIOR = {
-  shouldShowAlert: true,
   shouldShowBanner: true,
   shouldShowList: true,
   shouldPlaySound: true,

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Expo, type ExpoPushMessage } from 'expo-server-sdk';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@imeal/core';
 import type { StructuredLogger } from '@imeal/observability';
 import { PrismaService } from './common/prisma.service.js';
 import {

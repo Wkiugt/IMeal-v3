@@ -6,7 +6,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import type { StructuredLogger } from '@imeal/observability';
-import { Prisma, type JobRunStatus } from '@prisma/client';
+import { Prisma, type JobRunStatus } from '@imeal/core';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from './common/prisma.service.js';
 import { WorkerNotificationPublisher } from './worker-notification-publisher.js';

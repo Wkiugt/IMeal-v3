@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 
-import type { Prisma, Notification, NotificationKind } from '@prisma/client';
+import type { Prisma, Notification, NotificationKind } from '@imeal/core';
 const TIME_ZONE = 'Asia/Ho_Chi_Minh';
 type WorkerNotificationKind = Extract<
   NotificationKind,

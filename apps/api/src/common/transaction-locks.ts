@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@imeal/core';
 
 const USER_LIFECYCLE_LOCK = 'imeal:user-lifecycle';
 

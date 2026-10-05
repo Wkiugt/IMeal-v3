@@ -3,7 +3,7 @@ import { isIP } from 'node:net';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { StructuredLogger } from '@imeal/observability';
 import { Cron } from '@nestjs/schedule';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@imeal/core';
 import { PrismaService } from './common/prisma.service.js';
 import {
   createWorkerStructuredLogger,

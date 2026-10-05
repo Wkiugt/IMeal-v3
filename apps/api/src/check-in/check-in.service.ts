@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { v1 } from '@imeal/contracts';
-import type { Prisma, ServingConfirmRequest } from '@prisma/client';
+import type { Prisma, ServingConfirmRequest } from '@imeal/core';
 
 import { PrismaService } from '../common/prisma.service.js';
 import { ApiMetricsService } from '../common/metrics.service.js';

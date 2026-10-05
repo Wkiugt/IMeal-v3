@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import type { Server } from 'node:http';
 import request from 'supertest';
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient, type PrismaClient } from '@imeal/core';
 import { describe, expect, it, vi } from 'vitest';
 import { AdminUsersController } from '../src/admin/users/admin-users.controller.js';
 import { AdminUsersService } from '../src/admin/users/admin-users.service.js';
@@ -67,7 +67,7 @@ async function seedRoles(client: PrismaClient): Promise<void> {
 
 describe('Admin users HTTP lifecycle', () => {
   it('authorizes, lists, replaces roles, previews, disables and enables without restoration', async () => {
-    const client = track(new PrismaClient());
+    const client = track(createPrismaClient(process.env.DATABASE_URL ?? ''));
     await seedRoles(client);
     const target = await client.user.create({
       data: { email: 'http-target@example.test', name: 'HTTP Target' },
@@ -153,7 +153,7 @@ describe('Admin users HTTP lifecycle', () => {
   });
 
   it('returns 403 without user.manage and rejects unsafe role request bodies', async () => {
-    const client = track(new PrismaClient());
+    const client = track(createPrismaClient(process.env.DATABASE_URL ?? ''));
     await seedRoles(client);
     const target = await client.user.create({
       data: { email: 'http-guard-target@example.test', name: 'Guard Target' },

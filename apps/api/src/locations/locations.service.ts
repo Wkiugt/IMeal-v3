@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '@imeal/core';
 import { v1 } from '@imeal/contracts';
 import { randomUUID } from 'node:crypto';
 const VN_TIME_ZONE = 'Asia/Ho_Chi_Minh' as const;

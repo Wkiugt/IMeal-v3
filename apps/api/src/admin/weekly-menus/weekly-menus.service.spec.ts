@@ -34,13 +34,6 @@ const mockTx = {
 
 const notificationsServiceMock = { publish: vi.fn() };
 
-vi.mock('@prisma/client', () => ({
-  PrismaClient: class {
-    constructor() {
-      return mockPrisma;
-    }
-  },
-}));
 
 describe('WeeklyMenusService', () => {
   let service: WeeklyMenusService;

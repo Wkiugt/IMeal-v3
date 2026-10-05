@@ -7,9 +7,7 @@ import {
   Switch,
   TextInput,
   View,
-  type NativeSyntheticEvent,
   type StyleProp,
-  type TextInputFocusEventData,
   type TextInputProps,
   type TextStyle,
   type ViewStyle,
@@ -334,12 +332,12 @@ export function TextField({
   const resolvedAccessibilityHint = [accessibilityHint, fieldDescription]
     .filter((part): part is string => Boolean(part))
     .join('. ');
-  const handleFocus = (event: NativeSyntheticEvent<TextInputFocusEventData>) => {
+  const handleFocus: NonNullable<TextInputProps['onFocus']> = (event) => {
     setFocused(true);
     onFocus?.(event);
   };
 
-  const handleBlur = (event: NativeSyntheticEvent<TextInputFocusEventData>) => {
+  const handleBlur: NonNullable<TextInputProps['onBlur']> = (event) => {
     setFocused(false);
     onBlur?.(event);
   };
@@ -496,7 +494,11 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   toggleLoadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },

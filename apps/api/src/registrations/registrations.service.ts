@@ -14,7 +14,7 @@ import {
   createApiStructuredLogger,
   API_STRUCTURED_LOGGER,
 } from '../common/structured-logger.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '@imeal/core';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 import { v1 } from '@imeal/contracts';
 import type { VietnameseLunarDate } from '../common/vietnamese-lunar.js';

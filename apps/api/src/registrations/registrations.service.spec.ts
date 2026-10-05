@@ -45,19 +45,12 @@ const completeRegistrationSnapshot = {
   registeredAt: new Date('2026-09-20T03:00:00.000Z'),
 };
 
-vi.mock('@prisma/client', () => ({
-  PrismaClient: class {
-    constructor() {
-      return prismaMock;
-    }
-  },
-}));
 
 function createService(
   kitchenEventsService?: KitchenEventsService,
 ): RegistrationsService {
   return new RegistrationsService(
-    new PrismaService(),
+    prismaMock as unknown as PrismaService,
     kitchenEventsService,
   );
 }

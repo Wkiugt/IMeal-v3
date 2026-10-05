@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import { Client } from 'pg';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../src/prisma.js';
 import { randomUUID } from 'crypto';
 import * as dotenv from 'dotenv';
 import { beforeEach, beforeAll, afterAll, afterEach } from 'vitest';

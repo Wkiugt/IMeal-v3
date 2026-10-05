@@ -1,6 +1,6 @@
 import { toZonedTime } from 'date-fns-tz';
-import { Prisma } from '@prisma/client';
-import { prisma } from './db';
+import { Prisma } from './prisma.js';
+import { prisma } from './db.js';
 
 const VN_TIMEZONE = 'Asia/Ho_Chi_Minh';
 

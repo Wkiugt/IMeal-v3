@@ -1,6 +1,6 @@
-import { Prisma } from '@prisma/client';
-import { prisma } from '../src/db';
-import { RegistrationService } from '../src/RegistrationService';
+import { Prisma } from '../src/prisma.js';
+import { prisma } from '../src/db.js';
+import { RegistrationService } from '../src/RegistrationService.js';
 
 /**
  * Compatibility-only database fixtures for historical domain tests.

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '../src/prisma.js';
 import { LocalSeedConfigError, parseLocalSeedConfig } from '../src/local-seed/config.js';
 import { buildLocalSeedPlan } from '../src/local-seed/plan.js';
 import type { LocalSeedCliDeps } from '../src/local-seed/index.js';

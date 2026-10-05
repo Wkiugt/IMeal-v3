@@ -2,24 +2,37 @@
   "name": "@imeal/core",
   "version": "1.0.0",
   "private": true,
-  "devDependencies": {
-    "@prisma/client": "^5.22.0",
-    "@types/node": "^26.4.0",
-    "@types/pg": "^8.23.1",
-    "dotenv": "^17.4.2",
-    "pg": "^8.23.0",
-    "prisma": "5.22.0",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.6.2",
-    "vitest": "^4.1.11"
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "test:unit": "vitest run --config ./vitest.unit.config.ts",
-    "seed:local": "node -e \"process.argv.splice(1, 0, 'src/local-seed/cli.ts'); require('ts-node').register({ experimentalResolver: true, compilerOptions: { module: 'CommonJS' } }); require('./src/local-seed/cli.ts')\" --"
+    "seed:local": "node --import tsx src/local-seed/cli.ts",
+    "prisma": "prisma"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
     "date-fns": "^4.4.0",
-    "date-fns-tz": "^3.2.0"
+    "date-fns-tz": "^3.2.0",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "@types/pg": "^8.23.1",
+    "dotenv": "^17.4.2",
+    "prisma": "7.10.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.6.2",
+    "vitest": "^4.1.11"
   }
 }

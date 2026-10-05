@@ -230,9 +230,8 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
 ### Workstream A Task 9 rollout evidence and blockers — NOT COMPLETE / NO-GO
 
 The operator procedure is the
-[staging readiness runbook](runbooks/staging-readiness.md), and its
-`scripts/staging/runbook-links.test.mjs` acceptance checks pass locally. This
-is documentation/tooling evidence only; it does not claim a staging target,
+[staging readiness runbook](runbooks/staging-readiness.md). This is
+documentation/tooling evidence only; it does not claim a staging target,
 external approval, or production qualification.
 
 - **Current hard blocker:** private worker `/metrics`, structured API-to-worker transport, worker 30-second application snapshot interval, and collector lifecycle registration (initial collection plus fixed 60-second schedule) exist as repository wiring. The API automatic periodic flush/metadata caller remains unimplemented; optional authoritative providers and protected source/target/evidence bindings remain unavailable, so release stays **NO-GO**.

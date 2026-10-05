@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient, type PrismaClient } from '@imeal/core';
 import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
@@ -62,7 +62,7 @@ type CheckInWorld = {
 type ActorRole = 'staff' | 'kitchen';
 
 function trackedClient(): PrismaClient {
-  const client = new PrismaClient();
+  const client = createPrismaClient(process.env.DATABASE_URL ?? '');
   (
     globalThis as typeof globalThis & TestPrismaRegistry
   ).__imealRegisterTestPrismaClient?.(client);

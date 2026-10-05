@@ -17,13 +17,6 @@ const mockPrisma = {
   },
 };
 
-vi.mock('@prisma/client', () => ({
-  PrismaClient: class {
-    constructor() {
-      return mockPrisma;
-    }
-  },
-}));
 
 describe('NotificationsService', () => {
   let service: NotificationsService;

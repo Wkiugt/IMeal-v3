@@ -18,13 +18,6 @@ const prisma = {
   $transaction: vi.fn(),
 };
 
-vi.mock('@prisma/client', () => ({
-  PrismaClient: class {
-    constructor() {
-      return prisma;
-    }
-  },
-}));
 
 const metadata: SessionMetadata = {
   deviceId: 'device-1',

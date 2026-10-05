@@ -21,7 +21,7 @@ client-role login path.
 
 ## 2. Prerequisites
 
-- Node.js `>=18`
+- Node.js `>=24 <25`
 - Corepack with Yarn `4.18.0`
 - Docker Desktop with Linux containers for PostgreSQL-backed checks
 - A disposable database/schema for DB or API e2e tests

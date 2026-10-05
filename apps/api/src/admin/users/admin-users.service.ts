@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, type AuthSession, type User } from '@prisma/client';
+import { Prisma, type AuthSession, type User } from '@imeal/core';
 import { v1 } from '@imeal/contracts';
 import { getBusinessDate, parseMealDate } from '../../common/business-time.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';

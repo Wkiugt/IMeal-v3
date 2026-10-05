@@ -1,4 +1,4 @@
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '../prisma.js';
 
 import type {
   LocalSeedPlan,
@@ -72,10 +72,9 @@ export async function writeLocalSeed(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      return await prisma.$transaction(
-        (tx) => writeTransaction(tx, plan),
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-      );
+      return await prisma.$transaction((tx) => writeTransaction(tx, plan), {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
     } catch (error) {
       const code = errorCode(error);
       if (code === 'P2034' && attempt < maxAttempts) {
@@ -84,7 +83,11 @@ export async function writeLocalSeed(
       }
 
       const context = operationContext(error);
-      throw new LocalSeedWriteError(context.entity, context.key, code ?? 'UNKNOWN');
+      throw new LocalSeedWriteError(
+        context.entity,
+        context.key,
+        code ?? 'UNKNOWN',
+      );
     }
   }
 
@@ -104,7 +107,12 @@ export async function writeTransaction(
       'users',
       row.id,
       () => tx.user.findUnique({ where: { id: row.id } }),
-      () => tx.user.upsert({ where: { id: row.id }, create: userCreate(row), update: userUpdate(row) }),
+      () =>
+        tx.user.upsert({
+          where: { id: row.id },
+          create: userCreate(row),
+          update: userUpdate(row),
+        }),
       () => userUpdate(row),
     );
   }
@@ -112,7 +120,9 @@ export async function writeTransaction(
   for (const row of plan.userRoles) {
     const roleId = roleIds.get(row.roleName);
     if (!roleId) {
-      throw new SeedOperationError('roles', row.roleName, { code: 'ROLE_MISSING' });
+      throw new SeedOperationError('roles', row.roleName, {
+        code: 'ROLE_MISSING',
+      });
     }
     const key = `${row.userId}:${row.roleName}`;
     await upsertRow(
@@ -139,7 +149,12 @@ export async function writeTransaction(
       'locations',
       row.id,
       () => tx.location.findUnique({ where: { id: row.id } }),
-      () => tx.location.upsert({ where: { id: row.id }, create: locationCreate(row), update: locationUpdate(row) }),
+      () =>
+        tx.location.upsert({
+          where: { id: row.id },
+          create: locationCreate(row),
+          update: locationUpdate(row),
+        }),
       () => locationUpdate(row),
     );
   }
@@ -182,7 +197,12 @@ export async function writeTransaction(
       'allowlists',
       row.id,
       () => tx.otpAllowlist.findUnique({ where: { id: row.id } }),
-      () => tx.otpAllowlist.upsert({ where: { id: row.id }, create: allowlistCreate(row), update: allowlistUpdate(row) }),
+      () =>
+        tx.otpAllowlist.upsert({
+          where: { id: row.id },
+          create: allowlistCreate(row),
+          update: allowlistUpdate(row),
+        }),
       () => allowlistUpdate(row),
     );
   }
@@ -207,7 +227,12 @@ export async function writeTransaction(
       'dailyMenus',
       row.id,
       () => tx.dailyMenu.findUnique({ where: { id: row.id } }),
-      () => tx.dailyMenu.upsert({ where: { id: row.id }, create: dailyMenuCreate(row), update: dailyMenuUpdate(row) }),
+      () =>
+        tx.dailyMenu.upsert({
+          where: { id: row.id },
+          create: dailyMenuCreate(row),
+          update: dailyMenuUpdate(row),
+        }),
       () => dailyMenuUpdate(row),
     );
   }
@@ -218,7 +243,12 @@ export async function writeTransaction(
       'mealDays',
       row.id,
       () => tx.mealDay.findUnique({ where: { id: row.id } }),
-      () => tx.mealDay.upsert({ where: { id: row.id }, create: mealDayCreate(row), update: mealDayUpdate(row) }),
+      () =>
+        tx.mealDay.upsert({
+          where: { id: row.id },
+          create: mealDayCreate(row),
+          update: mealDayUpdate(row),
+        }),
       () => mealDayUpdate(row),
     );
   }
@@ -245,7 +275,12 @@ export async function writeTransaction(
       'appSettings',
       row.key,
       () => tx.appSetting.findUnique({ where: { key: row.key } }),
-      () => tx.appSetting.upsert({ where: { key: row.key }, create: appSettingCreate(row), update: appSettingUpdate(row) }),
+      () =>
+        tx.appSetting.upsert({
+          where: { key: row.key },
+          create: appSettingCreate(row),
+          update: appSettingUpdate(row),
+        }),
       () => appSettingUpdate(row),
     );
   }
@@ -254,13 +289,12 @@ export async function writeTransaction(
     .filter((row) => row.status === 'SERVED')
     .map((row) => row.id);
   const existingServingRegistrationIds = new Set(
-    (
-      servedRegistrationIds.length === 0
-        ? []
-        : await tx.mealServing.findMany({
-            where: { registrationId: { in: servedRegistrationIds } },
-            select: { registrationId: true },
-          })
+    (servedRegistrationIds.length === 0
+      ? []
+      : await tx.mealServing.findMany({
+          where: { registrationId: { in: servedRegistrationIds } },
+          select: { registrationId: true },
+        })
     ).map((row) => row.registrationId),
   );
   const servedRegistrationIdsToFinalize = servedRegistrationIds.filter(
@@ -290,14 +324,18 @@ export async function writeTransaction(
     );
   }
 
-
   for (const row of plan.penalties) {
     await upsertRow(
       stats,
       'penalties',
       row.id,
       () => tx.penalty.findUnique({ where: { id: row.id } }),
-      () => tx.penalty.upsert({ where: { id: row.id }, create: penaltyCreate(row), update: penaltyUpdate(row) }),
+      () =>
+        tx.penalty.upsert({
+          where: { id: row.id },
+          create: penaltyCreate(row),
+          update: penaltyUpdate(row),
+        }),
       () => penaltyUpdate(row),
     );
   }
@@ -356,7 +394,12 @@ export async function writeTransaction(
       'mealServings',
       row.id,
       () => tx.mealServing.findUnique({ where: { id: row.id } }),
-      () => tx.mealServing.upsert({ where: { id: row.id }, create: mealServingCreate(row), update: mealServingUpdate(row) }),
+      () =>
+        tx.mealServing.upsert({
+          where: { id: row.id },
+          create: mealServingCreate(row),
+          update: mealServingUpdate(row),
+        }),
       () => mealServingUpdate(row),
     );
   }
@@ -378,7 +421,12 @@ export async function writeTransaction(
       'mealEvents',
       row.id,
       () => tx.mealEvent.findUnique({ where: { id: row.id } }),
-      () => tx.mealEvent.upsert({ where: { id: row.id }, create: mealEventCreate(row), update: mealEventUpdate(row) }),
+      () =>
+        tx.mealEvent.upsert({
+          where: { id: row.id },
+          create: mealEventCreate(row),
+          update: mealEventUpdate(row),
+        }),
       () => mealEventUpdate(row),
     );
   }
@@ -389,13 +437,20 @@ export async function writeTransaction(
   };
 }
 
-async function resolveCanonicalRoles(tx: TransactionClient): Promise<Map<string, string>> {
+async function resolveCanonicalRoles(
+  tx: TransactionClient,
+): Promise<Map<string, string>> {
   const roleIds = new Map<string, string>();
   for (const roleName of CANONICAL_ROLE_NAMES) {
     try {
-      const role = await tx.role.findUnique({ where: { name: roleName }, select: { id: true } });
+      const role = await tx.role.findUnique({
+        where: { name: roleName },
+        select: { id: true },
+      });
       if (!role) {
-        throw new SeedOperationError('roles', roleName, { code: 'ROLE_MISSING' });
+        throw new SeedOperationError('roles', roleName, {
+          code: 'ROLE_MISSING',
+        });
       }
       roleIds.set(roleName, role.id);
     } catch (error) {
@@ -446,10 +501,19 @@ function matchesSeedFields(existing: unknown, expected: unknown): boolean {
 
 function valuesEqual(left: unknown, right: unknown): boolean {
   if (left instanceof Date || right instanceof Date) {
-    return left instanceof Date && right instanceof Date && left.getTime() === right.getTime();
+    return (
+      left instanceof Date &&
+      right instanceof Date &&
+      left.getTime() === right.getTime()
+    );
   }
   if (Array.isArray(left) || Array.isArray(right)) {
-    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    if (
+      !Array.isArray(left) ||
+      !Array.isArray(right) ||
+      left.length !== right.length
+    )
+      return false;
     return left.every((value, index) => valuesEqual(value, right[index]));
   }
   if (isRecord(left) || isRecord(right)) {
@@ -465,7 +529,12 @@ function valuesEqual(left: unknown, right: unknown): boolean {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) && !(value instanceof Date);
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    !(value instanceof Date)
+  );
 }
 
 function userCreate(row: SeedUserRow) {
@@ -784,7 +853,6 @@ function registrationUpdate(row: SeedRegistrationRow) {
   };
 }
 
-
 function penaltyCreate(row: SeedPenaltyRow) {
   return {
     id: row.id,
@@ -990,9 +1058,12 @@ function mealEventUpdate(row: SeedMealEventRow) {
   };
 }
 
-function jsonValue(value: SeedLocationRow['operationalMetadata'] | SeedLocationRow['holidayOverrides'] | SeedServingConfirmRequestRow['resultSnapshot']):
-  | Prisma.InputJsonValue
-  | undefined {
+function jsonValue(
+  value:
+    | SeedLocationRow['operationalMetadata']
+    | SeedLocationRow['holidayOverrides']
+    | SeedServingConfirmRequestRow['resultSnapshot'],
+): Prisma.InputJsonValue | undefined {
   return value === undefined ? undefined : (value as Prisma.InputJsonValue);
 }
 
@@ -1012,8 +1083,21 @@ function errorCode(error: unknown): string | undefined {
   if (error instanceof SeedOperationError) return errorCode(error.original);
   if (typeof error !== 'object' || error === null) return undefined;
   if ('code' in error && typeof error.code === 'string') return error.code;
-  if ('errorCode' in error && typeof error.errorCode === 'string') return error.errorCode;
+  if ('errorCode' in error && typeof error.errorCode === 'string')
+    return error.errorCode;
+  if ('cause' in error && isPrismaPgTransactionWriteConflict(error.cause)) {
+    return 'P2034';
+  }
   return undefined;
+}
+
+function isPrismaPgTransactionWriteConflict(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  if (!('kind' in error) || !('originalCode' in error)) return false;
+  return (
+    error.kind === 'TransactionWriteConflict' &&
+    (error.originalCode === '40001' || error.originalCode === '40P01')
+  );
 }
 
 function operationContext(error: unknown): OperationContext {

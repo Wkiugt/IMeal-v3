@@ -4,7 +4,7 @@ IMeal là monorepo Yarn Workspaces + Turborepo cho hệ thống đăng ký, qu�
 
 ## Yêu cầu
 
-- Node.js `>=18` (khuyến nghị Node.js 20)
+- Node.js `>=24 <25`
 - Corepack, Yarn `4.18.0`
 - Docker Desktop + Docker Compose v2
 - Expo/Android Studio nếu chạy mobile native
@@ -70,6 +70,7 @@ location hoặc coordinate data mẫu.
 ### 2. Khởi động database và migration
 
 ```powershell
+$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public'
 corepack yarn workspace @imeal/core prisma generate
 corepack yarn workspace @imeal/contracts build
 docker compose up -d db pgbouncer minio minio-create-bucket migrate
@@ -163,7 +164,7 @@ Với một target ADB duy nhất, khởi động API rồi chạy:
 corepack yarn workspace @imeal/mobile android:local
 ```
 
-Lệnh này reverse Metro `8081` và API `3000` qua ADB rồi chạy Expo với `--localhost`. Yêu cầu `adb` trong `PATH`, Expo Go SDK 51 và chỉ một target đang kết nối.
+Lệnh này reverse Metro `8081` và API `3000` qua ADB rồi chạy Expo với `--localhost`. Yêu cầu `adb` trong `PATH`, Expo Go SDK 57 và chỉ một target đang kết nối.
 
 Nếu có nhiều target, chọn serial trước rồi chạy các lệnh reverse thủ công:
 
@@ -178,7 +179,7 @@ Chọn target đã reverse từ terminal Expo.
 
 ### Điện thoại Android cùng LAN
 
-Điện thoại và máy Windows phải ở cùng một LAN. API phải bind trên `0.0.0.0:3000`; cài đúng Expo Go SDK 51, cho phép inbound TCP `3000` và `8081` trong Windows Firewall, và để trống `EXPO_PUBLIC_API_URL`. Chế độ LAN không dùng ngrok hoặc cloudflared.
+Điện thoại và máy Windows phải ở cùng một LAN. API phải bind trên `0.0.0.0:3000`; cài đúng Expo Go SDK 57, cho phép inbound TCP `3000` và `8081` trong Windows Firewall, và để trống `EXPO_PUBLIC_API_URL`. Chế độ LAN không dùng ngrok hoặc cloudflared.
 
 Lệnh chuẩn và duy nhất cho flow này là:
 
@@ -239,7 +240,7 @@ thay thế flow trên. Với test tự động không có provider, xem
 
 ### Khắc phục nhanh Android LAN
 
-- **`Something went wrong`:** kiểm tra output có `Metro waiting on exp://<LAN-IP>:8081`, điện thoại và máy ở cùng LAN, Expo Go SDK 51 và Firewall đã mở TCP `3000`/`8081`. Dừng Metro bằng `Ctrl+C`, rồi chạy lại `start:lan`.
+- **`Something went wrong`:** kiểm tra output có `Metro waiting on exp://<LAN-IP>:8081`, điện thoại và máy ở cùng LAN, Expo Go SDK 57 và Firewall đã mở TCP `3000`/`8081`. Dừng Metro bằng `Ctrl+C`, rồi chạy lại `start:lan`.
 - **QR có host sai:** nếu QR là `exp://127.0.0.1:8081` hoặc IPv4 không thuộc LAN đang dùng, dừng Metro và chạy lại lệnh chuẩn. Chỉ khi launcher báo nhiều ứng viên mới đặt `IMEAL_LAN_HOST` theo hướng dẫn trên.
 - **Không kết nối được API:** bảo đảm API đang chạy, `EXPO_PUBLIC_API_URL` để trống, kiểm tra `curl.exe http://localhost:3000/health`, rồi kiểm tra Firewall TCP `3000` và cùng LAN trước khi chạy lại `start:lan`.
 - **Metro cũ hoặc port `8081` bị chiếm:** dừng terminal Metro bằng `Ctrl+C`. Nếu vẫn còn listener, xem process và dừng đúng PID của Metro:
@@ -295,7 +296,7 @@ WebSocket cho Kitchen; Metro proxy vẫn chỉ trỏ tới `localhost:8081`. N�
 dùng được `cloudflared`, thay bằng public HTTP reverse proxy do người dùng sở
 hữu trỏ tới `localhost:8081`.
 
-Với Expo SDK 51, Android device/emulator phải cài đúng Expo Go SDK 51 từ [expo.dev/go](https://expo.dev/go); store build hiện tại có thể chỉ hỗ trợ SDK mới nhất. Không trộn nâng cấp Expo vào networking fix này.
+Với Expo SDK 57, Android device/emulator phải cài đúng Expo Go SDK 57 từ [expo.dev/go](https://expo.dev/go); store build hiện tại có thể chỉ hỗ trợ SDK mới nhất. Không trộn nâng cấp Expo vào networking fix này.
 
 Lỗi `Cannot read properties of undefined (reading 'body')` là lỗi Expo shared tunnel, không chứng minh API ngrok bị down. Khi API ngrok đổi URL, cập nhật `.env` và restart Metro.
 
@@ -372,7 +373,7 @@ worker chạy các scheduled jobs và không được public trực tiếp.
 
 ### Điều kiện trước khi deploy
 
-- Linux LTS và Docker Compose v2; nếu build trên host thì cài Node.js `>=18`,
+- Linux LTS và Docker Compose v2; nếu build trên host thì cài Node.js `>=24 <25`,
   Corepack và Yarn `4.18.0`.
 - Khuyến nghị tối thiểu **4 vCPU, 8 GB RAM, 100 GB disk**, tăng theo tải,
   retention và dung lượng object storage.
@@ -525,7 +526,6 @@ The staging tooling and Compose boundary can be verified without credentials:
 ```bash
 yarn test:staging-tools
 node --test scripts/staging/compose-config.test.mjs
-node --test scripts/staging/runbook-links.test.mjs
 ```
 
 After an approved staging target exists, follow the [staging readiness

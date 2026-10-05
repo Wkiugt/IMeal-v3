@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@imeal/core';
 import { v1 } from '@imeal/contracts';
 import { PrismaService } from '../common/prisma.service.js';
 import {
