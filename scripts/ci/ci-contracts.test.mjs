@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   EXPECTED_JOB_IDS,
@@ -11,6 +14,7 @@ import {
   sha256FileContent,
   validateProducerEvidence,
 } from './ci-contracts.mjs';
+import { aggregateFromDirectory } from './aggregate-qualification.mjs';
 
 const context = {
   releaseId: releaseIdFor({ runId: '99', sourceSha: 'a'.repeat(40) }),
@@ -136,6 +140,35 @@ test('global cancellation fails closed even when every producer and job reports 
   });
   assert.equal(report.result, 'FAIL');
   assert.match(report.failureDiagnostics[0].diagnostics[0], /globally cancelled/i);
+});
+
+test('directory aggregation does not project unvalidated producer PASS fields', async () => {
+  const evidenceRoot = await mkdtemp(join(tmpdir(), 'qualification-invalid-source-'));
+  const outputDirectory = await mkdtemp(join(tmpdir(), 'qualification-invalid-output-'));
+  const invalidEvidence = allEvidence().map((item) =>
+    item.laneId === 'static' ? { ...item, sourceSha: 'f'.repeat(40) } : item,
+  );
+  for (const item of invalidEvidence) {
+    const directory = join(evidenceRoot, item.laneId);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'producer-result.json'), `${JSON.stringify(item)}\n`);
+    if (item.laneId.startsWith('images-')) {
+      const service = item.laneId.slice('images-'.length);
+      await writeFile(join(directory, `build-image-sbom-${service}.spdx.json`), context.imageFiles[item.laneId]);
+      await writeFile(join(directory, 'image-inspection.txt'), context.imageInspections[item.laneId]);
+    }
+  }
+  const report = await aggregateFromDirectory({
+    evidenceRoot,
+    outputDirectory,
+    needs: successfulNeeds(),
+    context,
+  });
+  assert.equal(report.result, 'FAIL');
+  assert.equal(report.typecheck, 'UNVERIFIED');
+  assert.equal(report.db, 'UNVERIFIED');
+  assert.equal(report.stagingTools, 'UNVERIFIED');
+  assert.equal(report.sbom, undefined);
 });
 
 test('provenance rejects a producer from another workflow, source, run, or future attempt', () => {

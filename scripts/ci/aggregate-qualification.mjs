@@ -86,6 +86,7 @@ export async function aggregateFromDirectory({
     };
   }
   const stepResult = (laneId, stepId) => {
+    if (report?.verifiedStatuses?.[laneId] !== 'PASS') return 'UNVERIFIED';
     const item = collected?.evidence?.find((entry) => entry.laneId === laneId);
     return item?.steps?.find((step) => step.id === stepId)?.result ?? 'UNVERIFIED';
   };
@@ -107,7 +108,10 @@ export async function aggregateFromDirectory({
   if (
     collected &&
     ['images-api', 'images-worker', 'images-admin-web'].every(
-      (laneId) => collected.imageFiles?.[laneId],
+      (laneId) =>
+        report?.verifiedStatuses?.[laneId] === 'PASS' &&
+        collected.imageFiles?.[laneId] &&
+        collected.imageInspections?.[laneId],
     )
   ) {
     report.sbom = 'artifacts/build-image-sbom-index.json';
