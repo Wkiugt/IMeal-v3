@@ -392,7 +392,7 @@ jobs:
           cat > "$RUNNER_TEMP/ci/needs.json" <<'JSON'
           ${{ toJSON(needs) }}
           JSON
-          node scripts/ci/aggregate-qualification.mjs --evidence-root "$RUNNER_TEMP/ci/evidence" --output-directory "$RUNNER_TEMP/ci/aggregate" --needs-json "$RUNNER_TEMP/ci/needs.json" --release-id "$RELEASE_ID" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --cancelled "${{ cancelled() }}"
+          node scripts/ci/aggregate-qualification.mjs --evidence-root "$RUNNER_TEMP/ci/evidence" --output-directory "$RUNNER_TEMP/ci/aggregate" --needs-json "$RUNNER_TEMP/ci/needs.json" --release-id "$RELEASE_ID" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --cancelled "${{ job.status == 'cancelled' }}"
       - if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/ci/aggregate"
@@ -415,7 +415,7 @@ jobs:
           retention-days: 14
       - if: always()
         env:
-          GLOBAL_CANCELLED: ${{ cancelled() }}
+          GLOBAL_CANCELLED: ${{ job.status == 'cancelled' }}
         run: |
           if [ "$GLOBAL_CANCELLED" = "true" ]; then
             exit 1
