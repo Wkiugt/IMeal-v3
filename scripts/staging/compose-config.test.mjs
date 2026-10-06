@@ -287,7 +287,7 @@ test('base Compose explicitly selects the Admin Dockerfile without changing loca
   const baseText = readFileSync(resolve(root, 'docker-compose.yml'), 'utf8');
   assert.match(
     baseText,
-    /admin-web:\s+\n\s+build:\s+\n\s+context: \.\s+\n\s+dockerfile: apps\/admin-web\/Dockerfile/,
+    /admin-web:\s*\n\s+build:\s+\n\s+context: \.\s+\n\s+dockerfile: apps\/admin-web\/Dockerfile/,
   );
   assert.match(baseText, /NODE_ENV: \$\{NODE_ENV:-development\}/);
   assert.match(baseText, /POSTGRES_PORT:-5432/);
