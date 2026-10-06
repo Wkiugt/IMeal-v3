@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — 2026-10-06
+
+### Changed
+
+- Root typecheck, unit, and database tasks now share Turbo dependency preparation, so each command builds its workspace dependencies independently without relying on prior local artifacts.
+- Prisma metadata generation is an explicit domain build prerequisite, uses a build-only nonsecret URL, and is cached with the generated source while remaining ignored; clean-copy and schema-change regressions cover missing-output and invalidation behavior.
+- Protected staging image qualification now scans immutable image archives with Trivy and retains redacted scan reports and advisory metadata for audit review.
+
+- CI qualification now uses a Node 24/Yarn 4.18 command catalogue, immutable producer evidence, explicit per-lane downloads, cancellation-safe owned subprocess cleanup, and fail-closed protected staging gates. Default local verification does not launch Docker; this task exercised that default and leaves disposable PostgreSQL and image/secrets scanners blocked unless authorized CI execution is available.
+- Independent cold-copy verification passed immutable install, typecheck, unit, build, build-order, and mobile/admin/observability client suites. The current dependency audit still reports high `braces@3.0.3` and `node-forge@1.4.0`; the security gate permits only the exact advisory exceptions recorded in the evidence, expiring 2026-11-06 00:00 UTC, and fails closed for every other or expired finding. No dependency, manifest, or lockfile upgrade/resolution was made.
+
+- Platform limits are recorded explicitly: Windows Node 24 was exercised with workspace-junction failures; a clean Linux Node 24.21/Yarn 4.18 copy passed immutable install, build, typecheck, lint (11 warnings), unit, and client suites. Build-order and later Docker/image/mobile qualification were interrupted and are not PASS. Protected reruns keep stable producer names with overwrite for same-run evidence and use attempt-scoped protected release artifacts; every deployment requires current-run source/workflow/run provenance.
+  The CI hardening also corrects generated POSIX fixture-file argv offsets and bounds dispatcher descendant/evidence waits, while image binding keeps Trivy's immutable bare `sha256:` ID distinct from Syft's required `docker:sha256:` target without weakening hashes or provenance.
+
 ## Unreleased — 2026-10-04
 
 ### Changed

@@ -24,8 +24,9 @@ async function git(cwd, args) {
 }
 
 async function fixture() {
-  const repositoryPath = await mkdtemp(join(tmpdir(), 'release-manifest-'));
-  await git(repositoryPath, ['init', '--quiet']);
+  const temporaryRepositoryPath = await mkdtemp(join(tmpdir(), 'release-manifest-'));
+  await git(temporaryRepositoryPath, ['init', '--quiet']);
+  const repositoryPath = await git(temporaryRepositoryPath, ['rev-parse', '--show-toplevel']);
   await git(repositoryPath, ['config', 'user.email', 'ci@example.test']);
   await git(repositoryPath, ['config', 'user.name', 'CI']);
   await writeFile(join(repositoryPath, 'yarn.lock'), 'lockfile fixture\n');
@@ -53,10 +54,14 @@ async function fixture() {
   await git(repositoryPath, ['add', '.']);
   await git(repositoryPath, ['commit', '--quiet', '-m', 'fixture']);
   const commit = await git(repositoryPath, ['rev-parse', 'HEAD']);
+  const canonicalRepositoryPath = await git(repositoryPath, ['rev-parse', '--show-toplevel']);
   return {
-    repositoryPath,
-    lockfilePath: join(repositoryPath, 'yarn.lock'),
-    migrationsDirectory,
+    repositoryPath: canonicalRepositoryPath,
+    lockfilePath: join(canonicalRepositoryPath, 'yarn.lock'),
+    migrationsDirectory: join(
+      canonicalRepositoryPath,
+      'packages/domain/prisma/migrations',
+    ),
     commit,
   };
 }

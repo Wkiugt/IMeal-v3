@@ -70,15 +70,13 @@ location hoặc coordinate data mẫu.
 ### 2. Khởi động database và migration
 
 ```powershell
-$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public'
-corepack yarn workspace @imeal/core prisma generate
-corepack yarn workspace @imeal/contracts build
+corepack yarn build
 docker compose up -d db pgbouncer minio minio-create-bucket migrate
 docker compose wait migrate
 docker compose ps --all
 ```
 
-`migrate` phải có trạng thái `Exited (0)`.
+`yarn build` prepares shared workspaces and runs metadata-only Prisma generation with a nonsecret build URL; it does not connect to the database. No separate Prisma or contracts build is required before Compose. `migrate` must have status `Exited (0)`.
 
 ### Seed synthetic local/dev/test/UAT
 

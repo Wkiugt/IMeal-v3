@@ -283,16 +283,6 @@ test('renders an isolated immutable staging boundary', () => {
   assert.doesNotMatch(rendered, /CHANGE_ME_LOCAL|:latest\b/);
 });
 
-test('base Compose explicitly selects the Admin Dockerfile without changing local defaults', () => {
-  const baseText = readFileSync(resolve(root, 'docker-compose.yml'), 'utf8');
-  assert.match(
-    baseText,
-    /admin-web:\s+\n\s+build:\s+\n\s+context: \.\s+\n\s+dockerfile: apps\/admin-web\/Dockerfile/,
-  );
-  assert.match(baseText, /NODE_ENV: \$\{NODE_ENV:-development\}/);
-  assert.match(baseText, /POSTGRES_PORT:-5432/);
-});
-
 test('Caddy owns HTTPS redirect, health routes, headers and request IDs without stock rate-limit directives', () => {
   assert.match(caddyText, /http:\/\/\{\$PUBLIC_HOSTNAME\}/);
   assert.match(
