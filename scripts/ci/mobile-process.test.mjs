@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -16,6 +17,35 @@ async function tempLog(name) {
   const directory = await mkdtemp(join(tmpdir(), `imeal-mobile-${name}-`));
   temporaryDirectories.push(directory);
   return join(directory, 'process.log');
+}
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    if (process.platform === 'linux') {
+      try {
+        const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+        const state = stat.slice(stat.lastIndexOf(')') + 2).trimStart()[0];
+        if (state === 'Z') return false;
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+        return false;
+      }
+    }
+    return true;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+async function waitForProcessStop(pid, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (!processAlive(pid)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 }
 
 test.after(async () => {
@@ -106,21 +136,34 @@ test(
   async () => {
     const logPath = await tempLog('early-descendant');
     const pidPath = `${logPath}.pid`;
+    const descendantSource =
+      "process.on('SIGTERM', () => {}); setInterval(() => {}, 60_000); process.send('ready');";
+    const leaderSource = `const { spawn } = require('node:child_process'); const { writeFileSync } = require('node:fs'); const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendantSource)}], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] }); child.once('message', (message) => { if (message !== 'ready') return; writeFileSync(process.env.CHILD_PID_FILE, String(child.pid)); child.disconnect(); process.exit(23); });`;
     const processHandle = spawnOwnedProcess({
       command: process.execPath,
-      args: [
-        '-e',
-        "const {spawn}=require('node:child_process'); const {writeFileSync}=require('node:fs'); const child=spawn(process.execPath,['-e','process.on(\\'SIGTERM\\',()=>{}); setTimeout(()=>{},60000)'],{stdio:'ignore'}); writeFileSync(process.env.CHILD_PID_FILE,String(child.pid)); process.exit(23)",
-      ],
+      args: ['-e', leaderSource],
       cwd: process.cwd(),
       env: { ...process.env, CHILD_PID_FILE: pidPath },
       detached: true,
     });
-    const result = await processHandle.waitForExit(5_000);
-    assert.equal(result.code, 23);
-    await stopOwnedProcess(processHandle, { graceMs: 200 });
-    const childPid = Number(await readFile(pidPath, 'utf8'));
-    assert.throws(() => process.kill(childPid, 0));
+    let childPid;
+    let cleanupResult;
+    try {
+      const result = await processHandle.waitForExit(5_000);
+      assert.equal(result.code, 23);
+      childPid = Number(await readFile(pidPath, 'utf8'));
+      // kill(pid, 0) reports Linux zombies as present, so processAlive checks /proc state.
+      assert.equal(processAlive(childPid), true);
+    } finally {
+      cleanupResult = await stopOwnedProcess(processHandle, { graceMs: 200 });
+    }
+    assert.equal(cleanupResult?.timedOut, undefined);
+    assert.equal(processHandle.exitResult?.code, 23);
+    assert.equal((await processHandle.waitForClose(2_000)).code, 23);
+    assert.equal(processAlive(processHandle.pid), false);
+    assert.equal(await waitForProcessStop(childPid), true);
+    assert.equal(processHandle.child.stdout?.destroyed, true);
+    assert.equal(processHandle.child.stderr?.destroyed, true);
   },
 );
 
