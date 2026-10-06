@@ -17,7 +17,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:unit": "vitest run --config ./vitest.unit.config.ts",
-    "test:db": "vitest run",
+    "test:db": "vitest run --exclude \"**/*.unit.test.ts\"",
     "seed:local": "node --import tsx src/local-seed/cli.ts",
     "prisma": "prisma",
     "prisma:generate": "node scripts/generate-prisma.mjs"

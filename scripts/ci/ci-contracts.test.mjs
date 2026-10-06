@@ -1,0 +1,282 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import {
+  EXPECTED_JOB_IDS,
+  EXPECTED_LANE_IDS,
+  EXPECTED_STEP_IDS,
+  aggregateQualification,
+  createProducerEvidence,
+  laneArtifactName,
+  releaseIdFor,
+  sha256FileContent,
+  validateProducerEvidence,
+} from './ci-contracts.mjs';
+
+const context = {
+  releaseId: releaseIdFor({ runId: '99', sourceSha: 'a'.repeat(40) }),
+  runId: '99',
+  currentAttempt: 2,
+  sourceSha: 'a'.repeat(40),
+  workflowSha: 'b'.repeat(40),
+  imageFiles: {
+    'images-api': '{"spdxVersion":"2.3","name":"api"}',
+    'images-worker': '{"spdxVersion":"2.3","name":"worker"}',
+    'images-admin-web': '{"spdxVersion":"2.3","name":"admin-web"}',
+  },
+  imageInspections: {
+    'images-api': `sha256:${'c'.repeat(64)}`,
+    'images-worker': `sha256:${'c'.repeat(64)}`,
+    'images-admin-web': `sha256:${'c'.repeat(64)}`,
+  },
+};
+
+function evidence(laneId, result = 'PASS', runAttempt = 2) {
+  const service = laneId.startsWith('images-') ? laneId.slice('images-'.length) : undefined;
+  const imageContent = service ? context.imageFiles[laneId] : undefined;
+  const image = service
+    ? {
+        service,
+        sourceTag: `imeal/${service}:${context.sourceSha}`,
+        imageId: `sha256:${'c'.repeat(64)}`,
+        sbomSha256: sha256FileContent(imageContent),
+        sbomPath: `build-image-sbom-${service}.spdx.json`,
+      }
+    : undefined;
+  return createProducerEvidence({
+    ...context,
+    laneId,
+    result,
+    runAttempt,
+    workflowSha: context.workflowSha,
+    artifactName: laneArtifactName(context.releaseId, laneId),
+    image,
+    steps: EXPECTED_STEP_IDS[laneId].map((id) => ({
+      id,
+      result,
+      elapsedMs: 12,
+      exitCode: result === 'PASS' ? 0 : 1,
+      argv: service && ['scan', 'sbom'].includes(id)
+        ? ['docker', 'run', `docker:${image.imageId}`]
+        : service && id === 'build'
+          ? ['docker', 'build']
+          : ['node', id],
+    })),
+  });
+}
+
+function allEvidence() {
+  return EXPECTED_LANE_IDS.map((laneId) => evidence(laneId));
+}
+
+function successfulNeeds() {
+  return Object.fromEntries(EXPECTED_JOB_IDS.map((jobId) => [jobId, { result: 'success' }]));
+}
+
+test('release identity is stable across rerun attempts', () => {
+  assert.equal(
+    releaseIdFor({ runId: '99', sourceSha: 'a'.repeat(40) }),
+    releaseIdFor({ runId: '99', sourceSha: 'a'.repeat(40), runAttempt: 1 }),
+  );
+});
+
+test('aggregator requires every producer lane and job result', () => {
+  assert.throws(
+    () =>
+      aggregateQualification({
+        evidence: allEvidence().slice(1),
+        needs: successfulNeeds(),
+        context,
+      }),
+    /missing producer evidence/i,
+  );
+
+  const needs = successfulNeeds();
+  delete needs[EXPECTED_JOB_IDS[0]];
+  assert.throws(
+    () => aggregateQualification({ evidence: allEvidence(), needs, context }),
+    /missing producer job result/i,
+  );
+});
+
+test('aggregator reports producer failures and preserves diagnostics', () => {
+  const failed = evidence(EXPECTED_LANE_IDS[0], 'FAIL');
+  failed.diagnostics = ['command failed: redacted diagnostic'];
+  const report = aggregateQualification({
+    evidence: [failed, ...allEvidence().slice(1)],
+    needs: successfulNeeds(),
+    context,
+  });
+  assert.equal(report.result, 'FAIL');
+  assert.equal(report.verifiedStatuses[EXPECTED_LANE_IDS[0]], 'FAIL');
+  assert.deepEqual(report.failureDiagnostics[0].diagnostics, [
+    'command failed: redacted diagnostic',
+  ]);
+});
+
+test('aggregate PASS maps actual verified statuses rather than unconditional PASS', () => {
+  const report = aggregateQualification({
+    evidence: allEvidence(),
+    needs: successfulNeeds(),
+    context,
+  });
+  assert.equal(report.result, 'PASS');
+  assert.deepEqual(
+    Object.values(report.verifiedStatuses),
+    EXPECTED_LANE_IDS.map(() => 'PASS'),
+  );
+  assert.equal(report.provenance.runId, context.runId);
+  assert.equal(report.provenance.sourceSha, context.sourceSha);
+});
+
+test('global cancellation fails closed even when every producer and job reports success', () => {
+  const report = aggregateQualification({
+    evidence: allEvidence(),
+    needs: successfulNeeds(),
+    context: { ...context, cancelled: true },
+  });
+  assert.equal(report.result, 'FAIL');
+  assert.match(report.failureDiagnostics[0].diagnostics[0], /globally cancelled/i);
+});
+
+test('provenance rejects a producer from another workflow, source, run, or future attempt', () => {
+  for (const patch of [
+    { workflowSha: 'c'.repeat(40) },
+    { sourceSha: 'c'.repeat(40) },
+    { runId: '100' },
+    { runAttempt: 3 },
+  ]) {
+    const item = { ...evidence(EXPECTED_LANE_IDS[0]), ...patch };
+    assert.throws(() => validateProducerEvidence(item, { ...context }), /provenance|attempt/i);
+  }
+});
+
+test('partial rerun accepts prior producer evidence only when it is bound to this run and source', () => {
+  const item = evidence(EXPECTED_LANE_IDS[0], 'PASS', 1);
+  assert.equal(validateProducerEvidence(item, context).result, 'PASS');
+  assert.throws(
+    () => validateProducerEvidence({ ...item, runAttempt: 0 }, context),
+    /attempt/i,
+  );
+});
+test('mandatory job failures fail closed while unknown or missing job results reject', () => {
+  for (const result of ['failure', 'cancelled', 'skipped']) {
+    const needs = successfulNeeds();
+    needs[EXPECTED_JOB_IDS[0]] = { result };
+    const report = aggregateQualification({
+      evidence: allEvidence(),
+      needs,
+      context,
+    });
+    assert.equal(report.result, 'FAIL');
+    assert.equal(report.jobStatuses[EXPECTED_JOB_IDS[0]], result);
+  }
+
+  for (const result of ['', 'successfully', null]) {
+    const needs = successfulNeeds();
+    needs[EXPECTED_JOB_IDS[0]] = { result };
+    assert.throws(
+      () => aggregateQualification({ evidence: allEvidence(), needs, context }),
+      /job result/i,
+    );
+  }
+
+  assert.throws(
+    () =>
+      aggregateQualification({
+        evidence: [],
+        needs: {},
+        context,
+      }),
+    /missing producer job result|missing producer evidence/i,
+  );
+});
+
+test('aggregator rejects duplicate or incomplete lane sets', () => {
+  const first = evidence(EXPECTED_LANE_IDS[0]);
+  assert.throws(
+    () =>
+      aggregateQualification({
+        evidence: [first, first, ...allEvidence().slice(1)],
+        needs: successfulNeeds(),
+        context,
+      }),
+    /duplicate/i,
+  );
+  assert.throws(
+    () =>
+      aggregateQualification({
+        evidence: [...allEvidence(), { ...first, laneId: 'unexpected-lane' }],
+        needs: successfulNeeds(),
+        context,
+      }),
+    /unexpected|duplicate/i,
+  );
+});
+
+test('PASS producer cannot hide failed, blocked, missing, or inconsistent substeps', () => {
+  for (const patch of [
+    { steps: [{ id: 'step', result: 'FAIL', elapsedMs: 1, exitCode: 1 }] },
+    { steps: [{ id: 'step', result: 'BLOCKED', elapsedMs: 1, exitCode: -2 }] },
+    { steps: [] },
+    { steps: [{ id: 'step', result: 'PASS', elapsedMs: 1, exitCode: 1 }] },
+    { steps: [{ id: 'step', result: 'PASS', elapsedMs: 1 }] },
+  ]) {
+    assert.throws(
+      () =>
+        validateProducerEvidence(
+          { ...evidence(EXPECTED_LANE_IDS[0]), ...patch },
+          context,
+        ),
+      /step|PASS|exit/i,
+    );
+  }
+});
+
+test('image evidence requires inspected immutable identity and SBOM content binding', () => {
+  const imageLane = EXPECTED_LANE_IDS.find((laneId) => laneId.startsWith('images-'));
+  assert.ok(imageLane);
+  const valid = evidence(imageLane);
+  assert.equal(validateProducerEvidence(valid, context).image.imageId, valid.image.imageId);
+  const brokenContent = {
+    ...context,
+    imageFiles: { ...context.imageFiles, [imageLane]: 'tampered SBOM bytes' },
+  };
+  assert.throws(
+    () =>
+      aggregateQualification({
+        evidence: allEvidence(),
+        needs: successfulNeeds(),
+        context: brokenContent,
+      }),
+    /SBOM content hash mismatch/i,
+  );
+  const brokenIdentity = {
+    ...context,
+    imageInspections: {
+      ...context.imageInspections,
+      [imageLane]: `sha256:${'e'.repeat(64)}`,
+    },
+  };
+  assert.throws(
+    () =>
+      aggregateQualification({
+        evidence: allEvidence(),
+        needs: successfulNeeds(),
+        context: brokenIdentity,
+      }),
+    /inspected image identity mismatch/i,
+  );
+  assert.equal(validateProducerEvidence(valid, context).image.imageId, valid.image.imageId);
+  for (const image of [
+    { ...valid.image, imageId: `imeal/${imageLane}: ${context.sourceSha}` },
+    { ...valid.image, imageId: 'not-an-image-id' },
+    { ...valid.image, sbomSha256: 'not-a-hash' },
+    { ...valid.image, service: 'other' },
+    { ...valid.image, sbomPath: '../outside.spdx.json' },
+  ]) {
+    assert.throws(
+      () => validateProducerEvidence({ ...valid, image }, context),
+      /image|SBOM|digest|service|path/i,
+    );
+  }
+});

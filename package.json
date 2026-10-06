@@ -16,6 +16,7 @@
     "test:unit": "turbo run test:unit --concurrency=1 --filter=@imeal/core --filter=@imeal/contracts --filter=@imeal/api --filter=@imeal/worker",
     "test:db": "turbo run test:db --concurrency=1 --filter=@imeal/core --filter=@imeal/api --filter=@imeal/worker",
     "test:build-order": "node --test scripts/build-order.test.mjs",
+    "ci:verify": "node scripts/ci/ci-verify.mjs",
     "verify:production-boundary": "node scripts/verify-production-boundary.mjs",
     "test:production-boundary": "node --test scripts/verify-production-boundary.test.mjs",
     "test:staging-tools": "node --test scripts/staging/*.test.mjs",

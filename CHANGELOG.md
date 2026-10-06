@@ -8,6 +8,11 @@
 - Prisma metadata generation is an explicit domain build prerequisite, uses a build-only nonsecret URL, and is cached with the generated source while remaining ignored; clean-copy and schema-change regressions cover missing-output and invalidation behavior.
 - Protected staging image qualification now scans immutable image archives with Trivy and retains redacted scan reports and advisory metadata for audit review.
 
+- CI qualification now uses a Node 24/Yarn 4.18 command catalogue, immutable producer evidence, explicit per-lane downloads, cancellation-safe owned subprocess cleanup, and fail-closed protected staging gates. Default local verification does not launch Docker; this task exercised that default and leaves disposable PostgreSQL and image/secrets scanners blocked unless authorized CI execution is available.
+- Independent cold-copy verification passed immutable install, typecheck, unit, build, build-order, and mobile/admin/observability client suites. The current dependency audit remains blocking: published `braces@3.0.3` and `node-forge@1.4.0` are still reported high severity by Yarn audit; no compatible patched release was available, so no waiver or severity exclusion was added.
+
+- Platform limits are recorded explicitly: Windows Node 24 is the exercised local runtime; WSL probing found only the Docker Desktop distribution, so POSIX signal-group and Linux container qualification remains unconfirmed until an authorized Linux runner. Protected reruns keep stable producer names with overwrite for same-run evidence and use attempt-scoped protected release artifacts; every deployment requires current-run source/workflow/run provenance.
+
 ## Unreleased — 2026-10-04
 
 ### Changed
