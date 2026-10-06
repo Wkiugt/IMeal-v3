@@ -13,11 +13,14 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "yarn prisma:generate && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:unit": "vitest run --config ./vitest.unit.config.ts",
+    "test:db": "vitest run",
     "seed:local": "node --import tsx src/local-seed/cli.ts",
-    "prisma": "prisma"
+    "prisma": "prisma",
+    "prisma:generate": "node scripts/generate-prisma.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",

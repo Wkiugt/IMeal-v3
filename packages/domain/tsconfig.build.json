@@ -7,10 +7,11 @@
     "target": "ES2023",
     "rootDir": "./src",
     "outDir": "./dist",
+    "tsBuildInfoFile": "./dist/tsconfig.build.tsbuildinfo",
     "declaration": true,
     "sourceMap": true,
-    "incremental": true,
     "strict": true,
+    "incremental": true,
     "skipLibCheck": true
   },
   "include": ["src"]

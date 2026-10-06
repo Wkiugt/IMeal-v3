@@ -69,12 +69,10 @@ jobs:
       - name: Install dependencies immutably
         run: yarn install --immutable
 
-      - name: Validate and generate Prisma client
+      - name: Validate Prisma schema
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public
-        run: |
-          yarn workspace @imeal/core exec prisma validate --schema prisma/schema.prisma
-          yarn workspace @imeal/core exec prisma generate --schema prisma/schema.prisma
+        run: yarn workspace @imeal/core exec prisma validate --schema prisma/schema.prisma
 
       - name: Record release identity
         id: release
@@ -95,8 +93,7 @@ jobs:
         working-directory: apps/mobile
         run: |
           set -euo pipefail
-          yarn workspace @imeal/core build
-          yarn workspace @imeal/contracts build
+          yarn turbo run build --filter=@imeal/core --filter=@imeal/contracts
           metro_log="$RUNNER_TEMP/imeal-metro.log"
           yarn exec expo start --clear --localhost >"$metro_log" 2>&1 &
           metro_pid=$!
@@ -136,6 +133,8 @@ jobs:
       - name: Run unit and contract tests
         run: yarn test:unit
 
+      - name: Verify build dependency ordering
+        run: yarn test:build-order
       - name: Apply migrations to disposable PostgreSQL
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public
@@ -168,8 +167,24 @@ jobs:
           docker build --file apps/admin-web/Dockerfile --tag imeal/admin-web:${GITHUB_SHA} .
 
       - name: Audit dependencies
-        run: yarn npm audit --all --recursive
+        id: audit
+        run: |
+          mkdir -p "$RUNNER_TEMP/staging-artifacts"
+          audit_log="$RUNNER_TEMP/staging-artifacts/dependency-audit.log"
+          set +e
+          yarn npm audit --all --recursive >"$audit_log" 2>&1
+          audit_status=$?
+          cat "$audit_log"
+          exit "$audit_status"
 
+      - name: Upload dependency audit diagnostics
+        if: ${{ always() && steps.audit.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/staging-artifacts/dependency-audit.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Scan source for secrets with redacted output
         run: >-
           docker run --rm
@@ -376,30 +391,22 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/trivy-cache"
           mkdir -p "$RUNNER_TEMP/staging-artifacts"
+          cleanup_scan_archives() {
+            rm -f "$RUNNER_TEMP"/deployed-image-*.tar
+          }
+          trap cleanup_scan_archives EXIT
           for service in api worker admin-web; do
-            image="$(
-              node --input-type=module - \
-                "$RUNNER_TEMP/images.json" "$service" <<'NODE'
-          import { readFile } from 'node:fs/promises';
-          const [path, service] = process.argv.slice(2);
-          const images = JSON.parse(await readFile(path, 'utf8'));
-          const key = service === 'admin-web' ? 'adminWeb' : service;
-          process.stdout.write(images[key]);
-          NODE
-            )"
-            if ! docker pull "$image" \
-              >"$RUNNER_TEMP/staging-artifacts/deployed-image-pull-${service}.log" 2>&1; then
-              echo 'failed to pull a protected deployment image digest' >&2
-              exit 1
-            fi
-            if ! docker run --rm --pull=always \
-              --volume "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
-              "${TRIVY_IMAGE}" \
-              image --timeout 15m --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$image" \
-              >"$RUNNER_TEMP/staging-artifacts/deployed-image-trivy-${service}.log" 2>&1; then
-              echo 'protected deployment image security scan failed' >&2
-              exit 1
-            fi
+            node scripts/staging/image-scan.mjs \
+              --images-json "$RUNNER_TEMP/images.json" \
+              --service "$service" \
+              --trivy-image "${TRIVY_IMAGE}" \
+              --cache-directory "$RUNNER_TEMP/trivy-cache" \
+              --archive "$RUNNER_TEMP/deployed-image-${service}.tar" \
+              --report "$RUNNER_TEMP/staging-artifacts/deployed-image-trivy-${service}.log" \
+              || {
+                echo 'protected deployment image security scan failed' >&2
+                exit 1
+              }
           done
 
       - name: Render protected staging Compose configuration

@@ -6,7 +6,6 @@ FROM base AS builder
 WORKDIR /app
 COPY . .
 RUN yarn install --immutable
-RUN DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public yarn workspace @imeal/core prisma generate
 RUN yarn turbo run build --filter=@imeal/api...
 
 FROM base AS runner

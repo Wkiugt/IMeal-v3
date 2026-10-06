@@ -17,4 +17,5 @@ node_modules
 **/*.migration-evidence.json
 apps/admin-web/penalties-preview.html
 apps/admin-web/preview.html
+packages/domain/src/generated/
 **/*.tsbuildinfo

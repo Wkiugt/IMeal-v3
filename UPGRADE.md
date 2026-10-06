@@ -25,7 +25,7 @@ For any Expo 54 → 55 migration step, React Native's New Architecture is mandat
 
 ### Prisma and backend
 
-Prisma was upgraded from 5.22.0 to stable 7.10.0 with the canonical generated-client output, explicit `prisma.config.ts` datasource, and PostgreSQL driver adapter; the existing ten migrations are unchanged. API Nest common/core/schedule resolve to 12.0.1 with platform-fastify 12.0.4; worker common/core/schedule resolve to 12.0.1 with platform-express 12.1.2 and multer 2.4.0. API and worker TypeScript resolve to 6.0.3. The disposable PostgreSQL verification uses port 55432 only; it runs `validate`, `generate`, `migrate deploy`, and `migrate status`.
+Prisma was upgraded from 5.22.0 to stable 7.10.0 with the canonical generated-client output, explicit `prisma.config.ts` datasource, and PostgreSQL driver adapter; the existing ten migrations are unchanged. API Nest common/core/schedule resolve to 12.0.1 with platform-fastify 12.0.4; worker common/core/schedule resolve to 12.0.1 with platform-express 12.1.2 and multer 2.4.0. Domain builds now run metadata-only `prisma:generate` with a build-scoped nonsecret URL before TypeScript, and Turbo caches the ignored generated source with the domain build. API and worker TypeScript resolve to 6.0.3. The disposable PostgreSQL verification uses port 55432 only; it runs `validate`, `generate`, `migrate deploy`, and `migrate status`.
 
 ### CI and staging boundary
 
@@ -55,6 +55,6 @@ The root `package.json` contains descriptor-specific resolutions only:
 
 These are narrow, consumer-tested fixes for exact vulnerable descriptors; they are not global major-version overrides. `corepack yarn install --immutable` must pass after dependency changes.
 
-The final recursive Yarn audit remains non-zero only for the unfixed `braces@3.0.3` high advisory, `node-forge@1.4.0` high advisory, and registry deprecation findings. No advisory is suppressed. See `docs/superpowers/evidence/2026-10-04-final-dependency-audit.md` for paths, IDs, and evidence.
+The final recursive Yarn audit remains non-zero only for the unfixed `braces@3.0.3` high advisory, `node-forge@1.4.0` high advisory, and registry deprecation findings. No advisory is suppressed. See [`2026-10-04 final dependency audit`](docs/superpowers/evidence/2026-10-04-final-dependency-audit.md) and its [`2026-10-06 current reassessment`](docs/superpowers/evidence/2026-10-06-dependency-audit.md) for paths, IDs, reachability, and evidence.
 
 The consolidated final qualification record, exact upgrade-authored file inventory, final image bindings, scanner evidence, commands, and blockers are maintained in [`docs/superpowers/evidence/2026-10-04-prisma7-checkpoint.md`](docs/superpowers/evidence/2026-10-04-prisma7-checkpoint.md).

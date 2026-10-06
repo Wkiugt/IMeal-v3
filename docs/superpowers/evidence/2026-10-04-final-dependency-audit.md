@@ -1,6 +1,7 @@
 # Final dependency audit and security lock evidence
 
 Date: 2026-10-04
+Current reassessment: [`2026-10-06 dependency audit addendum`](2026-10-06-dependency-audit.md).
 
 ## Commands and lock state
 
@@ -34,17 +35,17 @@ For the worker, the official parent was upgraded from `@nestjs/platform-express^
 
 These are the installed versions resolved by each workspace after the final immutable install (not manifest ranges):
 
-| Workspace | TypeScript | Nest installed paths | Vite | Vitest |
-| --- | --- | --- | --- | --- |
-| repository root | 5.9.3 | — | 8.2.2 | 4.1.11 |
-| `apps/mobile` | 6.0.3 | — | 8.2.2 | 4.1.11 |
-| `apps/admin-web` | 5.9.3 | — | 8.2.2 | 4.1.11 |
-| `apps/api` | 6.0.3 | common/core/schedule 12.0.1; platform-fastify 12.0.4; CLI 12.0.0 | 8.2.2 | 4.1.11 |
-| `apps/worker` | 6.0.3 | common/core/schedule 12.0.1; platform-express 12.1.2; CLI 12.0.0 | 8.2.2 | 4.1.11 |
-| `packages/contracts` | 5.9.3 | — | 8.2.2 | 4.1.11 |
-| `packages/observability` | 5.9.3 | — | 8.2.2 | 4.1.11 |
-| `packages/domain` (`@imeal/core`) | 5.9.3 | — | 8.2.2 | 4.1.11 |
-| `packages/ui` | none declared; root-hoisted 5.9.3 resolves | — | — | — |
+| Workspace                         | TypeScript                                 | Nest installed paths                                             | Vite  | Vitest |
+| --------------------------------- | ------------------------------------------ | ---------------------------------------------------------------- | ----- | ------ |
+| repository root                   | 5.9.3                                      | —                                                                | 8.2.2 | 4.1.11 |
+| `apps/mobile`                     | 6.0.3                                      | —                                                                | 8.2.2 | 4.1.11 |
+| `apps/admin-web`                  | 5.9.3                                      | —                                                                | 8.2.2 | 4.1.11 |
+| `apps/api`                        | 6.0.3                                      | common/core/schedule 12.0.1; platform-fastify 12.0.4; CLI 12.0.0 | 8.2.2 | 4.1.11 |
+| `apps/worker`                     | 6.0.3                                      | common/core/schedule 12.0.1; platform-express 12.1.2; CLI 12.0.0 | 8.2.2 | 4.1.11 |
+| `packages/contracts`              | 5.9.3                                      | —                                                                | 8.2.2 | 4.1.11 |
+| `packages/observability`          | 5.9.3                                      | —                                                                | 8.2.2 | 4.1.11 |
+| `packages/domain` (`@imeal/core`) | 5.9.3                                      | —                                                                | 8.2.2 | 4.1.11 |
+| `packages/ui`                     | none declared; root-hoisted 5.9.3 resolves | —                                                                | —     | —      |
 
 `packages/ui` declares no TypeScript compiler or test script; the root typecheck does not include this package. Its project-relative TypeScript resolution was checked once and resolved to the root-hoisted `5.9.3`.
 
@@ -65,15 +66,15 @@ The following affected paths were removed from the final audit output by compati
 
 The registry still reports these findings, with exact current paths and fixed-version boundaries:
 
-| Package and current path | Severity / advisory | Fixed boundary or status |
-| --- | --- | --- |
-| `braces@3.0.3` via `micromatch@4.0.8` | High, GHSA-vfj7-8cjw-p6xm | Affected `<=3.0.3`; npm's stable latest is still `3.0.3`, so no fixed release exists in the required 3.x line. |
-| `node-forge@1.4.0` via `@expo/cli@57.0.27` | High, GHSA-86w9-cpqp-85rv | Affected `<=1.4.0`; npm currently publishes no version beyond `1.4.0`, so no fixed release is available. |
-| `text-encoding@0.7.0` via `react-native-qrcode-svg@6.3.22` | Moderate deprecation | Package is unmaintained; no replacement was introduced speculatively. |
-| `tsconfck@3.1.6` via `vite-tsconfig-paths@5.1.4` | Moderate deprecation | Current npm 3.x remains `3.1.6`; no fixed 3.x release is published. |
-| `glob@7.2.3`, `inflight@1.0.6`, `rimraf@3.0.2` via legacy ESLint/flat-cache tooling | Moderate deprecations | Remediation requires parent/tooling major migration; no gate was weakened. |
-| `eslint@8.57.1` and its `@humanwhocodes/*` dependencies | Moderate deprecation | ESLint 8 is unsupported; the current root configuration has not been silently migrated to ESLint 9. |
-| `whatwg-encoding@3.1.1` via `jsdom@26.1.0` | Moderate deprecation | npm's current release remains `3.1.1`; no fixed release is available. |
+| Package and current path                                                            | Severity / advisory       | Fixed boundary or status                                                                                       |
+| ----------------------------------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `braces@3.0.3` via `micromatch@4.0.8`                                               | High, GHSA-vfj7-8cjw-p6xm | Affected `<=3.0.3`; npm's stable latest is still `3.0.3`, so no fixed release exists in the required 3.x line. |
+| `node-forge@1.4.0` via `@expo/cli@57.0.27`                                          | High, GHSA-86w9-cpqp-85rv | Affected `<=1.4.0`; npm currently publishes no version beyond `1.4.0`, so no fixed release is available.       |
+| `text-encoding@0.7.0` via `react-native-qrcode-svg@6.3.22`                          | Moderate deprecation      | Package is unmaintained; no replacement was introduced speculatively.                                          |
+| `tsconfck@3.1.6` via `vite-tsconfig-paths@5.1.4`                                    | Moderate deprecation      | Current npm 3.x remains `3.1.6`; no fixed 3.x release is published.                                            |
+| `glob@7.2.3`, `inflight@1.0.6`, `rimraf@3.0.2` via legacy ESLint/flat-cache tooling | Moderate deprecations     | Remediation requires parent/tooling major migration; no gate was weakened.                                     |
+| `eslint@8.57.1` and its `@humanwhocodes/*` dependencies                             | Moderate deprecation      | ESLint 8 is unsupported; the current root configuration has not been silently migrated to ESLint 9.            |
+| `whatwg-encoding@3.1.1` via `jsdom@26.1.0`                                          | Moderate deprecation      | npm's current release remains `3.1.1`; no fixed release is available.                                          |
 
 ## Consumer verification
 

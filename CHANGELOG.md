@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — 2026-10-06
+
+### Changed
+
+- Root typecheck, unit, and database tasks now share Turbo dependency preparation, so each command builds its workspace dependencies independently without relying on prior local artifacts.
+- Prisma metadata generation is an explicit domain build prerequisite, uses a build-only nonsecret URL, and is cached with the generated source while remaining ignored; clean-copy and schema-change regressions cover missing-output and invalidation behavior.
+- Protected staging image qualification now scans immutable image archives with Trivy and retains redacted scan reports and advisory metadata for audit review.
+
 ## Unreleased — 2026-10-04
 
 ### Changed
