@@ -93,7 +93,7 @@ jobs:
         working-directory: apps/mobile
         run: |
           set -euo pipefail
-          yarn turbo run build --filter=@imeal/core --filter=@imeal/contracts
+          yarn run --top-level turbo run build --filter=@imeal/core --filter=@imeal/contracts
           metro_log="$RUNNER_TEMP/imeal-metro.log"
           yarn exec expo start --clear --localhost >"$metro_log" 2>&1 &
           metro_pid=$!
