@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,21 +37,57 @@ async function waitForPath(path, timeoutMs = 5_000) {
     try {
       await access(path);
       return true;
-    } catch {}
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
     if (Date.now() >= deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
 
-function processAlive(pid) {
+async function waitForExit(exit, timeoutMs = 5_000) {
+  let timer;
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+    return await Promise.race([
+      exit,
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    if (process.platform === 'linux') {
+      try {
+        const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+        const state = stat.slice(stat.lastIndexOf(')') + 2).trimStart()[0];
+        if (state === 'Z') return false;
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+        return false;
+      }
+    }
+    return true;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+async function waitForProcessStop(pid, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (!processAlive(pid)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
 test('real child checks continue after failure, record elapsed status, and redact split credentials', async () => {
   await withOutput('imeal-ci-dispatch-real-', async (output) => {
     const marker = join(output, 'independent.marker');
@@ -262,9 +299,9 @@ test('signal handler cancellation blocks later real work and cleans its owned de
     assert.equal(producer.steps[0].result, 'FAIL');
     assert.equal(producer.steps[1].result, 'BLOCKED');
     assert.equal(producer.steps[1].exitCode, -2);
-    assert.equal(await waitForPath(later, 250), false);
+    assert.equal(await waitForPath(later, 500), false);
     const descendantPid = Number(await readFile(pidPath, 'utf8'));
-    assert.equal(processAlive(descendantPid), false);
+    assert.equal(await waitForProcessStop(descendantPid), true);
   });
 });
 
@@ -279,8 +316,8 @@ test(
       const descendant = join(output, 'descendant.mjs');
       const first = join(output, 'first.mjs');
       const commandsPath = join(output, 'commands.json');
-      await writeFile(descendant, `import { writeFile } from 'node:fs/promises'; await writeFile(process.argv[1], String(process.pid)); setInterval(() => {}, 1000);`);
-      await writeFile(first, `import { access, writeFile } from 'node:fs/promises'; import { spawn } from 'node:child_process'; const [readyPath, pidPath, descendantPath] = process.argv.slice(1); spawn(process.execPath, [descendantPath, pidPath], { stdio: 'ignore' }); for (let i = 0; i < 200; i += 1) { try { await access(pidPath); break; } catch { await new Promise((resolve) => setTimeout(resolve, 10)); } } await writeFile(readyPath, 'ready'); setInterval(() => {}, 1000);`);
+      await writeFile(descendant, `import { writeFile } from 'node:fs/promises'; await writeFile(process.argv[2], String(process.pid)); setInterval(() => {}, 1000);`);
+      await writeFile(first, `import { access, writeFile } from 'node:fs/promises'; import { spawn } from 'node:child_process'; const [readyPath, pidPath, descendantPath] = process.argv.slice(2); spawn(process.execPath, [descendantPath, pidPath], { stdio: 'ignore' }); for (let i = 0; i < 200; i += 1) { try { await access(pidPath); break; } catch { await new Promise((resolve) => setTimeout(resolve, 10)); } } await writeFile(readyPath, 'ready'); setInterval(() => {}, 1000);`);
       await writeFile(commandsPath, JSON.stringify([
         { id: 'typecheck', timeoutMs: 10_000, argv: [process.execPath, first, ready, pidPath, descendant] },
         { id: 'lint', argv: nodeCommand(`import { writeFile } from 'node:fs/promises'; await writeFile(${JSON.stringify(later)}, 'ran')`) },
@@ -291,14 +328,29 @@ test(
       try {
         assert.equal(await waitForPath(ready), true);
         assert.equal(child.kill('SIGTERM'), true);
-        const result = await Promise.race([exit, new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), 15_000))]);
+        const result = await waitForExit(exit, 10_000);
         assert.equal(result.timedOut, undefined);
         assert.ok(Number.isInteger(result.code) && result.code !== 0);
-        assert.equal(await waitForPath(later, 250), false);
+        const producer = JSON.parse(await readFile(join(output, 'producer-result.json'), 'utf8'));
+        assert.equal(producer.result, 'FAIL');
+        assert.equal(producer.steps[0].result, 'FAIL');
+        assert.equal(producer.steps[1].result, 'BLOCKED');
+        assert.equal(await waitForPath(later, 500), false);
         const descendantPid = Number(await readFile(pidPath, 'utf8'));
-        assert.equal(processAlive(descendantPid), false);
+        assert.equal(await waitForProcessStop(descendantPid), true);
       } finally {
-        if (!child.killed) child.kill('SIGKILL');
+        if (!child.killed) child.kill('SIGTERM');
+        const cleanup = await waitForExit(exit, 5_000);
+        if (cleanup.timedOut) {
+          child.kill('SIGKILL');
+          const forcedCleanup = await waitForExit(exit, 5_000);
+          assert.equal(forcedCleanup.timedOut, undefined);
+        }
+        if (await waitForPath(pidPath, 250)) {
+          const descendantPid = Number(await readFile(pidPath, 'utf8'));
+          if (processAlive(descendantPid)) process.kill(descendantPid, 'SIGKILL');
+          assert.equal(await waitForProcessStop(descendantPid), true);
+        }
       }
     });
   },

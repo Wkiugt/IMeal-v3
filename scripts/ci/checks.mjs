@@ -38,7 +38,7 @@ export function commandCatalogue({ lane, outputDirectory, service, kind, trivyIm
     { id: 'unit', argv: yarnArgs('test:unit') },
     { id: 'client-suites', argv: yarnArgs('turbo', 'run', 'test', '--filter=@imeal/mobile', '--filter=@imeal/admin-web', '--filter=@imeal/observability', '--concurrency=1') },
     { id: 'build-order', argv: yarnArgs('test:build-order') },
-    { id: 'ci-behavior', argv: nodeArgs('--test', 'scripts/ci/ci-contracts.test.mjs', 'scripts/ci/ci-dispatcher.test.mjs', 'scripts/ci/ci-verify.test.mjs', 'scripts/ci/workflow-graph.test.mjs', 'scripts/ci/mobile-process.test.mjs', 'scripts/ci/mobile-export.test.mjs', 'scripts/ci/metro-smoke.test.mjs') },
+    { id: 'ci-behavior', argv: nodeArgs('--test', 'scripts/ci/ci-contracts.test.mjs', 'scripts/ci/ci-dispatcher.test.mjs', 'scripts/ci/ci-verify.test.mjs', 'scripts/ci/workflow-graph.test.mjs', 'scripts/ci/mobile-process.test.mjs', 'scripts/ci/mobile-export.test.mjs', 'scripts/ci/metro-smoke.test.mjs', 'scripts/ci/security-audit.test.mjs') },
   ];
   if (lane === 'mobile-export') return [
     { id: 'expo-install-check', argv: yarnArgs('workspace', '@imeal/mobile', 'exec', 'expo', 'install', '--check') },
@@ -61,7 +61,7 @@ export function commandCatalogue({ lane, outputDirectory, service, kind, trivyIm
     { id: 'production-boundary-verify', argv: nodeArgs('scripts/verify-production-boundary.mjs') },
     { id: 'compose', requiresDocker: true, argv: nodeArgs('--test', 'scripts/staging/compose-config.test.mjs') },
   ];
-  if (lane === 'security-audit') return [{ id: 'audit', argv: yarnArgs('npm', 'audit', '--all', '--recursive') }];
+  if (lane === 'security-audit') return [{ id: 'audit', argv: nodeArgs('scripts/ci/security-audit.mjs') }];
   if (lane === 'security-secrets') return [{ id: 'secrets', argv: ['docker', 'run', '--rm', '--volume', `${process.cwd()}:/repo:ro`, 'zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f', 'detect', '--source=/repo', '--redact', '--no-banner', '--exit-code=1'] }];
   if (lane?.startsWith('images-')) {
     const imageService = service ?? lane.slice('images-'.length);

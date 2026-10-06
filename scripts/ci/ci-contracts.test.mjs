@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { commandCatalogue } from './checks.mjs';
 import { test } from 'node:test';
 import {
   EXPECTED_JOB_IDS,
@@ -34,6 +35,17 @@ const context = {
   },
 };
 
+function imageStepArgv(laneId, stepId, imageId) {
+  const service = laneId.slice('images-'.length);
+  const command = commandCatalogue({
+    lane: laneId,
+    service,
+    outputDirectory: '/tmp/imeal-ci-contract-test',
+    trivyImage: `aquasecurity/trivy@sha256:${'d'.repeat(64)}`,
+  }).find((candidate) => candidate.id === stepId);
+  return command.argv.map((arg) => arg.replaceAll('{{IMAGE_ID}}', imageId));
+}
+
 function evidence(laneId, result = 'PASS', runAttempt = 2) {
   const service = laneId.startsWith('images-') ? laneId.slice('images-'.length) : undefined;
   const imageContent = service ? context.imageFiles[laneId] : undefined;
@@ -60,7 +72,7 @@ function evidence(laneId, result = 'PASS', runAttempt = 2) {
       elapsedMs: 12,
       exitCode: result === 'PASS' ? 0 : 1,
       argv: service && ['scan', 'sbom'].includes(id)
-        ? ['docker', 'run', `docker:${image.imageId}`]
+        ? imageStepArgv(laneId, id, image.imageId)
         : service && id === 'build'
           ? ['docker', 'build']
           : ['node', id],
@@ -312,4 +324,58 @@ test('image evidence requires inspected immutable identity and SBOM content bind
       /image|SBOM|digest|service|path/i,
     );
   }
+});
+
+test('image tool targets match catalogue source and exact inspected identity positions', () => {
+  const valid = evidence('images-api');
+  const validated = validateProducerEvidence(valid, context);
+  assert.equal(validated.image.imageId, valid.image.imageId);
+  const scan = valid.steps.find((step) => step.id === 'scan');
+  const sbom = valid.steps.find((step) => step.id === 'sbom');
+
+  const withStepArgv = (stepId, argv) => ({
+    ...valid,
+    steps: valid.steps.map((step) => (step.id === stepId ? { ...step, argv } : step)),
+  });
+  assert.throws(
+    () => validateProducerEvidence(withStepArgv('scan', [...scan.argv.slice(0, -1), valid.image.sourceTag]), context),
+    /target/i,
+  );
+  assert.throws(
+    () => validateProducerEvidence(withStepArgv('scan', [...scan.argv.slice(0, -1), `sha256:${'e'.repeat(64)}`]), context),
+    /target/i,
+  );
+  assert.throws(
+    () => validateProducerEvidence(withStepArgv('scan', [...scan.argv.slice(0, -1), valid.image.imageId, valid.image.sourceTag]), context),
+    /target/i,
+  );
+  assert.throws(
+    () => validateProducerEvidence(withStepArgv('scan', [...scan.argv.slice(0, -1), '--output', valid.image.imageId]), context),
+    /target/i,
+  );
+  const imageSourceIndex = scan.argv.indexOf('--image-src');
+  assert.throws(
+    () => validateProducerEvidence(
+      withStepArgv(
+        'scan',
+        [...scan.argv.slice(0, imageSourceIndex + 2), '--image-src', 'registry', ...scan.argv.slice(imageSourceIndex + 2)],
+      ),
+      context,
+    ),
+    /target/i,
+  );
+  assert.throws(
+    () => validateProducerEvidence(withStepArgv('sbom', sbom.argv.map((arg) => arg === `docker:${valid.image.imageId}` ? valid.image.sourceTag : arg)), context),
+    /target/i,
+  );
+  assert.throws(
+    () => validateProducerEvidence(
+      withStepArgv(
+        'sbom',
+        sbom.argv.map((arg) => arg === `docker:${valid.image.imageId}` ? `docker:sha256:${'e'.repeat(64)}` : arg),
+      ),
+      context,
+    ),
+    /target/i,
+  );
 });

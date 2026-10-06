@@ -193,6 +193,83 @@ function validateImageBinding(image, laneId, context) {
   return image;
 }
 
+function validateImageToolTarget(step, laneId, imageId, stepId) {
+  const argv = step?.argv;
+  const invalid = () => {
+    throw new Error(`producer ${laneId} ${stepId} target is not bound to inspected image`);
+  };
+  if (
+    !Array.isArray(argv) ||
+    argv.some((arg) => typeof arg !== 'string') ||
+    argv[0] !== 'docker' ||
+    argv[1] !== 'run'
+  ) {
+    invalid();
+  }
+  if (stepId === 'scan') {
+    const imageCommandIndexes = argv.flatMap((arg, index) => (arg === 'image' ? [index] : []));
+    const imageCommandIndex = imageCommandIndexes.length === 1 ? imageCommandIndexes[0] : -1;
+    const trivyImage = imageCommandIndex > 0 ? argv[imageCommandIndex - 1] : '';
+    if (
+      imageCommandIndex < 1 ||
+      !/^[A-Za-z0-9._/-]+\/trivy@sha256:[a-f0-9]{64}$/i.test(trivyImage)
+    ) {
+      invalid();
+    }
+    const valueOptions = new Map([
+      ['--image-src', 'docker'],
+      ['--timeout', '15m'],
+      ['--exit-code', '1'],
+      ['--severity', 'HIGH,CRITICAL'],
+    ]);
+    const flagOptions = new Set(['--ignore-unfixed']);
+    const seen = new Set();
+    let target;
+    for (let index = imageCommandIndex + 1; index < argv.length; index += 1) {
+      const arg = argv[index];
+      if (valueOptions.has(arg)) {
+        if (seen.has(arg) || argv[index + 1] !== valueOptions.get(arg)) invalid();
+        seen.add(arg);
+        index += 1;
+      } else if (flagOptions.has(arg)) {
+        if (seen.has(arg)) invalid();
+        seen.add(arg);
+      } else if (target === undefined && !arg.startsWith('-')) {
+        target = arg;
+      } else {
+        invalid();
+      }
+    }
+    if (
+      target !== imageId ||
+      seen.size !== valueOptions.size + flagOptions.size ||
+      argv.filter((arg) => arg === imageId).length !== 1
+    ) {
+      invalid();
+    }
+    return step;
+  }
+  const syftImageIndexes = argv.flatMap((arg, index) =>
+    /^anchore\/syft@sha256:[a-f0-9]{64}$/i.test(arg) ? [index] : [],
+  );
+  const syftImageIndex = syftImageIndexes.length === 1 ? syftImageIndexes[0] : -1;
+  const service = laneId.slice('images-'.length);
+  const expectedTarget = `docker:${imageId}`;
+  const expectedOutput = `spdx-json=/out/build-image-sbom-${service}.spdx.json`;
+  if (
+    syftImageIndex < 0 ||
+    argv[syftImageIndex + 1] !== expectedTarget ||
+    argv[syftImageIndex + 2] !== '--output' ||
+    argv[syftImageIndex + 3] !== expectedOutput ||
+    argv.length !== syftImageIndex + 4 ||
+    argv.filter((arg) => arg === expectedTarget).length !== 1 ||
+    argv.includes(imageId)
+  ) {
+    invalid();
+  }
+  return step;
+}
+
 export function validateProducerEvidence(evidence, context) {
   if (evidence.schemaVersion !== 2 || evidence.type !== 'imeal-ci-producer') {
     throw new Error('producer evidence schema/type is invalid');
@@ -258,12 +335,12 @@ export function validateProducerEvidence(evidence, context) {
     image = evidence.image;
   }
   if (image) {
-    const expectedTarget = `docker:${image.imageId}`;
     for (const stepId of ['scan', 'sbom']) {
       const step = steps.find((candidate) => candidate.id === stepId);
-      if (!step || !step.argv.includes(expectedTarget)) {
+      if (!step) {
         throw new Error(`producer ${laneId} ${stepId} target is not bound to inspected image`);
       }
+      validateImageToolTarget(step, laneId, image.imageId, stepId);
     }
   }
   const validated = { ...evidence, steps, ...(image ? { image } : {}) };
