@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — 2026-10-07
+
+### Changed
+
+- API Nest logs stay structured JSON. The Nest adapter keeps the original message and a non-stack context on stable `nestjs.*` events instead of emitting empty `{"event":"nestjs.log"}` lines. `api.started` now includes `host`, numeric `port`, `service`, `release`, `event`, and a bind message for `0.0.0.0:<port>`. Free-form message, context, host, and port fields are allowlisted only after redaction and token checks.
+
 ## Unreleased — 2026-10-06
 
 ### Changed

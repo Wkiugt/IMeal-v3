@@ -25,6 +25,10 @@ export type SafeLogFields = {
   errorCode?: string;
   providerCode?: string;
   provider?: string;
+  message?: string;
+  context?: string;
+  host?: string;
+  port?: number;
   [key: string]: string | number | boolean | undefined;
 };
 
@@ -53,6 +57,10 @@ const SAFE_FIELD_KEYS: Record<string, true> = {
   total: true,
   attempt: true,
   retry: true,
+  message: true,
+  context: true,
+  host: true,
+  port: true,
 };
 
 const SENSITIVE_LABEL_PATTERN =
@@ -103,11 +111,56 @@ function redactString(
     .replace(/\b-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+\b/g, REDACTED)
     .replace(OTP_LABEL_PATTERN, `$1${REDACTED}`);
 
-  if (context === 'event' || key === 'providerCode') {
+  if (context === 'event' || key === 'providerCode' || key === 'message') {
     redacted = redactPayloadLabels(redacted);
   }
 
   return redacted;
+}
+
+const MESSAGE_MAX_LENGTH = 1024;
+const CONTEXT_TOKEN = /^[A-Za-z][A-Za-z0-9_$.-]{0,63}$/;
+
+function isCredentialFreeBindHost(value: string): boolean {
+  if (
+    value.includes('@') ||
+    value.includes('/') ||
+    value.includes('\\') ||
+    value.includes(':') ||
+    /\s/.test(value)
+  ) {
+    return false;
+  }
+  return value === '0.0.0.0';
+}
+
+function sanitizeMessage(value: unknown): string {
+  if (typeof value !== 'string') return REDACTED;
+  return redactString(value, 'field', 'message').slice(0, MESSAGE_MAX_LENGTH);
+}
+
+function sanitizeContext(value: unknown): string {
+  if (typeof value === 'string' && CONTEXT_TOKEN.test(value)) return value;
+  return REDACTED;
+}
+
+function sanitizeHost(value: unknown): string {
+  if (typeof value === 'string' && isCredentialFreeBindHost(value)) {
+    return value;
+  }
+  return REDACTED;
+}
+
+function sanitizePort(value: unknown): number | string {
+  if (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= 65535
+  ) {
+    return value;
+  }
+  return REDACTED;
 }
 
 function sanitizeField(
@@ -115,6 +168,10 @@ function sanitizeField(
   value: unknown,
 ): string | number | boolean | undefined {
   if (SAFE_FIELD_KEYS[key] !== true) return undefined;
+  if (key === 'message') return sanitizeMessage(value);
+  if (key === 'context') return sanitizeContext(value);
+  if (key === 'host') return sanitizeHost(value);
+  if (key === 'port') return sanitizePort(value);
 
   if (typeof value === 'string') {
     if (key === 'requestId' && !REQUEST_ID_PATTERN.test(value)) {
