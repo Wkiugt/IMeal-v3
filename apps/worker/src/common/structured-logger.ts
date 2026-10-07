@@ -20,6 +20,7 @@ export type WorkerLogFields = Partial<
     | 'durationMs'
     | 'errorCode'
     | 'providerCode'
+    | 'provider'
     | 'method'
     | 'route'
     | 'status'

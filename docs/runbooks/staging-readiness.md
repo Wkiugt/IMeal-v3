@@ -136,7 +136,7 @@ that MUST remain visible in the release decision are:
   credentials, targets, or source payloads;
 - the approved edge WAF/rate-limit control and the alert delivery route are not
   provisioned;
-- no real staging environment, DNS, TLS certificate, OTP provider path,
+- no real staging environment, DNS, TLS certificate, Gmail SMTP OTP path,
   backup/restore rehearsal, alert delivery, UAT, identity approval, or
   location/roster approval has been observed;
 - no production data, credentials, or real operational domains are present in

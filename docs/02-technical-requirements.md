@@ -13,10 +13,10 @@ flowchart LR
     AW[Admin Web] -->|HTTPS + opaque session| RP
     RP --> API[NestJS API]
     API --> PG[(PostgreSQL)]
-    API --> OTP[OTP provider via outbox]
     API --> PUSH[Push provider]
     API --> IMG[Image/Object storage]
-    JOB[Worker / Cron] --> API
+    JOB[Worker / Cron] --> PG
+    JOB -->|SMTP STARTTLS :587| SMTP[smtp.gmail.com]
     K -->|focused/foreground HTTPS poll every 10s| API
 ```
 
@@ -102,9 +102,9 @@ Shared packages may contain API DTO/types and pure domain helpers, but backend r
   non-disclosing response; the API never confirms whether an address exists.
 - OTP verifiers are hashed; clear codes are single-use, bounded by expiry/attempt,
   resend and per-address/client rate limits, and are never logged or persisted.
-- OTP delivery is transactional outbox work. Provider payloads are encrypted until
-  the worker reaches the final delivery boundary and contain only destination,
-  purpose and clear code.
+- OTP delivery is transactional outbox work. The API encrypts a payload of
+  destination, purpose and clear code; only the worker decrypts it and sends
+  mail through Gmail SMTP (`smtp.gmail.com:587`, STARTTLS).
 - Successful verification creates only a high-entropy opaque session token. The
   database stores its one-way hash, expiry/revocation metadata and minimized
   hashed device/IP/user-agent metadata.
@@ -152,8 +152,10 @@ revokes sessions.
   `admin`; any Admin-role lifecycle remains a separately audited server-side
   operation. Account disable is one atomic workflow: preview future commitments,
   require confirmation, cancel/revoke them, persist audit and revoke sessions.
-- API/worker provider calls use outbound HTTPS with secrets injected at runtime;
-  clients never call a federated identity service as part of this contract.
+- Worker OTP delivery uses outbound TCP to `smtp.gmail.com:587` with SMTP
+  credentials injected only into the worker. Other provider calls that remain
+  use outbound HTTPS with secrets injected at runtime; clients never call a
+  federated identity service as part of this contract.
 - Account disable is one atomic Admin workflow: preview current/future
   `ACTIVE` registrations that are unserved and have no existing penalties,
   plus `PENDING|ACCEPTED` delegations in both owner and delegate directions;
@@ -188,8 +190,10 @@ The API remains reachable through its configured HTTPS entry point, while authen
 Requirements:
 
 - PostgreSQL port 5432: not publicly exposed and preferably not exposed to general LAN.
-- API/worker provider calls use outbound HTTPS with secrets injected at runtime;
-  clients never call a federated identity service as part of this contract.
+- Worker OTP delivery uses outbound TCP to `smtp.gmail.com:587`. The worker
+  publishes no inbound ports. Other provider calls that remain use outbound
+  HTTPS with secrets injected at runtime; clients never call a federated
+  identity service as part of this contract.
 - Kitchen menu management and Admin Web always require their explicit server-side role/permission checks.
 - Staff self resolve/confirm require an authenticated Staff principal and are
   always scoped to the caller's own registration. Kitchen QR/dashboard require
@@ -264,11 +268,9 @@ Exact path spelling may change only with the shared API contract. Mobile, Admin 
 
 Production startup is fail-closed. API validation requires `DATABASE_URL`,
 `AUTH_MODE=otp`, `REQUIRE_AUTH=true`, `QR_SIGNING_SECRET`, `OTP_HASH_SECRET`,
-`OTP_DELIVERY_ENCRYPTION_KEY`, `OTP_PROVIDER_URL` (HTTPS),
-`OTP_PROVIDER_API_KEY`, and the production sender identity
-`OTP_PROVIDER_FROM`, all OTP expiry/resend/attempt/rate-limit settings,
+`OTP_DELIVERY_ENCRYPTION_KEY`, all OTP expiry/resend/attempt/rate-limit settings,
 `SESSION_HASH_SECRET`, `SESSION_IDLE_TIMEOUT_SECONDS` and
-`SESSION_ABSOLUTE_TIMEOUT_SECONDS`.
+`SESSION_ABSOLUTE_TIMEOUT_SECONDS`. The API does not receive SMTP credentials.
 
 The same API validation requires positive GPS policy bounds:
 `GPS_DEFAULT_GEOFENCE_RADIUS_METERS`, `GPS_DEFAULT_MAX_FIX_AGE_SECONDS` and
@@ -290,9 +292,13 @@ the session is never replaced. The practical day/location check-in session uses
 server-issued `activeFrom`/`expiresAt`.
 
 Worker startup additionally requires `DATABASE_URL`, the encrypted OTP delivery
-key, HTTPS provider settings and every `OTP_DELIVERY_*` batch/retry/claim setting.
-It validates the same serving invariants. Test-only defaults are available to
-unit tests, never to production.
+key, `OTP_SMTP_USERNAME`, `OTP_SMTP_PASSWORD` (a Google App Password),
+`OTP_SMTP_FROM`, `OTP_EXPIRY_SECONDS`, and every `OTP_DELIVERY_*`
+batch/retry/claim setting. `OTP_SMTP_HOST` and `OTP_SMTP_PORT` are
+hard-defaulted to `smtp.gmail.com` and `587`; TLS is required. The worker is
+attached to the internal data network and a non-internal egress network, and
+it publishes no ports. It validates the same serving invariants. Test-only
+defaults are available to unit tests, never to production.
 
 Mobile uses only `EXPO_PUBLIC_API_URL` (plus the optional
 `EXPO_PACKAGER_PROXY_URL` for remote Metro sessions); Admin Web uses `VITE_API_URL`.

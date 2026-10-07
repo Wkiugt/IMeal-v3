@@ -24,6 +24,7 @@ export type SafeLogFields = {
   durationMs?: number;
   errorCode?: string;
   providerCode?: string;
+  provider?: string;
   [key: string]: string | number | boolean | undefined;
 };
 
@@ -44,6 +45,7 @@ const SAFE_FIELD_KEYS: Record<string, true> = {
   durationMs: true,
   errorCode: true,
   providerCode: true,
+  provider: true,
   method: true,
   route: true,
   status: true,
@@ -116,6 +118,9 @@ function sanitizeField(
 
   if (typeof value === 'string') {
     if (key === 'requestId' && !REQUEST_ID_PATTERN.test(value)) {
+      return REDACTED;
+    }
+    if (key === 'provider' && !/^[a-z0-9-]{1,32}$/.test(value)) {
       return REDACTED;
     }
     const redacted = redactString(value, 'field', key);

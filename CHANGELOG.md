@@ -4,6 +4,8 @@
 
 ### Changed
 
+- OTP email is sent only by the worker through Gmail SMTP (`smtp.gmail.com:587`, STARTTLS, App Password). The API no longer requires an HTTP OTP provider. The production and staging workers join the internal data network and a non-internal egress network, and they still publish no ports.
+
 - Root typecheck, unit, and database tasks now share Turbo dependency preparation, so each command builds its workspace dependencies independently without relying on prior local artifacts.
 - Prisma metadata generation is an explicit domain build prerequisite, uses a build-only nonsecret URL, and is cached with the generated source while remaining ignored; clean-copy and schema-change regressions cover missing-output and invalidation behavior.
 - Protected staging image qualification now scans immutable image archives with Trivy and retains redacted scan reports and advisory metadata for audit review.

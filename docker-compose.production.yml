@@ -54,7 +54,7 @@ services:
     networks:
       - data
     healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://127.0.0.1:9000/minio/health/live']
+      test: ['CMD', '/usr/bin/mc', 'ready', 'local']
       interval: 10s
       timeout: 5s
       retries: 12
@@ -72,7 +72,7 @@ services:
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint: ['/bin/sh', '-ec']
+    entrypoint: ['/usr/bin/bash', '-ec']
     command:
       - >-
         /usr/bin/mc alias set myminio http://minio:9000 "$${MINIO_ROOT_USER}"
@@ -132,9 +132,6 @@ services:
       QR_SIGNING_SECRET: ${QR_SIGNING_SECRET:?QR_SIGNING_SECRET is required}
       OTP_HASH_SECRET: ${OTP_HASH_SECRET:?OTP_HASH_SECRET is required}
       OTP_DELIVERY_ENCRYPTION_KEY: ${OTP_DELIVERY_ENCRYPTION_KEY:?OTP_DELIVERY_ENCRYPTION_KEY is required}
-      OTP_PROVIDER_URL: ${OTP_PROVIDER_URL:?OTP_PROVIDER_URL is required}
-      OTP_PROVIDER_API_KEY: ${OTP_PROVIDER_API_KEY:?OTP_PROVIDER_API_KEY is required}
-      OTP_PROVIDER_FROM: ${OTP_PROVIDER_FROM:?OTP_PROVIDER_FROM is required}
       OTP_EXPIRY_SECONDS: ${OTP_EXPIRY_SECONDS:?OTP_EXPIRY_SECONDS is required}
       OTP_RESEND_SECONDS: ${OTP_RESEND_SECONDS:?OTP_RESEND_SECONDS is required}
       OTP_ATTEMPT_LIMIT: ${OTP_ATTEMPT_LIMIT:?OTP_ATTEMPT_LIMIT is required}
@@ -200,9 +197,14 @@ services:
       WORKER_METRICS_SOURCE_BEARER_TOKEN: ${WORKER_METRICS_SOURCE_BEARER_TOKEN:-}
       WORKER_METRICS_TARGET_FINGERPRINT: ${WORKER_METRICS_TARGET_FINGERPRINT:?WORKER_METRICS_TARGET_FINGERPRINT is required}
       OTP_DELIVERY_ENCRYPTION_KEY: ${OTP_DELIVERY_ENCRYPTION_KEY:?OTP_DELIVERY_ENCRYPTION_KEY is required}
-      OTP_PROVIDER_URL: ${OTP_PROVIDER_URL:?OTP_PROVIDER_URL is required}
-      OTP_PROVIDER_API_KEY: ${OTP_PROVIDER_API_KEY:?OTP_PROVIDER_API_KEY is required}
-      OTP_PROVIDER_FROM: ${OTP_PROVIDER_FROM:?OTP_PROVIDER_FROM is required}
+      OTP_SMTP_HOST: smtp.gmail.com
+      OTP_SMTP_PORT: '587'
+      OTP_SMTP_REQUIRE_TLS: 'true'
+      OTP_SMTP_USERNAME: ${OTP_SMTP_USERNAME:?OTP_SMTP_USERNAME is required}
+      OTP_SMTP_PASSWORD: ${OTP_SMTP_PASSWORD:?OTP_SMTP_PASSWORD is required}
+      OTP_SMTP_FROM: ${OTP_SMTP_FROM:?OTP_SMTP_FROM is required}
+      OTP_SMTP_FROM_NAME: ${OTP_SMTP_FROM_NAME:-IMeal}
+      OTP_EXPIRY_SECONDS: ${OTP_EXPIRY_SECONDS:?OTP_EXPIRY_SECONDS is required}
       OTP_DELIVERY_BATCH_SIZE: ${OTP_DELIVERY_BATCH_SIZE:?OTP_DELIVERY_BATCH_SIZE is required}
       OTP_DELIVERY_MAX_ATTEMPTS: ${OTP_DELIVERY_MAX_ATTEMPTS:?OTP_DELIVERY_MAX_ATTEMPTS is required}
       OTP_DELIVERY_RETRY_BASE_SECONDS: ${OTP_DELIVERY_RETRY_BASE_SECONDS:?OTP_DELIVERY_RETRY_BASE_SECONDS is required}
@@ -221,6 +223,7 @@ services:
       - migration_evidence:/run/imeal:ro
     networks: !override
       - data
+      - egress
     depends_on: !override
       pgbouncer:
         condition: service_healthy
@@ -291,6 +294,9 @@ networks:
     name: ${DATA_NETWORK_NAME:?DATA_NETWORK_NAME is required}
     driver: bridge
     internal: true
+  egress:
+    name: ${EGRESS_NETWORK_NAME:?EGRESS_NETWORK_NAME is required}
+    driver: bridge
 
 volumes:
   db_data:

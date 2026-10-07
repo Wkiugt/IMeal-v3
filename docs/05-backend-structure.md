@@ -22,7 +22,7 @@ flowchart TB
     RP[Reverse Proxy]
     API[NestJS API]
     PG[(PostgreSQL)]
-    OTP[OTP delivery outbox/provider]
+    SMTP[smtp.gmail.com:587]
     JOB[Worker/Cron]
     PUSH[Notification Provider]
 
@@ -30,8 +30,8 @@ flowchart TB
     ADM -->|HTTPS + opaque session| RP
     RP --> API
     API --> PG
-    API --> OTP
-    JOB -->|outbox/session-aware worker| PG
+    JOB -->|claim encrypted OTP outbox| PG
+    JOB -->|SMTP STARTTLS| SMTP
     API --> PUSH
 ```
 

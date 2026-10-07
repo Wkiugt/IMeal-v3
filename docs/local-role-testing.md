@@ -43,12 +43,13 @@ docker compose up --build
 ```
 
 The API startup validator requires the OTP/session/GPS/serving settings in every
-non-test runtime; its HTTPS provider URL, API key and sender identity are
-required only when `NODE_ENV=production`. The worker has a separate startup
-validator: the encrypted delivery key is always required, while production
-additionally requires database/provider settings, every `OTP_DELIVERY_*` value
-and the fixed serving/QR/session values. Selected worker numeric/fixed defaults
-are available outside production for unit tests. These validators are
+non-test runtime. It does not receive SMTP credentials. The worker has a
+separate startup validator: the encrypted delivery key is always required, while
+production additionally requires database settings, Gmail SMTP username,
+App Password, and From address, `OTP_EXPIRY_SECONDS`, every `OTP_DELIVERY_*`
+value, and the fixed serving values. Host and port default to
+`smtp.gmail.com:587`, and TLS cannot be disabled. Selected worker numeric/fixed
+defaults are available outside production for unit tests. These validators are
 intentionally not identical, and the API test-harness bypass does not make a
 worker runtime safe to deploy.
 

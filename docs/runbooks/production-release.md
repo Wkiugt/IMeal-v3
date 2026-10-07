@@ -40,6 +40,14 @@ Variables: `PRODUCTION_RUNNER_LABEL`, `PRODUCTION_API_ORIGIN`,
 and optional `IMEAL_BACKUP_RETENTION_DAYS` (default 35). Do not hardcode a
 production domain or hostname in the workflow or this runbook.
 
+`PRODUCTION_ENV_FILE` must contain `OTP_SMTP_USERNAME`, `OTP_SMTP_PASSWORD`
+(a Google App Password, never the normal Google account password),
+`OTP_SMTP_FROM`, and `EGRESS_NETWORK_NAME`. It must not contain
+`OTP_PROVIDER_URL`, `OTP_PROVIDER_API_KEY`, or `OTP_PROVIDER_FROM`.
+`OTP_SMTP_HOST` and `OTP_SMTP_PORT` are hard-defaulted to `smtp.gmail.com`
+and `587` in production Compose. Do not add GitHub secrets for the mailbox;
+the protected env file is the only source. See `docs/runbooks/otp-email.md`.
+
 `PRODUCTION_RUNNER_LABEL` must be a self-hosted runner label on the production
 Compose host. It must be non-empty and must not be `ubuntu-latest` or
 `ubuntu-24.04`. There is no GitHub-hosted fallback. An empty or hosted label

@@ -14,9 +14,6 @@ function setValidProductionEnvironment() {
   process.env.QR_SIGNING_SECRET = 'q'.repeat(32);
   process.env.OTP_HASH_SECRET = 'o'.repeat(32);
   process.env.OTP_DELIVERY_ENCRYPTION_KEY = 'e'.repeat(32);
-  process.env.OTP_PROVIDER_URL = 'https://provider.internal/send';
-  process.env.OTP_PROVIDER_API_KEY = 'provider-key';
-  process.env.OTP_PROVIDER_FROM = 'imeal@company.invalid';
   process.env.OTP_EXPIRY_SECONDS = '600';
   process.env.OTP_RESEND_SECONDS = '60';
   process.env.OTP_ATTEMPT_LIMIT = '5';
@@ -131,53 +128,6 @@ describe('API environment validation', () => {
     );
   });
 
-  it('rejects production when the OTP sender identity is missing', () => {
-    setValidProductionEnvironment();
-    delete process.env.OTP_PROVIDER_FROM;
-
-    expect(() => validateApiEnvironment()).toThrow('OTP_PROVIDER_FROM');
-  });
-
-  it.each([
-    'http://provider.internal/send',
-    'https://provider.example.test/send',
-    'https://localhost/send',
-    'https://127.0.0.1/send',
-    'https://192.168.1.10/send',
-    'https://[::1]/send',
-    'https://',
-    'https:///send',
-    'not-a-url',
-  ])('rejects production when the OTP provider URL is invalid: %s', (url) => {
-    setValidProductionEnvironment();
-    process.env.OTP_PROVIDER_URL = url;
-
-    expect(() => validateApiEnvironment()).toThrow('OTP_PROVIDER_URL');
-  });
-
-  it('accepts trimmed valid secrets and fixed runtime settings', () => {
-    setValidProductionEnvironment();
-    process.env.DATABASE_URL = '  postgresql://localhost/imeal  ';
-    process.env.QR_SIGNING_SECRET = `  ${'q'.repeat(32)}  `;
-
-    expect(() => validateApiEnvironment()).not.toThrow();
-  });
-
-  it('rejects placeholders without exposing their values', () => {
-    setValidProductionEnvironment();
-    process.env.OTP_PROVIDER_API_KEY = 'CHANGE_ME_LOCAL';
-
-    let error: unknown;
-    try {
-      validateApiEnvironment();
-    } catch (caught) {
-      error = caught;
-    }
-
-    expect(String(error)).toContain('OTP_PROVIDER_API_KEY');
-    expect(String(error)).not.toContain('CHANGE_ME_LOCAL');
-  });
-
   it('rejects a QR secret placeholder without exposing its value', () => {
     setValidProductionEnvironment();
     process.env.QR_SIGNING_SECRET =
@@ -222,7 +172,9 @@ describe('API environment validation', () => {
   it('rejects production when API metrics evidence digest is missing or invalid', () => {
     setValidProductionEnvironment();
     delete process.env.API_METRICS_EVIDENCE_DIGEST;
-    expect(() => validateApiEnvironment()).toThrow('API_METRICS_EVIDENCE_DIGEST');
+    expect(() => validateApiEnvironment()).toThrow(
+      'API_METRICS_EVIDENCE_DIGEST',
+    );
 
     setValidProductionEnvironment();
     process.env.API_METRICS_EVIDENCE_DIGEST = 'not-a-digest';

@@ -10,9 +10,9 @@ import { NotificationReminderService } from './notification-reminder.service.js'
 import {
   OtpDeliveryWorker,
   WORKER_OTP_PROVIDER,
-  WorkerConfiguredOtpProvider,
   WorkerOtpOutboxService,
 } from './otp-delivery-worker.service.js';
+import { GmailSmtpOtpProvider } from './gmail-smtp-otp-provider.js';
 import {
   WORKER_METRICS_TRANSPORT_TOKEN,
   MetricsController,
@@ -71,9 +71,7 @@ function createWorkerMetricsSourceTransport(
   return createAuthoritativeSourceTransport(
     createAuthoritativeSourceResolver({
       registryUrl: registry.registryUrl,
-      ...(registry.bearerToken
-        ? { accessToken: registry.bearerToken }
-        : {}),
+      ...(registry.bearerToken ? { accessToken: registry.bearerToken } : {}),
       privateSource: true,
     }),
   );
@@ -180,11 +178,14 @@ function createWorkerMetricsSourceTransport(
     NotificationDispatchService,
     NotificationReminderService,
     WorkerOtpOutboxService,
-    WorkerConfiguredOtpProvider,
+    {
+      provide: GmailSmtpOtpProvider,
+      useFactory: () => new GmailSmtpOtpProvider(),
+    },
     OtpDeliveryWorker,
     {
       provide: WORKER_OTP_PROVIDER,
-      useExisting: WorkerConfiguredOtpProvider,
+      useExisting: GmailSmtpOtpProvider,
     },
   ],
 })
