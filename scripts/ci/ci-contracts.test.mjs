@@ -142,6 +142,9 @@ test('aggregate PASS maps actual verified statuses rather than unconditional PAS
   );
   assert.equal(report.provenance.runId, context.runId);
   assert.equal(report.provenance.sourceSha, context.sourceSha);
+  assert.equal(report.stagingQualification, false);
+  assert.equal(report.productionQualification, false);
+  assert.equal(report.qualificationClass, 'secretless-disposable-postgresql');
 });
 
 test('global cancellation fails closed even when every producer and job reports success', () => {

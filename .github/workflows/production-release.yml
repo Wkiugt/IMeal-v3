@@ -1,0 +1,460 @@
+name: production-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact 40-character release commit SHA
+        required: true
+        type: string
+      release_id:
+        description: Release or version ID
+        required: true
+        type: string
+      image_digests_json:
+        description: JSON object with api, worker, and adminWeb repository@sha256 digests
+        required: true
+        type: string
+      migration_gate_digest:
+        description: migration-gate repository@sha256 digest
+        required: true
+        type: string
+      rollback_artifact:
+        description: Prior-release rollback artifact reference
+        required: true
+        type: string
+      staging_evidence_run_id:
+        description: GitHub run ID containing the protected staging-release artifact
+        required: true
+        type: string
+      staging_evidence_artifact:
+        description: Protected staging-release artifact name for the same SHA
+        required: true
+        type: string
+      approved_lineage:
+        description: Approval id binding the downloaded evidence. This is not a waiver and cannot synthesize PASS.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24.x'
+  YARN_VERSION: '4.18.0'
+  CI: 'true'
+  TRIVY_IMAGE: aquasec/trivy@sha256:fa9a2d2a839e69bfc0e774e885c526b5db20dc1feba5bcd1bfb59e51e7855ae0
+
+jobs:
+  release:
+    name: Production release
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ vars.PRODUCTION_RUNNER_LABEL }}
+    timeout-minutes: 120
+    environment:
+      name: production
+    steps:
+      - name: Refuse GitHub-hosted production runners
+        env:
+          PRODUCTION_RUNNER_LABEL: ${{ vars.PRODUCTION_RUNNER_LABEL }}
+        run: |
+          if [ -z "$PRODUCTION_RUNNER_LABEL" ] || [ "$PRODUCTION_RUNNER_LABEL" = "ubuntu-latest" ] || [ "$PRODUCTION_RUNNER_LABEL" = "ubuntu-24.04" ]; then
+            echo 'PRODUCTION_RUNNER_LABEL must be a non-empty self-hosted production Compose host label' >&2
+            exit 1
+          fi
+
+      - name: Refuse non-dispatch production execution
+        env:
+          IMEAL_PRODUCTION_DEPLOY: ${{ secrets.IMEAL_PRODUCTION_DEPLOY }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then
+            echo 'refusing production workflow outside workflow_dispatch' >&2
+            exit 1
+          fi
+          if [ "$IMEAL_PRODUCTION_DEPLOY" != "1" ]; then
+            echo 'IMEAL_PRODUCTION_DEPLOY is absent or not 1; refusing production database contact and deploy' >&2
+            exit 1
+          fi
+
+      - name: Check out the requested release SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+
+      - name: Validate checkout SHA
+        env:
+          REQUESTED_SHA: ${{ inputs.release_sha }}
+        run: |
+          printf '%s' "$REQUESTED_SHA" | grep -Eq '^[0-9a-fA-F]{40}$' || {
+            echo 'release SHA must be 40 hexadecimal characters' >&2
+            exit 1
+          }
+          requested="$(printf '%s' "$REQUESTED_SHA" | tr '[:upper:]' '[:lower:]')"
+          test "$(git rev-parse HEAD)" = "$requested" || {
+            echo 'checked-out commit does not match the requested release SHA' >&2
+            exit 1
+          }
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable Corepack and select Yarn
+        run: |
+          corepack enable
+          corepack install --global "yarn@${YARN_VERSION}"
+          test "$(corepack yarn --version)" = "${YARN_VERSION}"
+
+      - name: Install dependencies immutably
+        run: yarn install --immutable
+
+      - name: Require protected production inputs
+        env:
+          PRODUCTION_ENV_FILE: ${{ secrets.PRODUCTION_ENV_FILE }}
+          IMEAL_PRODUCTION_DEPLOY: ${{ secrets.IMEAL_PRODUCTION_DEPLOY }}
+          PRODUCTION_APPROVAL_ID: ${{ secrets.PRODUCTION_APPROVAL_ID }}
+          PRODUCTION_SMOKE_SESSION_TOKEN: ${{ secrets.PRODUCTION_SMOKE_SESSION_TOKEN }}
+          PRODUCTION_API_ORIGIN: ${{ vars.PRODUCTION_API_ORIGIN }}
+          PRODUCTION_WORKER_ORIGIN: ${{ vars.PRODUCTION_WORKER_ORIGIN }}
+          PRODUCTION_ADMIN_ORIGIN: ${{ vars.PRODUCTION_ADMIN_ORIGIN }}
+          IMEAL_BACKUP_DATABASE_URL: ${{ secrets.IMEAL_BACKUP_DATABASE_URL }}
+          AGE_RECIPIENT: ${{ secrets.AGE_RECIPIENT }}
+          IMEAL_BACKUP_S3_ENDPOINT: ${{ secrets.IMEAL_BACKUP_S3_ENDPOINT }}
+          IMEAL_BACKUP_S3_BUCKET: ${{ secrets.IMEAL_BACKUP_S3_BUCKET }}
+          IMEAL_BACKUP_S3_PREFIX: ${{ secrets.IMEAL_BACKUP_S3_PREFIX }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.AWS_DEFAULT_REGION }}
+          IMAGE_DIGESTS_JSON: ${{ inputs.image_digests_json }}
+          MIGRATION_GATE_DIGEST: ${{ inputs.migration_gate_digest }}
+          ROLLBACK_ARTIFACT: ${{ inputs.rollback_artifact }}
+          APPROVED_LINEAGE: ${{ inputs.approved_lineage }}
+        run: |
+          node --input-type=module - <<'NODE'
+          const required = [
+            'PRODUCTION_ENV_FILE',
+            'IMEAL_PRODUCTION_DEPLOY',
+            'PRODUCTION_APPROVAL_ID',
+            'PRODUCTION_SMOKE_SESSION_TOKEN',
+            'PRODUCTION_API_ORIGIN',
+            'PRODUCTION_WORKER_ORIGIN',
+            'PRODUCTION_ADMIN_ORIGIN',
+            'IMEAL_BACKUP_DATABASE_URL',
+            'AGE_RECIPIENT',
+            'IMEAL_BACKUP_S3_ENDPOINT',
+            'IMEAL_BACKUP_S3_BUCKET',
+            'IMEAL_BACKUP_S3_PREFIX',
+            'AWS_ACCESS_KEY_ID',
+            'AWS_SECRET_ACCESS_KEY',
+            'AWS_DEFAULT_REGION',
+            'IMAGE_DIGESTS_JSON',
+            'MIGRATION_GATE_DIGEST',
+            'ROLLBACK_ARTIFACT',
+            'APPROVED_LINEAGE',
+          ];
+          const missing = required.filter((name) => !process.env[name] || !process.env[name].trim());
+          if (missing.length) {
+            console.error(`missing protected input: ${missing.join(', ')}`);
+            process.exit(1);
+          }
+          if (process.env.IMEAL_PRODUCTION_DEPLOY !== '1') {
+            console.error('IMEAL_PRODUCTION_DEPLOY is absent or not 1; refusing production deploy');
+            process.exit(1);
+          }
+          NODE
+          umask 077
+          mkdir -p "$RUNNER_TEMP/production-artifacts"
+          printf '%s\n' "$PRODUCTION_ENV_FILE" > "$RUNNER_TEMP/production.env"
+          printf '%s\n' "$IMAGE_DIGESTS_JSON" > "$RUNNER_TEMP/images.json"
+          printf '%s\n' "$MIGRATION_GATE_DIGEST" > "$RUNNER_TEMP/migration-gate-digest.txt"
+          printf '%s\n' "$ROLLBACK_ARTIFACT" > "$RUNNER_TEMP/rollback-artifact.txt"
+          chmod 0600 "$RUNNER_TEMP/production.env"
+
+      - name: Download protected staging evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.staging_evidence_artifact }}
+          run-id: ${{ inputs.staging_evidence_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/staging-evidence
+
+      - name: Verify staging evidence for the requested SHA
+        env:
+          EXPECTED_SHA: ${{ inputs.release_sha }}
+          ARTIFACT_NAME: ${{ inputs.staging_evidence_artifact }}
+          APPROVED_LINEAGE: ${{ inputs.approved_lineage }}
+        run: |
+          node scripts/staging/protected-qualification.mjs verify-staging-evidence \
+            --directory "$RUNNER_TEMP/staging-evidence" \
+            --artifact-name "$ARTIFACT_NAME" \
+            --expected-sha "$EXPECTED_SHA" \
+            --approved-lineage "$APPROVED_LINEAGE" \
+            --output "$RUNNER_TEMP/production-artifacts/staging-evidence-verification.json"
+
+      - name: Validate immutable production images
+        run: |
+          node scripts/staging/protected-qualification.mjs verify-images \
+            --images-json "$RUNNER_TEMP/images.json" \
+            --env-file "$RUNNER_TEMP/production.env" \
+            --migration-gate-digest-file "$RUNNER_TEMP/migration-gate-digest.txt" \
+            --output "$RUNNER_TEMP/production-artifacts/image-contract.json"
+
+      - name: Re-scan approved image digests
+        run: |
+          node scripts/staging/protected-qualification.mjs scan-digests \
+            --contract "$RUNNER_TEMP/production-artifacts/image-contract.json" \
+            --trivy-image "$TRIVY_IMAGE" \
+            --output-directory "$RUNNER_TEMP/production-artifacts"
+
+      - name: Generate SBOMs for approved digests
+        run: |
+          node --input-type=module - "$RUNNER_TEMP/production-artifacts/image-contract.json" "$RUNNER_TEMP/production-artifacts" <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          import { spawn } from 'node:child_process';
+          const [contractPath, outputDirectory] = process.argv.slice(2);
+          const contract = JSON.parse(await readFile(contractPath, 'utf8'));
+          const images = [
+            ['api', contract.api],
+            ['worker', contract.worker],
+            ['admin-web', contract.adminWeb],
+            ['migration-gate', contract.migrationGate],
+          ];
+          for (const [service, image] of images) {
+            if (!image) throw new Error(`missing digest for ${service}`);
+            const code = await new Promise((resolve) => {
+              const child = spawn('docker', [
+                'run', '--rm',
+                '--volume', '/var/run/docker.sock:/var/run/docker.sock',
+                '--volume', `${outputDirectory}:/out`,
+                'anchore/syft@sha256:b8c170b8e51bfc4779ec3ef4399942c57290f5ce76a9c3af564c9d00d4946a6b',
+                `docker:${image}`,
+                '--output', `spdx-json=/out/deployed-image-sbom-${service}.spdx.json`,
+              ], { shell: false, stdio: 'inherit' });
+              child.on('error', () => resolve(127));
+              child.on('close', resolve);
+            });
+            if (code !== 0) throw new Error(`SBOM generation failed for ${service}`);
+          }
+          NODE
+
+      - name: Validate production boundary
+        run: |
+          test -s "$RUNNER_TEMP/production.env" || {
+            echo 'PRODUCTION_ENV_FILE is required' >&2
+            exit 1
+          }
+          yarn verify:production-boundary --env-file "$RUNNER_TEMP/production.env"
+
+      - name: Install backup client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client age awscli
+          command -v pg_dump
+          command -v age
+          command -v aws
+          command -v psql
+
+      - name: Back up production before migration
+        env:
+          IMEAL_PRODUCTION_DEPLOY: ${{ secrets.IMEAL_PRODUCTION_DEPLOY }}
+          IMEAL_BACKUP_DATABASE_URL: ${{ secrets.IMEAL_BACKUP_DATABASE_URL }}
+          AGE_RECIPIENT: ${{ secrets.AGE_RECIPIENT }}
+          IMEAL_BACKUP_S3_ENDPOINT: ${{ secrets.IMEAL_BACKUP_S3_ENDPOINT }}
+          IMEAL_BACKUP_S3_BUCKET: ${{ secrets.IMEAL_BACKUP_S3_BUCKET }}
+          IMEAL_BACKUP_S3_PREFIX: ${{ secrets.IMEAL_BACKUP_S3_PREFIX }}
+          IMEAL_BACKUP_RETENTION_DAYS: ${{ vars.IMEAL_BACKUP_RETENTION_DAYS }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.AWS_DEFAULT_REGION }}
+          RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          if [ "$IMEAL_PRODUCTION_DEPLOY" != "1" ]; then
+            echo 'IMEAL_PRODUCTION_DEPLOY is absent or not 1; refusing production backup' >&2
+            exit 1
+          fi
+          node --input-type=module - "$RUNNER_TEMP/production.env" "$RUNNER_TEMP/schema.txt" "$RUNNER_TEMP/database.txt" "$RUNNER_TEMP/release-version.txt" <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises';
+          const [envPath, schemaPath, databasePath, releasePath] = process.argv.slice(2);
+          const values = Object.fromEntries(
+            (await readFile(envPath, 'utf8'))
+              .split(/\r?\n/)
+              .map((line) => line.match(/^(MIGRATION_TARGET_SCHEMA|POSTGRES_DB|RELEASE_VERSION)=(.*)$/))
+              .filter(Boolean)
+              .map(([, key, value]) => [key, value.replace(/^(['"])(.*)\1$/, '$2')]),
+          );
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(values.MIGRATION_TARGET_SCHEMA ?? '')) {
+            throw new Error('MIGRATION_TARGET_SCHEMA is missing');
+          }
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(values.POSTGRES_DB ?? '')) {
+            throw new Error('POSTGRES_DB is missing');
+          }
+          if (!values.RELEASE_VERSION || /\s/.test(values.RELEASE_VERSION)) {
+            throw new Error('RELEASE_VERSION is missing');
+          }
+          await writeFile(schemaPath, values.MIGRATION_TARGET_SCHEMA);
+          await writeFile(databasePath, values.POSTGRES_DB);
+          await writeFile(releasePath, values.RELEASE_VERSION);
+          NODE
+          export NODE_ENV=production
+          export IMEAL_BACKUP_ENV=production
+          export IMEAL_BACKUP_SCHEMA="$(cat "$RUNNER_TEMP/schema.txt")"
+          export IMEAL_BACKUP_RELEASE_ID="$RELEASE_ID"
+          if [ -z "${IMEAL_BACKUP_RETENTION_DAYS}" ]; then
+            export IMEAL_BACKUP_RETENTION_DAYS=35
+          fi
+          node scripts/backup/cli.mjs backup --output "$RUNNER_TEMP/production-artifacts/backup"
+          node scripts/backup/cli.mjs verify \
+            --manifest "$RUNNER_TEMP/production-artifacts/backup/backup-manifest.json" \
+            --output "$RUNNER_TEMP/production-artifacts/backup"
+
+      - name: Run migration preflight
+        env:
+          IMEAL_BACKUP_DATABASE_URL: ${{ secrets.IMEAL_BACKUP_DATABASE_URL }}
+          RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          test -x "$(command -v psql)" || {
+            echo 'psql is required for migration preflight' >&2
+            exit 1
+          }
+          node scripts/staging/phase0-preflight.mjs \
+            --database-url-env IMEAL_BACKUP_DATABASE_URL \
+            --schema "$(cat "$RUNNER_TEMP/schema.txt")" \
+            --release-id "$RELEASE_ID" \
+            --expected-database "$(cat "$RUNNER_TEMP/database.txt")" \
+            --output "$RUNNER_TEMP/production-artifacts/preflight-before.json"
+
+      - name: Run production migration gate
+        env:
+          IMEAL_PRODUCTION_DEPLOY: ${{ secrets.IMEAL_PRODUCTION_DEPLOY }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then
+            echo 'refusing production compose outside workflow_dispatch' >&2
+            exit 1
+          fi
+          if [ "$IMEAL_PRODUCTION_DEPLOY" != "1" ]; then
+            echo 'IMEAL_PRODUCTION_DEPLOY is absent or not 1; refusing production deploy' >&2
+            exit 1
+          fi
+          # Exact gate command. Do not add down, volumes, or orphan removal.
+          # migration-gate joins the existing production data network and exits.
+          # This does not recreate the previous release and does not delete volumes.
+          docker compose --env-file "$RUNNER_TEMP/production.env" \
+            -f docker-compose.yml -f docker-compose.production.yml \
+            up --no-deps --abort-on-container-exit --exit-code-from migration-gate migration-gate
+
+      - name: Deploy approved production services
+        env:
+          IMEAL_PRODUCTION_DEPLOY: ${{ secrets.IMEAL_PRODUCTION_DEPLOY }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then
+            echo 'refusing production compose outside workflow_dispatch' >&2
+            exit 1
+          fi
+          if [ "$IMEAL_PRODUCTION_DEPLOY" != "1" ]; then
+            echo 'IMEAL_PRODUCTION_DEPLOY is absent or not 1; refusing production deploy' >&2
+            exit 1
+          fi
+          docker compose --env-file "$RUNNER_TEMP/production.env" \
+            -f docker-compose.yml -f docker-compose.production.yml \
+            up --detach --no-build api worker admin-web caddy
+
+      - name: Wait for migration gate and runtime health
+        run: |
+          node scripts/staging/protected-qualification.mjs wait-runtime \
+            --env-file "$RUNNER_TEMP/production.env" \
+            --compose-file docker-compose.yml \
+            --compose-file docker-compose.production.yml \
+            --contract "$RUNNER_TEMP/production-artifacts/image-contract.json" \
+            --gate-service migration-gate \
+            --expected-release-file "$RUNNER_TEMP/release-version.txt" \
+            --output-directory "$RUNNER_TEMP/production-artifacts" || {
+              echo 'migration gate wait, health, or deployed digest verification failed' >&2
+              exit 1
+            }
+
+      - name: Check API and worker health
+        env:
+          PRODUCTION_API_ORIGIN: ${{ vars.PRODUCTION_API_ORIGIN }}
+          PRODUCTION_WORKER_ORIGIN: ${{ vars.PRODUCTION_WORKER_ORIGIN }}
+          RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          node scripts/staging/protected-qualification.mjs runtime-health \
+            --api-origin "$PRODUCTION_API_ORIGIN" \
+            --worker-origin "$PRODUCTION_WORKER_ORIGIN" \
+            --expected-release "$RELEASE_ID" \
+            --output "$RUNNER_TEMP/production-artifacts/runtime-integration.json"
+
+      - name: Run API, authenticated, and admin smoke
+        env:
+          PRODUCTION_API_ORIGIN: ${{ vars.PRODUCTION_API_ORIGIN }}
+          PRODUCTION_ADMIN_ORIGIN: ${{ vars.PRODUCTION_ADMIN_ORIGIN }}
+          PRODUCTION_SMOKE_SESSION_TOKEN: ${{ secrets.PRODUCTION_SMOKE_SESSION_TOKEN }}
+        run: |
+          yarn staging:smoke \
+            --api-origin "$PRODUCTION_API_ORIGIN" \
+            --admin-origin "$PRODUCTION_ADMIN_ORIGIN" \
+            --session-token-env PRODUCTION_SMOKE_SESSION_TOKEN \
+            --output "$RUNNER_TEMP/production-artifacts/production-smoke.json"
+
+      - name: Require admin reachability and authenticated smoke
+        run: |
+          node --input-type=module - "$RUNNER_TEMP/production-artifacts/production-smoke.json" <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          const report = JSON.parse(await readFile(process.argv[2], 'utf8'));
+          if (report.result !== 'PASS') throw new Error('production smoke did not PASS');
+          const names = new Set((report.checks ?? []).filter((check) => check.result === 'PASS').map((check) => check.name));
+          for (const name of ['api-live', 'api-ready', 'admin-health', 'auth-me']) {
+            if (!names.has(name)) throw new Error(`production smoke is missing ${name}`);
+          }
+          NODE
+
+      - name: Generate release manifest
+        env:
+          REQUESTED_SHA: ${{ inputs.release_sha }}
+          RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          requested="$(printf '%s' "$REQUESTED_SHA" | tr '[:upper:]' '[:lower:]')"
+          yarn staging:manifest \
+            --release-id "$RELEASE_ID" \
+            --commit "$requested" \
+            --images-json "$RUNNER_TEMP/images.json" \
+            --checks-json "$RUNNER_TEMP/staging-evidence/check-results.json" \
+            --rollback-artifact "$(cat "$RUNNER_TEMP/rollback-artifact.txt")" \
+            --output "$RUNNER_TEMP/production-artifacts/release-manifest.json"
+
+      - name: Capture rollback reference
+        env:
+          REQUESTED_SHA: ${{ inputs.release_sha }}
+          RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          requested="$(printf '%s' "$REQUESTED_SHA" | tr '[:upper:]' '[:lower:]')"
+          node scripts/staging/protected-qualification.mjs rollback-reference \
+            --release-id "$RELEASE_ID" \
+            --commit "$requested" \
+            --images-json "$RUNNER_TEMP/images.json" \
+            --migration-gate-image-file "$RUNNER_TEMP/migration-gate-digest.txt" \
+            --rollback-artifact-file "$RUNNER_TEMP/rollback-artifact.txt" \
+            --output "$RUNNER_TEMP/production-artifacts/rollback-reference.json"
+
+      - name: Reject secret-bearing production artifacts
+        id: redact
+        if: always()
+        run: |
+          node scripts/staging/protected-qualification.mjs assert-artifacts \
+            --directory "$RUNNER_TEMP/production-artifacts"
+
+      - name: Upload redacted production evidence
+        if: always() && steps.redact.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-release-${{ inputs.release_id }}-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/production-artifacts
+          if-no-files-found: error
+          retention-days: 30

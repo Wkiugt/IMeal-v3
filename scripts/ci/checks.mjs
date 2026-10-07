@@ -38,7 +38,7 @@ export function commandCatalogue({ lane, outputDirectory, service, kind, trivyIm
     { id: 'unit', argv: yarnArgs('test:unit') },
     { id: 'client-suites', argv: yarnArgs('turbo', 'run', 'test', '--filter=@imeal/mobile', '--filter=@imeal/admin-web', '--filter=@imeal/observability', '--concurrency=1') },
     { id: 'build-order', argv: yarnArgs('test:build-order') },
-    { id: 'ci-behavior', argv: nodeArgs('--test', 'scripts/ci/ci-contracts.test.mjs', 'scripts/ci/ci-dispatcher.test.mjs', 'scripts/ci/ci-verify.test.mjs', 'scripts/ci/workflow-graph.test.mjs', 'scripts/ci/mobile-process.test.mjs', 'scripts/ci/mobile-export.test.mjs', 'scripts/ci/metro-smoke.test.mjs', 'scripts/ci/security-audit.test.mjs') },
+    { id: 'ci-behavior', argv: nodeArgs('--test', 'scripts/ci/ci-contracts.test.mjs', 'scripts/ci/ci-dispatcher.test.mjs', 'scripts/ci/ci-verify.test.mjs', 'scripts/ci/workflow-graph.test.mjs', 'scripts/ci/branch-protection-checks.test.mjs', 'scripts/ci/production-release-workflow.test.mjs', 'scripts/ci/mobile-process.test.mjs', 'scripts/ci/mobile-export.test.mjs', 'scripts/ci/metro-smoke.test.mjs', 'scripts/ci/security-audit.test.mjs') },
   ];
   if (lane === 'mobile-export') return [
     { id: 'expo-install-check', argv: yarnArgs('workspace', '@imeal/mobile', 'exec', 'expo', 'install', '--check') },

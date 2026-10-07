@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 
+import { SECRETLESS_QUALIFICATION } from './branch-protection-checks.mjs';
+
+export { SECRETLESS_QUALIFICATION };
+
 export const EXPECTED_JOB_IDS = Object.freeze([
   'static',
   'suites',
@@ -7,8 +11,11 @@ export const EXPECTED_JOB_IDS = Object.freeze([
   'mobile-smoke',
   'db',
   'tooling',
-  'security',
-  'images',
+  'security-audit',
+  'security-secrets',
+  'images-api',
+  'images-worker',
+  'images-admin-web',
 ]);
 
 export const EXPECTED_LANE_IDS = Object.freeze([
@@ -420,6 +427,7 @@ export function aggregateQualification({ evidence, needs, context }) {
     producerReferences,
     imageReferences,
     failureDiagnostics,
+    ...SECRETLESS_QUALIFICATION,
     provenance: {
       runId: String(context.runId),
       sourceSha: context.sourceSha,

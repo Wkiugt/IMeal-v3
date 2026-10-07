@@ -25,12 +25,24 @@ http://{$PUBLIC_HOSTNAME} {
         respond 404
     }
 
+    @health path /health/live /health/ready
+    handle @health {
+        reverse_proxy api:3000 {
+            header_up X-Request-Id {http.request.header.X-Request-Id}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
     @api path /api/* /auth/* /registrations/* /admin/* /v1/* /internal/*
     handle @api {
         # flush_interval -1 keeps server-sent events flowing; WebSocket
         # upgrades are handled automatically by reverse_proxy.
+        # Replace any client-supplied chain with the single hop Caddy saw.
         reverse_proxy api:3000 {
             flush_interval -1
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Real-IP {remote_host}
         }
     }
 

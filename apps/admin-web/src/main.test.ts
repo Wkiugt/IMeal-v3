@@ -546,3 +546,57 @@ describe('Admin Web users surface', () => {
     window.confirm = originalConfirm;
   });
 });
+
+describe('Admin Web persisted oversight', () => {
+  it('labels the in-browser operations list as session memory, not persisted audit', async () => {
+    await loadMain(makeFetch([], { permissions: ['location.manage'] }));
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain('Nhật ký phiên trình duyệt');
+    });
+    expect(document.body.textContent).toContain('không phải AuditLog đã lưu');
+  });
+
+  it('loads the persisted audit API instead of the browser list', async () => {
+    const records: RequestRecord[] = [];
+    await loadMain(async (input, init) => {
+      const url = String(input);
+      records.push({ url, method: init?.method ?? 'GET' });
+      if (url.endsWith('/auth/me')) {
+        return response(profile(['audit.read']));
+      }
+      if (url.includes('/v1/admin/audit')) {
+        return response({
+          items: [
+            {
+              id: 'audit-1',
+              action: 'USER_DISABLED',
+              actorUserId: 'admin-1',
+              targetUserId: 'user-1',
+              result: 'DISABLED',
+              resourceType: 'user',
+              createdAt: NOW,
+              details: { revokedSessionCount: 1 },
+              redacted: true,
+            },
+          ],
+          pagination: {
+            page: 1,
+            limit: 20,
+            total: 1,
+            totalPages: 1,
+            hasNextPage: false,
+          },
+        });
+      }
+      return response({});
+    });
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain('Kiểm toán đã lưu');
+      expect(document.body.textContent).toContain('USER_DISABLED');
+    });
+    expect(records.some((entry) => entry.url.includes('/v1/admin/audit'))).toBe(true);
+    expect(document.body.textContent).not.toContain('Nhật ký phiên trình duyệt');
+  });
+});

@@ -4,6 +4,7 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
 import { AdminUsersModule } from './admin/users/admin-users.module.js';
+import { AdminOperationsModule } from './admin/operations/admin-operations.module.js';
 import { PenaltiesModule } from './admin/penalties/penalties.module.js';
 import { EmployeePenaltiesModule } from './penalties/employee-penalties.module.js';
 import { RegistrationsModule } from './registrations/registrations.module.js';
@@ -44,6 +45,7 @@ import { PrismaService } from './common/prisma.service.js';
     ScheduleModule.forRoot(),
     AuthModule,
     AdminUsersModule,
+    AdminOperationsModule,
     PenaltiesModule,
     EmployeePenaltiesModule,
     RegistrationsModule,
@@ -109,6 +111,7 @@ import { PrismaService } from './common/prisma.service.js';
     MetricRegistry,
     ApiMetricsService,
     ApiMetricsSourceAdapter,
+    HealthService,
   ],
 })
 export class AppModule {}

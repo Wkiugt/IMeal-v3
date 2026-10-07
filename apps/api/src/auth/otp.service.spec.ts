@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
+import { parseTrustedProxyList, resolveTrustedClientIp } from '../common/trusted-client-ip.js';
 import {
   AllowlistService,
   type AllowlistResolution,
@@ -389,5 +390,55 @@ describe('OtpService', () => {
     expect(metricSink.recordAuthAttempt).toHaveBeenCalledWith(
       'dependency_failure',
     );
+  });
+
+  it('does not share an OTP client bucket across trusted forwarded clients or honor untrusted spoofing', async () => {
+    const rules = parseTrustedProxyList('172.31.28.0/24');
+    const firstIp = resolveTrustedClientIp(
+      {
+        socket: { remoteAddress: '172.31.28.2' },
+        headers: { 'x-forwarded-for': '203.0.113.10' },
+      },
+      rules,
+    );
+    const secondIp = resolveTrustedClientIp(
+      {
+        socket: { remoteAddress: '172.31.28.2' },
+        headers: { 'x-forwarded-for': '203.0.113.11' },
+      },
+      rules,
+    );
+    const spoofedIp = resolveTrustedClientIp(
+      {
+        socket: { remoteAddress: '198.51.100.8' },
+        headers: {
+          'x-forwarded-for': '203.0.113.10, 198.51.100.9',
+          'x-real-ip': '203.0.113.10',
+          forwarded: 'for=203.0.113.10',
+        },
+      },
+      rules,
+    );
+    expect(firstIp).toBe('203.0.113.10');
+    expect(secondIp).toBe('203.0.113.11');
+    expect(spoofedIp).toBe('198.51.100.8');
+
+    const { service, allowlist, prisma } = installService();
+    vi.spyOn(allowlist, 'findEligible').mockResolvedValue(ALLOWLIST);
+    const hashes = new Set<string>();
+    for (const clientIp of [firstIp, secondIp, spoofedIp]) {
+      prisma.otpChallenge.create.mockClear();
+      await service.request(
+        { email: EMAIL, purpose: 'SESSION_LOGIN' },
+        { ...context, clientIp, clientFingerprint: undefined },
+      );
+      const created = prisma.otpChallenge.create.mock.calls[0]?.[0] as {
+        data: { clientIpHash: string | null };
+      };
+      expect(created.data.clientIpHash).toEqual(expect.any(String));
+      expect(JSON.stringify(prisma.otpChallenge.create.mock.calls)).not.toContain(clientIp);
+      hashes.add(created.data.clientIpHash ?? '');
+    }
+    expect(hashes.size).toBe(3);
   });
 });

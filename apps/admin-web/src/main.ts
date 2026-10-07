@@ -2,6 +2,11 @@ import { v1 } from '@imeal/contracts';
 import { z } from 'zod';
 import { renderUsers as renderAdminUsersView } from './admin-users';
 import {
+  renderJobsHealth,
+  renderPersistedAudit,
+  renderServingAudit,
+} from './admin-oversight';
+import {
   selectEffectiveLocationPolicy,
   toRosterImportRequest,
   toRosterPreviewRows,
@@ -220,7 +225,14 @@ function parseAdminError(payload: unknown): {
   };
 }
 
-type ViewName = 'menus' | 'penalties' | 'operations' | 'users';
+type ViewName =
+  | 'menus'
+  | 'penalties'
+  | 'operations'
+  | 'users'
+  | 'audit'
+  | 'servings'
+  | 'jobs';
 
 const API_URL = (
   import.meta.env.VITE_API_URL || window.location.origin
@@ -416,6 +428,24 @@ function renderShell(): HTMLElement {
     );
     usersButton.setAttribute('aria-pressed', String(currentView === 'users'));
     nav.append(usersButton);
+  }
+  if (profile?.permissions.includes('audit.read')) {
+    const auditButton = actionButton('Kiểm toán đã lưu', () => void renderPersistedAuditView());
+    auditButton.setAttribute('aria-pressed', String(currentView === 'audit'));
+    nav.append(auditButton);
+  }
+  if (profile?.permissions.includes('serving.read')) {
+    const servingButton = actionButton(
+      'Kiểm toán phục vụ',
+      () => void renderServingAuditView(),
+    );
+    servingButton.setAttribute('aria-pressed', String(currentView === 'servings'));
+    nav.append(servingButton);
+  }
+  if (profile?.permissions.includes('jobs.read')) {
+    const jobsButton = actionButton('Tác vụ & sức khỏe', () => void renderJobsView());
+    jobsButton.setAttribute('aria-pressed', String(currentView === 'jobs'));
+    nav.append(jobsButton);
   }
   if (
     profile?.permissions.some((permission) =>
@@ -1258,8 +1288,8 @@ function renderAudit(): HTMLElement {
   const section = element('section', 'operation-section');
   section.append(
     operationHeading(
-      'Kết quả kiểm toán an toàn',
-      'Hiển thị các thao tác trong phiên này sau khi loại bỏ OTP, session token, QR và dữ liệu GPS thô. Không có xuất dữ liệu tùy ý.',
+      'Nhật ký phiên trình duyệt',
+      'Chỉ là bộ nhớ tạm của trình duyệt trong phiên này, không phải AuditLog đã lưu. Dùng mục Kiểm toán đã lưu cho dữ liệu persisted.',
     ),
   );
   if (auditEntries.length === 0) {
@@ -1433,6 +1463,39 @@ function renderLogin(
   app.replaceChildren(login);
 }
 
+async function renderPersistedAuditView(): Promise<void> {
+  currentView = 'audit';
+  app.replaceChildren(renderShell());
+  const root = contentRoot();
+  if (!profile?.permissions.includes('audit.read')) {
+    root.append(element('div', 'card empty', 'Tài khoản không có quyền kiểm toán đã lưu.'));
+    return;
+  }
+  await renderPersistedAudit(root, { api });
+}
+
+async function renderServingAuditView(): Promise<void> {
+  currentView = 'servings';
+  app.replaceChildren(renderShell());
+  const root = contentRoot();
+  if (!profile?.permissions.includes('serving.read')) {
+    root.append(element('div', 'card empty', 'Tài khoản không có quyền kiểm toán phục vụ.'));
+    return;
+  }
+  await renderServingAudit(root, { api });
+}
+
+async function renderJobsView(): Promise<void> {
+  currentView = 'jobs';
+  app.replaceChildren(renderShell());
+  const root = contentRoot();
+  if (!profile?.permissions.includes('jobs.read')) {
+    root.append(element('div', 'card empty', 'Tài khoản không có quyền xem tác vụ.'));
+    return;
+  }
+  await renderJobsHealth(root, { api });
+}
+
 async function renderDefaultView(): Promise<void> {
   if (!profile) {
     renderLogin();
@@ -1448,6 +1511,12 @@ async function renderDefaultView(): Promise<void> {
     )
   ) {
     await renderOperations();
+  } else if (profile.permissions.includes('audit.read')) {
+    await renderPersistedAuditView();
+  } else if (profile.permissions.includes('serving.read')) {
+    await renderServingAuditView();
+  } else if (profile.permissions.includes('jobs.read')) {
+    await renderJobsView();
   } else if (profile.permissions.includes('menu.manage')) {
     await renderMenus();
   } else if (profile.permissions.includes('penalty.read')) {

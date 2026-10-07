@@ -39,6 +39,7 @@ function setValidProductionEnvironment() {
   process.env.SHUTDOWN_TIMEOUT_SECONDS = '30';
   process.env.MIGRATION_EVIDENCE_PATH = '/run/imeal/migration-gate.json';
   process.env.MIGRATION_TARGET_IDENTITY = 'staging-schema';
+  process.env.TRUSTED_PROXY_CIDRS = '172.31.28.0/24';
 }
 
 afterEach(() => {
@@ -201,11 +202,22 @@ describe('API environment validation', () => {
     'SHUTDOWN_TIMEOUT_SECONDS',
     'MIGRATION_EVIDENCE_PATH',
     'MIGRATION_TARGET_IDENTITY',
+    'TRUSTED_PROXY_CIDRS',
   ])('rejects production when %s is missing', (name) => {
     setValidProductionEnvironment();
     delete process.env[name];
 
     expect(() => validateApiEnvironment()).toThrow(name);
+  });
+
+  it('rejects an unrestricted trusted proxy list and allows an empty list outside production', () => {
+    setValidProductionEnvironment();
+    process.env.TRUSTED_PROXY_CIDRS = '0.0.0.0/0';
+    expect(() => validateApiEnvironment()).toThrow('TRUSTED_PROXY_CIDRS');
+
+    process.env.NODE_ENV = 'development';
+    delete process.env.TRUSTED_PROXY_CIDRS;
+    expect(() => validateApiEnvironment()).not.toThrow();
   });
   it('rejects production when API metrics evidence digest is missing or invalid', () => {
     setValidProductionEnvironment();

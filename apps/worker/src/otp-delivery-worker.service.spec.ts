@@ -296,9 +296,10 @@ describe('OtpDeliveryWorker', () => {
       send: vi.fn().mockResolvedValue(undefined),
     };
     const outbox = fakeOutbox([delivery()]);
+    const jobRunCreate = vi.fn().mockResolvedValue({ id: 'job-1' });
 
     const result = await new OtpDeliveryWorker(
-      {} as PrismaService,
+      { jobRun: { create: jobRunCreate } } as PrismaService,
       provider,
       outbox,
       () => NOW,
@@ -310,6 +311,18 @@ describe('OtpDeliveryWorker', () => {
       failed: 0,
       suppressed: 0,
     });
+    expect(jobRunCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobName: expect.stringMatching(/^otp_delivery_/),
+        status: 'COMPLETED',
+        successCount: 1,
+        failureCount: 0,
+        failureCode: null,
+        failureMessage: null,
+      }),
+    });
+    expect(JSON.stringify(jobRunCreate.mock.calls)).not.toContain(CODE);
+    expect(JSON.stringify(jobRunCreate.mock.calls)).not.toContain(DESTINATION);
   });
 
   it('preserves active max-attempt PROCESSING claims during cleanup', async () => {

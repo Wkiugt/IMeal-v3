@@ -1,0 +1,46 @@
+# One-shot backup overlay. This file is not included by docker-compose.yml,
+# docker-compose.production.yml, or docker-compose.staging.yml, and the backup
+# profile is not started by a plain compose up. Invoke it explicitly:
+#   docker compose -f docker-compose.backup.yml --profile backup run --rm --no-deps backup
+# Schedule that command with TZ=Asia/Ho_Chi_Minh at 17:30. Do not publish ports
+# or place secret values in this file. Inject credentials through the operator
+# environment. The image must be digest-pinned and contain node, pg_dump, age,
+# and the AWS CLI. IMEAL_BACKUP_EVIDENCE_DIR must be outside the git checkout
+# and must not be the in-stack MinIO volume.
+services:
+  backup:
+    profiles: ["backup"]
+    image: ${IMEAL_BACKUP_IMAGE:?IMEAL_BACKUP_IMAGE is required}
+    restart: "no"
+    user: "1000:1000"
+    read_only: true
+    working_dir: /opt/imeal
+    entrypoint:
+      ["node", "/opt/imeal/scripts/backup/cli.mjs", "backup", "--output", "/evidence"]
+    environment:
+      NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
+      IMEAL_BACKUP_ENV: ${IMEAL_BACKUP_ENV:?IMEAL_BACKUP_ENV is required}
+      IMEAL_BACKUP_DATABASE_URL: ${IMEAL_BACKUP_DATABASE_URL:?IMEAL_BACKUP_DATABASE_URL is required}
+      IMEAL_BACKUP_SCHEMA: ${IMEAL_BACKUP_SCHEMA:?IMEAL_BACKUP_SCHEMA is required}
+      IMEAL_BACKUP_RELEASE_ID: ${IMEAL_BACKUP_RELEASE_ID:?IMEAL_BACKUP_RELEASE_ID is required}
+      AGE_RECIPIENT: ${AGE_RECIPIENT:?AGE_RECIPIENT is required}
+      IMEAL_BACKUP_S3_ENDPOINT: ${IMEAL_BACKUP_S3_ENDPOINT:?IMEAL_BACKUP_S3_ENDPOINT is required}
+      IMEAL_BACKUP_S3_BUCKET: ${IMEAL_BACKUP_S3_BUCKET:?IMEAL_BACKUP_S3_BUCKET is required}
+      IMEAL_BACKUP_S3_PREFIX: ${IMEAL_BACKUP_S3_PREFIX:?IMEAL_BACKUP_S3_PREFIX is required}
+      IMEAL_BACKUP_RETENTION_DAYS: ${IMEAL_BACKUP_RETENTION_DAYS:?IMEAL_BACKUP_RETENTION_DAYS is required}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:?AWS_DEFAULT_REGION is required}
+    volumes:
+      - ./scripts/backup:/opt/imeal/scripts/backup:ro
+      - ./scripts/staging:/opt/imeal/scripts/staging:ro
+      - ${IMEAL_BACKUP_EVIDENCE_DIR:?IMEAL_BACKUP_EVIDENCE_DIR is required}:/evidence
+    networks:
+      - data
+    tmpfs:
+      - /tmp
+
+networks:
+  data:
+    external: true
+    name: ${IMEAL_BACKUP_NETWORK_NAME:?IMEAL_BACKUP_NETWORK_NAME is required}

@@ -198,4 +198,30 @@ describe('NotificationDispatchService ticket mapping', () => {
       },
     });
   });
+
+  it('records a sanitized notification dispatch JobRun without payloads', async () => {
+    const jobRunCreate = vi.fn().mockResolvedValue({ id: 'job-1' });
+    const scheduled = new NotificationDispatchService({
+      jobRun: { create: jobRunCreate },
+    } as unknown as PrismaService);
+    vi.spyOn(scheduled, 'processNotificationDispatch').mockResolvedValue({
+      outboxCount: 2,
+      deliveryCount: 1,
+    });
+
+    await scheduled.handleNotificationDispatchCron();
+
+    expect(jobRunCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobName: expect.stringMatching(/^notification_dispatch_/),
+        status: 'COMPLETED',
+        successCount: 3,
+        failureCount: 0,
+        failureCode: null,
+      }),
+    });
+    expect(JSON.stringify(jobRunCreate.mock.calls)).not.toMatch(
+      /ExpoPushToken|token|payload|secret/i,
+    );
+  });
 });

@@ -35,6 +35,8 @@ function nestLoggerAdapter(logger: JsonStructuredLogger): LoggerService {
 }
 
 async function bootstrap() {
+  // trustProxy stays false. Client identity is resolved by the one-hop helper
+  // so Fastify cannot walk a client-supplied X-Forwarded-For chain.
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({ trustProxy: false }),

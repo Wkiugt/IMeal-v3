@@ -5,7 +5,9 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+import { EXPECTED_JOB_IDS } from './ci-contracts.mjs';
 const require = createRequire(import.meta.url);
+
 const { parse } = require('yaml');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -16,21 +18,15 @@ async function workflow() {
 test('workflow graph keeps exact aggregate context and complete producer job IDs', async () => {
   const jobs = (await workflow()).jobs;
   assert.equal(jobs.checks.name, 'Secretless qualification (disposable PostgreSQL)');
-  assert.deepEqual(jobs.checks.needs, [
-    'static',
-    'suites',
-    'mobile-export',
-    'mobile-smoke',
-    'db',
-    'tooling',
-    'security',
-    'images',
-  ]);
+  assert.deepEqual(jobs.checks.needs, [...EXPECTED_JOB_IDS]);
   assert.equal(jobs.checks.if, 'always()');
-  assert.deepEqual(jobs.security.strategy.matrix.kind, ['audit', 'secrets']);
-  assert.equal(jobs.security.strategy['fail-fast'], false);
-  assert.deepEqual(jobs.images.strategy.matrix.service, ['api', 'worker', 'admin-web']);
-  assert.equal(jobs.images.strategy['fail-fast'], false);
+  for (const id of ['security-audit', 'security-secrets', 'images-api', 'images-worker', 'images-admin-web']) {
+    assert.equal(jobs[id].strategy, undefined);
+    assert.equal(typeof jobs[id].name, 'string');
+    assert.doesNotMatch(jobs[id].name, /\$\{\{/);
+  }
+  assert.equal(jobs.security, undefined);
+  assert.equal(jobs.images, undefined);
 });
 
 test('mobile production and HTTP smoke jobs are independent mandatory lanes', async () => {
@@ -43,7 +39,7 @@ test('mobile production and HTTP smoke jobs are independent mandatory lanes', as
 
 test('producer uploads and aggregate downloads use explicit stable lane references', async () => {
   const jobs = (await workflow()).jobs;
-  for (const id of ['static', 'suites', 'mobile-export', 'mobile-smoke', 'db', 'tooling', 'security', 'images']) {
+  for (const id of EXPECTED_JOB_IDS) {
     const steps = jobs[id].steps ?? [];
     const upload = steps.find((step) => step.uses === 'actions/upload-artifact@v4');
     assert.ok(upload, `${id} must upload producer evidence`);

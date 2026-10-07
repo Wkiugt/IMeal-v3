@@ -15,6 +15,7 @@ import {
   type WorkerShutdownCoordinatorLike,
 } from './health.service.js';
 import { WorkerMetricsService } from './metrics/metrics.service.js';
+import { recordScheduledJobRun } from './job-run-fields.js';
 
 export type OtpPurpose = 'SESSION_LOGIN';
 
@@ -801,13 +802,32 @@ export class OtpDeliveryWorker {
       const result = await this.processOnce(new Date());
       this.metrics?.recordWorkerRun('otp_delivery', 'success');
       await this.metrics?.refreshOutboxAge();
+      await this.recordDeliveryJobRun(result).catch(() => undefined);
       return result;
     } catch (error) {
       this.metrics?.recordWorkerRun('otp_delivery', 'failure');
+      await this.recordDeliveryJobRun(undefined).catch(() => undefined);
       throw error;
     } finally {
       release?.();
     }
+  }
+
+  private recordDeliveryJobRun(
+    result: DeliveryRunResult | undefined,
+  ): Promise<void> {
+    const failed = result?.failed ?? 1;
+    return recordScheduledJobRun(this.prisma, {
+      prefix: 'otp_delivery_',
+      status: result && result.failed === 0 ? 'COMPLETED' : 'FAILED',
+      successCount: result?.sent ?? 0,
+      failureCount: result ? result.failed : 1,
+      ...(failed > 0
+        ? {
+            failureCode: result ? 'OTP_DELIVERY_PARTIAL' : 'OTP_DELIVERY_FAILURE',
+          }
+        : {}),
+    });
   }
 
   async processOnce(now: Date): Promise<DeliveryRunResult> {

@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service.js';
 import { lockUserLifecycle } from '../common/transaction-locks.js';
+import { auditColumnsFromDetails } from '../admin/operations/audit-redaction.js';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { AuthenticatedUser } from './authenticated-user.js';
 
@@ -118,14 +119,19 @@ export class SessionService {
           message: 'Invalid or expired session.',
         });
       }
+      const details = JSON.stringify({
+        purpose: input.purpose,
+        authMethod: 'EMAIL_OTP',
+        requestId: input.requestId,
+      });
       const audit = await tx.auditLog.create({
         data: {
           userId: input.userId,
           action: 'SESSION_CREATED',
-          details: JSON.stringify({
-            purpose: input.purpose,
-            authMethod: 'EMAIL_OTP',
-            requestId: input.requestId,
+          details,
+          ...auditColumnsFromDetails(details, {
+            targetUserId: input.userId,
+            resourceType: 'session',
           }),
         },
       });
@@ -270,11 +276,17 @@ export class SessionService {
       });
       if (revoked.count === 0) return;
 
+      const details = JSON.stringify({ reason, requestId });
       await tx.auditLog.create({
         data: {
           userId,
           action: 'SESSION_REVOKED',
-          details: JSON.stringify({ reason, requestId }),
+          details,
+          ...auditColumnsFromDetails(details, {
+            targetUserId: userId,
+            result: reason,
+            resourceType: 'session',
+          }),
         },
       });
     });
