@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import {
   EXPECTED_JOB_IDS,
   EXPECTED_LANE_IDS,
+  JOB_LANES,
   EXPECTED_STEP_IDS,
   aggregateQualification,
   createProducerEvidence,
@@ -95,6 +96,15 @@ test('release identity is stable across rerun attempts', () => {
   );
 });
 
+test('GitHub job IDs and evidence lanes stay distinct and fully mapped', () => {
+  assert.deepEqual(Object.keys(JOB_LANES), [...EXPECTED_JOB_IDS]);
+  assert.deepEqual(Object.values(JOB_LANES).flat(), [...EXPECTED_LANE_IDS]);
+  assert.equal(new Set(Object.values(JOB_LANES).flat()).size, EXPECTED_LANE_IDS.length);
+  assert.equal(EXPECTED_JOB_IDS.length, 8);
+  assert.equal(EXPECTED_LANE_IDS.length, 11);
+  assert.notDeepEqual([...EXPECTED_JOB_IDS], [...EXPECTED_LANE_IDS]);
+});
+
 test('aggregator requires every producer lane and job result', () => {
   assert.throws(
     () =>
@@ -127,6 +137,10 @@ test('aggregator reports producer failures and preserves diagnostics', () => {
   assert.deepEqual(report.failureDiagnostics[0].diagnostics, [
     'command failed: redacted diagnostic',
   ]);
+  assert.deepEqual(
+    report.jobStatuses,
+    Object.fromEntries(EXPECTED_JOB_IDS.map((jobId) => [jobId, 'success'])),
+  );
 });
 
 test('aggregate PASS maps actual verified statuses rather than unconditional PASS', () => {
@@ -237,6 +251,40 @@ test('mandatory job failures fail closed while unknown or missing job results re
       }),
     /missing producer job result|missing producer evidence/i,
   );
+});
+
+test('aggregator rejects unexpected needs keys', () => {
+  for (const jobId of ['security-audit', 'images-api', 'not-a-job']) {
+    assert.throws(
+      () =>
+        aggregateQualification({
+          evidence: allEvidence(),
+          needs: { ...successfulNeeds(), [jobId]: { result: 'success' } },
+          context,
+        }),
+      /unexpected producer job result/i,
+    );
+  }
+});
+
+test('matrix job failure fails closed even when every lane evidence is PASS', () => {
+  for (const jobId of ['security', 'images']) {
+    for (const result of ['failure', 'cancelled', 'skipped']) {
+      const needs = successfulNeeds();
+      needs[jobId] = { result };
+      const report = aggregateQualification({
+        evidence: allEvidence(),
+        needs,
+        context,
+      });
+      assert.equal(report.result, 'FAIL');
+      assert.equal(report.jobStatuses[jobId], result);
+      assert.deepEqual(
+        Object.values(report.verifiedStatuses),
+        EXPECTED_LANE_IDS.map(() => 'PASS'),
+      );
+    }
+  }
 });
 
 test('aggregator rejects duplicate or incomplete lane sets', () => {

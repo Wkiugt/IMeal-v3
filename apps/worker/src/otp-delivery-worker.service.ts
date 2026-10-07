@@ -817,17 +817,22 @@ export class OtpDeliveryWorker {
     result: DeliveryRunResult | undefined,
   ): Promise<void> {
     const failed = result?.failed ?? 1;
-    return recordScheduledJobRun(this.prisma, {
-      prefix: 'otp_delivery_',
-      status: result && result.failed === 0 ? 'COMPLETED' : 'FAILED',
-      successCount: result?.sent ?? 0,
-      failureCount: result ? result.failed : 1,
-      ...(failed > 0
-        ? {
-            failureCode: result ? 'OTP_DELIVERY_PARTIAL' : 'OTP_DELIVERY_FAILURE',
-          }
-        : {}),
-    });
+    return recordScheduledJobRun(
+      typeof this.prisma.jobRun?.create === 'function'
+        ? (data: Prisma.JobRunCreateInput) => this.prisma.jobRun.create({ data })
+        : undefined,
+      {
+        prefix: 'otp_delivery_',
+        status: result && result.failed === 0 ? 'COMPLETED' : 'FAILED',
+        successCount: result?.sent ?? 0,
+        failureCount: result ? result.failed : 1,
+        ...(failed > 0
+          ? {
+              failureCode: result ? 'OTP_DELIVERY_PARTIAL' : 'OTP_DELIVERY_FAILURE',
+            }
+          : {}),
+      },
+    );
   }
 
   async processOnce(now: Date): Promise<DeliveryRunResult> {

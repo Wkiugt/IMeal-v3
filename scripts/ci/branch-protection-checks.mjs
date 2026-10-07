@@ -1,17 +1,6 @@
 export const WORKFLOW_NAME = 'staging-readiness';
 
 export const DEVELOP_REQUIRED_JOB_NAMES = Object.freeze([
-  'Static checks',
-  'Workspace suites',
-  'Mobile production export',
-  'Mobile HTTP smoke',
-  'Disposable PostgreSQL suites',
-  'Staging tooling and Compose tests',
-  'Security audit',
-  'Security secrets',
-  'Image build scan SBOM api',
-  'Image build scan SBOM worker',
-  'Image build scan SBOM admin-web',
   'Secretless qualification (disposable PostgreSQL)',
 ]);
 

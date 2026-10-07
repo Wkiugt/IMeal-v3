@@ -299,7 +299,7 @@ describe('OtpDeliveryWorker', () => {
     const jobRunCreate = vi.fn().mockResolvedValue({ id: 'job-1' });
 
     const result = await new OtpDeliveryWorker(
-      { jobRun: { create: jobRunCreate } } as PrismaService,
+      { jobRun: { create: jobRunCreate } } as unknown as PrismaService,
       provider,
       outbox,
       () => NOW,

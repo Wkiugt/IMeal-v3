@@ -11,11 +11,8 @@ export const EXPECTED_JOB_IDS = Object.freeze([
   'mobile-smoke',
   'db',
   'tooling',
-  'security-audit',
-  'security-secrets',
-  'images-api',
-  'images-worker',
-  'images-admin-web',
+  'security',
+  'images',
 ]);
 
 export const EXPECTED_LANE_IDS = Object.freeze([

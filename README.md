@@ -248,18 +248,11 @@ Release mobile production nằm ở [mobile release](./docs/mobile-release.md). 
 
 Đây là tên để maintainer chọn. Repository này không bật được GitHub protection. Xem [bảo vệ nhánh](./docs/runbooks/branch-protection.md).
 
-- staging-readiness / Static checks
-- staging-readiness / Workspace suites
-- staging-readiness / Mobile production export
-- staging-readiness / Mobile HTTP smoke
-- staging-readiness / Disposable PostgreSQL suites
-- staging-readiness / Staging tooling and Compose tests
-- staging-readiness / Security audit
-- staging-readiness / Security secrets
-- staging-readiness / Image build scan SBOM api
-- staging-readiness / Image build scan SBOM worker
-- staging-readiness / Image build scan SBOM admin-web
+Chỉ check tổng hợp sau là bắt buộc cho qualification pull request của `deploy/develop` và `deploy/staging`. Job đó fail-closed trên mọi producer job và mọi evidence lane:
+
 - staging-readiness / Secretless qualification (disposable PostgreSQL)
+
+Không chọn context con của matrix như `staging-readiness / Security matrix (audit)` hoặc `staging-readiness / Image build scan SBOM matrix (api)`. Không chọn tên producer riêng lẻ. Không chọn `staging-readiness / Protected staging qualification (ephemeral Compose)` làm check bắt buộc của pull request. CI không bí mật không phải qualification staging hoặc production.
 
 ## Docker local
 

@@ -1,6 +1,6 @@
 import { Reflector } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
-import type { INestApplication } from '@nestjs/common';
+import type { INestApplication, Provider, Type } from '@nestjs/common';
 import type { Server } from 'node:http';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,11 +37,11 @@ const pagination = {
 
 async function createApp(
   user: AuthenticatedUser,
-  providers: Array<{ provide: unknown; useValue: unknown }>,
-  controllers: unknown[],
+  providers: Provider[],
+  controllers: Type[],
 ): Promise<INestApplication<Server>> {
   const module = await Test.createTestingModule({
-    controllers: controllers as never,
+    controllers,
     providers: [
       Reflector,
       SessionGuard,

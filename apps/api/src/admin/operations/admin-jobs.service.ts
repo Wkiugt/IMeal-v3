@@ -9,13 +9,14 @@ import { pageMeta } from './audit-redaction.js';
 const RELEASE = /^[A-Za-z0-9._:+-]{1,80}$/;
 const FAILURE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const SENSITIVE = /(otp|token|secret|password|authorization|bearer|gps|latitude|longitude|qr)/i;
-const FAMILY_PREFIXES: Record<Exclude<v1.AdminJobFamily, 'other'>, readonly string[]> = {
+const FAMILY_PREFIXES: Record<v1.AdminJobFamily, readonly string[]> = {
   no_show: ['no_show_worker_', 'no_show_'],
   registration_reminder: ['registration_reminder_'],
   pickup_reminder: ['pickup_reminder_'],
   cutoff_lock: ['cutoff_lock_'],
   otp_delivery: ['otp_delivery_'],
   notification_dispatch: ['notification_dispatch_', 'push_dispatch_'],
+  other: [],
 };
 const KNOWN_FAMILIES: v1.AdminJobsResponse['knownFamilies'] = [
   { family: 'no_show', persisted: true },
@@ -26,7 +27,7 @@ const KNOWN_FAMILIES: v1.AdminJobsResponse['knownFamilies'] = [
   { family: 'notification_dispatch', persisted: true },
 ];
 const PERSISTED_PREFIXES = KNOWN_FAMILIES.filter((item) => item.persisted).flatMap(
-  (item) => FAMILY_PREFIXES[item.family],
+  (item) => FAMILY_PREFIXES[item.family].filter((prefix) => prefix.length > 0),
 );
 
 type WorkerHealthReader = (signal: AbortSignal) => Promise<Response>;
@@ -66,10 +67,11 @@ function count(value: number | null | undefined): number | null {
 }
 
 function familyOf(jobName: string): v1.AdminJobFamily {
-  for (const [family, prefixes] of Object.entries(FAMILY_PREFIXES) as Array<
-    [Exclude<v1.AdminJobFamily, 'other'>, readonly string[]]
-  >) {
-    if (prefixes.some((prefix) => jobName.startsWith(prefix))) return family;
+  for (const family of v1.AdminJobFamilySchema.options) {
+    const prefixes = FAMILY_PREFIXES[family];
+    if (prefixes.some((prefix) => prefix.length > 0 && jobName.startsWith(prefix))) {
+      return family;
+    }
   }
   return 'other';
 }

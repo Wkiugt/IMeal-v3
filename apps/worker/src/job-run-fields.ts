@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Prisma } from '@imeal/core';
 
 const FAILURE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const RELEASE = /^[A-Za-z0-9._:+-]{1,80}$/;
@@ -55,11 +56,7 @@ export function jobRunBookkeeping(input: {
 }
 
 export async function recordScheduledJobRun(
-  prisma: {
-    jobRun?: {
-      create?: (input: { data: Record<string, unknown> }) => Promise<unknown>;
-    };
-  },
+  create: ((data: Prisma.JobRunCreateInput) => Promise<unknown>) | undefined,
   input: {
     prefix: 'otp_delivery_' | 'notification_dispatch_';
     status: 'COMPLETED' | 'FAILED';
@@ -68,15 +65,13 @@ export async function recordScheduledJobRun(
     failureCode?: string;
   },
 ): Promise<void> {
-  const create = prisma.jobRun?.create;
   if (typeof create !== 'function') return;
-  await create({
-    data: {
-      id: randomUUID(),
-      jobName: `${input.prefix}${randomUUID()}`,
-      status: input.status,
-      completedAt: new Date(),
-      ...jobRunBookkeeping(input),
-    },
-  });
+  const data = {
+    id: randomUUID(),
+    jobName: `${input.prefix}${randomUUID()}`,
+    status: input.status,
+    completedAt: new Date(),
+    ...jobRunBookkeeping(input),
+  } satisfies Prisma.JobRunCreateInput;
+  await create(data);
 }

@@ -217,10 +217,14 @@ jobs:
       - if: steps.produce.outcome != 'success'
         run: exit 1
 
-  security-audit:
-    name: Security audit
+  security:
+    name: Security matrix
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [audit, secrets]
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -233,50 +237,26 @@ jobs:
           yarn install --immutable
       - id: produce
         run: |
-          mkdir -p "$RUNNER_TEMP/ci/security-audit"
-          node scripts/ci/checks.mjs --lane "security-audit" --output "$RUNNER_TEMP/ci/security-audit"
-          node scripts/ci/ci-dispatcher.mjs --allow-docker --release-id "$RELEASE_ID" --lane-id "security-audit" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/security-audit/commands.json" --output "$RUNNER_TEMP/ci/security-audit"
+          mkdir -p "$RUNNER_TEMP/ci/security-${{ matrix.kind }}"
+          node scripts/ci/checks.mjs --lane "security-${{ matrix.kind }}" --output "$RUNNER_TEMP/ci/security-${{ matrix.kind }}"
+          node scripts/ci/ci-dispatcher.mjs --allow-docker --release-id "$RELEASE_ID" --lane-id "security-${{ matrix.kind }}" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/security-${{ matrix.kind }}/commands.json" --output "$RUNNER_TEMP/ci/security-${{ matrix.kind }}"
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: staging-qualification-${{ env.RELEASE_ID }}-security-audit
-          path: ${{ runner.temp }}/ci/security-audit
+          name: staging-qualification-${{ env.RELEASE_ID }}-security-${{ matrix.kind }}
+          path: ${{ runner.temp }}/ci/security-${{ matrix.kind }}
           if-no-files-found: error
           overwrite: true
           retention-days: 14
 
-  security-secrets:
-    name: Security secrets
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - run: |
-          corepack enable
-          corepack install --global "yarn@${YARN_VERSION}"
-          yarn install --immutable
-      - id: produce
-        run: |
-          mkdir -p "$RUNNER_TEMP/ci/security-secrets"
-          node scripts/ci/checks.mjs --lane "security-secrets" --output "$RUNNER_TEMP/ci/security-secrets"
-          node scripts/ci/ci-dispatcher.mjs --allow-docker --release-id "$RELEASE_ID" --lane-id "security-secrets" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/security-secrets/commands.json" --output "$RUNNER_TEMP/ci/security-secrets"
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: staging-qualification-${{ env.RELEASE_ID }}-security-secrets
-          path: ${{ runner.temp }}/ci/security-secrets
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 14
-
-  images-api:
-    name: Image build scan SBOM api
+  images:
+    name: Image build scan SBOM matrix
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, worker, admin-web]
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -289,119 +269,35 @@ jobs:
           yarn install --immutable
       - id: produce
         run: |
-          mkdir -p "$RUNNER_TEMP/ci/images-api"
-          node scripts/ci/checks.mjs --lane "images-api" --output "$RUNNER_TEMP/ci/images-api"
+          mkdir -p "$RUNNER_TEMP/ci/images-${{ matrix.service }}"
+          node scripts/ci/checks.mjs --lane "images-${{ matrix.service }}" --output "$RUNNER_TEMP/ci/images-${{ matrix.service }}"
           set +e
-          node scripts/ci/ci-dispatcher.mjs --allow-docker --release-id "$RELEASE_ID" --lane-id "images-api" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/images-api/commands.json" --output "$RUNNER_TEMP/ci/images-api"
+          node scripts/ci/ci-dispatcher.mjs --allow-docker --release-id "$RELEASE_ID" --lane-id "images-${{ matrix.service }}" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/images-${{ matrix.service }}/commands.json" --output "$RUNNER_TEMP/ci/images-${{ matrix.service }}"
           dispatch_status=$?
           set -e
           image_id=''
-          if image_id="$(docker image inspect --format '{{.Id}}' "imeal/api:${GITHUB_SHA}" 2>/dev/null)"; then
-            sbom_path="$RUNNER_TEMP/ci/images-api/build-image-sbom-api.spdx.json"
+          if image_id="$(docker image inspect --format '{{.Id}}' "imeal/${{ matrix.service }}:${GITHUB_SHA}" 2>/dev/null)"; then
+            sbom_path="$RUNNER_TEMP/ci/images-${{ matrix.service }}/build-image-sbom-${{ matrix.service }}.spdx.json"
             if [ -f "$sbom_path" ]; then
               sbom_hash="$(sha256sum "$sbom_path" | cut -d' ' -f1)"
-              printf '%s\n' "$image_id" > "$RUNNER_TEMP/ci/images-api/image-inspection.txt"
-              node scripts/ci/record-built-image.mjs "$RUNNER_TEMP/ci/images-api/producer-result.json" "$image_id" "$sbom_hash" api "$GITHUB_SHA"
+              printf '%s\n' "$image_id" > "$RUNNER_TEMP/ci/images-${{ matrix.service }}/image-inspection.txt"
+              node scripts/ci/record-built-image.mjs "$RUNNER_TEMP/ci/images-${{ matrix.service }}/producer-result.json" "$image_id" "$sbom_hash" "${{ matrix.service }}" "$GITHUB_SHA"
             fi
           fi
-          test -f "$RUNNER_TEMP/ci/images-api/producer-result.json"
+          test -f "$RUNNER_TEMP/ci/images-${{ matrix.service }}/producer-result.json"
           exit "$dispatch_status"
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: staging-qualification-${{ env.RELEASE_ID }}-images-api
-          path: ${{ runner.temp }}/ci/images-api
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 14
-
-  images-worker:
-    name: Image build scan SBOM worker
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - run: |
-          corepack enable
-          corepack install --global "yarn@${YARN_VERSION}"
-          yarn install --immutable
-      - id: produce
-        run: |
-          mkdir -p "$RUNNER_TEMP/ci/images-worker"
-          node scripts/ci/checks.mjs --lane "images-worker" --output "$RUNNER_TEMP/ci/images-worker"
-          set +e
-          node scripts/ci/ci-dispatcher.mjs --allow-docker --release-id "$RELEASE_ID" --lane-id "images-worker" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/images-worker/commands.json" --output "$RUNNER_TEMP/ci/images-worker"
-          dispatch_status=$?
-          set -e
-          image_id=''
-          if image_id="$(docker image inspect --format '{{.Id}}' "imeal/worker:${GITHUB_SHA}" 2>/dev/null)"; then
-            sbom_path="$RUNNER_TEMP/ci/images-worker/build-image-sbom-worker.spdx.json"
-            if [ -f "$sbom_path" ]; then
-              sbom_hash="$(sha256sum "$sbom_path" | cut -d' ' -f1)"
-              printf '%s\n' "$image_id" > "$RUNNER_TEMP/ci/images-worker/image-inspection.txt"
-              node scripts/ci/record-built-image.mjs "$RUNNER_TEMP/ci/images-worker/producer-result.json" "$image_id" "$sbom_hash" worker "$GITHUB_SHA"
-            fi
-          fi
-          test -f "$RUNNER_TEMP/ci/images-worker/producer-result.json"
-          exit "$dispatch_status"
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: staging-qualification-${{ env.RELEASE_ID }}-images-worker
-          path: ${{ runner.temp }}/ci/images-worker
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 14
-
-  images-admin-web:
-    name: Image build scan SBOM admin-web
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - run: |
-          corepack enable
-          corepack install --global "yarn@${YARN_VERSION}"
-          yarn install --immutable
-      - id: produce
-        run: |
-          mkdir -p "$RUNNER_TEMP/ci/images-admin-web"
-          node scripts/ci/checks.mjs --lane "images-admin-web" --output "$RUNNER_TEMP/ci/images-admin-web"
-          set +e
-          node scripts/ci/ci-dispatcher.mjs --allow-docker --release-id "$RELEASE_ID" --lane-id "images-admin-web" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/images-admin-web/commands.json" --output "$RUNNER_TEMP/ci/images-admin-web"
-          dispatch_status=$?
-          set -e
-          image_id=''
-          if image_id="$(docker image inspect --format '{{.Id}}' "imeal/admin-web:${GITHUB_SHA}" 2>/dev/null)"; then
-            sbom_path="$RUNNER_TEMP/ci/images-admin-web/build-image-sbom-admin-web.spdx.json"
-            if [ -f "$sbom_path" ]; then
-              sbom_hash="$(sha256sum "$sbom_path" | cut -d' ' -f1)"
-              printf '%s\n' "$image_id" > "$RUNNER_TEMP/ci/images-admin-web/image-inspection.txt"
-              node scripts/ci/record-built-image.mjs "$RUNNER_TEMP/ci/images-admin-web/producer-result.json" "$image_id" "$sbom_hash" admin-web "$GITHUB_SHA"
-            fi
-          fi
-          test -f "$RUNNER_TEMP/ci/images-admin-web/producer-result.json"
-          exit "$dispatch_status"
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: staging-qualification-${{ env.RELEASE_ID }}-images-admin-web
-          path: ${{ runner.temp }}/ci/images-admin-web
+          name: staging-qualification-${{ env.RELEASE_ID }}-images-${{ matrix.service }}
+          path: ${{ runner.temp }}/ci/images-${{ matrix.service }}
           if-no-files-found: error
           overwrite: true
           retention-days: 14
 
   checks:
     name: Secretless qualification (disposable PostgreSQL)
-    needs: [static, suites, mobile-export, mobile-smoke, db, tooling, security-audit, security-secrets, images-api, images-worker, images-admin-web]
+    needs: [static, suites, mobile-export, mobile-smoke, db, tooling, security, images]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15

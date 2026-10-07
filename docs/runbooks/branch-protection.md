@@ -8,9 +8,26 @@ UI. Applying this document is an external action. It does not prove that
 protection is enabled, and it does not qualify staging or production.
 
 The workflow name is `staging-readiness`. GitHub reports each job as
-`staging-readiness / <job name>`. Select those exact strings. Do not select a
-matrix suffix such as `(audit)` or `(api)`; those names are not stable and are
-not used.
+`staging-readiness / <job name>`. For pull-request qualification of
+`deploy/develop` and `deploy/staging`, require only the aggregate secretless
+check below. That job already fail-closes unless every producer job result is
+`success` and every evidence lane is `PASS`.
+
+Producer GitHub job IDs are `static`, `suites`, `mobile-export`,
+`mobile-smoke`, `db`, `tooling`, `security`, and `images`. `security` is one
+matrix job (`fail-fast: false`) over `audit` and `secrets`. `images` is one
+matrix job (`fail-fast: false`) over `api`, `worker`, and `admin-web`. GitHub
+`needs` reports the combined matrix job result. It does not provide per-child
+needs keys. Lane granularity stays in the eleven evidence artifacts: `static`,
+`suites`, `mobile-export`, `mobile-smoke`, `db`, `tooling`, `security-audit`,
+`security-secrets`, `images-api`, `images-worker`, and `images-admin-web`. The
+aggregate downloads each artifact by that explicit name.
+
+Do not require individual producer display names. Do not require matrix child
+contexts such as `staging-readiness / Security matrix (audit)` or
+`staging-readiness / Image build scan SBOM matrix (api)`. GitHub may append
+matrix values to those job names; those contexts are not stable. Do not select
+a matrix suffix such as `(audit)` or `(api)`.
 
 ## deploy/develop
 
@@ -32,21 +49,13 @@ Settings for `deploy/develop`:
 
 Required status checks:
 
-- `staging-readiness / Static checks`
-- `staging-readiness / Workspace suites`
-- `staging-readiness / Mobile production export`
-- `staging-readiness / Mobile HTTP smoke`
-- `staging-readiness / Disposable PostgreSQL suites`
-- `staging-readiness / Staging tooling and Compose tests`
-- `staging-readiness / Security audit`
-- `staging-readiness / Security secrets`
-- `staging-readiness / Image build scan SBOM api`
-- `staging-readiness / Image build scan SBOM worker`
-- `staging-readiness / Image build scan SBOM admin-web`
 - `staging-readiness / Secretless qualification (disposable PostgreSQL)`
 
 `Secretless qualification (disposable PostgreSQL)` is disposable CI only. A
 green result is not staging qualification and is not production qualification.
+It is the stable pull-request gate because it validates every producer job and
+every evidence lane. It does not read protected staging secrets, and secretless
+CI must not be recorded as a protected staging PASS.
 
 ## deploy/staging
 
@@ -57,7 +66,7 @@ Settings for `deploy/staging`:
 - Do not allow direct pushes for normal contributors.
 - Block force pushes.
 - Block deletion.
-- Require the same secretless status checks listed above. Those jobs run on
+- Require the same secretless status check listed above. That job runs on
   `pull_request`. The protected job does not run on pull requests, so it must
   not be a required pull-request status check.
 - After merge, a push to `deploy/staging` may start
