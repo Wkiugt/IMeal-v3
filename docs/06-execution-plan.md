@@ -74,13 +74,15 @@ thích, không còn là flow active.
 ## Task 0.2 — OTP/provider/organization prerequisites
 
 Coordinate with the organization owner for allowlist-A provisioning and the
-approved OTP provider. No federated identity provider, tenant/client/redirect
-registration or local production login is part of the current contract:
+dedicated Gmail or Google Workspace mailbox used for OTP. No federated identity
+provider, tenant/client/redirect registration or local production login is part
+of the current contract:
 
 - [ ] Approve the source and owner for exactly the active allowlist-A emails.
-- [ ] Configure an HTTPS OTP provider URL, API key and sender identity outside
-      source control.
-- [ ] Confirm provider delivery, rate limits, expiry and support ownership.
+- [ ] Create a Google App Password for the OTP mailbox and store
+      `OTP_SMTP_USERNAME`, `OTP_SMTP_PASSWORD`, and `OTP_SMTP_FROM` outside
+      source control. Do not store the normal Google account password.
+- [ ] Confirm Gmail delivery, App Password rotation, expiry and support ownership.
 - [ ] Record synthetic test addresses and role assignments without storing
       secrets or real employee data in docs.
 - [ ] Approve the one-shot server-side first-Admin provisioning operation and
@@ -95,8 +97,8 @@ request/verify is exercised at the authentication exit.
 - [ ] Define public API hostname for Staff and Kitchen features.
 - [ ] Configure HTTPS certificate trusted by target iOS/Android devices.
 - [ ] Deny public/general LAN access to PostgreSQL port.
-- [ ] Allow API outbound HTTPS to the approved OTP provider and chosen
-      push/image providers.
+- [ ] Allow the worker outbound TCP to `smtp.gmail.com:587`. Do not publish
+      worker ports. Allow API outbound HTTPS only to chosen push/image providers.
 
 **Exit:** HTTPS API reachability, authentication/permission boundaries and PostgreSQL isolation are documented and testable.
 
@@ -752,8 +754,8 @@ Linux LTS
 The project has not yet selected package/bundle IDs, signing ownership, minimum OS versions or distribution channel. These are intentionally deferred and must be resolved before production release, not during core domain implementation.
 
 - [ ] Configure Android signing/package ID.
-- [ ] OTP provider HTTPS URL/sender settings and opaque-session behavior match
-      release configuration.
+- [ ] Worker Gmail SMTP sender settings (`smtp.gmail.com:587`, App Password,
+      approved From) and opaque-session behavior match release configuration.
 - [ ] Decide organization distribution channel (managed/internal store/public private listing as approved).
 - [ ] Test upgrade path and deep links/push on release build.
 - [ ] Define API/mobile compatibility matrix, minimum supported app version and pilot cohort.

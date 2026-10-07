@@ -12,9 +12,7 @@ const composeText = ['docker-compose.yml', 'docker-compose.production.yml']
   .join('\n');
 const requiredNames = [
   ...new Set(
-    [...composeText.matchAll(/\$\{([A-Z0-9_]+):\?/g)].map(
-      ([, name]) => name,
-    ),
+    [...composeText.matchAll(/\$\{([A-Z0-9_]+):\?/g)].map(([, name]) => name),
   ),
 ];
 const secretNames = new Set([
@@ -24,7 +22,7 @@ const secretNames = new Set([
   'OTP_HASH_SECRET',
   'OTP_DELIVERY_ENCRYPTION_KEY',
   'SESSION_HASH_SECRET',
-  'OTP_PROVIDER_API_KEY',
+  'OTP_SMTP_PASSWORD',
 ]);
 
 function testValues() {
@@ -37,11 +35,11 @@ function testValues() {
         ];
       }
       if (secretNames.has(name)) return [name, 'x'.repeat(48)];
-      if (name === 'OTP_PROVIDER_URL') return [name, 'https://otp.example.com'];
       if (name === 'STOP_GRACE_PERIOD') return [name, '35ms'];
       if (name === 'PROXY_HTTP_PORT') return [name, '80'];
       if (name === 'PROXY_HTTPS_PORT') return [name, '443'];
-      if (name.endsWith('_VOLUME_NAME')) return [name, `imeal-test-${name.toLowerCase()}`];
+      if (name.endsWith('_VOLUME_NAME'))
+        return [name, `imeal-test-${name.toLowerCase()}`];
       if (
         name.endsWith('_PORT') ||
         name.endsWith('_SECONDS') ||
@@ -74,10 +72,17 @@ function testValues() {
 }
 
 test('rejects millisecond stop grace values before Compose duration coercion', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'imeal-production-boundary-test-'));
+  const directory = mkdtempSync(
+    join(tmpdir(), 'imeal-production-boundary-test-'),
+  );
   const envFile = join(directory, 'compose.env');
   const values = testValues();
-  writeFileSync(envFile, Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n'));
+  writeFileSync(
+    envFile,
+    Object.entries(values)
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n'),
+  );
   const childEnv = { ...process.env };
   for (const name of requiredNames) delete childEnv[name];
 
@@ -86,7 +91,11 @@ test('rejects millisecond stop grace values before Compose duration coercion', (
       () =>
         execFileSync(
           process.execPath,
-          [resolve(root, 'scripts/verify-production-boundary.mjs'), '--env-file', envFile],
+          [
+            resolve(root, 'scripts/verify-production-boundary.mjs'),
+            '--env-file',
+            envFile,
+          ],
           {
             cwd: root,
             env: childEnv,
@@ -96,7 +105,10 @@ test('rejects millisecond stop grace values before Compose duration coercion', (
         ),
       (error) => {
         const output = `${error.stdout ?? ''}\n${error.stderr ?? ''}`;
-        assert.match(output, /STOP_GRACE_PERIOD must be expressed as whole seconds/);
+        assert.match(
+          output,
+          /STOP_GRACE_PERIOD must be expressed as whole seconds/,
+        );
         return true;
       },
     );
@@ -106,19 +118,30 @@ test('rejects millisecond stop grace values before Compose duration coercion', (
 });
 
 test('requires migration-gate, API, and worker schema alignment', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'imeal-production-schema-test-'));
+  const directory = mkdtempSync(
+    join(tmpdir(), 'imeal-production-schema-test-'),
+  );
   const envFile = join(directory, 'compose.env');
   const values = testValues();
   values.STOP_GRACE_PERIOD = '45s';
   values.MIGRATION_TARGET_SCHEMA = 'release_schema';
-  writeFileSync(envFile, Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n'));
+  writeFileSync(
+    envFile,
+    Object.entries(values)
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n'),
+  );
   const childEnv = { ...process.env };
   for (const name of requiredNames) delete childEnv[name];
 
   try {
     const output = execFileSync(
       process.execPath,
-      [resolve(root, 'scripts/verify-production-boundary.mjs'), '--env-file', envFile],
+      [
+        resolve(root, 'scripts/verify-production-boundary.mjs'),
+        '--env-file',
+        envFile,
+      ],
       {
         cwd: root,
         env: childEnv,

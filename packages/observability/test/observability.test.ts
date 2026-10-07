@@ -107,6 +107,28 @@ describe('JSON structured logging', () => {
     expect(lines[0]).not.toContain('provider-secret');
   });
 
+  it('keeps a constrained provider name and redacts anything else', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('worker', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.info('worker.otp.sent', {
+      service: 'worker',
+      release: 'r1',
+      provider: 'gmail-smtp',
+    });
+    logger.info('worker.otp.sent', {
+      service: 'worker',
+      release: 'r1',
+      provider: 'app-password-not-a-google-password',
+    });
+
+    expect(JSON.parse(lines[0]).provider).toBe('gmail-smtp');
+    expect(JSON.parse(lines[1]).provider).toBe('[REDACTED]');
+    expect(lines[1]).not.toContain('app-password-not-a-google-password');
+  });
+
   it('omits unknown and sensitive field names from structured output', () => {
     const lines: string[] = [];
     const logger = new JsonStructuredLogger('api', 'r1', (line) =>

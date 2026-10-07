@@ -170,9 +170,9 @@ Lỗi `Cannot read properties of undefined (reading 'body')` là lỗi Expo shar
 | App không gọi được API | API đang chạy, `EXPO_PUBLIC_API_URL` trống, `curl.exe http://localhost:3000/health` thành công, firewall mở `3000`. |
 | Port `8081` bị chiếm | `Ctrl+C`. Nếu còn listener: `Get-NetTCPConnection -LocalPort 8081 -State Listen`, rồi `Stop-Process -Id <PID>` và chạy lại `start:lan`. |
 
-Smoke thủ công cần email allowlist, role/location/roster và OTP provider được cấp ngoài repository:
+Smoke thủ công cần email allowlist, role/location/roster và hộp thư Gmail OTP được cấp ngoài repository. Worker gửi mã qua SMTP `smtp.gmail.com:587`; API không gửi mail:
 
-1. Staff xin OTP và verify code từ provider.
+1. Staff xin OTP và verify code nhận từ Gmail.
 2. Tạo đăng ký cho ngày đang phục vụ. Kitchen có `kitchen.serve` mở `GET /api/kitchen/check-in/qr`: một QR chung cho ngày/địa điểm, không chứa danh tính Staff.
 3. Staff quét QR, cấp camera và GPS foreground. `POST /api/me/check-in/resolve` trả đúng đăng ký của caller; `intentNonce` có giá trị khi eligible, null khi không.
 4. Staff review, lấy GPS mới và `POST /api/me/check-in/confirm` với cùng `sessionId`, `intentNonce` khác rỗng và idempotency key.

@@ -11,6 +11,11 @@ import {
   type OtpProvider,
   validateWorkerEnvironment,
 } from './otp-delivery-worker.service.js';
+import {
+  GmailSmtpOtpProvider,
+  type OtpSmtpTransport,
+  type OtpSmtpTransportFactory,
+} from './gmail-smtp-otp-provider.js';
 import { WorkerMetricsService } from './metrics/metrics.service.js';
 
 const NOW = new Date('2026-09-24T03:00:00.000Z');
@@ -48,9 +53,10 @@ function validWorkerEnvironment(): NodeJS.ProcessEnv {
     NODE_ENV: 'production',
     DATABASE_URL: 'postgresql://localhost/imeal',
     OTP_DELIVERY_ENCRYPTION_KEY: SECRET,
-    OTP_PROVIDER_URL: 'https://provider.internal/send',
-    OTP_PROVIDER_FROM: 'imeal@company.invalid',
-    OTP_PROVIDER_API_KEY: 'provider-key',
+    OTP_SMTP_USERNAME: 'otp-sender@company.invalid',
+    OTP_SMTP_PASSWORD: 'app-password-not-a-google-password',
+    OTP_SMTP_FROM: 'otp-sender@company.invalid',
+    OTP_EXPIRY_SECONDS: '600',
     OTP_DELIVERY_BATCH_SIZE: '100',
     OTP_DELIVERY_MAX_ATTEMPTS: '4',
     OTP_DELIVERY_RETRY_BASE_SECONDS: '60',
@@ -159,8 +165,7 @@ describe('OtpDeliveryWorker', () => {
   it('fails worker startup when the encrypted payload key is missing', () => {
     const env = {
       NODE_ENV: 'production',
-      OTP_PROVIDER_URL: 'https://provider.example.test/send',
-      OTP_PROVIDER_API_KEY: 'provider-key',
+      OTP_SMTP_USERNAME: 'otp-sender@company.invalid',
     } as NodeJS.ProcessEnv;
 
     expect(() => validateWorkerEnvironment(env)).toThrow(
@@ -173,7 +178,7 @@ describe('OtpDeliveryWorker', () => {
     ).not.toThrow();
   });
 
-  it.each(['OTP_PROVIDER_URL', 'OTP_PROVIDER_API_KEY', 'OTP_PROVIDER_FROM'])(
+  it.each(['OTP_SMTP_USERNAME', 'OTP_SMTP_PASSWORD', 'OTP_SMTP_FROM'])(
     'rejects production when %s is missing',
     (name) => {
       const env = validWorkerEnvironment();
@@ -183,26 +188,43 @@ describe('OtpDeliveryWorker', () => {
     },
   );
 
-  it.each([
-    'http://provider.internal/send',
-    'https://provider.example.test/send',
-    'https://localhost/send',
-    'https://127.0.0.1/send',
-    'https://192.168.1.10/send',
-    'https://[::1]/send',
-    'https://',
-    'https:///send',
-    'not-a-url',
-  ])('rejects production when OTP_PROVIDER_URL is invalid: %s', (url) => {
+  it('rejects production when the SMTP port is not 587', () => {
     const env = validWorkerEnvironment();
-    env.OTP_PROVIDER_URL = url;
+    env.OTP_SMTP_PORT = '465';
 
-    expect(() => validateWorkerEnvironment(env)).toThrow('OTP_PROVIDER_URL');
+    expect(() => validateWorkerEnvironment(env)).toThrow('OTP_SMTP_PORT');
+  });
+
+  it('rejects disabled SMTP TLS and a non-Gmail production host', () => {
+    const tls = validWorkerEnvironment();
+    tls.OTP_SMTP_REQUIRE_TLS = 'false';
+    expect(() => validateWorkerEnvironment(tls)).toThrow(
+      'OTP_SMTP_REQUIRE_TLS',
+    );
+
+    const host = validWorkerEnvironment();
+    host.OTP_SMTP_HOST = 'smtp-relay.gmail.com';
+    expect(() => validateWorkerEnvironment(host)).toThrow('OTP_SMTP_HOST');
+  });
+
+  it('accepts production SMTP when host and port use the Gmail defaults', () => {
+    const env = validWorkerEnvironment();
+    delete env.OTP_SMTP_HOST;
+    delete env.OTP_SMTP_PORT;
+
+    expect(() => validateWorkerEnvironment(env)).not.toThrow();
+    expect(() =>
+      validateWorkerEnvironment({
+        ...env,
+        OTP_SMTP_HOST: 'smtp.gmail.com',
+        OTP_SMTP_PORT: '587',
+      }),
+    ).not.toThrow();
   });
 
   it('rejects provider placeholders without exposing their values', () => {
     const env = validWorkerEnvironment();
-    env.OTP_PROVIDER_API_KEY = 'CHANGE_ME_LOCAL';
+    env.OTP_SMTP_PASSWORD = 'CHANGE_ME_LOCAL';
 
     let error: unknown;
     try {
@@ -211,7 +233,7 @@ describe('OtpDeliveryWorker', () => {
       error = caught;
     }
 
-    expect(String(error)).toContain('OTP_PROVIDER_API_KEY');
+    expect(String(error)).toContain('OTP_SMTP_PASSWORD');
     expect(String(error)).not.toContain('CHANGE_ME_LOCAL');
   });
 
@@ -279,7 +301,6 @@ describe('OtpDeliveryWorker', () => {
       'NODE_ENV',
     );
   });
-
 
   it('rejects a retry ceiling below the retry base', () => {
     const env = validWorkerEnvironment();
@@ -710,5 +731,183 @@ describe('OtpDeliveryWorker', () => {
     expect(text).toContain('imeal_otp_delivery_total 2');
     expect(text).toContain('imeal_otp_delivery_retries_total 1');
     expect(text).toContain('imeal_otp_delivery_failures_total 1');
+  });
+
+  it('delivers a claimed OTP through Gmail SMTP and records it processed', async () => {
+    process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
+    const password = 'app-password-not-a-google-password';
+    const sendMail = vi.fn<OtpSmtpTransport['sendMail']>(async () => ({
+      accepted: [DESTINATION],
+      rejected: [],
+    }));
+    const factory = vi.fn<OtpSmtpTransportFactory>(() => ({ sendMail }));
+    const smtp = new GmailSmtpOtpProvider(
+      {
+        NODE_ENV: 'test',
+        OTP_SMTP_USERNAME: 'otp-sender@company.invalid',
+        OTP_SMTP_PASSWORD: password,
+        OTP_SMTP_FROM: 'otp-sender@company.invalid',
+        OTP_EXPIRY_SECONDS: '600',
+      },
+      factory,
+    );
+    const outbox = fakeOutbox([delivery()]);
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const result = await new OtpDeliveryWorker(
+      {} as PrismaService,
+      smtp,
+      outbox,
+      () => NOW,
+      logger as unknown as StructuredLogger,
+    ).processOnce(NOW);
+
+    expect(result).toMatchObject({ claimed: 1, sent: 1, failed: 0 });
+    expect(outbox.processed).toEqual([{ id: 'outbox-1', now: NOW }]);
+    expect(outbox.failures).toEqual([]);
+    expect(smtp.send).toBeTypeOf('function');
+    expect(factory.mock.calls[0]?.[0]).toMatchObject({
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      requireTLS: true,
+      auth: {
+        user: 'otp-sender@company.invalid',
+        pass: password,
+      },
+      tls: { minVersion: 'TLSv1.2', servername: 'smtp.gmail.com' },
+    });
+    const message = sendMail.mock.calls[0]?.[0];
+    expect(message?.to).toBe(DESTINATION);
+    expect(message?.from).toEqual({
+      name: 'IMeal',
+      address: 'otp-sender@company.invalid',
+    });
+    expect(message?.subject).toBe('Your IMeal verification code');
+    expect(message?.text).toContain(`Your verification code is ${CODE}.`);
+    expect(message?.text).toContain('This code expires in 10 minutes.');
+    expect(message?.html).toContain(CODE);
+    expect(message?.html).toContain('This code expires in 10 minutes.');
+    expect(message?.html).not.toContain('<script');
+    const logs = JSON.stringify(logger.info.mock.calls);
+    expect(logs).toContain('"provider":"gmail-smtp"');
+    expect(logs).not.toContain(CODE);
+    expect(logs).not.toContain(password);
+  });
+
+  it('records authentication rejection as permanent without logging secrets', async () => {
+    process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
+    const password = 'app-password-not-a-google-password';
+    const sendMail = vi.fn<OtpSmtpTransport['sendMail']>(async () => {
+      throw Object.assign(new Error(`535 rejected ${password} code ${CODE}`), {
+        code: 'EAUTH',
+        responseCode: 535,
+      });
+    });
+    const factory = vi.fn<OtpSmtpTransportFactory>(() => ({ sendMail }));
+    const smtp = new GmailSmtpOtpProvider(
+      {
+        NODE_ENV: 'test',
+        OTP_SMTP_USERNAME: 'otp-sender@company.invalid',
+        OTP_SMTP_PASSWORD: password,
+        OTP_SMTP_FROM: 'otp-sender@company.invalid',
+        OTP_EXPIRY_SECONDS: '600',
+      },
+      factory,
+    );
+    const outbox = fakeOutbox([delivery()]);
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    await new OtpDeliveryWorker(
+      {} as PrismaService,
+      smtp,
+      outbox,
+      () => NOW,
+      logger as unknown as StructuredLogger,
+    ).processOnce(NOW);
+
+    expect(outbox.processed).toEqual([]);
+    expect(outbox.failures[0]).toMatchObject({
+      code: 'PROVIDER_PERMANENT',
+      retryAt: null,
+    });
+    const logs = JSON.stringify([
+      ...logger.info.mock.calls,
+      ...logger.warn.mock.calls,
+      ...logger.error.mock.calls,
+    ]);
+    expect(logs).toContain('"providerCode":"AUTHENTICATION"');
+    expect(logs).toContain('"provider":"gmail-smtp"');
+    expect(logs).not.toContain(password);
+    expect(logs).not.toContain(CODE);
+  });
+
+  it('keeps network and SMTP 4xx failures retryable and other SMTP 5xx permanent', async () => {
+    process.env.OTP_DELIVERY_ENCRYPTION_KEY = SECRET;
+    const env = {
+      NODE_ENV: 'test',
+      OTP_SMTP_USERNAME: 'otp-sender@company.invalid',
+      OTP_SMTP_PASSWORD: 'app-password-not-a-google-password',
+      OTP_SMTP_FROM: 'otp-sender@company.invalid',
+      OTP_EXPIRY_SECONDS: '600',
+    };
+    const network = vi.fn<OtpSmtpTransport['sendMail']>(async () => {
+      throw Object.assign(new Error('connection reset'), {
+        code: 'ECONNECTION',
+      });
+    });
+    const networkOutbox = fakeOutbox([delivery({ id: 'network-row' })]);
+    await new OtpDeliveryWorker(
+      {} as PrismaService,
+      new GmailSmtpOtpProvider(env, () => ({ sendMail: network })),
+      networkOutbox,
+      () => NOW,
+    ).processOnce(NOW);
+    expect(networkOutbox.processed).toEqual([]);
+    expect(networkOutbox.failures[0]).toMatchObject({
+      code: 'PROVIDER_TRANSIENT',
+      retryAt: new Date(NOW.getTime() + 60_000),
+    });
+
+    const rateLimited = vi.fn<OtpSmtpTransport['sendMail']>(async () => {
+      throw Object.assign(new Error('450 busy'), { responseCode: 450 });
+    });
+    const rateOutbox = fakeOutbox([delivery({ id: 'rate-row' })]);
+    await new OtpDeliveryWorker(
+      {} as PrismaService,
+      new GmailSmtpOtpProvider(env, () => ({ sendMail: rateLimited })),
+      rateOutbox,
+      () => NOW,
+    ).processOnce(NOW);
+    expect(rateOutbox.failures[0]).toMatchObject({
+      code: 'PROVIDER_TRANSIENT',
+    });
+    expect(rateOutbox.failures[0]?.retryAt).not.toBeNull();
+
+    const rejected = vi.fn<OtpSmtpTransport['sendMail']>(async () => {
+      throw Object.assign(new Error('550 unavailable'), { responseCode: 550 });
+    });
+    const rejectedOutbox = fakeOutbox([delivery({ id: 'rejected-row' })]);
+    await new OtpDeliveryWorker(
+      {} as PrismaService,
+      new GmailSmtpOtpProvider(env, () => ({ sendMail: rejected })),
+      rejectedOutbox,
+      () => NOW,
+    ).processOnce(NOW);
+    expect(rejectedOutbox.processed).toEqual([]);
+    expect(rejectedOutbox.failures[0]).toMatchObject({
+      code: 'PROVIDER_PERMANENT',
+      retryAt: null,
+    });
   });
 });
