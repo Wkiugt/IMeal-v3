@@ -47,14 +47,14 @@ observability, identity provisioning và product workflow vẫn chặn release.
 | ----------------------------------- | ------------------------------------------------------------------------------- |
 | Staff đăng nhập OTP                 | **Implemented happy path; session-expiry recovery partial**                     |
 | Staff registration/cutoff           | **Implemented API path; weekly UX và menu data partial**                        |
-| QR/GPS presenter                    | **Implemented client path; device/a11y/UAT partial**                            |
-| Kitchen scan/resolve/confirm        | **Implemented strongest operational path; concurrency/UAT cần chứng minh**      |
+| Staff self check-in QR/GPS          | **Current path: Staff scans the shared Kitchen QR and sends fresh foreground GPS; device UAT not claimed** |
+| Kitchen employee scan/resolve/confirm | **Not current. Kitchen displays one shared daily/location QR and does not scan employees** |
 | Kitchen dashboard                   | **Implemented snapshot/polling; realtime và status filter có gap nghiêm trọng** |
-| Delegation                          | **List/actions partial; owner create/search missing**                           |
+| Delegation / proxy pickup           | **Not an active requirement. Historical records are read-only audit; create/search is not required** |
 | Notification inbox                  | **Implemented; push/deployment dependent**                                      |
-| Staff history/penalty               | **Missing**                                                                     |
+| Staff meal history/penalty          | **Not missing: Meal History and Penalty list/detail exist**                    |
 | Admin menus/penalties/operations    | **Partial đến implemented từng module**                                         |
-| Admin user/role/disable/jobs/health | **Missing**                                                                     |
+| Admin user lifecycle                | **Not missing: users/roles/disable/enable/session revoke exist. Staging approval is separate** |
 | Worker/retention/operations         | **Chưa có evidence đủ để release**                                              |
 | Production infrastructure           | **Unsafe/local assumptions; not ready**                                         |
 | Tổng thể                            | **NO-GO**                                                                       |
@@ -70,7 +70,7 @@ observability, identity provisioning và product workflow vẫn chặn release.
 - Session lưu token hash/audit và xử lý expired/disabled ở service: `apps/api/src/auth/session.service.ts`.
 - Contract v1 có auth/session, registration, pickup, kitchen, delegation, notifications: `packages/contracts/src/v1/` và `packages/contracts/test/contracts.test.ts`.
 
-**Đánh giá:** auth/session model có nền tảng đúng (allowlist-A, opaque session, audit), nhưng account/role/disable lifecycle chưa hoàn chỉnh ở client/admin và chưa có production provider/runtime evidence. Technical docs yêu cầu envelope, request ID và idempotency conventions (`docs/02-technical-requirements.md:216-224`), trong khi nhiều active client wrapper parse raw response (`apps/mobile/src/api/registrationAPI.ts:34-64`, `kitchenAPI.ts:49-54`, `pickupAPI.ts:165-217`). Cần xác nhận HTTP response thực tế và loại bỏ contract drift trước release.
+**Đánh giá:** auth/session model có nền tảng đúng (allowlist-A, opaque session, audit). Account/role/disable lifecycle is not missing in Admin; the users surface exists, and this note does not claim production provider/runtime evidence or staging approval. Technical docs yêu cầu envelope, request ID và idempotency conventions (`docs/02-technical-requirements.md:216-224`), trong khi nhiều active client wrapper parse raw response (`apps/mobile/src/api/registrationAPI.ts:34-64`, `kitchenAPI.ts:49-54`, `pickupAPI.ts:165-217`). Cần xác nhận HTTP response thực tế và loại bỏ contract drift trước release.
 
 ### 3.2 Registration và menu data — lỗi P0
 
@@ -95,20 +95,17 @@ observability, identity provisioning và product workflow vẫn chặn release.
 
 **Đánh giá:** API cutoff và registration state là **partial implemented**, nhưng location snapshot phải sửa trước mọi pilot. Menu data/weekly UX chưa đủ để xác nhận staff đăng ký đúng món và location.
 
-### 3.3 Pickup, GPS, QR và serving
+### 3.3 Staff self check-in, GPS, and shared QR
 
-**Evidence triển khai:**
+**Current contract:** Kitchen publishes the menu, Staff registers, and Kitchen
+displays one shared QR for the meal date and location. Staff scans that QR,
+sends a fresh foreground GPS sample, and the server resolves only that Staff
+user's own registration. Staff confirms with another fresh foreground GPS
+sample. Confirm creates exactly one `MealServing`.
 
-- Options và exact selected intent: `apps/mobile/src/api/pickupAPI.ts:128-170`.
-- QR generate, sorted IDs, server response validation: `apps/mobile/src/api/pickupAPI.ts:138-169`.
-- Foreground GPS permission/watch/cleanup: `apps/mobile/src/api/locationAPI.ts:62-126`.
-- Pickup intent selection, QR refresh và focus cleanup: `apps/mobile/src/screens/pickup/PickupIntentScreen.tsx:124-302`.
-- Camera scan → resolve → 30-second pickup session → confirm: `apps/mobile/src/screens/kitchen/KitchenScannerScreen.tsx:190-335,598-710`.
-- Confirm có idempotency key và no item-level editing: `KitchenScannerScreen.tsx:246-267`; server routes/guard: `apps/api/src/pickup/internal-pickup.controller.ts:11-34`.
-
-**Đánh giá:** đây là path client mạnh nhất và phù hợp nguyên tắc exact intent, QR-only, foreground GPS, all-or-nothing confirm. Tuy nhiên chưa có native device UAT, concurrency run hoặc proof rằng registration location snapshot đã được lưu; vì vậy không được coi là production-safe dù code path tồn tại.
-
-**Accessibility gap:** `QrTicket.tsx:113-119` announce state transition, nhưng TTL/countdown chỉ là progressbar metadata tại `QrTicket.tsx:267-303`; docs yêu cầu live announcement khi code sắp hết hạn (`docs/04-ui-ux-design.md:208-239`).
+Kitchen does not scan employees. Active proxy pickup and Delegation
+Create/Search are not part of this flow. Older presenter/pickup scanner notes
+are not the current contract. This correction does not claim device UAT.
 
 ### 3.4 Kitchen dashboard và realtime — lỗi P0/P1
 
@@ -131,11 +128,10 @@ observability, identity provisioning và product workflow vẫn chặn release.
 
 ### 3.5 Delegation
 
-- API CRUD wrapper: `apps/mobile/src/api/delegationAPI.ts:36-86`.
-- Backend controller: `apps/api/src/delegations/delegations.controller.ts:20-65`.
-- Mobile list/actions: `apps/mobile/src/screens/delegation/DelegationScreen.tsx:48-166`.
-
-**Trạng thái:** **partial**. Incoming accept/decline và outgoing revoke có thật; owner `createDelegation` tồn tại ở wrapper nhưng không được screen gọi. Không có search user theo name/employee code, chọn registration/date, submit request, hiển thị tên người nhận hay revoke confirmation theo yêu cầu. Contract chỉ có IDs/status/timestamps (`packages/contracts/src/v1/delegations.ts:20-27`). Đây là missing feature cho proxy pickup.
+Active Delegation Create/Search and proxy pickup are not current requirements
+and are not missing features. Staff check-in authorizes only the authenticated
+user's own registration. Historical delegation/pickup records, if retained, are
+read-only audit and do not authorize current check-in.
 
 ### 3.6 Notifications
 
@@ -159,7 +155,7 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
 
 **Trạng thái:** từng module từ **implemented** đến **partial**. Menu không có image upload/progress; location UI không có đầy đủ create/import lifecycle; roster cần paste JSON. Admin local schemas được khai báo trong `main.ts:14-189` thay vì dùng `@imeal/contracts`, tạo drift risk.
 
-**Missing admin lifecycle:** view union chỉ là `menus | penalties | operations` (`main.ts:206`), không có `/admin/users` hoặc screen để quản lý Staff/Kitchen roles, disable account, revoke sessions, jobs/health. Audit `main.ts:399-405,950-980` chỉ là in-memory session list, không phải server audit lookup.
+**Admin user lifecycle is not missing.** Admin Web has a users surface for Staff/Kitchen roles, disable preview/confirm, enable, session revoke, and server-backed audit (`apps/admin-web/src/admin-users.ts`, `apps/admin-web/src/main.ts`). Jobs/health is a separate oversight surface (`apps/admin-web/src/admin-oversight.ts`). Staging approval is separate and is not claimed here.
 
 ## 4. Inventory theo mobile client
 
@@ -169,12 +165,12 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
 | OTP/session storage      | `src/api/authAPI.ts:61-170`; `src/auth/session.tsx:31-220`                                    | Implemented happy path; web localStorage và no global 401 recovery      |
 | Staff calendar           | `screens/employee/EmployeeCalendarScreen.tsx:228-976`                                         | Partial: API/cutoff thật, UX save tuần thiếu                            |
 | Staff Home               | `screens/employee/EmployeeDashboardScreen.tsx:27-143`                                         | Partial: status thật, menu/location tĩnh                                |
-| QR/GPS                   | `screens/pickup/PickupIntentScreen.tsx`; `api/locationAPI.ts`; `api/pickupAPI.ts`             | Implemented path; device/a11y/UAT partial                               |
-| Kitchen scanner          | `screens/kitchen/KitchenScannerScreen.tsx`                                                    | Implemented path; physical device/concurrency proof missing             |
-| Kitchen dashboard        | `screens/kitchen/KitchenDashboardScreen.tsx`                                                  | Partial: polling, status/search/realtime gaps                           |
-| Delegation               | `screens/delegation/DelegationScreen.tsx`                                                     | Partial: list/actions, create/search missing                            |
-| Notification inbox       | `screens/notifications/NotificationListScreen.tsx`, `NotificationDetailScreen.tsx`            | Implemented path                                                        |
-| Staff profile            | `screens/employee/EmployeeProfileScreen.tsx:202-315`                                          | Prototype data for stats; history/penalties missing                     |
+| Staff self check-in     | `screens/checkIn/SelfCheckInScreen.tsx`; `api/checkInAPI.ts`; `api/locationAPI.ts` | Current path: scan shared Kitchen QR, fresh foreground GPS, own registration only; device UAT not claimed |
+| Kitchen shared QR       | `screens/kitchen/KitchenQrScreen.tsx`                                              | Kitchen displays one daily/location QR; it does not scan employees |
+| Kitchen dashboard       | `screens/kitchen/KitchenDashboardScreen.tsx`                                       | Partial: polling, status/search/realtime gaps |
+| Delegation              | Historical retention only                                                          | Create/search and proxy pickup are not active requirements |
+| Notification inbox      | `screens/notifications/NotificationListScreen.tsx`, `NotificationDetailScreen.tsx` | Implemented path |
+| Staff history/penalty   | `screens/employee/MealHistoryScreen.tsx`, `PenaltyListScreen.tsx`, `PenaltyDetailScreen.tsx` | Not missing |
 | Kitchen profile          | `screens/kitchen/KitchenProfileScreen.tsx`                                                    | Basic identity/settings/logout only                                     |
 | Accessibility primitives | `src/ui/components/Controls.tsx:44-98,191-232,312-423`; `AppShell.tsx`; `useReducedMotion.ts` | Good foundation; QR countdown gap                                       |
 | API error/retry          | `src/api/mobileApiError.ts:15-166`; screen-local Retry                                        | Partial; generic mapping, no offline queue/global session reset         |
@@ -185,9 +181,9 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
 
 **Chưa đủ:**
 
-- Không có user/role/disable lifecycle hoặc session revoke UI.
-- Không có jobs/health/worker dashboard.
-- Audit không phải server-backed lookup.
+- User/role/disable/enable and session revoke are not missing; see `apps/admin-web/src/admin-users.ts`.
+- Jobs/health is not missing as a surface; see `apps/admin-web/src/admin-oversight.ts`. Qualification evidence remains separate.
+- Server-backed audit lookup exists for admin users; do not describe audit as only an in-memory session list.
 - API helper không có timeout/retry/idempotency/canonical error envelope (`main.ts:199-303`).
 - Admin local validation/schema không dùng shared v1 contracts.
 - Input/loading/error accessibility và operational UX còn cơ bản; waive dùng `window.prompt`.
@@ -290,12 +286,12 @@ date in Asia/Ho_Chi_Minh`; only earlier cancelled rows are legacy history
 
 1. Staff weekly draft + sticky save/select-all/partial failure UX.
 2. Server-authored menu content/name/meal type/location được trả trong contract và render ở Staff Home/calendar.
-3. Mobile owner delegation create/search/date/meal selection, confirmation, status reconciliation.
-4. Staff history/penalty screens/API và profile stats không hardcode.
+3. Delegation Create/Search and proxy pickup are not pilot requirements. Historical delegation records stay read-only audit.
+4. Staff Meal History and Penalty list/detail are not missing. Do not treat them as an unbuilt product gap.
 5. Kitchen SSE/reconnect/event-id dedup hoặc documented polling fallback với explicit freshness SLA; employee-code audited recovery.
 6. Global session-expiry handling, request timeout, retry classification, offline/recovery states; idempotency cho retried registration/admin mutations.
 7. Physical Android camera/GPS/push/accessibility UAT và QR countdown live announcement.
-8. Admin account/role/disable, jobs/health, server audit lookup; use shared contracts.
+8. Admin user/role/disable/enable, jobs/health, and server audit lookup are not missing product surfaces. Staging proof remains separate.
 9. Centralized logs/metrics/alerts, worker health, retention worker and operational runbook.
 10. CI/CD evidence: reproducible build, pinned dependencies/images, migration gate, security scan, release artifact/signing and rollback/API compatibility.
 
@@ -345,11 +341,11 @@ Centralized logs/metrics/alerts <--- Caddy/API/Worker/DB
 
 ### Mỗi canteen
 
-- **Một managed Android camera device** dành cho Kitchen scanner; device ID được allowlist theo location.
+- **Một managed Android** để Kitchen hiển thị shared QR ngày/location. Kitchen không quét nhân viên và không cần scanner device.
 - Một charger cố định/stand và dây dự phòng; đặt thiết bị tại quầy, không dùng tài khoản cá nhân của nhân viên.
 - Wi-Fi ổn định với network notes/contacts rõ ràng; có **4G fallback** hoặc hotspot quản trị khi Wi-Fi hỏng.
-- **Spare strategy:** tối thiểu một spare Android đã enroll, sạc và cài release tương thích để thay nóng khi hỏng/mất camera/pin.
-- Test đầu ca: login Kitchen, camera permission, scan QR, resolve, confirm, duplicate/expired QR, network recovery, charger/clock.
+- **Spare strategy:** tối thiểu một spare Android đã enroll, sạc và cài release tương thích để thay nóng khi hỏng/mất pin.
+- Test đầu ca: login Kitchen, hiển thị shared QR, Staff scan QR đó với foreground GPS, resolve/confirm own registration, duplicate confirm, network recovery, charger/clock.
 - Không đặt API/DB/server tại canteen; mọi thiết bị truy cập host trung tâm qua HTTPS.
 
 ### Người dùng khác
@@ -360,7 +356,7 @@ Centralized logs/metrics/alerts <--- Caddy/API/Worker/DB
 
 ### Rollout đúng bốn location
 
-Đăng ký và map chính xác bốn location approved; không dùng `Canteen A`, `LOC-A`, sample roster hoặc synthetic seed làm operational data. Mỗi location phải có `shortCode`, serving point, scanner device ID, GPS policy, contact, network fallback và emergency procedure.
+Đăng ký và map chính xác bốn location approved; không dùng `Canteen A`, `LOC-A`, sample roster hoặc synthetic seed làm operational data. Mỗi location phải có `shortCode`, serving point, GPS policy, contact, network fallback và emergency procedure. Không provision scanner device ID cho Kitchen employee scan.
 
 ## 10. Phased rollout
 
@@ -378,7 +374,7 @@ Centralized logs/metrics/alerts <--- Caddy/API/Worker/DB
 
 - Chọn một canteen có Wi-Fi tốt và đặt một managed Android + spare.
 - Dùng nhóm staff/kitchen/admin thật nhưng giới hạn phạm vi; không coi sample data là pilot evidence.
-- Chạy full workflow: OTP, weekly registration, cutoff, QR/GPS, scan/resolve/confirm, delegation, notification, no-show/penalty, disabled account, backup/restore và outage/retry.
+- Chạy full workflow: OTP, weekly registration, cutoff, Kitchen shared QR, Staff scan với foreground GPS, own-registration resolve/confirm, một `MealServing`, notification, no-show/penalty, disabled account, backup/restore và outage/retry. Không gồm Delegation Create/Search hay proxy pickup.
 - Theo dõi duplicate serving, stale dashboard, OTP delivery, push, API latency, error rate, device battery/network và operator recovery.
 - Chỉ mở rộng khi pilot có sign-off theo go/no-go checklist và không còn P0.
 
@@ -408,15 +404,15 @@ Centralized logs/metrics/alerts <--- Caddy/API/Worker/DB
       approval yet.
 - [ ] No-show/penalty creates one registration-keyed penalty under concurrent
       retry; local worker/e2e evidence passed, with no staging approval yet.
-- [ ] Cutoff, timezone `Asia/Ho_Chi_Minh`, serving window, QR TTL/skew, pickup session được test bằng server time.
-- [ ] Exact selected intent và delegation consent được kiểm tra server-side.
+- [ ] Serving window uses server time in `Asia/Ho_Chi_Minh`. There is no active Kitchen employee scan, proxy pickup, or delegation-consent check.
+- [ ] Staff resolve/confirm authorizes only the authenticated caller's own registration.
 
 ### Product/client completeness
 
 - [ ] Staff weekly save/select-all/partial failures hoàn chỉnh.
 - [ ] Server-authored menu/location content hiển thị, không còn hardcoded meal/location/stats.
-- [ ] Owner delegation create/search/confirm/revoke và notification deep-link hoàn chỉnh.
-- [ ] Staff history/penalty thật, Admin users/roles/disable/jobs/health/audit lookup thật.
+- [ ] Delegation Create/Search and proxy pickup are not release requirements. Historical records are read-only audit only.
+- [ ] Staff Meal History/Penalty and Admin user lifecycle are not missing features. This row is not a build-the-screen gate.
 - [ ] Kitchen realtime/reconnect/dedup hoặc fallback SLA đã test.
 - [ ] Session expiry/offline/timeout/retry/recovery đã test trên mobile và Admin.
 
@@ -461,7 +457,7 @@ Centralized logs/metrics/alerts <--- Caddy/API/Worker/DB
 5. Cấu hình Caddy TLS thật và kiểm thử API/Admin/mobile từ production-like hostname; xác nhận CORS/origin.
 6. Thiết lập backup encrypted offsite + restore rehearsal trước khi nạp dữ liệu thật; record RPO/RTO, rollback authority and decision window.
 7. Bổ sung centralized observability, retention worker, worker health và CI/CD release gates.
-8. Đóng Staff menu/history/penalty, weekly save và delegation create/search; loại hardcoded dashboard/profile data.
+8. Đóng weekly save và hardcoded dashboard/profile data nếu còn. Không mở Delegation Create/Search; Meal History, Penalty, và Admin user lifecycle không còn là feature missing.
 9. Quyết định SSE/reconnect/dedup hoặc documented polling SLA; bổ sung employee-code recovery.
 10. Provision đúng bốn location/roster/allowlist/role và bốn Kitchen Android devices; chạy pilot một canteen rồi sign-off.
 

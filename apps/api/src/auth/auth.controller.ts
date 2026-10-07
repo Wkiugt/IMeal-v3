@@ -14,12 +14,15 @@ import type { AuthenticatedUser } from './authenticated-user.js';
 import { OtpService, type OtpRequestContext } from './otp.service.js';
 import { SessionGuard } from './session.guard.js';
 import { ApiMetricsService } from '../common/metrics.service.js';
+import { resolveTrustedClientIp, trustedProxyCidrsFromEnv } from '../common/trusted-client-ip.js';
 import { SessionService } from './session.service.js';
 
 interface AuthRequest {
   id?: string;
   requestId?: string;
   ip?: string;
+  socket?: { remoteAddress?: string | null };
+  raw?: { socket?: { remoteAddress?: string | null } };
   headers?: Record<string, string | string[] | undefined>;
 }
 
@@ -42,7 +45,7 @@ function requestCorrelationId(request: AuthRequest): string {
 function otpContext(request: AuthRequest): OtpRequestContext {
   return {
     requestId: requestCorrelationId(request),
-    clientIp: request.ip,
+    clientIp: resolveTrustedClientIp(request, trustedProxyCidrsFromEnv()),
     clientFingerprint: firstHeader(request.headers, 'user-agent'),
   };
 }
@@ -84,7 +87,7 @@ export class AuthController {
     const principal = await this.otpService.verify(parsed.data, context);
     const requestId = context.requestId ?? principal.requestId;
     const metadata = {
-      ...(request.ip ? { clientIp: request.ip } : {}),
+      ...(context.clientIp ? { clientIp: context.clientIp } : {}),
       ...(firstHeader(request.headers, 'x-device-id')
         ? { deviceId: firstHeader(request.headers, 'x-device-id') }
         : {}),

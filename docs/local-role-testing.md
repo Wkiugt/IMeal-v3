@@ -70,16 +70,19 @@ database. The command requires all of these safety variables:
 The `seed:local` CLI reads the current process environment only; it does not
 load `.env` automatically. A local `.env` file may still be used by other
 services, but operators must explicitly set the seed variables in the current
-PowerShell session before invoking the CLI. The URL below is a clearly
-synthetic local target and must not be replaced with a shared or production
-connection string.
+PowerShell session before invoking the CLI. The seed CLI does not create
+databases. The example below targets the canonical local Compose database
+`${POSTGRES_DB:-imeal}` on localhost port 5432; the operator must match
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` from the ignored
+`.env`, and must not use port 6432. Do not point this URL at a shared or
+production database.
 
 ```powershell
 $env:NODE_ENV='test'
 $env:IMEAL_LOCAL_SEED='1'
 $env:IMEAL_LOCAL_SEED_CONFIRM='I_UNDERSTAND_LOCAL_ONLY'
 $env:IMEAL_LOCAL_SEED_BASE_EMAIL='imeal.seed@example.test'
-$env:DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal_local?schema=public'
+$env:DATABASE_URL='postgresql://CHANGE_ME_LOCAL:CHANGE_ME_LOCAL@localhost:5432/imeal?schema=public'
 yarn workspace @imeal/core seed:local --dry-run
 yarn workspace @imeal/core seed:local
 ```
@@ -153,8 +156,8 @@ codes or account state in a token or request body.
 
 | Principal | Expected local assertion |
 | --- | --- |
-| Synthetic Staff | Own registration/history/delegation APIs resolve from server state |
-| Synthetic Kitchen | Resolve/confirm requires `kitchen.serve`; scanner sends QR only and no GPS |
+| Synthetic Staff | Own registration, meal history, and penalty APIs resolve from server state; no active delegation API |
+| Synthetic Kitchen | Displays the shared QR and aggregate dashboard; it does not scan employees or collect GPS |
 | Synthetic Staff + Kitchen | Can use both surfaces only when both server assignments exist |
 | Synthetic Admin | Can use explicitly permitted allowlist/location/roster/audit operations; cannot grant `admin` in Admin Web |
 | Disabled synthetic user | Protected request resolves current status and is rejected; active sessions are revoked |

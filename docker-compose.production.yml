@@ -156,6 +156,7 @@ services:
       SHUTDOWN_TIMEOUT_SECONDS: ${SHUTDOWN_TIMEOUT_SECONDS:?SHUTDOWN_TIMEOUT_SECONDS is required}
       MIGRATION_EVIDENCE_PATH: /run/imeal/migration-gate.json
       MIGRATION_TARGET_IDENTITY: ${MIGRATION_TARGET_IDENTITY:?MIGRATION_TARGET_IDENTITY is required}
+      TRUSTED_PROXY_CIDRS: 172.31.28.0/24
     volumes:
       - migration_evidence:/run/imeal:ro
     networks:
@@ -283,6 +284,9 @@ networks:
     name: ${APP_NETWORK_NAME:?APP_NETWORK_NAME is required}
     driver: bridge
     internal: true
+    ipam:
+      config:
+        - subnet: 172.31.28.0/24
   data:
     name: ${DATA_NETWORK_NAME:?DATA_NETWORK_NAME is required}
     driver: bridge

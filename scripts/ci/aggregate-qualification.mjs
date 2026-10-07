@@ -3,6 +3,7 @@ import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   EXPECTED_LANE_IDS,
+  SECRETLESS_QUALIFICATION,
   aggregateQualification,
   redact,
 } from './ci-contracts.mjs';
@@ -76,6 +77,7 @@ export async function aggregateFromDirectory({
         ...(context.cancelled ? [{ diagnostics: ['workflow run was globally cancelled; qualification is not eligible'] }] : []),
         { diagnostics: [redact(error instanceof Error ? error.message : String(error))] },
       ],
+      ...SECRETLESS_QUALIFICATION,
       provenance: {
         runId: String(context.runId),
         sourceSha: context.sourceSha,

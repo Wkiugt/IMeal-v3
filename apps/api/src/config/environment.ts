@@ -1,6 +1,7 @@
 import { isIP } from 'node:net';
 import { API_METRICS_EVIDENCE_DIGEST_ENV } from '@imeal/observability';
 import { otpProviderConfiguration } from '../otp/otp-provider.js';
+import { validateTrustedProxyConfiguration } from '../common/trusted-client-ip.js';
 
 export { API_METRICS_EVIDENCE_DIGEST_ENV };
 export const API_METRICS_EVIDENCE_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -204,6 +205,9 @@ export function validateApiEnvironment(
     requireValue('OTP_PROVIDER_API_KEY', env);
     requireValue('OTP_PROVIDER_FROM', env);
     requireProductionRuntimeSettings(env);
+    validateTrustedProxyConfiguration(env, true);
+  } else {
+    validateTrustedProxyConfiguration(env, false);
   }
   const providerEnvironment =
     env.NODE_ENV === nodeEnv ? env : { ...env, NODE_ENV: nodeEnv };

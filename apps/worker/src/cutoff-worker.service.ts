@@ -12,6 +12,7 @@ import {
   type WorkerShutdownCoordinatorLike,
 } from './health.service.js';
 import { WorkerMetricsService } from './metrics/metrics.service.js';
+import { jobRunBookkeeping } from './job-run-fields.js';
 
 @Injectable()
 export class CutoffWorkerService {
@@ -78,6 +79,11 @@ export class CutoffWorkerService {
             jobName,
             status: 'COMPLETED',
             completedAt: new Date(),
+            ...jobRunBookkeeping({
+              status: 'COMPLETED',
+              successCount: 1,
+              failureCount: 0,
+            }),
           },
         });
 

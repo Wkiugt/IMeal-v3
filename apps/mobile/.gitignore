@@ -1,0 +1,9 @@
+# Signing material stays in EAS, never in git.
+credentials.json
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision
+google-services.json
+GoogleService-Info.plist

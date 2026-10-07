@@ -515,24 +515,40 @@ model NotificationDelivery {
 
 
 model JobRun {
-  id          String    @id @default(uuid())
-  jobName     String    @map("job_name")
-  status      JobRunStatus
-  startedAt   DateTime  @default(now()) @map("started_at")
-  completedAt DateTime? @map("completed_at")
+  id             String       @id @default(uuid())
+  jobName        String       @map("job_name")
+  status         JobRunStatus
+  startedAt      DateTime     @default(now()) @map("started_at")
+  completedAt    DateTime?    @map("completed_at")
+  failureCode    String?      @map("failure_code")
+  failureMessage String?      @map("failure_message")
+  successCount   Int?         @map("success_count")
+  failureCount   Int?         @map("failure_count")
+  releaseVersion String?      @map("release_version")
 
+  @@index([jobName, startedAt])
+  @@index([status, startedAt])
   @@map("job_runs")
 }
 
 model AuditLog {
-  id        String   @id @default(uuid())
-  userId    String?  @map("user_id")
-  action    String
-  details   String?
-  createdAt DateTime @default(now()) @map("created_at")
+  id           String   @id @default(uuid())
+  userId       String?  @map("user_id")
+  action       String
+  details      String?
+  targetUserId String?  @map("target_user_id")
+  result       String?
+  resourceType String?  @map("resource_type")
+  createdAt    DateTime @default(now()) @map("created_at")
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@index([createdAt])
+  @@index([action, createdAt])
+  @@index([userId, createdAt])
+  @@index([targetUserId, createdAt])
+  @@index([result, createdAt])
+  @@index([resourceType, createdAt])
   @@map("audit_logs")
 }
 

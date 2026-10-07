@@ -11,3 +11,4 @@ export * from './auth';
 export * from './locations';
 export * from './notifications';
 export * from './admin-users';
+export * from './admin-operations';

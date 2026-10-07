@@ -281,20 +281,7 @@ jobs:
             if [ -f "$sbom_path" ]; then
               sbom_hash="$(sha256sum "$sbom_path" | cut -d' ' -f1)"
               printf '%s\n' "$image_id" > "$RUNNER_TEMP/ci/images-${{ matrix.service }}/image-inspection.txt"
-              node --input-type=module - \
-                "$RUNNER_TEMP/ci/images-${{ matrix.service }}/producer-result.json" "$image_id" "$sbom_hash" "${{ matrix.service }}" "$GITHUB_SHA" <<'NODE'
-          import { readFile, writeFile } from 'node:fs/promises';
-          const [path, imageId, sbomSha256, service, sourceSha] = process.argv.slice(2);
-          const result = JSON.parse(await readFile(path, 'utf8'));
-          result.image = {
-            service,
-            sourceTag: `imeal/${service}:${sourceSha}`,
-            imageId,
-            sbomSha256,
-            sbomPath: `build-image-sbom-${service}.spdx.json`,
-          };
-          await writeFile(path, `${JSON.stringify(result, null, 2)}\n`);
-          NODE
+              node scripts/ci/record-built-image.mjs "$RUNNER_TEMP/ci/images-${{ matrix.service }}/producer-result.json" "$image_id" "$sbom_hash" "${{ matrix.service }}" "$GITHUB_SHA"
             fi
           fi
           test -f "$RUNNER_TEMP/ci/images-${{ matrix.service }}/producer-result.json"
@@ -588,6 +575,17 @@ jobs:
           await writeFile(releasePath, releaseVersion);
           NODE
 
+      - name: Verify immutable digests including migration gate
+        run: |
+          mkdir -p "$RUNNER_TEMP/staging-artifacts"
+          node scripts/staging/protected-qualification.mjs verify-images \
+            --images-json "$RUNNER_TEMP/images.json" \
+            --env-file "$RUNNER_TEMP/staging.env" \
+            --output "$RUNNER_TEMP/staging-artifacts/image-contract.json"
+          node scripts/staging/protected-qualification.mjs print-migration-gate \
+            --contract "$RUNNER_TEMP/staging-artifacts/image-contract.json" \
+            > "$RUNNER_TEMP/migration-gate-image.txt"
+
       - name: Scan exact protected deployment image digests
         run: |
           mkdir -p "$RUNNER_TEMP/trivy-cache"
@@ -609,6 +607,16 @@ jobs:
                 exit 1
               }
           done
+          node scripts/staging/image-scan.mjs \
+            --image "$(cat "$RUNNER_TEMP/migration-gate-image.txt")" \
+            --trivy-image "${TRIVY_IMAGE}" \
+            --cache-directory "$RUNNER_TEMP/trivy-cache" \
+            --archive "$RUNNER_TEMP/deployed-image-migration-gate.tar" \
+            --report "$RUNNER_TEMP/staging-artifacts/deployed-image-trivy-migration-gate.log" \
+            || {
+              echo 'migration-gate image security scan failed' >&2
+              exit 1
+            }
 
       - name: Render protected staging Compose configuration
         run: >-
@@ -620,6 +628,17 @@ jobs:
           docker compose --env-file "$RUNNER_TEMP/staging.env"
           -f docker-compose.yml -f docker-compose.staging.yml up
           --detach --wait --remove-orphans
+
+      - name: Wait for migration gate and runtime health
+        run: |
+          node scripts/staging/protected-qualification.mjs wait-runtime \
+            --env-file "$RUNNER_TEMP/staging.env" \
+            --compose-file docker-compose.yml \
+            --compose-file docker-compose.staging.yml \
+            --contract "$RUNNER_TEMP/staging-artifacts/image-contract.json" \
+            --gate-service migrate \
+            --expected-release-file "$RUNNER_TEMP/release-version.txt" \
+            --output-directory "$RUNNER_TEMP/staging-artifacts"
 
       - name: Generate SBOMs for deployed image digests
         run: |
@@ -641,11 +660,19 @@ jobs:
               "docker:${image}" \
               --output "spdx-json=/out/deployed-image-sbom-${service}.spdx.json"
           done
+          migration_image="$(cat "$RUNNER_TEMP/migration-gate-image.txt")"
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$RUNNER_TEMP/staging-artifacts:/out" \
+            anchore/syft@sha256:b8c170b8e51bfc4779ec3ef4399942c57290f5ce76a9c3af564c9d00d4946a6b \
+            "docker:${migration_image}" \
+            --output "spdx-json=/out/deployed-image-sbom-migration-gate.spdx.json"
           cat > "$RUNNER_TEMP/staging-artifacts/deployed-image-sbom-index.json" <<'JSON'
           {
             "api": "artifacts/deployed-image-sbom-api.spdx.json",
             "worker": "artifacts/deployed-image-sbom-worker.spdx.json",
-            "adminWeb": "artifacts/deployed-image-sbom-admin-web.spdx.json"
+            "adminWeb": "artifacts/deployed-image-sbom-admin-web.spdx.json",
+            "migrationGate": "artifacts/deployed-image-sbom-migration-gate.spdx.json"
           }
           JSON
 
@@ -785,6 +812,18 @@ jobs:
             --rollback-artifact "$(cat "$RUNNER_TEMP/rollback-artifact.txt")" \
             --output "$RUNNER_TEMP/staging-artifacts/release-manifest.json"
 
+      - name: Capture rollback reference
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          node scripts/staging/protected-qualification.mjs rollback-reference \
+            --release-id "${{ needs.checks.outputs.release_id }}" \
+            --commit "$RELEASE_COMMIT" \
+            --images-json "$RUNNER_TEMP/images.json" \
+            --migration-gate-image-file "$RUNNER_TEMP/migration-gate-image.txt" \
+            --rollback-artifact-file "$RUNNER_TEMP/rollback-artifact.txt" \
+            --output "$RUNNER_TEMP/staging-artifacts/rollback-reference.json"
+
       - name: Include protected manifest inputs in uploaded evidence
         if: always()
         run: |
@@ -797,8 +836,15 @@ jobs:
             "$RUNNER_TEMP/release-version.txt" \
             "$RUNNER_TEMP/staging-artifacts/release-version.txt"
 
-      - name: Upload protected staging evidence
+      - name: Reject secret-bearing staging artifacts
+        id: redact
         if: always()
+        run: |
+          node scripts/staging/protected-qualification.mjs assert-artifacts \
+            --directory "$RUNNER_TEMP/staging-artifacts"
+
+      - name: Upload protected staging evidence
+        if: always() && steps.redact.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: staging-release-${{ needs.checks.outputs.release_id }}-attempt${{ github.run_attempt }}

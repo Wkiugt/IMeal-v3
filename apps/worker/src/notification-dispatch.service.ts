@@ -16,6 +16,7 @@ import {
 } from './health.service.js';
 
 import { WorkerMetricsService } from './metrics/metrics.service.js';
+import { recordScheduledJobRun } from './job-run-fields.js';
 const CLAIM_BATCH_SIZE = 100;
 const PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
 const RETRY_DELAYS_MINUTES = [1, 5, 15];
@@ -192,9 +193,32 @@ export class NotificationDispatchService {
     try {
       const result = await this.processNotificationDispatch();
       this.metrics?.recordWorkerRun('notification_dispatch', 'success');
+      await recordScheduledJobRun(
+        typeof this.prisma.jobRun?.create === 'function'
+          ? (data: Prisma.JobRunCreateInput) => this.prisma.jobRun.create({ data })
+          : undefined,
+        {
+          prefix: 'notification_dispatch_',
+          status: 'COMPLETED',
+          successCount: result.outboxCount + result.deliveryCount,
+          failureCount: 0,
+        },
+      ).catch(() => undefined);
       return result;
     } catch (error) {
       this.metrics?.recordWorkerRun('notification_dispatch', 'failure');
+      await recordScheduledJobRun(
+        typeof this.prisma.jobRun?.create === 'function'
+          ? (data: Prisma.JobRunCreateInput) => this.prisma.jobRun.create({ data })
+          : undefined,
+        {
+          prefix: 'notification_dispatch_',
+          status: 'FAILED',
+          successCount: 0,
+          failureCount: 1,
+          failureCode: 'NOTIFICATION_DISPATCH_FAILURE',
+        },
+      ).catch(() => undefined);
       throw error;
     } finally {
       release?.();
