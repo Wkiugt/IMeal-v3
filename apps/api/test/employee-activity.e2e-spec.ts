@@ -7,6 +7,26 @@ import { getBusinessDate, parseMealDate } from '../src/common/business-time.js';
 import { PrismaService } from '../src/common/prisma.service.js';
 import { SessionService } from '../src/auth/session.service.js';
 import { AppModule } from '../src/app.module.js';
+function expectCanonicalNotFound(response: {
+  status: number;
+  body: Record<string, unknown>;
+  headers: Record<string, unknown>;
+}): void {
+  expect(response.status).toBe(404);
+  expect(response.body).toEqual({
+    statusCode: 404,
+    errorCode: 'NOT_FOUND',
+    message: 'The requested information could not be found.',
+    requestId: expect.any(String),
+  });
+  expect(Object.keys(response.body).sort()).toEqual([
+    'errorCode',
+    'message',
+    'requestId',
+    'statusCode',
+  ]);
+  expect(response.headers['x-request-id']).toBe(response.body.requestId);
+}
 
 describe('Employee activity HTTP (disposable PostgreSQL)', () => {
   let app: INestApplication<Server>;
@@ -148,7 +168,8 @@ describe('Employee activity HTTP (disposable PostgreSQL)', () => {
       .get('/api/penalties/not-a-real-penalty')
       .set('Authorization', `Bearer ${ownerToken}`)
       .expect(404);
-    expect(wrongOwner.body.error).toEqual(missing.body.error);
+    expectCanonicalNotFound(wrongOwner);
+    expectCanonicalNotFound(missing);
   });
   it('exercises history ordering and month stats through PostgreSQL', async () => {
     const today = parseMealDate(getBusinessDate());

@@ -432,7 +432,20 @@ must provide separately reviewed, target-bound PASS artifacts named
 `smoke-worker.json` for the corresponding identity, business, client, and
 worker paths. Do not turn local test mode into staging evidence.
 
-### 5.1 Current Staff self check-in qualification (external UAT gate)
+### 5.1 Mobile platform boundary (Phase A6)
+
+Staging and production support native Android and iOS builds only. Expo Web is
+not a supported client and must not be used as mobile release evidence; local
+Expo Web/Metro checks are limited to development and UI compatibility. The API
+does not enable browser CORS for this unsupported surface. Before treating the
+mobile qualification lanes as native release evidence, a later qualification
+maintenance change must remove any web-bundle assertions from those lanes.
+
+If product scope changes and Expo Web becomes required, stop native-only
+qualification and add an explicit production-origin allowlist, browser preflight
+handling, and an `OPTIONS /auth/otp/request` regression check before approval.
+
+### 5.2 Current Staff self check-in qualification (external UAT gate)
 
 The following checklist is required for the current cutover and is **not**
 evidence that staging has been provisioned. Each box must be independently

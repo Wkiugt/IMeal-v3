@@ -98,6 +98,216 @@ describe('JSON structured logging', () => {
     expect(sanitizeLogText('a'.repeat(20), 8)).toBe('aaaaaaaa');
   });
 
+  it('redacts dotted authorization properties', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.info('security.headers', {
+      service: 'api',
+      release: 'r1',
+      message:
+        'safe text headers.authorization=Bearer dotted-secret req.headers.authorization: "Bearer quoted-secret"',
+    });
+
+    const output = JSON.parse(lines[0]);
+    expect(output.message).toContain('safe text');
+    expect(output.message).toContain('[REDACTED]');
+    expect(output.message).not.toContain('dotted-secret');
+    expect(output.message).not.toContain('quoted-secret');
+  });
+
+  it('redacts Set-Cookie header values', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.info('security.headers', {
+      service: 'api',
+      release: 'r1',
+      message:
+        'safe text Set-Cookie: session=secret-cookie; Path=/; HttpOnly set-cookie: refresh_token=secret-refresh; Secure',
+    });
+
+    const output = JSON.parse(lines[0]);
+    expect(output.message).toContain('safe text');
+    expect(output.message).toContain('Set-Cookie: [REDACTED]');
+    expect(output.message).toContain('set-cookie: [REDACTED]');
+    expect(output.message).not.toContain('secret-cookie');
+    expect(output.message).not.toContain('secret-refresh');
+  });
+  it('redacts Set-Cookie values without consuming following headers', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.info('security.headers', {
+      service: 'api',
+      release: 'r1',
+      message: 'Set-Cookie: session=line-secret; Path=/\nX-Safe: ok',
+    });
+
+    const output = JSON.parse(lines[0]);
+    expect(output.message).toContain('Set-Cookie: [REDACTED]');
+    expect(output.message).toContain('\nX-Safe: ok');
+    expect(output.message).not.toContain('line-secret');
+  });
+
+
+  it('serializes error fields and sanitizes server diagnostics', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.error('http.exception', {
+      service: 'api',
+      release: 'r1',
+      event: 'http.exception',
+      errorClass: 'SERVER_ERROR',
+      method: 'GET',
+      path: '/health/ready?token=opaque-token',
+      route: '/health/ready?otp=123456',
+      statusCode: 500,
+      errorCode: 'INTERNAL_SERVER_ERROR',
+      requestId: '550e8400-e29b-41d4-a716-446655440000',
+      message:
+        'databaseUrl=postgresql://user:secret@db/internal authorization=Bearer opaque-token cookie=session=opaque-cookie otp=123456 sessionToken=session-secret accessToken=access-secret refreshToken=refresh-secret smtpPassword=smtp-secret providerSecret=provider-secret qrToken=qr-secret body=opaque-body',
+      stack:
+        'Error: databaseUrl=postgresql://user:secret@db/internal\\n    at usefulHandler (health.ts:10:2)',
+    });
+
+    const output = JSON.parse(lines[0] ?? '{}') as Record<string, unknown>;
+    expect(output).toMatchObject({
+      errorClass: 'SERVER_ERROR',
+      method: 'GET',
+      path: '/health/ready',
+      route: '/health/ready',
+      statusCode: 500,
+      errorCode: 'INTERNAL_SERVER_ERROR',
+    });
+    expect(output.message).toContain('databaseUrl=[REDACTED]');
+    expect(output.stack).toContain('usefulHandler');
+    expect(lines[0]).not.toContain('secret@db');
+    expect(lines[0]).not.toContain('session-secret');
+    expect(lines[0]).not.toContain('access-secret');
+    expect(lines[0]).not.toContain('refresh-secret');
+    expect(lines[0]).not.toContain('smtp-secret');
+    expect(lines[0]).not.toContain('provider-secret');
+    expect(lines[0]).not.toContain('qr-secret');
+    expect(lines[0]).not.toContain('opaque-token');
+    expect(lines[0]).not.toContain('opaque-cookie');
+    expect(lines[0]).not.toContain('123456');
+    expect(lines[0]).not.toContain('opaque-body');
+  });
+  it('redacts nonnumeric credential labels and serialized response fields', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.error('http.exception', {
+      service: 'api',
+      release: 'r1',
+      event: 'http.exception',
+      errorClass: 'SERVER_ERROR',
+      errorCode: 'OTP_123456',
+      providerCode: 'HTTP_654321',
+      message:
+        'otp=otp-sentinel session token=session-sentinel session  token=session-double-space access token=access-sentinel access   token=access-double-space refresh token=refresh-sentinel refresh  token=refresh-double-space smtp user=smtp-user-sentinel smtp   user=smtp-double-space request body={"field":"request-sentinel"} response={"headers":{"x-internal":"response-sentinel"}} headers={"x-custom":"header-sentinel"}',
+      stack: `Error: useful stack
+response={
+  "headers": {
+    "x-internal": "multiline-response-sentinel"
+  }
+}
+headers={
+  "x-custom": "multiline-header-sentinel"
+}
+body={
+  "field": "multiline-body-sentinel"
+}
+    at usefulHandler (diagnostics.ts:10:2)
+response=[
+  {
+    "nested": [
+      {
+        "x-internal": "multiline-array-response-sentinel",
+        "escaped": "escaped \\"multiline-array-escaped-sentinel\\""
+      }
+    ]
+  }
+]
+headers=[
+  {
+    "x-custom": "multiline-array-header-sentinel"
+  }
+]`,
+    });
+    expect(lines[0]).not.toContain('multiline-response-sentinel');
+    expect(lines[0]).not.toContain('multiline-header-sentinel');
+    expect(lines[0]).not.toContain('multiline-body-sentinel');
+    expect(lines[0]).toContain('usefulHandler');
+    expect(lines[0]).not.toContain('multiline-array-response-sentinel');
+    expect(lines[0]).not.toContain('multiline-array-header-sentinel');
+    expect(lines[0]).not.toContain('multiline-array-escaped-sentinel');
+
+    expect(lines[0]).not.toContain('otp-sentinel');
+    expect(lines[0]).not.toContain('session-sentinel');
+    expect(lines[0]).not.toContain('access-sentinel');
+    expect(lines[0]).not.toContain('refresh-sentinel');
+    expect(lines[0]).not.toContain('session-double-space');
+    expect(lines[0]).not.toContain('access-double-space');
+    expect(lines[0]).not.toContain('refresh-double-space');
+    expect(lines[0]).not.toContain('smtp-double-space');
+    expect(lines[0]).not.toContain('smtp-user-sentinel');
+    expect(lines[0]).not.toContain('request-sentinel');
+    expect(lines[0]).not.toContain('response-sentinel');
+    expect(lines[0]).not.toContain('header-sentinel');
+    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({
+      errorCode: 'OTP_123456',
+      providerCode: 'HTTP_654321',
+    });
+  });
+  it('redacts credential query values in error fields', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.error('http.exception', {
+      service: 'api',
+      release: 'r1',
+      event: 'http.exception',
+      errorClass: 'SERVER_ERROR',
+      errorCode:
+        'https://service.test/path?refresh_token=raw-code-token&trace=stable-code',
+      providerCode: 'HTTP_654321',
+      message:
+        'request failed https://service.test/path?token=raw-message-token&trace=stable-message',
+      stack:
+        'Error: https://service.test/path?access_token=raw-stack-token&trace=stable-stack',
+    });
+
+    const output = JSON.parse(lines[0] ?? '{}') as Record<string, unknown>;
+    expect(output.errorCode).toBe(
+      'https://service.test/path?refresh_token=[REDACTED]&trace=stable-code',
+    );
+    expect(output.providerCode).toBe('HTTP_654321');
+    expect(output.message).toContain(
+      '?token=[REDACTED]&trace=stable-message',
+    );
+    expect(output.stack).toContain(
+      '?access_token=[REDACTED]&trace=stable-stack',
+    );
+    expect(lines[0]).not.toContain('raw-code-token');
+    expect(lines[0]).not.toContain('raw-message-token');
+    expect(lines[0]).not.toContain('raw-stack-token');
+  });
+
   it('redacts provider and QR secrets embedded in safe string fields', () => {
     const lines: string[] = [];
     const logger = new JsonStructuredLogger('api', 'r1', (line) =>

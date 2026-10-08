@@ -101,6 +101,36 @@ describe('WeeklyMenusService', () => {
     });
     expect(result[0]?.dailyMenus[0]?.revisions).toEqual([latest]);
   });
+  it('does not create a revision for a legacy content-only no-op', async () => {
+    const dailyMenu = {
+      id: 'dm1',
+      date: new Date('2026-09-01T00:00:00.000Z'),
+      isHoliday: false,
+      isEnabled: true,
+      weeklyMenu: { publishedAt: null },
+      revisions: [
+        {
+          id: 'revision-1',
+          revision: 1,
+          mealName: 'Chicken rice',
+          description: 'Lunch',
+          imageUrl: null,
+          content: 'Legacy content',
+        },
+      ],
+      mealDays: [{ mealType: 'LUNCH' }],
+    };
+    mockTx.dailyMenu.findUnique.mockResolvedValueOnce(dailyMenu);
+    mockTx.weeklyMenu.findUnique.mockResolvedValueOnce({ publishedAt: null });
+
+    await service.updateDailyMenu(
+      '2026-09-01',
+      { content: 'Changed legacy content' },
+      'admin-1',
+    );
+
+    expect(mockTx.dailyMenuRevision.create).not.toHaveBeenCalled();
+  });
 
   it('rejects disabling a registered day', async () => {
     mockTx.dailyMenu.findUnique.mockResolvedValueOnce({

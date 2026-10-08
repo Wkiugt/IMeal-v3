@@ -38,6 +38,18 @@ import {
 } from '../common/vietnamese-lunar.js';
 
 const INVALID_MEAL_DATE_MESSAGE = 'Invalid meal date';
+const REGISTRATION_FAILED_MESSAGE = 'Registration could not be completed';
+const ACCOUNT_NOT_FOUND_MESSAGE = 'Account not found.';
+const ACCOUNT_DISABLED_MESSAGE = 'Account is disabled.';
+const PUBLISHED_MENU_UNAVAILABLE_MESSAGE = 'Published menu is unavailable';
+const PUBLISHED_MENU_REVISION_UNAVAILABLE_MESSAGE =
+  'Published menu revision is unavailable';
+const EMPLOYEE_LOCATION_ASSIGNMENT_UNAVAILABLE_MESSAGE =
+  'Employee location assignment is unavailable';
+const EMPLOYEE_LOCATION_ASSIGNMENT_AMBIGUOUS_MESSAGE =
+  'Employee location assignment is ambiguous';
+const SERVICE_LOCATION_AUTHORITY_UNAVAILABLE_MESSAGE =
+  'Service location authority is unavailable';
 const CUTOFF_PASSED_MESSAGE = 'Cutoff time exceeded';
 const REGISTRATION_WEEK_NOT_OPEN_MESSAGE = 'Registration week is not open';
 const OUTSIDE_REGISTRATION_WINDOW_MESSAGE =
@@ -46,10 +58,37 @@ const MEAL_CHOICE_UNAVAILABLE_MESSAGE =
   'Meal choice is unavailable for this date';
 const REGISTRATION_FINALIZED_MESSAGE = 'Registration is finalized';
 
+type RegistrationSnapshotFailureMessage =
+  | typeof PUBLISHED_MENU_UNAVAILABLE_MESSAGE
+  | typeof PUBLISHED_MENU_REVISION_UNAVAILABLE_MESSAGE
+  | typeof EMPLOYEE_LOCATION_ASSIGNMENT_UNAVAILABLE_MESSAGE
+  | typeof EMPLOYEE_LOCATION_ASSIGNMENT_AMBIGUOUS_MESSAGE
+  | typeof SERVICE_LOCATION_AUTHORITY_UNAVAILABLE_MESSAGE;
+
 class RegistrationFinalizedError extends Error {}
 
 class MealChoiceUnavailableError extends Error {}
-class RegistrationSnapshotResolutionError extends Error {}
+class RegistrationSnapshotResolutionError extends Error {
+  constructor(message: RegistrationSnapshotFailureMessage) {
+    super(message);
+  }
+}
+function safeRegistrationFailureReason(
+  error: unknown,
+): string | undefined {
+  if (error instanceof RegistrationSnapshotResolutionError) {
+    return error.message;
+  }
+  if (error instanceof BadRequestException) {
+    if (
+      error.message === ACCOUNT_NOT_FOUND_MESSAGE ||
+      error.message === ACCOUNT_DISABLED_MESSAGE
+    ) {
+      return error.message;
+    }
+  }
+  return undefined;
+}
 
 type RegistrationSnapshotResolution = {
   menuRevisionId: string;
@@ -409,11 +448,10 @@ export class RegistrationsService {
     let startDate: Date;
     try {
       startDate = parseMealDate(weekStart);
-    } catch (error: unknown) {
+    } catch {
       throw new BadRequestException({
         code: 'INVALID_MEAL_DATE',
-        message:
-          error instanceof Error ? error.message : INVALID_MEAL_DATE_MESSAGE,
+        message: INVALID_MEAL_DATE_MESSAGE,
       });
     }
 
@@ -428,11 +466,10 @@ export class RegistrationsService {
       lunarDates = mealDates.map((mealDate) =>
         getVietnameseLunarDate(mealDate),
       );
-    } catch (error: unknown) {
+    } catch {
       throw new BadRequestException({
         code: 'INVALID_MEAL_DATE',
-        message:
-          error instanceof Error ? error.message : INVALID_MEAL_DATE_MESSAGE,
+        message: INVALID_MEAL_DATE_MESSAGE,
       });
     }
 
@@ -753,7 +790,7 @@ export class RegistrationsService {
     });
     if (!dailyMenu) {
       throw new RegistrationSnapshotResolutionError(
-        'Published menu is unavailable',
+        PUBLISHED_MENU_UNAVAILABLE_MESSAGE,
       );
     }
 
@@ -777,7 +814,7 @@ export class RegistrationsService {
       revisions[1]?.revision === revision.revision
     ) {
       throw new RegistrationSnapshotResolutionError(
-        'Published menu revision is unavailable',
+        PUBLISHED_MENU_REVISION_UNAVAILABLE_MESSAGE,
       );
     }
 
@@ -801,8 +838,8 @@ export class RegistrationsService {
     if (assignments.length !== 1) {
       throw new RegistrationSnapshotResolutionError(
         assignments.length === 0
-          ? 'Employee location assignment is unavailable'
-          : 'Employee location assignment is ambiguous',
+          ? EMPLOYEE_LOCATION_ASSIGNMENT_UNAVAILABLE_MESSAGE
+          : EMPLOYEE_LOCATION_ASSIGNMENT_AMBIGUOUS_MESSAGE,
       );
     }
     const assignment = assignments[0];
@@ -830,7 +867,7 @@ export class RegistrationsService {
       !location.address?.trim()
     ) {
       throw new RegistrationSnapshotResolutionError(
-        'Service location authority is unavailable',
+        SERVICE_LOCATION_AUTHORITY_UNAVAILABLE_MESSAGE,
       );
     }
 
@@ -868,13 +905,12 @@ export class RegistrationsService {
       try {
         mealDate = parseMealDate(mealDateStr);
         getVietnameseLunarDate(mealDateStr);
-      } catch (error: unknown) {
+      } catch {
         results.push({
           date: mealDateStr,
           success: false,
           code: 'INVALID_MEAL_DATE',
-          reason:
-            error instanceof Error ? error.message : INVALID_MEAL_DATE_MESSAGE,
+          reason: INVALID_MEAL_DATE_MESSAGE,
         });
         continue;
       }
@@ -945,10 +981,10 @@ export class RegistrationsService {
                   select: { id: true, isActive: true },
                 });
                 if (!owner) {
-                  throw new BadRequestException('Account not found.');
+                  throw new BadRequestException(ACCOUNT_NOT_FOUND_MESSAGE);
                 }
                 if (!owner.isActive) {
-                  throw new BadRequestException('Account is disabled.');
+                  throw new BadRequestException(ACCOUNT_DISABLED_MESSAGE);
                 }
 
                 if (
@@ -1130,12 +1166,12 @@ export class RegistrationsService {
             reason: MEAL_CHOICE_UNAVAILABLE_MESSAGE,
           });
         } else {
+          const safeReason = safeRegistrationFailureReason(error);
           results.push({
             date: mealDateStr,
             success: false,
             code: 'REGISTRATION_FAILED',
-            reason:
-              error instanceof Error ? error.message : 'Registration failed',
+            reason: safeReason ?? REGISTRATION_FAILED_MESSAGE,
           });
         }
       }

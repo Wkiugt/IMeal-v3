@@ -9,6 +9,30 @@ import { PrismaService } from '../src/common/prisma.service.js';
 import { CheckInService } from '../src/check-in/check-in.service.js';
 import { LocationsService } from '../src/locations/locations.service.js';
 
+function expectCanonicalError(
+  response: {
+    status: number;
+    body: Record<string, unknown>;
+    headers: Record<string, unknown>;
+  },
+  errorCode: string,
+): void {
+  expect(response.status).toBe(400);
+  expect(response.body).toEqual({
+    statusCode: 400,
+    errorCode,
+    message:
+      'The provided information is not valid. Please check it and try again.',
+    requestId: expect.any(String),
+  });
+  expect(Object.keys(response.body).sort()).toEqual([
+    'errorCode',
+    'message',
+    'requestId',
+    'statusCode',
+  ]);
+  expect(response.headers['x-request-id']).toBe(response.body.requestId);
+}
 describe('Check-in controller (e2e)', () => {
   let app: INestApplication<Server>;
   let checkInService: {
@@ -88,13 +112,7 @@ describe('Check-in controller (e2e)', () => {
       .post('/api/me/check-in/resolve')
       .send({ qr: 'imeal-checkin-v1.signed' });
 
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({
-      statusCode: 400,
-      errorCode: 'GPS_REQUIRED',
-      message: 'The provided information is not valid. Please check it and try again.',
-      requestId: response.headers['x-request-id'],
-    });
+    expectCanonicalError(response, 'GPS_REQUIRED');
   });
 
   it('rejects a target-user field instead of allowing delegated check-in', async () => {
@@ -111,13 +129,7 @@ describe('Check-in controller (e2e)', () => {
         },
       });
 
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({
-      statusCode: 400,
-      errorCode: 'VALIDATION_ERROR',
-      message: 'The provided information is not valid. Please check it and try again.',
-      requestId: response.headers['x-request-id'],
-    });
+    expectCanonicalError(response, 'VALIDATION_ERROR');
   });
 
   it('rejects confirmation without its resolved intent nonce', async () => {
@@ -134,13 +146,7 @@ describe('Check-in controller (e2e)', () => {
         },
       });
 
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({
-      statusCode: 400,
-      errorCode: 'VALIDATION_ERROR',
-      message: 'The provided information is not valid. Please check it and try again.',
-      requestId: response.headers['x-request-id'],
-    });
+    expectCanonicalError(response, 'VALIDATION_ERROR');
   });
 
   it('returns the confirmed check-in response', async () => {
@@ -285,8 +291,15 @@ describe('Check-in real-service HTTP boundaries (e2e)', () => {
       statusCode: 500,
       errorCode: 'INTERNAL_SERVER_ERROR',
       message: 'Something went wrong on our side. Please try again later.',
-      requestId: response.headers['x-request-id'],
+      requestId: expect.any(String),
     });
+    expect(Object.keys(response.body).sort()).toEqual([
+      'errorCode',
+      'message',
+      'requestId',
+      'statusCode',
+    ]);
+    expect(response.headers['x-request-id']).toBe(response.body.requestId);
     expect(JSON.stringify(response.body)).not.toContain('unexpected-hash');
   });
 });

@@ -246,8 +246,8 @@ export class NoShowWorkerService {
       });
 
       const { currentHour, currentMinute } = this.getVietnamTime(now);
-      const eligibleAt1330 =
-        currentHour > 13 || (currentHour === 13 && currentMinute >= 30);
+      const eligibleAt1345 =
+        currentHour > 13 || (currentHour === 13 && currentMinute >= 45);
       const registrationDate = registration?.mealDate
         .toISOString()
         .slice(0, 10);
@@ -258,7 +258,7 @@ export class NoShowWorkerService {
         registration.mealServing !== null ||
         registration.user.isActive !== true ||
         registrationDate !== dateStr ||
-        !eligibleAt1330
+        !eligibleAt1345
       ) {
         return 'SKIPPED';
       }

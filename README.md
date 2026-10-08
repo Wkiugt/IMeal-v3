@@ -71,8 +71,13 @@ Mỗi lệnh một terminal. API phải chạy trước mobile.
 | App | Lệnh | Đích |
 | --- | --- | --- |
 | Admin Web | `$env:VITE_API_URL='http://localhost:3000'; corepack yarn workspace @imeal/admin-web dev` | `http://localhost:5173` |
-| Mobile web | `corepack yarn workspace @imeal/mobile web` | Expo web |
+| Mobile (native) | `corepack yarn workspace @imeal/mobile start` | Expo Go trên Android hoặc iOS |
 | Worker | xem khối bên dưới | `localhost:3001` |
+
+Expo Web is not a supported staging or production client. Use the native Android/iOS
+paths above for release qualification; a local `expo start --web` session is only
+for development/UI inspection and is not evidence that the API supports browser
+origins or CORS preflight.
 
 Worker không tự đọc `.env`:
 
@@ -83,6 +88,26 @@ corepack yarn workspace @imeal/worker start:dev
 ```
 
 Thay user/password bằng đúng giá trị trong `.env`.
+For Gmail OTP setup, see the [OTP email runbook](./docs/runbooks/otp-email.md). Use a dedicated mailbox with 2-Step Verification and a Google App Password; never put a regular Google password or a real credential in this repository.
+
+Local SMTP injection has two supported modes:
+
+- **Compose (selected local behavior):** `docker compose` reads the untracked `.env` and passes `OTP_SMTP_USERNAME`, `OTP_SMTP_PASSWORD`, `OTP_SMTP_FROM`, and optional `OTP_SMTP_FROM_NAME` to the worker only. The API receives no SMTP credentials.
+- **Direct worker:** because the worker does not read `.env`, set the same variables in the worker process before starting it:
+
+  ```powershell
+  $env:OTP_SMTP_HOST='smtp.gmail.com'
+  $env:OTP_SMTP_PORT='587'
+  $env:OTP_SMTP_USERNAME='otp-local@example.test'
+  $env:OTP_SMTP_PASSWORD='CHANGE_ME_LOCAL'
+  $env:OTP_SMTP_FROM='otp-local@example.test'
+  $env:OTP_SMTP_FROM_NAME='IMeal'
+  $env:OTP_SMTP_REQUIRE_TLS='true'
+  corepack yarn workspace @imeal/worker start:dev
+  ```
+
+Both modes use STARTTLS over TCP `587`; production validation remains fail-closed. Rotate by creating a replacement App Password, updating the protected worker environment, restarting the worker, verifying delivery, and then revoking the old App Password. Do not add `OTP_PROVIDER_API_KEY` or any SMTP credential to the API environment.
+
 
 ## Mobile
 

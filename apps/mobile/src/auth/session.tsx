@@ -14,9 +14,7 @@ import {
   type RequestOtpResponse,
 } from '../api/authAPI';
 import { MobileApiError, getMobileErrorMessage } from '../api/mobileApiError';
-import { RequestTimeoutError } from '../api/requestWithTimeout';
 import { useLanguage } from '../i18n/LanguageProvider';
-import type { Translate } from '../i18n/translations';
 import { navigationRef } from '../navigation';
 import { registerAuthInvalidationHandler } from './authInvalidation';
 import { attemptSessionStorage } from './sessionStorage';
@@ -31,14 +29,6 @@ type AuthErrorFallbackKey =
 type AuthErrorState = { error: unknown; fallbackKey: AuthErrorFallbackKey };
 const SESSION_KEY = 'imeal.opaque.session-token';
 
-function getAuthErrorMessage(
-  error: unknown,
-  fallbackKey: AuthErrorFallbackKey,
-  t: Translate,
-): string {
-  if (error instanceof RequestTimeoutError) return t('errors.apiTimeout');
-  return getMobileErrorMessage(error, t, fallbackKey);
-}
 
 async function readStoredToken(): Promise<string | null> {
   if (Platform.OS === 'web')
@@ -230,10 +220,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       isSigningIn: isVerifyingOtp,
       canSignIn: true,
       authError: authErrorState
-        ? getAuthErrorMessage(
+        ? getMobileErrorMessage(
             authErrorState.error,
-            authErrorState.fallbackKey,
             t,
+            authErrorState.fallbackKey,
           )
         : null,
       canUseEmployee: roles.includes('staff'),

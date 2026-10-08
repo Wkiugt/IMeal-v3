@@ -111,8 +111,6 @@ export class WeeklyMenusService {
       const publishedAt = lockedWeeklyMenu?.publishedAt ?? null;
       const latestRevision = dailyMenu.revisions[0];
       const currentMealType = dailyMenu.mealDays[0]?.mealType;
-      const contentChanged =
-        data.content !== undefined && data.content !== latestRevision?.content;
       const canonicalContentChanged =
         (data.mealName !== undefined &&
           data.mealName !== latestRevision?.mealName) ||
@@ -127,7 +125,6 @@ export class WeeklyMenusService {
       const enabledChanged =
         data.isEnabled !== undefined && data.isEnabled !== dailyMenu.isEnabled;
       const changed =
-        contentChanged ||
         canonicalContentChanged ||
         mealTypeChanged ||
         holidayChanged ||
@@ -177,7 +174,7 @@ export class WeeklyMenusService {
           description,
           imageUrl,
           createdByUserId: actorUserId,
-          content: data.content ?? latestRevision?.content ?? mealName,
+          content: latestRevision?.content ?? mealName,
         },
       });
 

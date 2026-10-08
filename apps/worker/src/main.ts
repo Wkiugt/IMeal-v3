@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
-import type { LoggerService } from '@nestjs/common';
 import { AppModule } from './app.module.js';
+import { nestLoggerAdapter } from './common/nest-logger.adapter.js';
 import {
   installShutdownHandlers,
   shutdownTimeoutMs,
@@ -15,21 +15,6 @@ import { HealthService } from './health.service.js';
 import { validateWorkerEnvironment } from './otp-delivery-worker.service.js';
 import { validateMetricsEnvironment } from './metrics/metrics-environment.js';
 import { WorkerMetricsService } from './metrics/metrics.service.js';
-function nestLoggerAdapter(logger: StructuredLogger): LoggerService {
-  const fields = (event: string) => ({
-    service: 'worker' as const,
-    release: process.env.RELEASE_VERSION?.trim() || 'unconfigured',
-    event,
-  });
-  return {
-    log: () => logger.info('nestjs.log', fields('nestjs.log')),
-    error: () => logger.error('nestjs.error', fields('nestjs.error')),
-    warn: () => logger.warn('nestjs.warn', fields('nestjs.warn')),
-    debug: () => logger.debug('nestjs.debug', fields('nestjs.debug')),
-    verbose: () => logger.debug('nestjs.verbose', fields('nestjs.verbose')),
-    fatal: () => logger.error('nestjs.fatal', fields('nestjs.fatal')),
-  };
-}
 
 async function bootstrap() {
   validateWorkerEnvironment();

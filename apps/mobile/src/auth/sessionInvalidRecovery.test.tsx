@@ -89,11 +89,10 @@ describe('Mobile SESSION_INVALID recovery', () => {
 
     const response = new Response(
       JSON.stringify({
-        error: {
-          code: 'SESSION_INVALID',
-          message: 'Invalid or expired session.',
-        },
-        requestId: 'request-1',
+        statusCode: 401,
+        errorCode: 'SESSION_INVALID',
+        message: 'Authentication is required.',
+        requestId: '550e8400-e29b-41d4-a716-446655440020',
       }),
       { status: 401 },
     );
@@ -150,10 +149,10 @@ describe('Mobile SESSION_INVALID recovery', () => {
 
     const delayedResponse = new Response(
       JSON.stringify({
-        error: {
-          code: 'SESSION_INVALID',
-          message: 'Invalid or expired session.',
-        },
+        statusCode: 401,
+        errorCode: 'SESSION_INVALID',
+        message: 'Authentication is required.',
+        requestId: '550e8400-e29b-41d4-a716-446655440021',
       }),
       { status: 401 },
     );
@@ -242,10 +241,10 @@ describe('Mobile SESSION_INVALID recovery', () => {
 
     const invalidationResponse = new Response(
       JSON.stringify({
-        error: {
-          code: 'SESSION_INVALID',
-          message: 'Invalid or expired session.',
-        },
+        statusCode: 401,
+        errorCode: 'SESSION_INVALID',
+        message: 'Authentication is required.',
+        requestId: '550e8400-e29b-41d4-a716-446655440022',
       }),
       { status: 401 },
     );

@@ -138,7 +138,7 @@ describe('NoShowWorkerService', () => {
       expect(mockPrisma.registration.findMany).not.toHaveBeenCalled();
     });
 
-    it('allows forced processing at 13:30 but the domain predicate rejects 13:29:59', async () => {
+    it('enforces 13:45 eligibility in the per-registration guard', async () => {
       const registration = activeRegistration();
       mockPrisma.registration.findMany
         .mockResolvedValueOnce([{ id: registration.id }])
@@ -152,7 +152,7 @@ describe('NoShowWorkerService', () => {
 
       const before = await service.processNoShows('2026-09-03', {
         force: true,
-        currentTime: new Date('2026-09-03T06:29:59.000Z'),
+        currentTime: new Date('2026-09-03T06:44:59.000Z'),
       });
       expect(before.processedCount).toBe(0);
       expect(mockTx.registration.update).not.toHaveBeenCalled();
@@ -160,12 +160,12 @@ describe('NoShowWorkerService', () => {
       prepareCandidate(registration);
       const atBoundary = await service.processNoShows('2026-09-03', {
         force: true,
-        currentTime: new Date('2026-09-03T06:30:00.000Z'),
+        currentTime: new Date('2026-09-03T06:45:00.000Z'),
       });
       expect(atBoundary.processedCount).toBe(1);
       expect(mockTx.registration.update).toHaveBeenCalledWith({
         where: { id: registration.id },
-        data: { status: 'NO_SHOW', noShowAt: new Date('2026-09-03T06:30:00.000Z') },
+        data: { status: 'NO_SHOW', noShowAt: new Date('2026-09-03T06:45:00.000Z') },
       });
     });
 

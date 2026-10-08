@@ -138,6 +138,23 @@ describe('RegistrationsService', () => {
     ).resolves.toEqual([{ date: '2026-09-05', success: true }]);
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
   });
+  it('rejects registration after the 14:00:00 Vietnam cutoff', async () => {
+    vi.setSystemTime(new Date('2026-09-04T07:00:01.000Z'));
+
+    await expect(
+      createService().batchRegister('user-1', [
+        { mealDate: '2026-09-05', status: 'ACTIVE', mealChoice: 'REGULAR' },
+      ]),
+    ).resolves.toEqual([
+      {
+        date: '2026-09-05',
+        success: false,
+        code: 'CUTOFF_PASSED',
+        reason: 'Cutoff time exceeded',
+      },
+    ]);
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
 
   it('rechecks the owner account after registration lock before creating', async () => {
     vi.setSystemTime(new Date('2026-09-04T06:59:59.000Z'));
@@ -996,6 +1013,7 @@ describe('RegistrationsService', () => {
       status: 400,
       response: {
         code: 'INVALID_MEAL_DATE',
+        message: 'Invalid meal date',
       },
     });
     expect(prismaMock.appSetting.findUnique).not.toHaveBeenCalled();
@@ -1552,7 +1570,7 @@ describe('RegistrationsService', () => {
         date: '2200-01-01',
         success: false,
         code: 'INVALID_MEAL_DATE',
-        reason: expect.stringContaining('between 1200 and 2199'),
+        reason: 'Invalid meal date',
       },
     ]);
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
@@ -1578,7 +1596,7 @@ describe('RegistrationsService', () => {
         date: '2026-09-24',
         success: false,
         code: 'REGISTRATION_FAILED',
-        reason: 'database down',
+        reason: 'Registration could not be completed',
       },
     ]);
   });

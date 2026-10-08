@@ -361,7 +361,15 @@ describe('employeeActivityAPI', () => {
       'fetch',
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ code: 'NOT_FOUND' }), { status: 404 }),
+          new Response(
+            JSON.stringify({
+              statusCode: 404,
+              errorCode: 'NOT_FOUND',
+              message: 'The requested information could not be found.',
+              requestId: '550e8400-e29b-41d4-a716-446655440011',
+            }),
+            { status: 404 },
+          ),
       ),
     );
 
@@ -378,11 +386,10 @@ describe('employeeActivityAPI', () => {
         async () =>
           new Response(
             JSON.stringify({
-              error: {
-                code: 'UNAUTHORIZED',
-                message: 'Session is invalid',
-              },
-              requestId: 'qa-request-unauthorized',
+              statusCode: 401,
+              errorCode: 'UNAUTHORIZED',
+              message: 'Authentication is required.',
+              requestId: '550e8400-e29b-41d4-a716-446655440012',
             }),
             { status: 401 },
           ),

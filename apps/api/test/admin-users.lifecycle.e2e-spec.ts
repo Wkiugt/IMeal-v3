@@ -37,6 +37,31 @@ type LifecycleFixture = {
 function bearer(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
+function expectCanonicalError(
+  response: {
+    status: number;
+    body: Record<string, unknown>;
+    headers: Record<string, unknown>;
+  },
+  statusCode: number,
+  errorCode: string,
+  message: string,
+): void {
+  expect(response.status).toBe(statusCode);
+  expect(response.body).toEqual({
+    statusCode,
+    errorCode,
+    message,
+    requestId: expect.any(String),
+  });
+  expect(Object.keys(response.body).sort()).toEqual([
+    'errorCode',
+    'message',
+    'requestId',
+    'statusCode',
+  ]);
+  expect(response.headers['x-request-id']).toBe(response.body.requestId);
+}
 
 const TEST_BUSINESS_DATE = parseMealDate(getBusinessDate());
 
@@ -743,13 +768,12 @@ describe('Admin user lifecycle with real opaque SessionGuard', () => {
     const invalidated = await request(app.getHttpServer())
       .get('/auth/me')
       .set(bearer(fixture.targetToken));
-    expect(invalidated.status).toBe(401);
-    expect(invalidated.body).toEqual({
-      statusCode: 401,
-      errorCode: 'SESSION_INVALID',
-      message: 'Your session is no longer valid. Please sign in again.',
-      requestId: invalidated.headers['x-request-id'],
-    });
+    expectCanonicalError(
+      invalidated,
+      401,
+      'SESSION_INVALID',
+      'Your session is no longer valid. Please sign in again.',
+    );
 
     const repeated = await request(app.getHttpServer())
       .post(`/v1/admin/users/${fixture.targetId}/disable`)
@@ -807,13 +831,12 @@ describe('Admin user lifecycle with real opaque SessionGuard', () => {
         purpose: 'SESSION_LOGIN',
         code: oldCode,
       });
-    expect(disabledVerify.status).toBe(401);
-    expect(disabledVerify.body).toEqual({
-      statusCode: 401,
-      errorCode: 'OTP_INVALID_OR_EXPIRED',
-      message: 'Your session is no longer valid. Please sign in again.',
-      requestId: disabledVerify.headers['x-request-id'],
-    });
+    expectCanonicalError(
+      disabledVerify,
+      401,
+      'OTP_INVALID_OR_EXPIRED',
+      'Your session is no longer valid. Please sign in again.',
+    );
     const disabledOtp = await request(app.getHttpServer())
       .post('/auth/otp/request')
       .send({ email: fixture.targetEmail, purpose: 'SESSION_LOGIN' });
@@ -914,13 +937,12 @@ describe('Admin user lifecycle with real opaque SessionGuard', () => {
         purpose: 'SESSION_LOGIN',
         code: oldCode,
       });
-    expect(stillDisabledVerify.status).toBe(401);
-    expect(stillDisabledVerify.body).toEqual({
-      statusCode: 401,
-      errorCode: 'OTP_INVALID_OR_EXPIRED',
-      message: 'Your session is no longer valid. Please sign in again.',
-      requestId: stillDisabledVerify.headers['x-request-id'],
-    });
+    expectCanonicalError(
+      stillDisabledVerify,
+      401,
+      'OTP_INVALID_OR_EXPIRED',
+      'Your session is no longer valid. Please sign in again.',
+    );
 
     expect(
       (
@@ -1046,13 +1068,12 @@ describe('Admin user lifecycle with real opaque SessionGuard', () => {
       .post(`/v1/admin/users/${fixture.actorId}/disable`)
       .set(adminHeaders)
       .send({ confirm: true });
-    expect(selfDisable.status).toBe(409);
-    expect(selfDisable.body).toEqual({
-      statusCode: 409,
-      errorCode: 'ADMIN_SELF_DISABLE_FORBIDDEN',
-      message: 'The information has changed. Please refresh and try again.',
-      requestId: selfDisable.headers['x-request-id'],
-    });
+    expectCanonicalError(
+      selfDisable,
+      409,
+      'ADMIN_SELF_DISABLE_FORBIDDEN',
+      'The information has changed. Please refresh and try again.',
+    );
     const adminRole = await prisma.role.findUniqueOrThrow({
       where: { name: 'admin' },
     });
@@ -1075,13 +1096,12 @@ describe('Admin user lifecycle with real opaque SessionGuard', () => {
       .post(`/v1/admin/users/${sole.id}/disable`)
       .set(adminHeaders)
       .send({ confirm: true });
-    expect(blocked.status).toBe(409);
-    expect(blocked.body).toEqual({
-      statusCode: 409,
-      errorCode: 'ADMIN_LAST_ACTIVE_ADMIN',
-      message: 'The information has changed. Please refresh and try again.',
-      requestId: blocked.headers['x-request-id'],
-    });
+    expectCanonicalError(
+      blocked,
+      409,
+      'ADMIN_LAST_ACTIVE_ADMIN',
+      'The information has changed. Please refresh and try again.',
+    );
     expect(
       await prisma.user.findUniqueOrThrow({ where: { id: sole.id } }),
     ).toMatchObject({ isActive: true });

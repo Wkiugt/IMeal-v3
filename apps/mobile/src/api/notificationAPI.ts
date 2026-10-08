@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { v1 } from '@imeal/contracts';
 import { API_BASE } from './apiConfig';
+import { fetchWithTimeout } from './requestWithTimeout';
 import {
   MobileApiError,
   readMobileResponseJson,
@@ -15,7 +16,7 @@ export type NotificationPreferences =
   v1.NotificationPreferencesResponse['data'];
 export type RegisterPushDeviceRequest = v1.RegisterPushDeviceRequest;
 export type PushDevicePlatform = v1.PushDevicePlatform;
-
+const NOTIFICATION_REQUEST_TIMEOUT_MS = 10_000;
 const PushDeviceResponseSchema = z
   .object({
     data: z
@@ -49,14 +50,18 @@ async function request(
 ): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-        ...init?.headers,
+    response = await fetchWithTimeout(
+      `${API_BASE}${path}`,
+      {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+          ...init?.headers,
+        },
       },
-    });
+      NOTIFICATION_REQUEST_TIMEOUT_MS,
+    );
   } catch (error: unknown) {
     throw toMobileApiError(error, fallbackKey);
   }

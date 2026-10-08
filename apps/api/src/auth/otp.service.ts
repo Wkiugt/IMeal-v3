@@ -20,6 +20,23 @@ const DEFAULT_RATE_WINDOW_SECONDS = 60 * 60;
 const DEFAULT_ADDRESS_RATE_LIMIT = 5;
 const DEFAULT_CLIENT_RATE_LIMIT = 20;
 
+type OtpRawLockClient = {
+  $executeRaw: (...args: unknown[]) => unknown;
+  $queryRaw: (...args: unknown[]) => unknown;
+};
+
+const hasOtpRawLockCapabilities = (
+  tx: unknown,
+): tx is OtpRawLockClient => {
+  if (typeof tx !== 'object' || tx === null) return false;
+  return (
+    '$executeRaw' in tx &&
+    typeof tx.$executeRaw === 'function' &&
+    '$queryRaw' in tx &&
+    typeof tx.$queryRaw === 'function'
+  );
+};
+
 export interface OtpRequestContext {
   requestId?: string;
   clientIp?: string;
@@ -187,15 +204,17 @@ export class OtpService {
     );
 
     return this.prisma.$transaction(async (tx) => {
-      if (typeof tx.$queryRaw === 'function') {
+      if (hasOtpRawLockCapabilities(tx)) {
         const clientLockKeys = [clientIpHash, clientFingerprintHash]
           .filter((value): value is string => Boolean(value))
           .sort();
         for (const identityHash of clientLockKeys) {
           const lockKey = `otp-rate-limit:${input.purpose}:${identityHash}`;
-          await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
         }
         await tx.$queryRaw`SELECT id FROM "otp_allowlists" WHERE id = ${eligible.id} FOR UPDATE`;
+      } else if (process.env.NODE_ENV !== 'test') {
+        throw new Error('OTP transaction client is missing raw lock capabilities');
       }
       const activeChallenge = await tx.otpChallenge.findFirst({
         where: {

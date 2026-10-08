@@ -206,10 +206,12 @@ describe('checkInAPI', () => {
       vi.fn(async () =>
         new Response(
           JSON.stringify({
-            error: { code: 'GPS_STALE', message: 'GPS fix is stale' },
-            requestId: 'request-1',
+            statusCode: 422,
+            errorCode: 'GPS_STALE',
+            message: 'The request could not be processed.',
+            requestId: '550e8400-e29b-41d4-a716-446655440010',
           }),
-          { status: 422, headers: { 'Content-Type': 'application/json' } },
+          { status: 422 },
         ),
       ),
     );

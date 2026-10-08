@@ -14,6 +14,7 @@ type MockFunction = Mock;
 interface OtpPrismaMock {
   $transaction: MockFunction;
   $queryRaw: MockFunction;
+  $executeRaw: MockFunction;
   otpAllowlist: { findFirst: MockFunction };
   otpChallenge: {
     findFirst: MockFunction;
@@ -42,10 +43,14 @@ const ALLOWLIST: AllowlistResolution = {
   user: USER,
 };
 
-function createPrisma() {
+function createPrisma(
+  rawCapabilities: 'complete' | 'query-only' | 'execute-only' | 'none' =
+    'complete',
+) {
   const prisma = {
     $transaction: vi.fn(),
     $queryRaw: vi.fn().mockResolvedValue([]),
+    $executeRaw: vi.fn().mockResolvedValue(0),
     otpAllowlist: { findFirst: vi.fn() },
     otpChallenge: {
       findFirst: vi.fn(),
@@ -66,6 +71,14 @@ function createPrisma() {
       }),
     },
   } satisfies OtpPrismaMock;
+
+  if (rawCapabilities === 'query-only' || rawCapabilities === 'none') {
+    Reflect.deleteProperty(prisma, '$executeRaw');
+  }
+  if (rawCapabilities === 'execute-only' || rawCapabilities === 'none') {
+    Reflect.deleteProperty(prisma, '$queryRaw');
+  }
+
   prisma.$transaction.mockImplementation(
     (callback: (tx: OtpPrismaMock) => unknown) => callback(prisma),
   );
@@ -74,8 +87,10 @@ function createPrisma() {
 
 function installService(
   metrics?: Pick<ApiMetricsService, 'recordAuthAttempt'>,
+  rawCapabilities: 'complete' | 'query-only' | 'execute-only' | 'none' =
+    'complete',
 ) {
-  const prisma = createPrisma();
+  const prisma = createPrisma(rawCapabilities);
   const allowlist = new AllowlistService(prisma as never);
   Reflect.set(allowlist, 'prisma', prisma);
   const service = new OtpService(
@@ -88,6 +103,7 @@ function installService(
   Reflect.set(service, 'generateCode', vi.fn().mockReturnValue('123456'));
   return { service, allowlist, prisma };
 }
+
 
 describe('AllowlistService', () => {
   it('normalizes email deterministically before lookup', async () => {
@@ -218,7 +234,7 @@ describe('OtpService', () => {
     expect(prisma.otpChallenge.create).not.toHaveBeenCalled();
   });
 
-  it('uses shared client and address locks across concurrent allowlisted addresses', async () => {
+  it('uses both raw capabilities for OTP locking', async () => {
     const { service, allowlist, prisma } = installService();
     const first = {
       ...ALLOWLIST,
@@ -236,6 +252,16 @@ describe('OtpService', () => {
       email === first.normalizedEmail ? first : second,
     );
 
+    const lockCallOrder: string[] = [];
+    prisma.$executeRaw.mockImplementation(() => {
+      lockCallOrder.push('advisory');
+      return Promise.resolve(0);
+    });
+    prisma.$queryRaw.mockImplementation(() => {
+      lockCallOrder.push('row-lock');
+      return Promise.resolve([]);
+    });
+
     await Promise.all([
       service.request(
         { email: first.normalizedEmail, purpose: 'SESSION_LOGIN' },
@@ -247,20 +273,103 @@ describe('OtpService', () => {
       ),
     ]);
 
-    const rawCalls = prisma.$queryRaw.mock.calls;
-    const advisoryCalls = rawCalls.filter(
-      ([template]) =>
-      Array.isArray(template) &&
-      template.join('').includes('pg_advisory_xact_lock'),
-    );
-    const addressCalls = rawCalls.filter(
-      ([template]) =>
-        Array.isArray(template) && template.join('').includes('otp_allowlists'),
-    );
+    const advisoryCalls = prisma.$executeRaw.mock.calls;
+    const addressCalls = prisma.$queryRaw.mock.calls;
     expect(advisoryCalls).toHaveLength(2);
     expect(addressCalls).toHaveLength(2);
     expect(advisoryCalls[0][1]).toBe(advisoryCalls[1][1]);
-    expect(JSON.stringify(rawCalls)).not.toContain(context.clientIp);
+    expect(
+      advisoryCalls.every(([query]) =>
+        String(query).includes('pg_advisory_xact_lock'),
+      ),
+    ).toBe(true);
+    expect(
+      addressCalls.every(
+        ([query]) =>
+          String(query).includes('otp_allowlists') &&
+          String(query).includes('FOR UPDATE'),
+      ),
+    ).toBe(true);
+    expect(lockCallOrder).toEqual([
+      'advisory',
+      'advisory',
+      'row-lock',
+      'row-lock',
+    ]);
+    expect(
+      JSON.stringify([...advisoryCalls, ...addressCalls]),
+    ).not.toContain(context.clientIp);
+  });
+
+  it('does not call absent raw methods', async () => {
+    for (const rawCapabilities of [
+      'query-only',
+      'execute-only',
+      'none',
+    ] as const) {
+      const { service, allowlist, prisma } = installService(
+        undefined,
+        rawCapabilities,
+      );
+      vi.spyOn(allowlist, 'findEligible').mockResolvedValue(ALLOWLIST);
+
+      await expect(
+        service.request({ email: EMAIL, purpose: 'SESSION_LOGIN' }, context),
+      ).resolves.toEqual({ accepted: true });
+
+      const queryRaw = Reflect.get(prisma, '$queryRaw') as
+        | MockFunction
+        | undefined;
+      const executeRaw = Reflect.get(prisma, '$executeRaw') as
+        | MockFunction
+        | undefined;
+
+      if (rawCapabilities === 'query-only') {
+        expect(queryRaw).toBeDefined();
+        expect(queryRaw).not.toHaveBeenCalled();
+        expect(executeRaw).toBeUndefined();
+      } else if (rawCapabilities === 'execute-only') {
+        expect(queryRaw).toBeUndefined();
+        expect(executeRaw).toBeDefined();
+        expect(executeRaw).not.toHaveBeenCalled();
+      } else {
+        expect(queryRaw).toBeUndefined();
+        expect(executeRaw).toBeUndefined();
+      }
+    }
+  });
+
+  it('fails closed for an incomplete production transaction client', async () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalEncryptionKey = process.env.OTP_DELIVERY_ENCRYPTION_KEY;
+    process.env.NODE_ENV = 'production';
+    process.env.OTP_DELIVERY_ENCRYPTION_KEY =
+      'otp-delivery-encryption-test-secret';
+    try {
+      for (const rawCapabilities of [
+        'query-only',
+        'execute-only',
+        'none',
+      ] as const) {
+        const { service, allowlist, prisma } = installService(
+          undefined,
+          rawCapabilities,
+        );
+        vi.spyOn(allowlist, 'findEligible').mockResolvedValue(ALLOWLIST);
+
+        await expect(
+          service.request({ email: EMAIL, purpose: 'SESSION_LOGIN' }, context),
+        ).rejects.toThrow('OTP transaction client is missing raw lock capabilities');
+        expect(prisma.otpChallenge.create).not.toHaveBeenCalled();
+      }
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+      if (originalEncryptionKey === undefined) {
+        delete process.env.OTP_DELIVERY_ENCRYPTION_KEY;
+      } else {
+        process.env.OTP_DELIVERY_ENCRYPTION_KEY = originalEncryptionKey;
+      }
+    }
   });
 
   it('atomically consumes a valid code and resolves the current user', async () => {

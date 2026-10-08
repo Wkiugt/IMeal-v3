@@ -62,7 +62,7 @@ The following are the concrete seams this design addresses:
 
 - `apps/api/src/main.ts:9-20` validates API configuration but does not configure graceful shutdown, request correlation, or startup failure handling.
 - `apps/worker/src/main.ts:5-12` validates worker configuration and listens, but has no graceful shutdown or readiness endpoint.
-- `apps/api/src/config/environment.ts:73-147` already provides fail-closed API validation, including OTP/session secrets, provider settings, GPS bounds, fixed serving values, and test-only auth bypass.
+- `apps/api/src/config/environment.ts:73-147` already provides fail-closed API validation, including OTP/session secrets, GPS bounds, fixed serving values, and test-only auth bypass.
 - `apps/worker/src/otp-delivery-worker.service.ts:268-314` validates worker delivery settings, but worker runtime lifecycle is still unmanaged.
 - `apps/api/src/app.service.ts:12-27` exposes a DB health response with HTTP-success semantics even when the query fails, and returns the raw database error message.
 - `apps/worker/src/app.controller.ts:4-12` exposes only a Hello World root route; `docker-compose.yml:194-206` uses that route as worker health.
@@ -75,7 +75,7 @@ The following are the concrete seams this design addresses:
 ## 3. Goals
 
 1. Prevent accidental public access to PostgreSQL, PgBouncer, MinIO, the worker, and internal migration services.
-2. Ensure production cannot start with placeholder credentials, test auth bypass, insecure provider URLs, incorrect business invariants, or missing migration approval.
+2. Ensure production cannot start with placeholder credentials, test auth bypass, insecure non-OTP provider URLs, incorrect business invariants, or missing migration approval.
 3. Provide truthful liveness/readiness signals suitable for Compose restart and external monitoring.
 4. Make every API request and error correlatable without trusting attacker-supplied arbitrary IDs.
 5. Emit machine-readable logs with no OTPs, session tokens, QR payloads, raw coordinates, provider payloads, or routine personal data.
@@ -164,14 +164,13 @@ Caddy's certificate issuance requires DNS records, inbound 80/443 reachability, 
 - `AUTH_MODE=otp` and `REQUIRE_AUTH=true` outside the exact `NODE_ENV=test` plus `REQUIRE_AUTH=false` harness;
 - OTP hash and delivery-encryption secrets;
 - session hash secret and idle/absolute timeouts;
-- HTTPS OTP provider URL, API key, and sender identity;
 - OTP expiry/resend/attempt/rate values;
 - positive GPS policy defaults;
 - exact serving/QR values from `apps/api/src/config/environment.ts:24-31`.
 
 The validator should trim before length checks, reject known placeholder values (`CHANGE_ME_LOCAL`, `replace-with-`, `example.test`), and validate production-only URL/network restrictions without logging the values. A production API must fail before `app.listen` when any check fails.
 
-`validateWorkerEnvironment` must enforce the worker's complete production contract before listening: `DATABASE_URL`, OTP encryption/provider settings, all OTP delivery retry/claim settings, and the same fixed business invariants. It must reject production `NODE_ENV` values that are not explicit and must never enable a test default in production.
+`validateWorkerEnvironment` must enforce the worker's complete production contract before listening: `DATABASE_URL`, OTP encryption/Gmail SMTP settings, all OTP delivery retry/claim settings, and the same fixed business invariants. It must reject production `NODE_ENV` values that are not explicit and must never enable a test default in production.
 
 ### 6.2 Required production variables
 
@@ -179,7 +178,7 @@ The production secret manager or protected host environment must supply the exis
 
 - `DATABASE_URL` for runtime PgBouncer access;
 - `QR_SIGNING_SECRET`, `OTP_HASH_SECRET`, `OTP_DELIVERY_ENCRYPTION_KEY`, `SESSION_HASH_SECRET`;
-- `OTP_PROVIDER_URL`, `OTP_PROVIDER_API_KEY`, `OTP_PROVIDER_FROM`;
+- `OTP_SMTP_USERNAME`, `OTP_SMTP_PASSWORD` (a Gmail App Password), `OTP_SMTP_FROM`, and optional `OTP_SMTP_FROM_NAME`; host/port remain `smtp.gmail.com:587` with STARTTLS;
 - OTP/session/GPS/serving settings already documented in `.env.example:25-70` and `docs/02-technical-requirements.md:226-251`;
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` without tracked defaults;
 - `PUBLIC_HOSTNAME` and the selected ACME/certificate configuration;
@@ -193,8 +192,8 @@ The migration-only URL must not be passed to the API or worker. The API/worker r
 - Secrets are injected at runtime through a protected environment/secret manager and are absent from source control, image layers, Compose command strings, and ordinary logs.
 - Secret values are never returned by readiness, diagnostics, error envelopes, or audit details.
 - Production rejects the test auth bypass even if other values appear valid.
-- Provider URLs must be HTTPS with a hostname; loopback/example destinations are rejected in production.
-- Rotation is a runbook operation: provision the new value, restart the affected process through the normal gate, verify readiness and provider delivery, then revoke the old value. QR/session/OTP rotation effects must be explicitly accepted by the operator because existing signed artifacts/sessions may become invalid.
+- Non-OTP external provider URLs must be HTTPS with a hostname; loopback/example destinations are rejected in production. Rotate the Gmail worker App Password through the OTP runbook (create a replacement, update protected worker injection, restart the worker, verify delivery, then revoke the old value); rotate unrelated provider values through their own runbooks.
+- Rotation is a runbook operation: provision the new value, update protected injection, restart the affected process through the normal gate, verify readiness and delivery, then revoke the old value. QR/session/OTP rotation effects must be explicitly accepted by the operator because existing signed artifacts/sessions may become invalid.
 
 ## 7. Health and readiness interfaces
 
@@ -300,7 +299,7 @@ The logger writes one JSON object per line to stdout/stderr for the container ru
 
 The redaction policy is explicit:
 
-- never log OTP clear codes, OTP provider payloads, session tokens, bearer headers, QR payloads/signatures, raw GPS coordinates, provider API keys, database URLs, or full push tokens;
+- never log OTP clear codes, OTP delivery payloads, session tokens, bearer headers, QR payloads/signatures, raw GPS coordinates, provider API keys, database URLs, or full push tokens;
 - use existing hashes or stable IDs for email/identity correlation where required;
 - sanitize provider errors using the existing notification redaction behavior at `apps/worker/src/notification-dispatch.service.ts:53-59`;
 - do not serialize arbitrary request bodies or exception response objects into logs.
@@ -434,12 +433,12 @@ This is the proposed implementation map; these files are not changed by this des
 | --- | --- | --- |
 | Missing/placeholder production secret | Process exits before listening; safe structured startup error | Correct secret-manager injection; restart through Compose |
 | `REQUIRE_AUTH=false` outside test harness | API exits before listening | Set `REQUIRE_AUTH=true`; no production bypass |
-| OTP provider URL not HTTPS | API/worker exits before listening | Provision approved HTTPS provider URL |
+| Missing/invalid worker Gmail SMTP configuration | Worker exits before listening | Inject `OTP_SMTP_USERNAME`, a Gmail App Password in `OTP_SMTP_PASSWORD`, and `OTP_SMTP_FROM` through the protected worker environment; allow outbound TCP 587 with STARTTLS |
 | PostgreSQL unavailable after startup | `/health/ready` returns 503; API remains live but is removed from traffic; worker is not ready | Restore DB/network; Compose/monitoring restarts as policy dictates |
 | PostgreSQL unavailable during startup | API/worker do not become ready; no business traffic | Fix DB and rerun readiness/migration dependency |
 | Migration gate fails | API/worker containers do not start; gate result identifies step/check | Remediate exact target or restore approved backup |
 | Caddy certificate/DNS failure | HTTPS edge does not become healthy; no HTTP production fallback | Fix DNS/ACME/certificate prerequisite; do not expose API over plaintext |
-| Provider call timeout/transient failure | Structured retryable event; outbox remains retryable with bounded backoff | Worker retry/dead-letter alert; persisted inbox remains authoritative |
+| Worker OTP delivery timeout/transient failure | Structured retryable event; outbox remains retryable with bounded backoff | Worker retry/dead-letter alert; persisted inbox remains authoritative |
 | SIGTERM/SIGINT | Readiness becomes 503, new work stops, in-flight work drains, Prisma disconnects | Container restarts after clean stop; clients retry idempotently |
 | Shutdown timeout | Process exits non-zero after deadline; stale claims recover through existing worker policy | Operator investigates long-running work and repeats deployment |
 | Malformed request ID | API generates a UUIDv4; response uses generated ID | No operator action; attacker cannot control correlation format |
@@ -457,14 +456,14 @@ This is the proposed implementation map; these files are not changed by this des
 ### Phase B — Staging migration gate
 
 1. Obtain a representative disposable/staging database and restorable backup.
-2. Provision the independent approval record, direct migration URL, secrets, four approved locations/roster inputs, roles, and provider settings out of band.
+2. Provision the independent approval record, direct migration URL, secrets, four approved locations/roster inputs, roles, worker Gmail/Workspace SMTP settings, and any unrelated provider settings out of band.
 3. Run the migration gate against an explicitly named target schema/database.
 4. Capture preflight, backfill, post-preflight, constraint validation, and release checksums.
 5. Start API/worker only after the gate succeeds and verify both readiness endpoints.
 
 ### Phase C — Staging failure/recovery rehearsal
 
-Exercise DB outage, provider timeout, malformed secret, failed migration check, SIGTERM during an in-flight request/job, Caddy certificate failure, and repeated worker restart. Verify that no raw secret or dependency error appears in HTTP or logs and that retry/idempotency behavior preserves business state.
+Exercise DB outage, worker SMTP delivery timeout, malformed secret, failed migration check, SIGTERM during an in-flight request/job, Caddy certificate failure, and repeated worker restart. Verify that no raw secret or dependency error appears in HTTP or logs and that retry/idempotency behavior preserves business state.
 
 ### Phase D — Production cutover
 
@@ -526,8 +525,8 @@ The verification record must show:
 The following cannot be invented or completed by repository code:
 
 1. Approved production API hostname, DNS records, inbound 80/443 firewall policy, ACME/certificate ownership, and Caddy certificate storage policy.
-2. Secret-manager or protected-host ownership for database credentials, OTP/session/QR/encryption secrets, provider API key/sender, and release metadata.
-3. Approved OTP provider contract, HTTPS endpoint, rate/expiry/support policy, and delivery monitoring.
+2. Secret-manager or protected-host ownership for database credentials, OTP/session/QR/encryption secrets, worker Gmail/Workspace App Password/sender, unrelated provider credentials, and release metadata.
+3. Dedicated OTP Gmail/Workspace mailbox, approved `OTP_SMTP_FROM`, App Password rotation/support owner, outbound `smtp.gmail.com:587` STARTTLS access, delivery test, and monitoring.
 4. Exactly four organization-approved locations, effective GPS policies, scanner device IDs, and employee roster/allowlist data; no fabricated operational rows may be added to source control.
 5. Explicit initial-Admin provisioning authority and staff/kitchen role assignments. The current repository does not provide the complete admin lifecycle.
 6. Separate staging and production databases, private network/firewall rules, and a direct migration connection path.

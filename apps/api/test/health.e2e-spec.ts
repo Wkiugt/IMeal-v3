@@ -61,9 +61,6 @@ describe('HealthController (e2e)', () => {
       .get('/health')
       .expect(200);
 
-    if (response.body.status !== 'ok') {
-      console.log('Health check failed with error:', response.body.error);
-    }
 
     expect(response.body).toHaveProperty('status', 'ok');
     expect(response.body).toHaveProperty('db', 'connected');

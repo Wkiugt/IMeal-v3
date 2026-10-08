@@ -208,10 +208,10 @@ function makeFetch(
       if (options.invalidAuth) {
         return response(
           {
-            error: {
-              code: 'SESSION_INVALID',
-              message: 'Invalid or expired session.',
-            },
+            statusCode: 401,
+            errorCode: 'SESSION_INVALID',
+            message: 'Authentication is required.',
+            requestId: '550e8400-e29b-41d4-a716-446655440030',
           },
           401,
         );
@@ -221,7 +221,12 @@ function makeFetch(
     if (url.endsWith('/auth/otp/request')) return response({ accepted: true });
     if (url.endsWith('/auth/otp/verify') && options.otpInvalid) {
       return response(
-        { error: { code: 'OTP_INVALID_OR_EXPIRED', message: 'Invalid code.' } },
+        {
+          statusCode: 401,
+          errorCode: 'OTP_INVALID_OR_EXPIRED',
+          message: 'Authentication is required.',
+          requestId: '550e8400-e29b-41d4-a716-446655440031',
+        },
         401,
       );
     }
@@ -229,10 +234,10 @@ function makeFetch(
     if (options.invalidDetail && url.endsWith('/v1/admin/users/user-1')) {
       return response(
         {
-          error: {
-            code: 'SESSION_INVALID',
-            message: 'Invalid or expired session.',
-          },
+          statusCode: 401,
+          errorCode: 'SESSION_INVALID',
+          message: 'Authentication is required.',
+          requestId: '550e8400-e29b-41d4-a716-446655440032',
         },
         401,
       );
@@ -308,6 +313,231 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+describe('Admin Web menu surface', () => {
+  it('sends canonical meal fields without content', async () => {
+    const records: RequestRecord[] = [];
+    let draftCreated = false;
+    const draft = {
+      startDate: '2026-10-05T00:00:00.000Z',
+      endDate: '2026-10-11T00:00:00.000Z',
+      dailyMenus: Array.from({ length: 5 }, (_, index) => ({
+        date: `2026-10-${String(5 + index).padStart(2, '0')}T00:00:00.000Z`,
+        isEnabled: true,
+        isHoliday: false,
+        revisions: [],
+      })),
+    };
+    const fetchHandler: FetchHandler = async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      records.push({
+        url,
+        method,
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      });
+      if (url.endsWith('/auth/me')) return response(profile(['menu.manage']));
+      if (
+        url.endsWith('/admin/weekly-menus') &&
+        method === 'GET'
+      ) {
+        return response(draftCreated ? [draft] : []);
+      }
+      if (url.endsWith('/admin/weekly-menus/draft')) {
+        draftCreated = true;
+        return response({});
+      }
+      if (url.includes('/admin/weekly-menus/') && method === 'PUT') {
+        return response({});
+      }
+      return response({});
+    };
+
+    await loadMain(fetchHandler);
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('Chưa có thực đơn tuần nào.'),
+    );
+
+    const weekStart = document.querySelector<HTMLInputElement>('#week-start');
+    const toolbar = document.querySelector<HTMLFormElement>('form.toolbar');
+    if (!weekStart || !toolbar) throw new Error('Missing draft form');
+    weekStart.value = '2026-10-05';
+    toolbar.dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    );
+
+    await vi.waitFor(() =>
+      expect(
+        records.some(
+          (request) =>
+            request.url.endsWith('/admin/weekly-menus/draft') &&
+            request.method === 'POST',
+        ),
+      ).toBe(true),
+    );
+    await vi.waitFor(() => {
+      expect(
+        document.querySelectorAll('input[placeholder="Tên món ăn"]'),
+      ).toHaveLength(5);
+      expect(document.querySelectorAll('.meal-description')).toHaveLength(5);
+    });
+    expect(
+      Array.from(
+        document.querySelectorAll<HTMLInputElement>(
+          'input[placeholder="Tên món ăn"]',
+        ),
+      ).map((input) => input.value),
+    ).toEqual(['', '', '', '', '']);
+    expect(
+      Array.from(
+        document.querySelectorAll<HTMLTextAreaElement>('.meal-description'),
+      ).map((input) => input.value),
+    ).toEqual(['', '', '', '', '']);
+    expect(
+      Array.from(
+        document.querySelectorAll<HTMLInputElement>(
+          'input[placeholder="https://…"]',
+        ),
+      ).map((input) => input.value),
+    ).toEqual(['', '', '', '', '']);
+
+    const mealName = document.querySelector<HTMLInputElement>(
+      'input[placeholder="Tên món ăn"]',
+    );
+    const save = Array.from(document.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Lưu món',
+    );
+    if (!mealName || !save) throw new Error('Missing meal editor');
+    mealName.value = 'Chicken rice';
+    const description = document.querySelector<HTMLTextAreaElement>('.meal-description');
+    if (!description) throw new Error('Missing meal description');
+    description.value = 'Lunch';
+    save.click();
+
+    await vi.waitFor(() =>
+      expect(
+        records.some(
+          (request) =>
+            request.url.endsWith('/admin/weekly-menus/2026-10-05') &&
+            request.method === 'PUT',
+        ),
+      ).toBe(true),
+    );
+    const saveRequest = records.find(
+      (request) =>
+        request.url.endsWith('/admin/weekly-menus/2026-10-05') &&
+        request.method === 'PUT',
+    );
+    expect(JSON.parse(saveRequest?.body ?? '')).toEqual({
+      mealName: 'Chicken rice',
+      description: 'Lunch',
+      imageUrl: null,
+    });
+  });
+  it('does not PUT when meal name is whitespace', async () => {
+    const records: RequestRecord[] = [];
+    const fetchHandler: FetchHandler = async (input, init) => {
+      const url = String(input);
+      records.push({
+        url,
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      });
+      if (url.endsWith('/auth/me')) return response(profile(['menu.manage']));
+      if (url.endsWith('/admin/weekly-menus')) {
+        return response([
+          {
+            startDate: '2026-10-05T00:00:00.000Z',
+            endDate: '2026-10-11T00:00:00.000Z',
+            dailyMenus: [
+              {
+                date: '2026-10-05T00:00:00.000Z',
+                isEnabled: true,
+                isHoliday: false,
+                revisions: [],
+              },
+            ],
+          },
+        ]);
+      }
+      return response({});
+    };
+
+    await loadMain(fetchHandler);
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('input[placeholder="Tên món ăn"]'),
+      ).not.toBeNull(),
+    );
+    const mealName = document.querySelector<HTMLInputElement>(
+      'input[placeholder="Tên món ăn"]',
+    );
+    if (!mealName) throw new Error('Missing meal editor');
+    mealName.value = '   ';
+    await clickButton('Lưu món');
+    expect(
+      records.some(
+        (request) =>
+          request.method === 'PUT' &&
+          request.url.endsWith('/admin/weekly-menus/2026-10-05'),
+      ),
+    ).toBe(false);
+  });
+
+  it('rejects an invalid image URL without PUT', async () => {
+    const records: RequestRecord[] = [];
+    const fetchHandler: FetchHandler = async (input, init) => {
+      const url = String(input);
+      records.push({
+        url,
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      });
+      if (url.endsWith('/auth/me')) return response(profile(['menu.manage']));
+      if (url.endsWith('/admin/weekly-menus')) {
+        return response([
+          {
+            startDate: '2026-10-05T00:00:00.000Z',
+            endDate: '2026-10-11T00:00:00.000Z',
+            dailyMenus: [
+              {
+                date: '2026-10-05T00:00:00.000Z',
+                isEnabled: true,
+                isHoliday: false,
+                revisions: [],
+              },
+            ],
+          },
+        ]);
+      }
+      return response({});
+    };
+
+    await loadMain(fetchHandler);
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('input[placeholder="Tên món ăn"]'),
+      ).not.toBeNull(),
+    );
+    const mealName = document.querySelector<HTMLInputElement>(
+      'input[placeholder="Tên món ăn"]',
+    );
+    const imageUrl = document.querySelector<HTMLInputElement>(
+      'input[placeholder="https://…"]',
+    );
+    if (!mealName || !imageUrl) throw new Error('Missing meal editor');
+    mealName.value = 'Chicken rice';
+    imageUrl.value = 'not a URL';
+    await clickButton('Lưu món');
+    expect(
+      records.some(
+        (request) =>
+          request.method === 'PUT' &&
+          request.url.endsWith('/admin/weekly-menus/2026-10-05'),
+      ),
+    ).toBe(false);
+  });
+});
+
 describe('Admin Web auth recovery', () => {
   it('renders login for a protected SESSION_INVALID response without logout recursion', async () => {
     const records: RequestRecord[] = [];
@@ -316,7 +546,7 @@ describe('Admin Web auth recovery', () => {
     await vi.waitFor(() => {
       expect(document.querySelector('.login')).not.toBeNull();
       expect(document.querySelector('.error')?.textContent).toContain(
-        'Invalid or expired session.',
+        'Authentication is required.',
       );
     });
     expect(sessionStorage.getItem('imeal.session-token')).toBeNull();
@@ -363,7 +593,7 @@ describe('Admin Web auth recovery', () => {
     });
     await vi.waitFor(() => {
       expect(document.querySelector('.form-feedback')?.textContent).toContain(
-        'Invalid code.',
+        'Authentication is required.',
       );
     });
 

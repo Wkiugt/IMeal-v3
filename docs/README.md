@@ -7,6 +7,7 @@ IMeal v2 là một re-platforming so với hệ thống web Firebase/Firestore h
 ## Định hướng đã chốt
 
 - Mobile app: **React Native + Expo + TypeScript**, hỗ trợ Android và iOS.
+- Expo Web is **not** a production-supported client. Staging and production qualification cover native Android and iOS builds only; local Expo Web checks are development/UI compatibility checks and do not justify API CORS support.
 - Backend: **NestJS (Fastify Adapter) + TypeScript**, mọi business write đi qua API server để đạt tối đa throughput.
 - Database: **PostgreSQL + PgBouncer** (connection pooling); không dùng Firestore làm database production cho v2.
 - Authentication production: **email OTP qua allowlist A** là phương thức duy nhất. Allowlist và trạng thái tài khoản do PostgreSQL quản lý; không có federated login, username/password, email-domain authorization hoặc client-supplied role.

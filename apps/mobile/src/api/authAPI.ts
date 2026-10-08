@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { v1 } from '@imeal/contracts';
 import { API_ROOT } from './apiConfig';
+import { fetchWithTimeout } from './requestWithTimeout';
 import {
   MobileApiError,
   readMobileResponseJson,
@@ -13,6 +14,8 @@ type AuthFallbackKey =
   | 'errors.verifyOtp'
   | 'errors.restoreSession'
   | 'errors.logOut';
+
+const AUTH_REQUEST_TIMEOUT_MS = 10_000;
 
 const CurrentUserSchema = z
   .object({
@@ -42,7 +45,11 @@ async function requestJson(
 ): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(`${API_ROOT}${path}`, init);
+    response = await fetchWithTimeout(
+      `${API_ROOT}${path}`,
+      init,
+      AUTH_REQUEST_TIMEOUT_MS,
+    );
   } catch (error: unknown) {
     throw toMobileApiError(error, fallbackKey);
   }

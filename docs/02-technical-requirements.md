@@ -24,6 +24,13 @@ Production identity bootstrap is email OTP through allowlist A. The API, worker 
 mobile/Admin Web use the environment contract documented in §8.2; no alternate
 federated or local production login path exists.
 
+The production-supported mobile clients are native Android and iOS builds. Expo
+Web is retained only as a local development/UI compatibility surface; it is not
+part of staging or production qualification, and the API does not promise browser
+CORS allowlisting or preflight handling for it. If Expo Web becomes a real product
+requirement, revisit this decision with an explicit production-origin allowlist,
+preflight behavior, and focused regression coverage before enabling it.
+
 The current check-in cutover is Staff self check-in. Kitchen serves only the
 stable day/location QR and aggregate dashboard; Staff scans that QR, sends a
 fresh foreground GPS sample to resolve, reviews their own registration, then
@@ -258,7 +265,7 @@ Exact path spelling may change only with the shared API contract. Mobile, Admin 
   `packages/contracts/src/v1/employee-activity.ts` are parsed by
   `apps/mobile/src/api/checkInAPI.ts` and
   `apps/mobile/src/api/employeeActivityAPI.ts`.
-- JSON error envelope: `{ error: { code, message, details? }, requestId }`; clients branch on stable `code`, never localized `message`.
+- JSON error response: `{ statusCode, errorCode, message, requestId }`; `errorCode` is a stable machine-readable code, `message` is safe for end users, and `requestId` correlates with server logs. Clients branch on `errorCode`, never localized `message`; unexpected server failures use a generic error code/message.
 - Every request receives/returns `X-Request-Id`; server replaces malformed/untrusted values.
 - Retry-safe mutations use `Idempotency-Key`. For
   `POST /api/me/check-in/confirm`, the same authenticated caller/key/body
@@ -272,7 +279,7 @@ Exact path spelling may change only with the shared API contract. Mobile, Admin 
   `INVALID_QR`, `INACTIVE_CHECKIN_SESSION`, `NO_REGISTRATION`,
   `REGISTRATION_CANCELLED`, `ALREADY_CHECKED_IN`,
   `OUTSIDE_CHECKIN_WINDOW`, `LOCATION_MISMATCH`, `GPS_REQUIRED`, `GPS_STALE`,
-  `GPS_INACCURATE` and `OUTSIDE_GEOFENCE`. Clients branch on `code`, never
+  `GPS_INACCURATE` and `OUTSIDE_GEOFENCE`. Clients branch on `errorCode`, never
   localized `message`.
 - Dashboard responses include server `lastUpdated`; Kitchen polls the aggregate
   endpoint every 10 seconds only while focused/foregrounded. Under healthy
@@ -315,6 +322,17 @@ hard-defaulted to `smtp.gmail.com` and `587`; TLS is required. The worker is
 attached to the internal data network and a non-internal egress network, and
 it publishes no ports. It validates the same serving invariants. Test-only
 defaults are available to unit tests, never to production.
+For local Compose, the untracked `.env` supplies `OTP_SMTP_USERNAME`,
+`OTP_SMTP_PASSWORD`, `OTP_SMTP_FROM`, and optional `OTP_SMTP_FROM_NAME`; Compose
+passes them to the worker service only. A direct worker process does not read
+`.env`, so operators must set the same variables in that process before
+startup. The API environment must never contain SMTP credentials or
+`OTP_PROVIDER_API_KEY`. Use a Gmail App Password created after enabling
+2-Step Verification, not the regular mailbox password. Rotate by creating a
+replacement App Password, updating the worker environment, restarting the
+worker, verifying delivery, and then revoking the old App Password. Local
+examples remain placeholders; production values are injected out of band.
+
 
 Mobile uses only `EXPO_PUBLIC_API_URL` (plus the optional
 `EXPO_PACKAGER_PROXY_URL` for remote Metro sessions); Admin Web uses `VITE_API_URL`.

@@ -6,7 +6,7 @@
 
 ## 1. Decision summary
 
-Staging is a controlled, production-like environment with a separate PostgreSQL database, separate object storage bucket, separate OTP provider credentials, and no shared operator credentials with production. The release candidate is promoted by immutable image digest and a checked-in migration set, not by rebuilding an untracked working tree on the host.
+Staging is a controlled, production-like environment with a separate PostgreSQL database, separate object storage bucket, and a dedicated staging Gmail/Workspace mailbox with a worker-only App Password; no shared operator or OTP credentials are used with production. The release candidate is promoted by immutable image digest and a checked-in migration set, not by rebuilding an untracked working tree on the host.
 
 The migration workflow is target-safe and approval-gated:
 
@@ -65,7 +65,7 @@ Current deployment inputs and their design implications:
 
 ### 4.2 Environment validation
 
-API startup validation is in `apps/api/src/config/environment.ts:79-147`: it requires authenticated OTP mode, database/signing/session/OTP secrets, provider settings, numeric limits, GPS bounds and fixed Vietnam-time/QR/session invariants. The worker validator is in `apps/worker/src/otp-delivery-worker.service.ts:268-313` and additionally requires production database/provider/delivery retry settings and fixed operational values.
+API startup validation is in `apps/api/src/config/environment.ts:79-147`: it requires authenticated OTP mode, database/signing/session/OTP secrets, numeric limits, GPS bounds and fixed Vietnam-time/QR/session invariants. The worker validator is in `apps/worker/src/otp-delivery-worker.service.ts:268-313` and additionally requires production database/Gmail SMTP/delivery retry settings and fixed operational values.
 
 The staging contract deliberately runs the server processes with `NODE_ENV=production` to exercise production validation, while a separate deployment label identifies the environment:
 
@@ -92,7 +92,7 @@ Staging MUST have:
 
 - A distinct Linux host or isolated VM/network segment, distinct database and database credentials, and a named technical owner.
 - A distinct object-storage endpoint/bucket and access key. The bucket MUST be private; public anonymous access is not acceptable.
-- A distinct OTP provider account/sender or provider sandbox, with a documented delivery and support owner.
+- A dedicated staging Gmail/Workspace mailbox with a Google App Password injected into the worker, an approved sender, and a documented delivery/support owner. The mailbox and App Password MUST be distinct from production.
 - A staging HTTPS hostname and certificate trusted by the target Android/iOS/browser devices.
 - No public PostgreSQL, PgBouncer, MinIO API, MinIO console, worker, or internal admin ports. Only the reverse proxy is internet-facing.
 - Resource capacity representative of the proposed baseline (recommended 4 vCPU, 8 GB RAM, 100 GB SSD) and disk monitoring.
@@ -111,9 +111,9 @@ require each reference; protected deployment environments must supply approved
 opaque reference IDs. This repository supplies no values, credentials, URLs,
 targets, or source payloads, and absent bindings remain fail-closed.
 
-**API required:** `DATABASE_URL`, `AUTH_MODE`, `REQUIRE_AUTH`, `QR_SIGNING_SECRET`, `OTP_HASH_SECRET`, `OTP_DELIVERY_ENCRYPTION_KEY`, `OTP_PROVIDER_URL`, `OTP_PROVIDER_API_KEY`, `OTP_PROVIDER_FROM`, all `OTP_*` expiry/rate values, `SESSION_HASH_SECRET`, both session timeout values, all `GPS_DEFAULT_*` values, and the fixed `SERVING_*`, `NO_SHOW_PROCESSING_TIME`, `QR_*`, `PICKUP_SESSION_TTL_SECONDS` values.
+**API required:** `DATABASE_URL`, `AUTH_MODE`, `REQUIRE_AUTH`, `QR_SIGNING_SECRET`, `OTP_HASH_SECRET`, `OTP_DELIVERY_ENCRYPTION_KEY`, all `OTP_*` expiry/rate values, `SESSION_HASH_SECRET`, both session timeout values, all `GPS_DEFAULT_*` values, and the fixed `SERVING_*`, `NO_SHOW_PROCESSING_TIME`, `QR_*`, `PICKUP_SESSION_TTL_SECONDS` values. The API does not receive SMTP credentials or provider API keys.
 
-**Worker required:** `DATABASE_URL`, `OTP_DELIVERY_ENCRYPTION_KEY`, `OTP_PROVIDER_URL`, `OTP_PROVIDER_API_KEY`, `OTP_PROVIDER_FROM`, every `OTP_DELIVERY_*` batch/retry/claim value, and the same fixed serving/QR/session values.
+**Worker required:** `DATABASE_URL`, `OTP_DELIVERY_ENCRYPTION_KEY`, `OTP_SMTP_USERNAME`, `OTP_SMTP_PASSWORD` (a Gmail App Password), `OTP_SMTP_FROM`, optional `OTP_SMTP_FROM_NAME`, every `OTP_DELIVERY_*` batch/retry/claim value, and the same fixed serving/QR/session values. `OTP_SMTP_HOST` and `OTP_SMTP_PORT` default to `smtp.gmail.com:587` with STARTTLS.
 
 **Database/storage:** `POSTGRES_*`, `MINIO_ROOT_*`, `MINIO_BUCKET_NAME`, and service-specific runtime connection strings are injected only into the service that needs them. Migration connectivity MUST use the direct PostgreSQL endpoint; API/worker runtime MAY use PgBouncer transaction pooling as already modeled in `docker-compose.yml:94,108,168`.
 
@@ -332,7 +332,7 @@ Then:
 1. Apply no new migration unless the rehearsal explicitly tests upgrade-after-restore; first prove the backup alone is usable.
 2. Restore object data and verify expected object count/size/checksum sample.
 3. Run `prisma migrate status`, API readiness, worker readiness and the smoke suite against restored endpoints.
-4. Verify a representative read path, authenticated OTP path using staging provider/test addresses, registration read/write in a disposable scope, pickup resolve/confirm in the approved synthetic dataset, and notification inbox persistence.
+4. Verify a representative read path, authenticated OTP path using staging Gmail/Workspace test addresses, registration read/write in a disposable scope, pickup resolve/confirm in the approved synthetic dataset, and notification inbox persistence.
 5. Record restore start/end, measured RTO, latest recoverable timestamp/RPO, row/object counts, checksum results, failed steps and operator IDs.
 6. Destroy the isolated restore target only after evidence is retained and no investigation hold exists.
 
@@ -363,7 +363,7 @@ yarn test:unit
 
 ### 8.2 Authentication and authorization
 
-Using approved synthetic/staging addresses and the real staging provider path:
+Using approved synthetic/staging addresses and the real staging Gmail SMTP worker path:
 
 1. Allowlisted address receives OTP; unknown/disabled address receives the same non-disclosing request response and creates no challenge/outbox row.
 2. OTP is single-use, expires, respects attempts/resend/rate limits, and is never logged.
@@ -430,8 +430,8 @@ Thresholds are initial staging defaults and must be tuned from observed baseline
 | --- | --- | --- |
 | API unavailable | readiness fails for 2 of 3 checks over 1 minute | On-call; inspect API/DB/proxy and rollback if release-correlated |
 | API errors | 5xx >5% for 5 minutes or any sustained auth/serving error spike | API owner; inspect release/request IDs |
-| API latency | p95 >1 second for 10 minutes on normal traffic, or serving confirm p95 above agreed pilot SLO | API owner; investigate DB/locks/provider |
-| OTP backlog | oldest pending item >5 minutes, or terminal failures above approved rate | Worker/provider owner; inspect provider and retries |
+| API latency | p95 >1 second for 10 minutes on normal traffic, or serving confirm p95 above agreed pilot SLO | API owner; investigate DB/locks/external dependencies |
+| OTP backlog | oldest pending item >5 minutes, or terminal failures above approved rate | Worker/OTP delivery owner; inspect SMTP delivery and retries |
 | Worker stale | any required job has no successful run by its deadline plus 10 minutes | Worker owner; run controlled retry only with audit |
 | DB/storage | DB disk >80%, pool saturation/lock waits, object storage unavailable | DBA/operations |
 | Backup | latest backup older than 26 hours, checksum failure or restore test failure | DBA; block release/pilot |
@@ -517,7 +517,7 @@ Stop immediately on:
 - missing independent approval or changed candidate/target after approval;
 - timeout, lock conflict, unexpected row count or partial backfill;
 - any nonvalidated named constraint;
-- failed API/worker readiness, smoke, provider, mobile, dashboard, backup or alert check;
+- failed API/worker readiness, smoke, OTP delivery, mobile, dashboard, backup or alert check;
 - public internal port, HTTP credential transport, public object bucket, placeholder production secret or mutable image;
 - missing rollback authority, decision window or prior compatible artifact.
 
@@ -539,7 +539,7 @@ The following gates are outside repository code and MUST be recorded before stag
 | --- | --- | --- |
 | Organization/policy | Approved business timezone, cutoff/serving/no-show policy, four locations and scanner ownership | Product/operations |
 | Identity | Allowlist-A source, role/permission matrix, first-Admin bootstrap owner, disable/revoke procedure | Security/identity owner |
-| OTP/provider | HTTPS endpoint, sender approval, limits, delivery test, support/escalation contact | Provider owner |
+| OTP delivery | Dedicated staging Gmail/Workspace mailbox, worker App Password, approved sender, limits, delivery test, rotation and support/escalation owner | Worker/operations owner |
 | Network/TLS | DNS, certificate trust on target devices, firewall/private ports, egress allowlist, proxy/CORS policy | Infrastructure |
 | Data | Staging dataset classification, roster/location import approval, preflight approval and backfill scope | Data owner/DBA |
 | Recovery | Encrypted offsite DB/object backup, checksum, restore rehearsal, measured RPO/RTO and rollback authority | DBA/operations |

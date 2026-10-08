@@ -34,3 +34,30 @@ The worktree contains unrelated pre-existing user changes, including README and 
 
 - Removed the stray leading `-` from the Admin weekly-menu continuation line in both `AGENTS.md` and `docs/02-technical-requirements.md`; wording and route-specific envelope policy are unchanged.
 - Focused Markdown/static checks passed; tests, builds, lint, and typecheck were intentionally not run.
+## Final verification after commit `51a8441`
+
+Verification was rerun from HEAD `51a844114cf8db1548bbc141c120d7635fd7d9cb` without source edits or commits:
+
+- `corepack yarn workspace @imeal/api test --run src/admin/weekly-menus/weekly-menus.service.spec.ts src/health/health.controller.spec.ts src/common/api-exception.filter.spec.ts` — exit 0; 3 files and 72 tests passed. Vitest emitted the existing `vite-tsconfig-paths` deprecation warning.
+- `corepack yarn workspace @imeal/api typecheck` — exit 0; no output.
+- `corepack yarn workspace @imeal/mobile test` — exit 0; 30 files and 225 tests passed.
+- `corepack yarn workspace @imeal/mobile typecheck` — exit 0; no output.
+- `git diff --check -- AGENTS.md CHANGELOG.md README.md docs/mobile-release.md docs/02-technical-requirements.md apps/api/src/common/api-error-messages.ts` — exit 0; no output/whitespace errors.
+- `git diff --exit-code -- docs/mobile-release.md` — exit 0; no output, restored file matches tracked bytes.
+- Exact plan Node README destination check — exit 0; `](./docs/mobile-release.md)` occurs exactly twice at README lines 250 and 329, and the document exists.
+
+### Manual evidence
+
+- Weekly-menu source and regression show non-null revisions ordered by revision descending then id descending, with `take: 1`; Admin Web still consumes only `revisions?.[0]` and contains no ordering workaround.
+- Health regressions cover live draining, ready, legacy `/health`, and malformed-header readiness. Every failure body asserts status 503, `SERVICE_UNAVAILABLE`, the exact shared message, and the expected request ID; live, ready, and malformed-header cases also assert the `x-request-id` response header, while legacy uses the same `writeResult`/header path. The exception filter's `Service is shutting down.` override remains intact and tested.
+- README destinations resolve to the existing restored runbook. The runbook's `1.0.0`, `vn.iec.imeal`, `imeal`, production API/project validation, EAS profile names, remote credentials, Node 24.18.1, Yarn 4.18.0, and `autoIncrement: false` claims match `apps/mobile/app.config.ts` and `apps/mobile/eas.json`; it explicitly disclaims a signed store build.
+- §8.1 and `AGENTS.md:81-98` match the raw auth controller/client schemas, raw weekly-menu controller/Admin Web mapping, and envelope-backed check-in/employee-activity contracts and mobile consumers.
+
+The worktree remained pre-existing dirty (0 staged, 45 unstaged, 8 untracked); no source files were changed by this verification.
+ 
+## Final unit-suite evidence
+
+- `corepack yarn test:unit` — exit 0; 67/67 test files passed and 653/653 tests passed (0 failures).
+- Warnings: the existing `vite-tsconfig-paths` deprecation notice was emitted by the API and worker tasks; expected health/OTP/logger warning and error-path records also appeared in test output.
+- Finishing environment: `git-dir` `D:/My-Project/IEC/IMeal/.git/worktrees/17628-f0ab12cb-863a-4343-b74b-51f850323f49`; common dir `D:/My-Project/IEC/IMeal/.git`; top level `C:/Users/0xKoigzzzz/orca/workspaces/IMeal/deploy-develop-2`; branch `deploy-develop-2`.
+- Post-suite status remains unchanged: 0 staged, 46 unstaged, 8 untracked.

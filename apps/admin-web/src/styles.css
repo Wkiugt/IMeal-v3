@@ -156,6 +156,15 @@ button {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
+
+.menu-actions .field {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.menu-actions .field input {
+  width: 100%;
+}
 .meal-description {
   grid-column: 1 / -1;
   width: 100%;

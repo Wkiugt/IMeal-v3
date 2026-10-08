@@ -14,6 +14,7 @@ export type ApiLogFields = Partial<
     | 'durationMs'
     | 'errorCode'
     | 'errorClass'
+
     | 'providerCode'
     | 'method'
     | 'path'

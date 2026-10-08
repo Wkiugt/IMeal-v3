@@ -33,12 +33,30 @@ const DailyMenuSchema = z
     date: z.string(),
     isEnabled: z.boolean(),
     isHoliday: z.boolean(),
-    revisions: z.array(z.object({ content: z.string() })).optional(),
+    revisions: z
+      .array(
+        z.object({
+          content: z.string().optional(),
+          mealName: z.string().nullable().optional(),
+          description: z.string().nullable().optional(),
+          imageUrl: z.string().nullable().optional(),
+        }),
+      )
+      .optional(),
   })
-  .transform(({ revisions, ...day }) => ({
-    ...day,
-    content: revisions?.[0]?.content,
-  }));
+  .transform(({ revisions, ...day }) => {
+    const revision = revisions?.[0];
+    return {
+      ...day,
+      content: revision?.content,
+      mealName: revision?.mealName || '',
+      description:
+        revision?.description !== undefined
+          ? revision.description || ''
+          : revision?.content || '',
+      imageUrl: revision?.imageUrl || '',
+    };
+  });
 
 const WeeklyMenusSchema = z.array(
   z.object({
@@ -81,13 +99,7 @@ const PenaltyPageSchema = z.object({
   total: z.number().optional(),
 });
 
-const ErrorResponseSchema = z
-  .object({
-    error: v1.ErrorDetailSchema.optional(),
-    code: z.string().optional(),
-    message: z.string().optional(),
-  })
-  .passthrough();
+const ErrorResponseSchema = v1.ApiErrorResponseSchema;
 const OtpRequestResponseSchema = z.object({
   accepted: z.literal(true),
   retryAfterSeconds: z.number().optional(),
@@ -220,8 +232,8 @@ function parseAdminError(payload: unknown): {
   const parsed = ErrorResponseSchema.safeParse(payload);
   if (!parsed.success) return {};
   return {
-    code: parsed.data.error?.code ?? parsed.data.code,
-    message: parsed.data.error?.message ?? parsed.data.message,
+    code: parsed.data.errorCode,
+    message: parsed.data.message,
   };
 }
 
@@ -492,7 +504,7 @@ function recordAudit(action: string, details: unknown): void {
 
 async function updateDailyMenu(
   date: string,
-  update: Record<string, boolean | string>,
+  update: Record<string, boolean | string | null>,
 ): Promise<void> {
   await api(`/admin/weekly-menus/${date.slice(0, 10)}`, {
     method: 'PUT',
@@ -567,22 +579,53 @@ async function renderMenus(): Promise<void> {
             `${formatDate(day.date)} · ${day.isHoliday ? 'Ngày nghỉ' : day.isEnabled ? 'Đang phục vụ' : 'Đã tắt'}`,
           ),
         );
-        const contentInput = element('textarea', 'meal-description');
-        contentInput.rows = 3;
-        contentInput.value = day.content || '';
-        contentInput.placeholder = 'Mô tả món ăn';
-        contentInput.setAttribute(
+        const mealNameField = inputField(
+          'Tên món ăn',
+          day.mealName,
+          'text',
+          true,
+        );
+        mealNameField.input.placeholder = 'Tên món ăn';
+        mealNameField.input.setAttribute(
+          'aria-label',
+          `Tên món ăn ngày ${formatDate(day.date)}`,
+        );
+        const descriptionField = element('div', 'field');
+        const descriptionInput = element('textarea', 'meal-description');
+        descriptionInput.rows = 3;
+        descriptionInput.value = day.description;
+        descriptionInput.placeholder = 'Mô tả món ăn';
+        descriptionInput.setAttribute(
           'aria-label',
           `Mô tả món ăn ngày ${formatDate(day.date)}`,
         );
+        descriptionField.append(element('label', '', 'Mô tả'), descriptionInput);
+        const imageUrlField = inputField(
+          'URL hình ảnh',
+          day.imageUrl,
+          'url',
+          false,
+        );
+        imageUrlField.input.placeholder = 'https://…';
+        imageUrlField.input.setAttribute(
+          'aria-label',
+          `URL hình ảnh món ăn ngày ${formatDate(day.date)}`,
+        );
         const actions = element('div', 'row-actions menu-actions');
         actions.append(
-          contentInput,
+          mealNameField.wrapper,
+          descriptionField,
+          imageUrlField.wrapper,
           actionButton(
             'Lưu món',
             () => {
+              if (!mealNameField.input.reportValidity()) return;
+              if (!mealNameField.input.value.trim()) return;
+              if (!imageUrlField.input.reportValidity()) return;
               void updateDailyMenu(day.date, {
-                content: contentInput.value,
+                mealName: mealNameField.input.value.trim(),
+                description: descriptionInput.value,
+                imageUrl: imageUrlField.input.value.trim() || null,
               }).catch(showError);
             },
             'secondary',

@@ -397,15 +397,45 @@ export const vi = {
   'errors.resolvePickup': 'Không thể kiểm tra mã nhận suất.',
   'errors.confirmPickup': 'Không thể xác nhận phục vụ.',
   'errors.otpInvalidOrExpired': 'Mã không hợp lệ hoặc đã hết hạn.',
-  'errors.otpRateLimited': 'Bạn đã thử quá nhiều lần. Hãy thử lại sau.',
+  'errors.otpExpired': 'Mã xác thực đã hết hạn. Vui lòng yêu cầu mã mới.',
+  'errors.otpRateLimited':
+    'Bạn đã thử quá nhiều lần. Vui lòng đợi một lúc rồi thử lại.',
   'errors.sessionRevoked': 'Phiên đăng nhập đã bị thu hồi. Hãy đăng nhập lại.',
-  'errors.sessionInvalid': 'Phiên đăng nhập không hợp lệ. Hãy đăng nhập lại.',
+  'errors.sessionInvalid':
+    'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
+  'errors.badRequest':
+    'Yêu cầu không hợp lệ. Vui lòng kiểm tra và thử lại.',
+  'errors.forbidden': 'Bạn không có quyền thực hiện thao tác này.',
+  'errors.notFound': 'Không tìm thấy thông tin được yêu cầu.',
+  'errors.rateLimited':
+    'Bạn đã thực hiện quá nhiều yêu cầu. Vui lòng thử lại sau.',
+  'errors.internalServerError':
+    'Hệ thống đang gặp sự cố. Vui lòng thử lại sau.',
+  'errors.serverError': 'Hệ thống đang gặp sự cố. Vui lòng thử lại sau.',
+  'errors.serviceUnavailable':
+    'Dịch vụ hiện đang tạm thời gián đoạn. Vui lòng thử lại sau.',
+  'errors.conflict': 'Thông tin đã thay đổi. Vui lòng làm mới và thử lại.',
+  'errors.unprocessableEntity':
+    'Một số thông tin không được chấp nhận. Vui lòng kiểm tra và thử lại.',
+  'errors.methodNotAllowed': 'Hành động này hiện không khả dụng.',
+  'errors.requestTimeout': 'Yêu cầu mất quá nhiều thời gian. Vui lòng thử lại.',
+  'errors.gone': 'Thông tin này không còn khả dụng.',
+  'errors.payloadTooLarge': 'Dữ liệu gửi lên quá lớn.',
+  'errors.unsupportedMediaType':
+    'Định dạng tệp hoặc dữ liệu này không được hỗ trợ.',
+  'errors.notImplemented': 'Tính năng này hiện không khả dụng.',
+  'errors.badGateway':
+    'Dịch vụ kết nối đang gặp sự cố. Vui lòng thử lại sau.',
+  'errors.gatewayTimeout':
+    'Dịch vụ kết nối phản hồi quá lâu. Vui lòng thử lại sau.',
+  'errors.supportCode': 'Mã hỗ trợ: %{requestId}',
   'errors.gpsRetryRequired':
     'Cần xác minh vị trí mới. Hãy thử lại hoặc làm mới.',
   'errors.gpsUnavailable':
     'Không thể lấy vị trí hiện tại. Hãy thử lại hoặc làm mới.',
   'errors.gpsStale': 'Vị trí đã cũ. Hãy thử lại hoặc làm mới.',
-  'errors.gpsInaccurate': 'Vị trí chưa đủ chính xác. Hãy thử lại hoặc làm mới.',
+  'errors.gpsInaccurate':
+    'Vị trí chưa đủ chính xác. Hãy thử lại hoặc làm mới.',
 'errors.checkInInvalidQr': 'Mã QR căng tin không hợp lệ. Hãy quét lại.',
 'errors.checkInSessionInactive': 'Phiên kiểm tra đã hết hiệu lực. Hãy quét lại.',
 'errors.checkInNoRegistration': 'Bạn chưa đăng ký suất ăn hôm nay.',
@@ -1046,6 +1076,32 @@ export const en: Record<TranslationKey, string> = {
   'errors.otpRateLimited': 'Too many attempts. Try again later.',
   'errors.sessionRevoked': 'Your session was revoked. Sign in again.',
   'errors.sessionInvalid': 'Your session is invalid. Sign in again.',
+  'errors.otpExpired': 'The verification code expired. Request a new code.',
+  'errors.badRequest':
+    'The request is invalid. Check the information and try again.',
+  'errors.forbidden': 'You do not have permission to perform this action.',
+  'errors.notFound': 'The requested information could not be found.',
+  'errors.rateLimited': 'Too many requests. Please try again later.',
+  'errors.internalServerError':
+    'The system is having trouble. Try again later.',
+  'errors.serverError': 'The system is having trouble. Try again later.',
+  'errors.serviceUnavailable':
+    'The service is temporarily unavailable. Try again later.',
+  'errors.conflict': 'The information has changed. Please refresh and try again.',
+  'errors.unprocessableEntity':
+    'Some provided information could not be accepted. Please check it and try again.',
+  'errors.methodNotAllowed': 'This action is currently unavailable.',
+  'errors.requestTimeout': 'The request took too long. Please try again.',
+  'errors.gone': 'This information is no longer available.',
+  'errors.payloadTooLarge': 'The submitted data is too large.',
+  'errors.unsupportedMediaType':
+    'This file or data format is not supported.',
+  'errors.notImplemented': 'This feature is currently unavailable.',
+  'errors.badGateway':
+    'A connected service is currently having problems. Please try again later.',
+  'errors.gatewayTimeout':
+    'A connected service is taking too long to respond. Please try again later.',
+  'errors.supportCode': 'Support code: %{requestId}',
   'errors.gpsRetryRequired':
     'A fresh location check is required. Retry or refresh.',
   'errors.gpsUnavailable': 'Current location is unavailable. Retry or refresh.',

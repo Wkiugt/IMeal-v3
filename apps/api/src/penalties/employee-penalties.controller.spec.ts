@@ -16,6 +16,26 @@ import { AppModule } from '../app.module.js';
 import { PrismaService } from '../common/prisma.service.js';
 import { RegistrationsService } from '../registrations/registrations.service.js';
 import { EmployeePenaltiesService } from './employee-penalties.service.js';
+function expectCanonicalNotFound(response: {
+  status: number;
+  body: Record<string, unknown>;
+  headers: Record<string, unknown>;
+}): void {
+  expect(response.status).toBe(404);
+  expect(response.body).toEqual({
+    statusCode: 404,
+    errorCode: 'NOT_FOUND',
+    message: 'The requested information could not be found.',
+    requestId: expect.any(String),
+  });
+  expect(Object.keys(response.body).sort()).toEqual([
+    'errorCode',
+    'message',
+    'requestId',
+    'statusCode',
+  ]);
+  expect(response.headers['x-request-id']).toBe(response.body.requestId);
+}
 
 describe('Employee activity HTTP controllers', () => {
   let app!: INestApplication<Server>;
@@ -182,8 +202,7 @@ describe('Employee activity HTTP controllers', () => {
       '/api/penalties/missing',
     );
 
-    expect(foreign.status).toBe(404);
-    expect(missing.status).toBe(404);
-    expect(foreign.body.error).toEqual(missing.body.error);
+    expectCanonicalNotFound(foreign);
+    expectCanonicalNotFound(missing);
   });
 });

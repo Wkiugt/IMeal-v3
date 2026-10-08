@@ -239,15 +239,3 @@ export type KitchenCheckInDashboardResponse = z.infer<
   typeof KitchenCheckInDashboardResponseSchema
 >;
 
-export const CheckInErrorResponseSchema = z
-  .object({
-    error: z
-      .object({
-        code: CheckInErrorCodeSchema,
-        message: z.string(),
-        details: z.record(z.unknown()).optional(),
-      })
-      .strict(),
-    requestId: NonEmptyTextSchema,
-  })
-  .strict();
