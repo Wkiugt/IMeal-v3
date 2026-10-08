@@ -1311,13 +1311,27 @@ describe('Contracts v1', () => {
         expect(v1.PUBLIC_ERROR_CODES[key]).toBe(true);
       }
 
-      const schemaCodes = [
-        ...v1.PublicErrorCodeSchema.options,
+      const canonicalSchemaCodes = [
         ...v1.ErrorCodeSchema.options,
         ...v1.OperationalErrorCodeSchema.options,
         ...v1.CheckInErrorCodeSchema.options,
         ...v1.RegistrationFailureCodeSchema.options,
       ];
+      const providerOtpCodes = [
+        'OTP_PROVIDER_UNAVAILABLE',
+        'OTP_REQUEST_ACCEPTED',
+        'OTP_INVALID_OR_EXPIRED',
+        'OTP_RATE_LIMITED',
+      ] as const;
+      const menuRosterLocationCodes = [
+        'MENU_NOT_FOUND',
+        'INVALID_EFFECTIVE_RANGE',
+        'ROSTER_BATCH_NOT_FOUND',
+        'ROSTER_IMPORT_REJECTED',
+        'UNKNOWN_SERVICE_LOCATION',
+        'INVALID_LOCATION_POLICY',
+        'LOCATION_COORDINATES_REQUIRED',
+      ] as const;
       const adminCodes = [
         'ADMIN_MANAGED_ROLES_UNAVAILABLE',
         'ADMIN_SELF_DISABLE_FORBIDDEN',
@@ -1332,7 +1346,9 @@ describe('Contracts v1', () => {
       ] as const;
 
       for (const code of [
-        ...schemaCodes,
+        ...canonicalSchemaCodes,
+        ...providerOtpCodes,
+        ...menuRosterLocationCodes,
         ...adminCodes,
         ...notificationCodes,
       ]) {
