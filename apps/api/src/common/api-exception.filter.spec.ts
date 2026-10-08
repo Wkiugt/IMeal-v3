@@ -371,6 +371,54 @@ describe('ApiExceptionFilter', () => {
       requestId: request.requestId,
     });
   });
+  it.each([
+    {
+      name: 'prefers a valid body.errorCode over body.code',
+      status: 400,
+      body: { errorCode: 'SESSION_INVALID', code: 'BAD_REQUEST' },
+      expected: 'SESSION_INVALID',
+    },
+    {
+      name: 'falls back to a valid body.code when body.errorCode is invalid',
+      status: 400,
+      body: { errorCode: 'not-public', code: 'VALIDATION_ERROR' },
+      expected: 'VALIDATION_ERROR',
+    },
+    {
+      name: 'falls back to the status code when both body codes are invalid',
+      status: 404,
+      body: { errorCode: 'not-public', code: 'also-not-public' },
+      expected: 'NOT_FOUND',
+    },
+    {
+      name: 'preserves unrelated public operational codes',
+      status: 503,
+      body: { code: 'OTP_PROVIDER_UNAVAILABLE' },
+      expected: 'OTP_PROVIDER_UNAVAILABLE',
+    },
+  ])('$name', ({ status, body, expected }) => {
+    const send = vi.fn();
+    const reply = {
+      header: vi.fn().mockReturnThis(),
+      status: vi.fn().mockReturnThis(),
+      send,
+    };
+
+    new ApiExceptionFilter().catch(
+      new HttpException(body, status),
+      host({ requestId: '550e8400-e29b-41d4-a716-446655440012' }, reply),
+    );
+
+    const response = send.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(response.errorCode).toBe(expected);
+    expect(Object.keys(response).sort()).toEqual([
+      'errorCode',
+      'message',
+      'requestId',
+      'statusCode',
+    ]);
+  });
+
   it('keeps database, provider, path, stack, and cause text out of responses', () => {
     const send = vi.fn();
     const reply = {

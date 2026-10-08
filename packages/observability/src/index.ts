@@ -23,9 +23,14 @@ export type SafeLogFields = {
   statusCode?: number;
   durationMs?: number;
   errorCode?: string;
+  errorClass?: string;
   providerCode?: string;
   provider?: string;
+  method?: string;
+  path?: string;
+  route?: string;
   message?: string;
+  stack?: string;
   context?: string;
   host?: string;
   port?: number;
@@ -48,9 +53,11 @@ const SAFE_FIELD_KEYS: Record<string, true> = {
   statusCode: true,
   durationMs: true,
   errorCode: true,
+  errorClass: true,
   providerCode: true,
   provider: true,
   method: true,
+  path: true,
   route: true,
   status: true,
   count: true,
@@ -58,21 +65,24 @@ const SAFE_FIELD_KEYS: Record<string, true> = {
   attempt: true,
   retry: true,
   message: true,
+  stack: true,
   context: true,
   host: true,
   port: true,
 };
 
 const SENSITIVE_LABEL_PATTERN =
-  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)(["'])(?:\\.|(?!\2)[^\r\n])*\2/gi;
+  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|cookie|otp|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)(["'])(?:\\.|(?!\2)[^\r\n])*\2/gi;
 const SENSITIVE_UNQUOTED_PATTERN =
-  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)[^\s"'`&#,;}\])]+/gi;
+  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|cookie|otp|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)[^\s"'`&#,;}\])]+/gi;
 const PAYLOAD_LABEL_PATTERN =
   /((?:^|[\s,{}(]|\[)["']?(?:body|title|data|to|payload|message)["']?\s*[:=]\s*)(["'])(?:\\.|(?!\2)[^\r\n])*\2/gi;
 const PAYLOAD_UNQUOTED_PATTERN =
   /((?:^|[\s,{}(]|\[)["']?(?:body|title|data|to|payload|message)["']?\s*[:=]\s*)[^\s"'`&#,;}\])]+/gi;
 const OTP_LABEL_PATTERN =
   /(\b(?:otp|one[- ]time|verification|auth(?:entication)?)(?:\s+(?:code|password))?(?:(?:\s*[:=]\s*)|\s+))(\d{6})\b/gi;
+const STRUCTURED_PAYLOAD_PATTERN =
+  /((?:response|headers|cause)\s*[:=]\s*)\{[\s\S]*$/gi;
 
 function redactPayloadLabels(value: string): string {
   return value
@@ -114,6 +124,10 @@ function redactString(
   if (context === 'event' || key === 'providerCode' || key === 'message') {
     redacted = redactPayloadLabels(redacted);
   }
+  redacted = redacted.replace(
+    STRUCTURED_PAYLOAD_PATTERN,
+    `$1${REDACTED}`,
+  );
 
   return redacted;
 }
@@ -134,9 +148,16 @@ function isCredentialFreeBindHost(value: string): boolean {
   return value === '0.0.0.0';
 }
 
-function sanitizeMessage(value: unknown): string {
+export function sanitizeLogText(
+  value: unknown,
+  maxLength = MESSAGE_MAX_LENGTH,
+): string {
   if (typeof value !== 'string') return REDACTED;
-  return redactString(value, 'field', 'message').slice(0, MESSAGE_MAX_LENGTH);
+  return redactString(value, 'field', 'message').slice(0, maxLength);
+}
+
+function sanitizeMessage(value: unknown): string {
+  return sanitizeLogText(value);
 }
 
 function sanitizeContext(value: unknown): string {
@@ -181,7 +202,9 @@ function sanitizeField(
       return REDACTED;
     }
     const redacted = redactString(value, 'field', key);
-    return key === 'route' ? redacted.split('?')[0] : redacted;
+    return key === 'path' || key === 'route'
+      ? redacted.split('?')[0]
+      : redacted;
   }
 
   if (typeof value === 'number')

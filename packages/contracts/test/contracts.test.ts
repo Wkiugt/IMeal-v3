@@ -1302,5 +1302,15 @@ describe('Contracts v1', () => {
       );
     });
   });
+  describe('Public error-code runtime set', () => {
+    it('exposes canonical public codes without inherited keys', () => {
+      expect(v1.PUBLIC_ERROR_CODES.OTP_PROVIDER_UNAVAILABLE).toBe(true);
+      expect(v1.PUBLIC_ERROR_CODES.SESSION_INVALID).toBe(true);
+      expect(Object.hasOwn(v1.PUBLIC_ERROR_CODES, 'toString')).toBe(false);
+      expect(Object.hasOwn(v1.PUBLIC_ERROR_CODES, 'password=secret')).toBe(
+        false,
+      );
+    });
+  });
   });
 });

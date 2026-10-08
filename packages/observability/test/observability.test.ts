@@ -7,6 +7,7 @@ import {
   REQUEST_ID_PATTERN,
   readMigrationEvidence,
   resolveRequestId,
+  sanitizeLogText,
 } from '../src/index.js';
 
 const temporaryDirectories: string[] = [];
@@ -50,12 +51,12 @@ describe('JSON structured logging', () => {
     const logger = new JsonStructuredLogger('api', 'r1', (line) =>
       lines.push(line),
     );
-
     logger.info('http.request', {
       service: 'api',
       release: 'r1',
       requestId: '550e8400-e29b-41d4-a716-446655440000',
       method: 'GET',
+      path: '/api/health',
       route: '/api/health',
       statusCode: 200,
       durationMs: 4,
@@ -64,6 +65,8 @@ describe('JSON structured logging', () => {
       payload: 'ExpoPushToken[secret]',
       coordinates: '10.7769,106.7009',
       databaseUrl: 'postgresql://user:password@db.internal/imeal',
+      body: 'raw-body-secret',
+      query: 'raw-query-secret',
     });
 
     expect(lines).toHaveLength(1);
@@ -71,10 +74,8 @@ describe('JSON structured logging', () => {
     expect(output).toMatchObject({
       level: 'info',
       service: 'api',
-      release: 'r1',
-      event: 'http.request',
-      requestId: '550e8400-e29b-41d4-a716-446655440000',
       method: 'GET',
+      path: '/api/health',
       route: '/api/health',
       statusCode: 200,
       durationMs: 4,
@@ -87,7 +88,16 @@ describe('JSON structured logging', () => {
     expect(lines[0]).not.toContain(
       'postgresql://user:password@db.internal/imeal',
     );
+    expect(lines[0]).not.toContain('raw-body-secret');
+    expect(lines[0]).not.toContain('raw-query-secret');
   });
+  it('exports bounded redaction for arbitrary log text', () => {
+    expect(sanitizeLogText('authorization=Bearer opaque-token')).not.toContain(
+      'opaque-token',
+    );
+    expect(sanitizeLogText('a'.repeat(20), 8)).toBe('aaaaaaaa');
+  });
+
   it('redacts provider and QR secrets embedded in safe string fields', () => {
     const lines: string[] = [];
     const logger = new JsonStructuredLogger('api', 'r1', (line) =>
