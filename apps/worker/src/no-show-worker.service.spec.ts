@@ -38,19 +38,6 @@ const mockPrisma = {
   ),
 };
 
-vi.mock('@prisma/client', () => ({
-  PrismaClient: class {
-    constructor() {
-      return mockPrisma;
-    }
-  },
-  Prisma: {
-    sql: vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => ({
-      strings,
-      values,
-    })),
-  },
-}));
 
 type RegistrationFixture = {
   id: string;

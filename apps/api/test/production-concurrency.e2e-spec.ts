@@ -1,1612 +1,1085 @@
-import { PrismaClient, type Prisma } from '@prisma/client';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { setTimeout as sleep } from 'node:timers/promises';
+import { createPrismaClient, type PrismaClient } from '@imeal/core';
+import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { PickupService } from '../src/pickup/pickup.service.js';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { CheckInService } from '../src/check-in/check-in.service.js';
+import { LocationsService } from '../src/locations/locations.service.js';
 import { RegistrationsService } from '../src/registrations/registrations.service.js';
-import { NotificationsService } from '../src/notifications/notifications.service.js';
-import { WeeklyMenusService } from '../src/admin/weekly-menus/weekly-menus.service.js';
-const MEAL_DATE = new Date('2026-09-28T00:00:00.000Z');
+import type { AuthenticatedUser } from '../src/auth/authenticated-user.js';
+
 const MEAL_DATE_KEY = '2026-09-28';
-const SERVING_TIME = new Date('2026-09-28T04:00:00.000Z');
-const NO_SHOW_TIME = new Date('2026-09-28T06:30:00.000Z');
+const MEAL_DATE = new Date(`${MEAL_DATE_KEY}T00:00:00.000Z`);
+const SERVING_TIME = new Date(`${MEAL_DATE_KEY}T04:00:00.000Z`);
+const BEFORE_WINDOW = new Date(`${MEAL_DATE_KEY}T03:29:59.000Z`);
+const AFTER_WINDOW = new Date(`${MEAL_DATE_KEY}T06:30:00.000Z`);
+const NO_SHOW_TIME = new Date(`${MEAL_DATE_KEY}T06:45:00.000Z`);
+const LOCATION_LATITUDE = 10;
+const LOCATION_LONGITUDE = 106;
+const QR_SIGNING_SECRET = 'test-production-check-in-secret-at-least-32-characters';
 
-const kitchenActor = {
-  id: 'kitchen-user',
-  userId: 'kitchen-user',
-  email: 'kitchen@example.test',
-  name: 'Kitchen',
-  roles: [] as string[],
-  permissions: ['kitchen.serve'] as string[],
-  sessionId: 'kitchen-session',
-  isActive: true,
-};
-
-type RealPrismaOwner = { prisma: PrismaClient };
 type TestPrismaRegistry = {
   __imealRegisterTestPrismaClient?: (client: PrismaClient) => void;
 };
-type NoShowWorker = RealPrismaOwner & {
-  processNoShows: (
-    targetDate: string,
-    options: { force: boolean; currentTime: Date },
-  ) => Promise<{ processedCount: number }>;
-};
-type DomainRegistrationService = {
-  disableUserAccount(
-    userId: string,
-    currentTime: Date,
-    actorUserId: string,
-    db: PrismaClient,
-  ): Promise<string[]>;
+
+type FixtureUser = {
+  id: string;
+  email: string;
+  name: string | null;
 };
 
-async function loadDomainRegistrationService() {
-  // The API e2e project has rootDir=apps/api; load the core source through
-  // Vite so this test can exercise the real account-disable transaction.
-  const modulePath = pathToFileURL(
-    resolve(process.cwd(), '../../packages/domain/src/RegistrationService.ts'),
-  ).href;
-  const module = (await import(modulePath)) as {
-    RegistrationService: DomainRegistrationService;
-  };
-  return module.RegistrationService;
-}
-function patchPrisma(service: RealPrismaOwner, client: PrismaClient) {
-  const original = service.prisma;
-  service.prisma = client;
-  return original;
-}
+type FixtureLocation = {
+  id: string;
+  shortCode: string;
+  displayName: string;
+  address: string;
+};
 
-function trackClient(client: PrismaClient): PrismaClient {
-  (globalThis as typeof globalThis & TestPrismaRegistry)
-    .__imealRegisterTestPrismaClient?.(client);
+type FixtureAssignment = {
+  id: string;
+  employeeCode: string;
+  effectiveFrom: Date;
+};
+
+type FixtureRegistration = {
+  id: string;
+};
+
+type CheckInWorld = {
+  location: FixtureLocation;
+  kitchen: FixtureUser;
+  owner: FixtureUser;
+  secondOwner: FixtureUser;
+  inactiveOwner: FixtureUser;
+  cancelledOwner: FixtureUser;
+  ownerRegistration: FixtureRegistration;
+  secondRegistration: FixtureRegistration;
+  kitchenActor: AuthenticatedUser;
+  ownerActor: AuthenticatedUser;
+  secondActor: AuthenticatedUser;
+};
+
+type ActorRole = 'staff' | 'kitchen';
+
+function trackedClient(): PrismaClient {
+  const client = createPrismaClient(process.env.DATABASE_URL ?? '');
+  (
+    globalThis as typeof globalThis & TestPrismaRegistry
+  ).__imealRegisterTestPrismaClient?.(client);
   return client;
 }
 
-async function createWorkerService(client: PrismaClient) {
-  const workerPath = pathToFileURL(
-    resolve(process.cwd(), '../worker/src/no-show-worker.service.ts'),
-  ).href;
-  const workerModule = (await import(workerPath)) as {
-    NoShowWorkerService: new () => NoShowWorker;
+function actor(
+  user: { id: string; email: string; name: string | null },
+  role: ActorRole,
+): AuthenticatedUser {
+  return {
+    id: user.id,
+    userId: user.id,
+    email: user.email,
+    name: user.name ?? undefined,
+    roles: [role],
+    permissions: role === 'kitchen' ? ['kitchen.serve'] : [],
+    sessionId: `${role}-session-${user.id}`,
+    isActive: true,
   };
-  const service = new workerModule.NoShowWorkerService();
-  const ownedClient = patchPrisma(service, client);
-  return { service, ownedClient };
 }
 
-
-async function createServingWorld(
-  client: PrismaClient,
-  options: { registrationCount?: number } = {},
+function gps(
+  at: Date,
+  options: {
+    ageSeconds?: number;
+    latitude?: number;
+    longitude?: number;
+    accuracyMeters?: number;
+  } = {},
 ) {
-  const permission = await client.permission.upsert({
-    where: { name: 'kitchen.serve' },
-    update: {},
-    create: { name: 'kitchen.serve' },
-  });
-  const kitchen = await client.user.create({
-    data: { id: kitchenActor.id, email: kitchenActor.email, name: kitchenActor.name },
-  });
-  await client.userPermission.create({
-    data: { userId: kitchen.id, permissionId: permission.id },
-  });
+  return {
+    capturedAt: new Date(
+      at.getTime() - (options.ageSeconds ?? 5) * 1_000,
+    ).toISOString(),
+    latitude: options.latitude ?? LOCATION_LATITUDE,
+    longitude: options.longitude ?? LOCATION_LONGITUDE,
+    accuracyMeters: options.accuracyMeters ?? 10,
+  };
+}
 
-  const owner = await client.user.create({
-    data: { email: 'owner@example.test', name: 'Owner' },
-  });
+function createCheckInService(client: PrismaClient): CheckInService {
+  return new CheckInService(
+    client as never,
+    new LocationsService(client as never),
+  );
+}
+
+async function expectCode(
+  operation: Promise<unknown>,
+  code: string,
+): Promise<void> {
+  await expect(operation).rejects.toMatchObject({ response: { code } });
+}
+
+async function createLocation(
+  client: PrismaClient,
+  shortCode: string,
+  withPolicy = true,
+) {
   const location = await client.location.create({
     data: {
-      shortCode: 'HQ-TEST',
-      displayName: 'Original Kitchen',
-      servingPointName: 'Original counter',
-      address: '1 Original Street',
+      id: randomUUID(),
+      shortCode,
+      displayName: `${shortCode} Kitchen`,
+      servingPointName: `${shortCode} counter`,
+      address: `1 ${shortCode} Street`,
       building: 'A',
       floor: '1',
-      roomOrCounter: '1',
-      localContact: 'original@example.test',
+      roomOrCounter: 'Lunch counter',
+      localContact: `${shortCode.toLowerCase()}@example.test`,
       isActive: true,
       effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
     },
   });
-  const policy = await client.locationPolicy.create({
+  const policy = withPolicy
+    ? await client.locationPolicy.create({
+        data: {
+          id: randomUUID(),
+          locationId: location.id,
+          latitude: LOCATION_LATITUDE,
+          longitude: LOCATION_LONGITUDE,
+          accuracySource: 'TEST_FIXTURE',
+          geofenceRadiusMeters: 100,
+          maxFixAgeSeconds: 60,
+          maxAccuracyMeters: 50,
+          effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+          isActive: true,
+        },
+      })
+    : null;
+  return { location, policy };
+}
+
+async function createWorld(
+  client: PrismaClient,
+  locationCode = 'HQ-TEST',
+): Promise<CheckInWorld> {
+  process.env.QR_SIGNING_SECRET = QR_SIGNING_SECRET;
+
+  const { location } = await createLocation(client, locationCode);
+  const fixtureTag = locationCode.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+  const kitchen = await client.user.create({
     data: {
-      locationId: location.id,
-      latitude: 10,
-      longitude: 106,
-      accuracySource: 'TEST',
-      geofenceRadiusMeters: 100,
-      maxFixAgeSeconds: 3600,
-      maxAccuracyMeters: 100,
-      effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
-      isActive: true,
-      updatedAt: SERVING_TIME,
+      id: randomUUID(),
+      email: `kitchen-check-in-${fixtureTag}@example.test`,
+      name: 'Kitchen Check-in',
     },
   });
+  const owner = await client.user.create({
+    data: {
+      id: randomUUID(),
+      email: `owner-check-in-${fixtureTag}@example.test`,
+      name: 'Owner Check-in',
+    },
+  });
+  const secondOwner = await client.user.create({
+    data: {
+      id: randomUUID(),
+      email: `second-owner-check-in-${fixtureTag}@example.test`,
+      name: 'Second Owner',
+    },
+  });
+  const inactiveOwner = await client.user.create({
+    data: {
+      id: randomUUID(),
+      email: `inactive-owner-check-in-${fixtureTag}@example.test`,
+      name: 'Inactive Owner',
+      isActive: false,
+    },
+  });
+  const cancelledOwner = await client.user.create({
+    data: {
+      id: randomUUID(),
+      email: `cancelled-owner-check-in-${fixtureTag}@example.test`,
+      name: 'Cancelled Owner',
+    },
+  });
+
+  const assignmentData = (
+    user: { id: string; email: string },
+    employeeCode: string,
+    role: string,
+  ) => ({
+    id: randomUUID(),
+    userId: user.id,
+    normalizedEmail: user.email,
+    employeeName: user.email.split('@')[0],
+    employeeCode,
+    isActive: true,
+    role,
+    serviceLocationCode: location.shortCode,
+    locationId: location.id,
+    effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+  });
+
+  await client.employeeLocationAssignment.create({
+    data: assignmentData(kitchen, `KITCHEN-001-${fixtureTag}`, 'KITCHEN'),
+  });
+  const ownerAssignment = await client.employeeLocationAssignment.create({
+    data: assignmentData(owner, `STAFF-001-${fixtureTag}`, 'STAFF'),
+  });
+  const secondAssignment = await client.employeeLocationAssignment.create({
+    data: assignmentData(secondOwner, `STAFF-002-${fixtureTag}`, 'STAFF'),
+  });
+  const inactiveAssignment = await client.employeeLocationAssignment.create({
+    data: assignmentData(inactiveOwner, `STAFF-003-${fixtureTag}`, 'STAFF'),
+  });
+  const cancelledAssignment = await client.employeeLocationAssignment.create({
+    data: assignmentData(cancelledOwner, `STAFF-004-${fixtureTag}`, 'STAFF'),
+  });
+
   const weeklyMenu = await client.weeklyMenu.create({
     data: {
+      id: randomUUID(),
       startDate: MEAL_DATE,
       endDate: MEAL_DATE,
       publishedAt: new Date('2026-01-01T00:00:00.000Z'),
     },
   });
   const dailyMenu = await client.dailyMenu.create({
-    data: { weeklyMenuId: weeklyMenu.id, date: MEAL_DATE, isEnabled: true },
+    data: {
+      id: randomUUID(),
+      weeklyMenuId: weeklyMenu.id,
+      date: MEAL_DATE,
+      isEnabled: true,
+      isHoliday: false,
+    },
   });
   const revision = await client.dailyMenuRevision.create({
     data: {
+      id: randomUUID(),
       dailyMenuId: dailyMenu.id,
       revision: 1,
-      mealName: 'Original lunch',
-      description: 'Original description',
-      imageUrl: 'https://example.test/original.jpg',
-      content: 'original',
+      mealName: 'Check-in lunch',
+      description: 'Production check-in fixture',
+      imageUrl: null,
+      content: 'Check-in lunch',
     },
   });
   await client.mealDay.create({
     data: {
+      id: randomUUID(),
       dailyMenuId: dailyMenu.id,
       mealType: 'LUNCH',
       isServingReady: true,
-      serviceStartAt: new Date('2026-09-28T03:30:00.000Z'),
-      serviceEndAt: new Date('2026-09-28T06:30:00.000Z'),
-    },
-  });
-  await client.appSetting.create({
-    data: { key: `isServingReady:${MEAL_DATE_KEY}`, value: 'true' },
-  });
-  const assignment = await client.employeeLocationAssignment.create({
-    data: {
-      userId: owner.id,
-      normalizedEmail: owner.email,
-      employeeName: 'Original Owner',
-      employeeCode: 'ORIGINAL-001',
-      isActive: true,
-      role: 'STAFF',
-      serviceLocationCode: location.shortCode,
-      locationId: location.id,
-      effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      serviceStartAt: new Date(`${MEAL_DATE_KEY}T03:30:00.000Z`),
+      serviceEndAt: new Date(`${MEAL_DATE_KEY}T06:30:00.000Z`),
     },
   });
 
-  const registrations = [];
-  const count = options.registrationCount ?? 1;
-  for (let index = 0; index < count; index += 1) {
-    const mealOwner =
-      index === 0
-        ? owner
-        : await client.user.create({
-            data: {
-              email: `owner-${index}@example.test`,
-              name: `Owner ${index}`,
-            },
-          });
-    const mealAssignment =
-      index === 0
-        ? assignment
-        : await client.employeeLocationAssignment.create({
-            data: {
-              userId: mealOwner.id,
-              normalizedEmail: mealOwner.email,
-              employeeName: `Original Owner ${index}`,
-              employeeCode: `ORIGINAL-${index}`,
-              isActive: true,
-              role: 'STAFF',
-              serviceLocationCode: location.shortCode,
-              locationId: location.id,
-              effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
-            },
-          });
-    registrations.push(
-      await client.registration.create({
-        data: {
-          userId: mealOwner.id,
-          mealDate: MEAL_DATE,
-          status: 'ACTIVE',
-          mealChoice: 'REGULAR',
-          menuRevisionId: revision.id,
-          ownerNameSnapshot: mealAssignment.employeeName,
-          employeeCodeSnapshot: mealAssignment.employeeCode,
-          menuNameSnapshot: revision.mealName,
-          menuDescriptionSnapshot: revision.description,
-          menuImageSnapshot: revision.imageUrl,
-          registeredAt: SERVING_TIME,
-          serviceLocationId: location.id,
-          serviceLocationAssignmentId: mealAssignment.id,
-          serviceLocationCode: location.shortCode,
-          serviceLocationName: location.displayName,
-          serviceLocationAddress: location.address,
-          serviceLocationEffectiveFrom: mealAssignment.effectiveFrom,
-          serviceLocationSnapshotAt: SERVING_TIME,
-        },
-      }),
-    );
-  }
-  const qrHash = 'qr-production-concurrency';
-  await client.servingVerification.create({
-    data: {
-      id: qrHash,
-      presenterUserId: owner.id,
-      locationId: location.id,
-      locationPolicyId: policy.id,
-      result: 'VALID',
-      capturedAt: SERVING_TIME,
-      verifiedAt: SERVING_TIME,
-      accuracyMeters: 10,
-      safeVerificationCode: 'verified',
-      intentNonce: 'nonce',
-      retentionUntil: new Date('2027-01-01T00:00:00.000Z'),
-    },
-  });
-  const session = await client.pickupSession.create({
-    data: {
-      userId: owner.id,
-      presenterUserId: owner.id,
-      mealDate: MEAL_DATE,
-      registrationIds: registrations.map(({ id }) => id).sort(),
-      intentRegistrationIds: registrations.map(({ id }) => id).sort(),
-      intentHash: qrHash,
-      intentNonce: 'nonce',
-      qrHash,
-      locationId: location.id,
-      servingVerificationId: qrHash,
-      expiresAt: new Date('2026-09-28T04:00:30.000Z'),
-    },
-  });
-  return { kitchen, owner, location, policy, revision, dailyMenu, assignment, registrations, session };
-}
-
-function createPickupService(client: PrismaClient) {
-  const service = new PickupService(client as never);
-  return { service };
-}
-
-async function createRegistrationService(client: PrismaClient) {
-  const notifications = new NotificationsService(client as never);
-  const service = new RegistrationsService(client as never, notifications);
-  return { service };
-}
-
-async function createWeeklyMenusService(client: PrismaClient) {
-  const notifications = new NotificationsService(client as never);
-  const service = new WeeklyMenusService(notifications, client as never);
-  return { service };
-}
-
-describe('Production PostgreSQL concurrency paths', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(SERVING_TIME);
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('serializes real PickupService confirmation against real NoShowWorkerService', async () => {
-    const client = trackClient(new PrismaClient());
-    const world = await createServingWorld(client);
-    const pickupClient = trackClient(new PrismaClient());
-    const workerClient = trackClient(new PrismaClient());
-    const pickup = createPickupService(pickupClient);
-    const worker = await createWorkerService(workerClient);
-    await worker.ownedClient.$disconnect();
-
-    const pickupPromise = pickup.service.confirmPickup(
-      { pickupSessionId: world.session.id, idempotencyKey: 'race-key' },
-      kitchenActor,
-    );
-    const workerPromise = worker.service.processNoShows(MEAL_DATE_KEY, {
-      force: true,
-      currentTime: NO_SHOW_TIME,
-    });
-    const [pickupResult, workerResult] = await Promise.allSettled([
-      pickupPromise,
-      workerPromise,
-    ]);
-
-    expect(workerResult.status).toBe('fulfilled');
-    const registration = await client.registration.findUniqueOrThrow({
-      where: { id: world.registrations[0].id },
-      include: { mealServing: true, penalties: true },
-    });
-    expect(
-      Boolean(registration.mealServing) && registration.status === 'NO_SHOW',
-    ).toBe(false);
-    if (pickupResult.status === 'fulfilled') {
-      expect(registration.status).toBe('ACTIVE');
-      expect(registration.mealServing).toBeTruthy();
-      expect(registration.penalties).toHaveLength(0);
-    } else {
-      expect(registration.status).toBe('NO_SHOW');
-      expect(registration.mealServing).toBeNull();
-      expect(registration.penalties).toHaveLength(1);
-    }
-  });
-
-  it('serializes real PickupService confirmation against real RegistrationsService cancellation', async () => {
-    const client = trackClient(new PrismaClient());
-    const world = await createServingWorld(client);
-    const pickupClient = trackClient(new PrismaClient());
-    const registrationClient = trackClient(new PrismaClient());
-    const pickup = createPickupService(pickupClient);
-    const registration = await createRegistrationService(registrationClient);
-
-    const transactionClient = registrationClient as unknown as {
-      $transaction: (
-        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
-        options?: unknown,
-      ) => Promise<unknown>;
-    };
-    const originalTransaction = transactionClient.$transaction.bind(
-      registrationClient,
-    );
-    let transactionEntered!: () => void;
-    const transactionStarted = new Promise<void>((resolve) => {
-      transactionEntered = resolve;
-    });
-    let releaseTransaction!: () => void;
-    const transactionRelease = new Promise<void>((resolve) => {
-      releaseTransaction = resolve;
-    });
-    transactionClient.$transaction = (callback, options) =>
-      originalTransaction(
-        async (tx) => {
-          await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${world.registrations[0].id} FOR UPDATE`;
-          transactionEntered();
-          await transactionRelease;
-          return callback(tx);
-        },
-        options,
-      );
-
-    vi.setSystemTime(new Date('2026-09-27T06:00:00.000Z'));
-    const cancelPromise = registration.service.batchRegister(world.owner.id, [
-      { mealDate: MEAL_DATE_KEY, status: 'CANCELLED' },
-    ]);
-    await transactionStarted;
-    vi.setSystemTime(SERVING_TIME);
-    const pickupPromise = pickup.service.confirmPickup(
-      { pickupSessionId: world.session.id, idempotencyKey: 'cancel-race-key' },
-      kitchenActor,
-    );
-    releaseTransaction();
-    const [pickupResult, cancelResult] = await Promise.allSettled([
-      pickupPromise,
-      cancelPromise,
-    ]);
-
-    if (cancelResult.status !== 'fulfilled') {
-      throw cancelResult.reason;
-    }
-    if (pickupResult.status !== 'rejected') {
-      throw new Error('Pickup unexpectedly won the cancellation race');
-    }
-    expect(pickupResult.reason).toMatchObject({
-      response: { code: 'PICKUP_INTENT_CONFLICT' },
-    });
-    const finalRegistration = await client.registration.findUniqueOrThrow({
-      where: { id: world.registrations[0].id },
-      include: { mealServing: true },
-    });
-    expect(finalRegistration.status).toBe('CANCELLED');
-    expect(finalRegistration.mealServing).toBeNull();
-    expect(cancelResult.value[0]).toMatchObject({ success: true });
-    expect(
-      await client.mealServing.count({
-        where: { registrationId: world.registrations[0].id },
-      }),
-    ).toBe(0);
-    expect(
-      await client.servingConfirmRequest.count({
-        where: {
-          callerUserId: kitchenActor.id,
-          idempotencyKey: 'cancel-race-key',
-        },
-      }),
-    ).toBe(0);
-    expect(
-      await client.auditLog.count({
-        where: { action: 'SERVING_CONFIRMED' },
-      }),
-    ).toBe(0);
-    expect(
-      await client.mealEvent.count({
-        where: { mealServing: { registrationId: world.registrations[0].id } },
-      }),
-    ).toBe(0);
-    expect(
-      await client.pickupSession.findUniqueOrThrow({
-        where: { id: world.session.id },
-      }),
-    ).toMatchObject({ consumedAt: null });
-    expect(
-      await client.auditLog.count({
-        where: { action: 'registration_cancelled' },
-      }),
-    ).toBe(1);
-  });
-  it('serializes account disable after pickup registration lock without deadlock', async () => {
-    const client = trackClient(new PrismaClient());
-    const world = await createServingWorld(client);
-    const pickupClient = trackClient(new PrismaClient());
-    const disableClient = trackClient(new PrismaClient());
-    const pickup = createPickupService(pickupClient);
-
-    type TransactionClientOwner = {
-      $transaction: (
-        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
-        options?: unknown,
-      ) => Promise<unknown>;
-    };
-    const pickupTransaction = pickupClient as unknown as TransactionClientOwner;
-    const originalPickupTransaction = pickupTransaction.$transaction.bind(
-      pickupClient,
-    );
-    let pickupLockEntered!: () => void;
-    const pickupLockStarted = new Promise<void>((resolve) => {
-      pickupLockEntered = resolve;
-    });
-    let releasePickupLock!: () => void;
-    const pickupLockRelease = new Promise<void>((resolve) => {
-      releasePickupLock = resolve;
-    });
-    pickupTransaction.$transaction = (callback, options) =>
-      originalPickupTransaction(
-        async (tx) => {
-          await tx.$queryRaw`
-            SELECT id FROM registrations
-            WHERE id = ${world.registrations[0].id}
-            FOR UPDATE
-          `;
-          pickupLockEntered();
-          await pickupLockRelease;
-          return callback(tx);
-        },
-        options,
-      );
-
-    const disableTransaction = disableClient as unknown as TransactionClientOwner;
-    const originalDisableTransaction = disableTransaction.$transaction.bind(
-      disableClient,
-    );
-    let disableTransactionEntered!: () => void;
-    const disableTransactionStarted = new Promise<void>((resolve) => {
-      disableTransactionEntered = resolve;
-    });
-    disableTransaction.$transaction = (callback, options) =>
-      originalDisableTransaction(
-        async (tx) => {
-          disableTransactionEntered();
-          return callback(tx);
-        },
-        options,
-      );
-
-    vi.setSystemTime(SERVING_TIME);
-    const pickupPromise = pickup.service.confirmPickup(
-      { pickupSessionId: world.session.id, idempotencyKey: 'disable-race-key' },
-      kitchenActor,
-    );
-    await pickupLockStarted;
-    const domainRegistrationService = await loadDomainRegistrationService();
-    const disablePromise = domainRegistrationService.disableUserAccount(
-      world.owner.id,
-      SERVING_TIME,
-      world.kitchen.id,
-      disableClient,
-    );
-    await disableTransactionStarted;
-    releasePickupLock();
-
-    const [pickupResult, disableResult] = await Promise.race([
-      Promise.allSettled([pickupPromise, disablePromise]),
-      sleep(5_000).then(() => {
-        throw new Error('account-disable/pickup race did not complete');
-      }),
-    ]);
-    if (pickupResult.status !== 'fulfilled') throw pickupResult.reason;
-    if (disableResult.status !== 'fulfilled') throw disableResult.reason;
-    expect(disableResult.value).toEqual([]);
-
-    const finalRegistration = await client.registration.findUniqueOrThrow({
-      where: { id: world.registrations[0].id },
-      include: { mealServing: true },
-    });
-    expect(finalRegistration).toMatchObject({
-      status: 'ACTIVE',
-      mealServing: { id: expect.any(String) },
-    });
-    expect(
-      await client.user.findUniqueOrThrow({ where: { id: world.owner.id } }),
-    ).toMatchObject({ isActive: false });
-    expect(
-      await client.auditLog.count({
-        where: { action: 'registration_account_disabled' },
-      }),
-    ).toBe(0);
-    expect(
-      await client.notification.count({
-        where: { kind: 'DELEGATION_REVOKED' },
-      }),
-    ).toBe(0);
-    expect(
-      await client.outboxEvent.count({
-        where: { eventType: 'NOTIFICATION_CREATED' },
-      }),
-    ).toBe(0);
-  });
-  it('cancels before pickup when account disable owns the registration lock first', async () => {
-    const client = trackClient(new PrismaClient());
-    const world = await createServingWorld(client);
-    const pickupClient = trackClient(new PrismaClient());
-    const disableClient = trackClient(new PrismaClient());
-    const pickup = createPickupService(pickupClient);
-
-    type TransactionClientOwner = {
-      $transaction: (
-        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
-        options?: unknown,
-      ) => Promise<unknown>;
-    };
-    const disableTransaction = disableClient as unknown as TransactionClientOwner;
-    const originalDisableTransaction = disableTransaction.$transaction.bind(
-      disableClient,
-    );
-    let disableLockEntered!: () => void;
-    const disableLockStarted = new Promise<void>((resolve) => {
-      disableLockEntered = resolve;
-    });
-    let releaseDisableLock!: () => void;
-    const disableLockRelease = new Promise<void>((resolve) => {
-      releaseDisableLock = resolve;
-    });
-    disableTransaction.$transaction = (callback, options) =>
-      originalDisableTransaction(
-        async (tx) => {
-          await tx.$queryRaw`
-            SELECT id FROM registrations
-            WHERE id = ${world.registrations[0].id}
-            FOR UPDATE
-          `;
-          disableLockEntered();
-          await disableLockRelease;
-          return callback(tx);
-        },
-        options,
-      );
-
-    const pickupTransaction = pickupClient as unknown as TransactionClientOwner;
-    const originalPickupTransaction = pickupTransaction.$transaction.bind(
-      pickupClient,
-    );
-    let pickupTransactionEntered!: () => void;
-    const pickupTransactionStarted = new Promise<void>((resolve) => {
-      pickupTransactionEntered = resolve;
-    });
-    pickupTransaction.$transaction = (callback, options) =>
-      originalPickupTransaction(
-        async (tx) => {
-          pickupTransactionEntered();
-          return callback(tx);
-        },
-        options,
-      );
-
-    const domainRegistrationService = await loadDomainRegistrationService();
-    vi.setSystemTime(SERVING_TIME);
-    const disablePromise = domainRegistrationService.disableUserAccount(
-      world.owner.id,
-      SERVING_TIME,
-      world.kitchen.id,
-      disableClient,
-    );
-    await disableLockStarted;
-    const pickupPromise = pickup.service.confirmPickup(
-      { pickupSessionId: world.session.id, idempotencyKey: 'disable-first-key' },
-      kitchenActor,
-    );
-    await pickupTransactionStarted;
-    releaseDisableLock();
-
-    const [disableResult, pickupResult] = await Promise.race([
-      Promise.allSettled([disablePromise, pickupPromise]),
-      sleep(5_000).then(() => {
-        throw new Error('disable-first account/pickup race did not complete');
-      }),
-    ]);
-    if (disableResult.status !== 'fulfilled') throw disableResult.reason;
-    expect(disableResult.value).toEqual([world.registrations[0].id]);
-    if (pickupResult.status !== 'rejected') {
-      throw new Error('Pickup unexpectedly won the disable-first race');
-    }
-    expect(pickupResult.reason).toMatchObject({
-      response: { code: 'SESSION_REVOKED' },
-    });
-
-    const finalRegistration = await client.registration.findUniqueOrThrow({
-      where: { id: world.registrations[0].id },
-      include: { mealServing: true },
-    });
-    expect(finalRegistration).toMatchObject({
-      status: 'CANCELLED',
-      cancelReason: 'ACCOUNT_DISABLED',
-      cancelledByUserId: world.kitchen.id,
-      cancelledAt: SERVING_TIME,
-      mealServing: null,
-    });
-    expect(
-      await client.user.findUniqueOrThrow({ where: { id: world.owner.id } }),
-    ).toMatchObject({ isActive: false });
-    expect(
-      await client.mealServing.count({
-        where: { registrationId: world.registrations[0].id },
-      }),
-    ).toBe(0);
-    expect(
-      await client.servingConfirmRequest.count({
-        where: {
-          callerUserId: kitchenActor.id,
-          idempotencyKey: 'disable-first-key',
-        },
-      }),
-    ).toBe(0);
-    expect(
-      await client.mealEvent.count({
-        where: { mealServing: { registrationId: world.registrations[0].id } },
-      }),
-    ).toBe(0);
-    expect(
-      await client.penalty.count({
-        where: { registrationId: world.registrations[0].id },
-      }),
-    ).toBe(0);
-    expect(
-      await client.pickupDelegation.count({
-        where: { registrationId: world.registrations[0].id },
-      }),
-    ).toBe(0);
-    expect(
-      await client.pickupSession.findUniqueOrThrow({
-        where: { id: world.session.id },
-      }),
-    ).toMatchObject({ consumedAt: null });
-    expect(
-      await client.auditLog.count({
-        where: { action: 'SERVING_CONFIRMED' },
-      }),
-    ).toBe(0);
-    expect(
-      await client.auditLog.count({
-        where: {
-          action: 'registration_account_disabled',
-          userId: world.kitchen.id,
-        },
-      }),
-    ).toBe(1);
-  });
-  it('serializes real RegistrationsService create calls for one registration', async () => {
-    const client = trackClient(new PrismaClient());
-    const world = await createServingWorld(client, { registrationCount: 0 });
-    const firstClient = trackClient(new PrismaClient());
-    const secondClient = trackClient(new PrismaClient());
-    const first = await createRegistrationService(firstClient);
-    const second = await createRegistrationService(secondClient);
-
-    type TransactionClientOwner = {
-      $transaction: (
-        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
-        options?: unknown,
-      ) => Promise<unknown>;
-    };
-    const clients = [firstClient, secondClient];
-    let enteredCount = 0;
-    let resolveTransactionBarrier!: () => void;
-    const transactionBarrier = new Promise<void>((resolve) => {
-      resolveTransactionBarrier = resolve;
-    });
-    for (const clientForRace of clients) {
-      const transactionClient = clientForRace as unknown as TransactionClientOwner;
-      const originalTransaction = transactionClient.$transaction.bind(
-        clientForRace,
-      );
-      transactionClient.$transaction = (callback, options) =>
-        originalTransaction(
-          async (tx) => {
-            enteredCount += 1;
-            if (enteredCount === clients.length) {
-              resolveTransactionBarrier();
-            }
-            await transactionBarrier;
-            return callback(tx);
-          },
-          options,
-        );
-    }
-
-    vi.setSystemTime(new Date('2026-09-27T06:00:00.000Z'));
-    const firstPromise = first.service.batchRegister(world.owner.id, [
-      { mealDate: MEAL_DATE_KEY, status: 'ACTIVE', mealChoice: 'REGULAR' },
-    ]);
-    const secondPromise = second.service.batchRegister(world.owner.id, [
-      { mealDate: MEAL_DATE_KEY, status: 'ACTIVE', mealChoice: 'REGULAR' },
-    ]);
-    await transactionBarrier;
-    const [firstResult, secondResult] = await Promise.all([
-      firstPromise,
-      secondPromise,
-    ]);
-
-    expect(firstResult[0]).toMatchObject({ success: true });
-    expect(secondResult[0]).toMatchObject({ success: true });
-    const registration = await client.registration.findUniqueOrThrow({
-      where: {
-        userId_mealDate: {
-          userId: world.owner.id,
-          mealDate: MEAL_DATE,
-        },
-      },
-    });
-    expect(registration).toMatchObject({
-      status: 'ACTIVE',
-      mealChoice: 'REGULAR',
-      menuRevisionId: world.revision.id,
-      ownerNameSnapshot: world.assignment.employeeName,
-      serviceLocationId: world.location.id,
-      serviceLocationAssignmentId: world.assignment.id,
-    });
-    expect(
-      await client.registration.count({
-        where: { userId: world.owner.id, mealDate: MEAL_DATE },
-      }),
-    ).toBe(1);
-  });
-  it('preserves whitespace in verified menu names through resolution and pickup eligibility', async () => {
-    const client = trackClient(new PrismaClient());
-    const owner = await client.user.create({
+  const createRegistration = async (
+    user: { id: string },
+    assignment: FixtureAssignment,
+    status: 'ACTIVE' | 'CANCELLED' = 'ACTIVE',
+  ) =>
+    client.registration.create({
       data: {
-        email: `whitespace-owner-${randomUUID()}@example.test`,
-        name: 'Whitespace Owner',
-      },
-    });
-    const location = await client.location.create({
-      data: {
-        shortCode: `WS-${randomUUID().slice(0, 8)}`,
-        displayName: 'Whitespace Kitchen',
-        servingPointName: 'Whitespace counter',
-        address: '1 Whitespace Street',
-        building: 'A',
-        floor: '1',
-        roomOrCounter: '1',
-        localContact: 'whitespace@example.test',
-        isActive: true,
-        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
-      },
-    });
-    const assignment = await client.employeeLocationAssignment.create({
-      data: {
-        userId: owner.id,
-        normalizedEmail: owner.email,
-        employeeName: owner.name!,
-        employeeCode: `WS-${randomUUID().slice(0, 8)}`,
-        isActive: true,
-        role: 'STAFF',
-        serviceLocationCode: location.shortCode,
-        locationId: location.id,
-        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
-      },
-    });
-    const mealDate = new Date('2026-10-15T00:00:00.000Z');
-    const weeklyMenu = await client.weeklyMenu.create({
-      data: {
-        startDate: mealDate,
-        endDate: mealDate,
-        publishedAt: new Date('2026-01-01T00:00:00.000Z'),
-      },
-    });
-    const dailyMenu = await client.dailyMenu.create({
-      data: {
-        weeklyMenuId: weeklyMenu.id,
-        date: mealDate,
-        isEnabled: true,
-        isHoliday: false,
-      },
-    });
-    const revision = await client.dailyMenuRevision.create({
-      data: {
-        dailyMenuId: dailyMenu.id,
-        revision: 1,
-        mealName: '  Whitespace lunch  ',
-        description: 'Whitespace description',
-        imageUrl: null,
-        content: 'Whitespace lunch',
-      },
-    });
-    await client.mealDay.create({
-      data: {
-        dailyMenuId: dailyMenu.id,
-        mealType: 'LUNCH',
-        isServingReady: true,
-      },
-    });
-    await client.appSetting.create({
-      data: { key: 'isServingReady:2026-10-15', value: 'true' },
-    });
-
-    vi.setSystemTime(new Date('2026-10-14T06:00:00.000Z'));
-    const registrationClient = trackClient(new PrismaClient());
-    const registration = await createRegistrationService(registrationClient);
-    const result = await registration.service.batchRegister(owner.id, [
-      { mealDate: '2026-10-15', status: 'ACTIVE', mealChoice: 'REGULAR' },
-    ]);
-    expect(result).toEqual([{ date: '2026-10-15', success: true }]);
-    const persisted = await client.registration.findUniqueOrThrow({
-      where: {
-        userId_mealDate: { userId: owner.id, mealDate },
-      },
-    });
-    expect(persisted).toMatchObject({
-      menuRevisionId: revision.id,
-      menuNameSnapshot: revision.mealName,
-    });
-
-    const pickupClient = trackClient(new PrismaClient());
-    const pickup = createPickupService(pickupClient);
-    vi.setSystemTime(new Date('2026-10-15T04:00:00.000Z'));
-    const options = await pickup.service.getPickupOptions(owner.id);
-    expect(options.options).toContainEqual({
-      type: 'OWN',
-      registrationId: persisted.id,
-      mealDate: '2026-10-15',
-      mealChoice: 'REGULAR',
-    });
-  });
-
-  it('publishes the latest committed revision across concurrent update and publish clients', async () => {
-    const client = trackClient(new PrismaClient());
-    const publishClient = trackClient(new PrismaClient());
-    const updateClient = trackClient(new PrismaClient());
-    const startDate = new Date('2026-10-05T00:00:00.000Z');
-    const owner = await client.user.create({
-      data: { email: 'weekly-race-owner@example.test', name: 'Weekly Race Owner' },
-    });
-    const admin = await client.user.create({
-      data: { email: 'weekly-race-admin@example.test', name: 'Weekly Race Admin' },
-    });
-    const location = await client.location.create({
-      data: {
-        shortCode: 'WEEKLY-RACE',
-        displayName: 'Weekly Race Kitchen',
-        servingPointName: 'Weekly Race counter',
-        address: '1 Weekly Race Street',
-        building: 'A',
-        floor: '1',
-        roomOrCounter: '1',
-        localContact: 'weekly-race@example.test',
-        isActive: true,
-        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
-      },
-    });
-    const assignment = await client.employeeLocationAssignment.create({
-      data: {
-        userId: owner.id,
-        normalizedEmail: owner.email,
-        employeeName: owner.name!,
-        employeeCode: 'WEEKLY-RACE-001',
-        isActive: true,
-        role: 'STAFF',
-        serviceLocationCode: location.shortCode,
-        locationId: location.id,
-        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
-      },
-    });
-    const weeklyMenu = await client.weeklyMenu.create({
-      data: { startDate, endDate: startDate, publishedAt: null },
-    });
-    const dailyMenu = await client.dailyMenu.create({
-      data: { weeklyMenuId: weeklyMenu.id, date: startDate, isEnabled: true },
-    });
-    const revisionOne = await client.dailyMenuRevision.create({
-      data: {
-        dailyMenuId: dailyMenu.id,
-        revision: 1,
-        mealName: 'Initial lunch',
-        description: 'Initial description',
-        imageUrl: 'https://example.test/initial.jpg',
-        content: 'Initial lunch',
-      },
-    });
-    await client.mealDay.create({
-      data: { dailyMenuId: dailyMenu.id, mealType: 'LUNCH' },
-    });
-    const registration = await client.registration.create({
-      data: {
-        userId: owner.id,
-        mealDate: startDate,
-        status: 'ACTIVE',
+        id: randomUUID(),
+        userId: user.id,
+        mealDate: MEAL_DATE,
+        status,
         mealChoice: 'REGULAR',
-        menuRevisionId: revisionOne.id,
-        ownerNameSnapshot: owner.name,
+        menuRevisionId: revision.id,
+        ownerNameSnapshot: user.id === owner.id ? 'Owner Check-in' : `${user.id} Check-in`,
         employeeCodeSnapshot: assignment.employeeCode,
-        menuNameSnapshot: revisionOne.mealName,
-        menuDescriptionSnapshot: revisionOne.description,
-        menuImageSnapshot: revisionOne.imageUrl,
-        registeredAt: new Date('2026-09-28T00:00:00.000Z'),
+        menuNameSnapshot: revision.mealName,
+        menuDescriptionSnapshot: revision.description,
+        menuImageSnapshot: revision.imageUrl,
+        registeredAt: SERVING_TIME,
+        cancelledAt: status === 'CANCELLED' ? SERVING_TIME : null,
+        cancelReason: status === 'CANCELLED' ? 'TEST_CANCELLED' : null,
+        cancelledByUserId: status === 'CANCELLED' ? user.id : null,
         serviceLocationId: location.id,
         serviceLocationAssignmentId: assignment.id,
         serviceLocationCode: location.shortCode,
         serviceLocationName: location.displayName,
         serviceLocationAddress: location.address,
         serviceLocationEffectiveFrom: assignment.effectiveFrom,
-        serviceLocationSnapshotAt: new Date('2026-09-28T00:00:00.000Z'),
+        serviceLocationSnapshotAt: SERVING_TIME,
       },
     });
-    const publisher = await createWeeklyMenusService(publishClient);
-    const updater = await createWeeklyMenusService(updateClient);
 
-    type TransactionOwner = {
-      $transaction: (
-        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
-        options?: unknown,
-      ) => Promise<unknown>;
+  const ownerRegistration = await createRegistration(owner, ownerAssignment);
+  const secondRegistration = await createRegistration(
+    secondOwner,
+    secondAssignment,
+  );
+  await createRegistration(inactiveOwner, inactiveAssignment);
+  await createRegistration(cancelledOwner, cancelledAssignment, 'CANCELLED');
+
+  return {
+    location,
+    kitchen,
+    owner,
+    secondOwner,
+    inactiveOwner,
+    cancelledOwner,
+    ownerRegistration,
+    secondRegistration,
+    kitchenActor: actor(kitchen, 'kitchen'),
+    ownerActor: actor(owner, 'staff'),
+    secondActor: actor(secondOwner, 'staff'),
+  };
+}
+
+async function qrFor(
+  service: CheckInService,
+  world: CheckInWorld,
+  at: Date = SERVING_TIME,
+) {
+  return service.getKitchenQr(world.kitchenActor, undefined, at);
+}
+
+async function resolveFor(
+  service: CheckInService,
+  world: CheckInWorld,
+  user: AuthenticatedUser = world.ownerActor,
+  at: Date = SERVING_TIME,
+  inputGps = gps(at),
+) {
+  const qr = await qrFor(service, world, SERVING_TIME);
+  return service.resolve(user, { qr: qr.data.qr, gps: inputGps }, at);
+}
+
+// The worker is a separate Nest application; load its source dynamically so
+// the API TypeScript project remains scoped to its own rootDir.
+async function createNoShowWorker(client: PrismaClient) {
+  const workerPath = pathToFileURL(
+    resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../worker/src/no-show-worker.service.ts',
+    ),
+  ).href;
+  const workerModule = (await import(workerPath)) as {
+    NoShowWorkerService: new (prisma: PrismaClient) => {
+      processNoShows: (
+        targetDate: string,
+        options: { force: boolean; currentTime: Date },
+      ) => Promise<{ processedCount: number }>;
     };
-    let releasePublicationRead!: () => void;
-    const publicationRead = new Promise<void>((resolve) => {
-      releasePublicationRead = resolve;
-    });
-    let publicationReadSeen!: () => void;
-    const publicationReadStarted = new Promise<void>((resolve) => {
-      publicationReadSeen = resolve;
-    });
-    const publisherTransaction = publishClient as unknown as TransactionOwner;
-    const originalPublisherTransaction = publisherTransaction.$transaction.bind(
-      publishClient,
-    );
-    publisherTransaction.$transaction = (callback, options) =>
-      originalPublisherTransaction(
-        async (tx) => {
-          let firstRead = true;
-          const guardedTx = new Proxy(tx, {
-            get(target, property, receiver) {
-              if (property !== 'weeklyMenu') {
-                const value = Reflect.get(target, property, receiver);
-                return typeof value === 'function'
-                  ? value.bind(target)
-                  : value;
-              }
-              const delegate = Reflect.get(target, property, receiver);
-              return new Proxy(delegate, {
-                get(delegateTarget, method, delegateReceiver) {
-                  const value = Reflect.get(
-                    delegateTarget,
-                    method,
-                    delegateReceiver,
-                  );
-                  if (method === 'findFirst') {
-                    return async (...args: unknown[]) => {
-                      const result = await value.apply(delegateTarget, args);
-                      if (firstRead) {
-                        firstRead = false;
-                        publicationReadSeen();
-                        await publicationRead;
-                      }
-                      return result;
-                    };
-                  }
-                  return typeof value === 'function'
-                    ? value.bind(delegateTarget)
-                    : value;
-                },
-              });
-            },
-          });
-          return callback(guardedTx);
-        },
-        options,
-      );
+  };
+  return new workerModule.NoShowWorkerService(client);
+}
 
-    let updateLockSeen!: () => void;
-    const updateLockStarted = new Promise<void>((resolve) => {
-      updateLockSeen = resolve;
-    });
-    const updaterTransaction = updateClient as unknown as TransactionOwner;
-    const originalUpdaterTransaction = updaterTransaction.$transaction.bind(
-      updateClient,
-    );
-    updaterTransaction.$transaction = (callback, options) =>
-      originalUpdaterTransaction(
-        async (tx) => {
-          const guardedTx = new Proxy(tx, {
-            get(target, property, receiver) {
-              const value = Reflect.get(target, property, receiver);
-              if (property === '$queryRaw') {
-                return async (...args: unknown[]) => {
-                  const result = await value.apply(target, args);
-                  updateLockSeen();
-                  return result;
-                };
-              }
-              return typeof value === 'function' ? value.bind(target) : value;
-            },
-          });
-          return callback(guardedTx);
-        },
-        options,
-      );
+describe('Production PostgreSQL staff self check-in paths', () => {
+  it('persists one stable day/location QR without employee identity', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
 
-    const publishPromise = publisher.service.publishWeeklyMenu(
-      '2026-10-05',
-      admin.id,
+    const first = await qrFor(service, world);
+    const storedAfterFirst = await client.checkInSession.findUniqueOrThrow({
+      where: {
+        mealDate_locationId: {
+          mealDate: MEAL_DATE,
+          locationId: world.location.id,
+        },
+      },
+    });
+    const second = await qrFor(service, world);
+    const storedAfterSecond = await client.checkInSession.findUniqueOrThrow({
+      where: {
+        mealDate_locationId: {
+          mealDate: MEAL_DATE,
+          locationId: world.location.id,
+        },
+      },
+    });
+
+    expect(second).toEqual(first);
+    expect(storedAfterSecond.id).toBe(storedAfterFirst.id);
+    expect(storedAfterSecond.updatedAt).toEqual(storedAfterFirst.updatedAt);
+    expect(first.data.qr).not.toContain(world.owner.id);
+    expect(first.data.qr).not.toContain(world.kitchen.id);
+    await expect(
+      client.checkInSession.count({ where: { locationId: world.location.id } }),
+    ).resolves.toBe(1);
+  });
+
+  it('fails closed on same-day QR signing rotation without mutating the existing session', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client, 'HQ-QR-ROTATION');
+    const service = createCheckInService(client);
+    await qrFor(service, world, SERVING_TIME);
+    const storedBefore = await client.checkInSession.findUniqueOrThrow({
+      where: {
+        mealDate_locationId: {
+          mealDate: MEAL_DATE,
+          locationId: world.location.id,
+        },
+      },
+    });
+    process.env.QR_SIGNING_SECRET = `${QR_SIGNING_SECRET}-rotated`;
+
+    await expect(
+      qrFor(service, world, SERVING_TIME),
+    ).rejects.toMatchObject({
+      status: 500,
+      message: 'Internal server error',
+    });
+
+    const storedAfter = await client.checkInSession.findUniqueOrThrow({
+      where: { id: storedBefore.id },
+    });
+    expect(storedAfter).toEqual(storedBefore);
+    await expect(
+      client.checkInSession.count({ where: { locationId: world.location.id } }),
+    ).resolves.toBe(1);
+  });
+
+  it('prepares one QR before 10:30, then rejects the early staff resolve without a serving', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client, 'HQ-PREWINDOW');
+    const service = createCheckInService(client);
+    const beforeWindow = new Date(`${MEAL_DATE_KEY}T03:00:00.000Z`);
+
+    const prepared = await qrFor(service, world, beforeWindow);
+    expect(prepared.data).toMatchObject({
+      date: MEAL_DATE_KEY,
+      activeFrom: `${MEAL_DATE_KEY}T03:30:00.000Z`,
+      expiresAt: `${MEAL_DATE_KEY}T06:30:00.000Z`,
+    });
+    const activeQr = await qrFor(service, world, SERVING_TIME);
+    expect(activeQr.data.qr).toBe(prepared.data.qr);
+
+    await expectCode(
+      service.resolve(
+        world.ownerActor,
+        { qr: prepared.data.qr, gps: gps(beforeWindow) },
+        beforeWindow,
+      ),
+      'OUTSIDE_CHECKIN_WINDOW',
     );
-    await publicationReadStarted;
-    const updatePromise = updater.service.updateDailyMenu(
-      '2026-10-05',
+    await expect(
+      client.mealServing.count({ where: { registrationId: world.ownerRegistration.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      client.servingVerification.count({ where: { presenterUserId: world.owner.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      client.checkInSession.count({
+        where: { mealDate: MEAL_DATE, locationId: world.location.id },
+      }),
+    ).resolves.toBe(1);
+  });
+
+  it('rejects the Kitchen QR at the global close boundary without changing the stored session', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client, 'HQ-QR-CLOSE');
+    const service = createCheckInService(client);
+    const prepared = await qrFor(service, world, SERVING_TIME);
+    const storedBefore = await client.checkInSession.findUniqueOrThrow({
+      where: {
+        mealDate_locationId: {
+          mealDate: MEAL_DATE,
+          locationId: world.location.id,
+        },
+      },
+    });
+
+    await expectCode(qrFor(service, world, AFTER_WINDOW), 'OUTSIDE_CHECKIN_WINDOW');
+
+    const storedAfter = await client.checkInSession.findUniqueOrThrow({
+      where: { id: storedBefore.id },
+    });
+    expect(storedAfter).toMatchObject({
+      id: storedBefore.id,
+      qrHash: storedBefore.qrHash,
+      expiresAt: storedBefore.expiresAt,
+    });
+    await expect(
+      client.checkInSession.count({ where: { locationId: world.location.id } }),
+    ).resolves.toBe(1);
+  });
+
+  it('resolves only the authenticated owner and persists verification without consuming registration', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+
+    const response = await resolveFor(service, world);
+    const registration = await client.registration.findUniqueOrThrow({
+      where: { id: world.ownerRegistration.id },
+      include: { mealServing: true },
+    });
+    const verifications = await client.servingVerification.findMany({
+      where: { presenterUserId: world.owner.id },
+    });
+
+    expect(response.data.employee.id).toBe(world.owner.id);
+    expect(response.data.registration.id).toBe(world.ownerRegistration.id);
+    expect(response.data.eligibility).toEqual({ eligible: true, reasons: [] });
+    expect(response.data.intentNonce).toEqual(expect.any(String));
+    expect(registration.mealServing).toBeNull();
+    expect(verifications).toHaveLength(1);
+    expect(verifications[0]).toMatchObject({
+      result: 'VALID',
+      safeVerificationCode: 'GPS_VALID',
+      intentNonce: response.data.intentNonce,
+      locationId: world.location.id,
+      accuracyMeters: 10,
+    });
+  });
+
+  it('rejects invalid and tampered shared QR values before any verification write', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+    const qr = await qrFor(service, world);
+    const tamperedQr = `${qr.data.qr.slice(0, -1)}${
+      qr.data.qr.endsWith('a') ? 'b' : 'a'
+    }`;
+
+    await expectCode(
+      service.resolve(
+        world.ownerActor,
+        { qr: 'imeal-checkin-v1.unknown', gps: gps(SERVING_TIME) },
+        SERVING_TIME,
+      ),
+      'INVALID_QR',
+    );
+    await expectCode(
+      service.resolve(
+        world.ownerActor,
+        { qr: tamperedQr, gps: gps(SERVING_TIME) },
+        SERVING_TIME,
+      ),
+      'INVALID_QR',
+    );
+    await expect(
+      client.servingVerification.count({ where: { presenterUserId: world.owner.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it('returns nullable intent eligibility for cancelled and already checked-in registrations', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+
+    const cancelled = await service.resolve(
       {
-        mealName: 'Latest lunch',
-        description: 'Latest description',
-        imageUrl: 'https://example.test/latest.jpg',
+        ...world.ownerActor,
+        id: world.cancelledOwner.id,
+        userId: world.cancelledOwner.id,
+        email: world.cancelledOwner.email,
       },
-      admin.id,
+      {
+        qr: (await qrFor(service, world)).data.qr,
+        gps: gps(SERVING_TIME),
+      },
+      SERVING_TIME,
     );
-    await updateLockStarted;
-    releasePublicationRead();
-    const [publishResult, updateResult] = await Promise.allSettled([
-      publishPromise,
-      updatePromise,
-    ]);
-    expect(publishResult.status).toBe('fulfilled');
-    expect(updateResult.status).toBe('fulfilled');
+    expect(cancelled.data.intentNonce).toBeNull();
+    expect(cancelled.data.eligibility).toEqual({
+      eligible: false,
+      reasons: ['REGISTRATION_CANCELLED'],
+    });
 
-    const finalMenu = await client.dailyMenu.findUniqueOrThrow({
-      where: { id: dailyMenu.id },
-      include: {
-        revisions: {
-          where: { revision: { not: null } },
-          orderBy: [{ revision: 'desc' }, { id: 'desc' }],
-          take: 1,
-        },
-        mealDays: true,
-      },
-    });
-    const latestRevision = finalMenu.revisions[0];
-    expect(latestRevision).toMatchObject({
-      revision: 2,
-      mealName: 'Latest lunch',
-    });
-    expect(finalMenu.mealDays[0]).toMatchObject({
-      menuNameSnapshot: latestRevision.mealName,
-      menuDescriptionSnapshot: latestRevision.description,
-      menuImageSnapshot: latestRevision.imageUrl,
-    });
-    const finalRegistration = await client.registration.findUniqueOrThrow({
-      where: { id: registration.id },
-    });
-    expect(finalRegistration).toMatchObject({
-      menuRevisionId: latestRevision.id,
-      menuNameSnapshot: latestRevision.mealName,
-      menuDescriptionSnapshot: latestRevision.description,
-      menuImageSnapshot: latestRevision.imageUrl,
+    const resolved = await resolveFor(service, world);
+    const body = {
+      sessionId: resolved.data.sessionId,
+      intentNonce: resolved.data.intentNonce!,
+      idempotencyKey: `already-checked-in-${randomUUID()}`,
+      gps: gps(SERVING_TIME, { ageSeconds: 2 }),
+    };
+    await service.confirm(world.ownerActor, body, SERVING_TIME);
+    const alreadyCheckedIn = await resolveFor(service, world);
+    expect(alreadyCheckedIn.data.intentNonce).toBeNull();
+    expect(alreadyCheckedIn.data.eligibility).toEqual({
+      eligible: false,
+      reasons: ['ALREADY_CHECKED_IN'],
     });
   });
 
-  it('serializes real cancellation and reactivation with refreshed snapshots', async () => {
-    const client = trackClient(new PrismaClient());
-    const world = await createServingWorld(client);
-    const cancellationClient = trackClient(new PrismaClient());
-    const reactivationClient = trackClient(new PrismaClient());
-    const cancellation = await createRegistrationService(cancellationClient);
-    const reactivation = await createRegistrationService(reactivationClient);
-
-    const registrationId = world.registrations[0].id;
-    const oldRegistration = await client.registration.findUniqueOrThrow({
-      where: { id: registrationId },
-    });
-    const oldSnapshot = {
-      menuRevisionId: oldRegistration.menuRevisionId,
-      ownerNameSnapshot: oldRegistration.ownerNameSnapshot,
-      serviceLocationId: oldRegistration.serviceLocationId,
-      serviceLocationAssignmentId: oldRegistration.serviceLocationAssignmentId,
-    };
-    const delegate = await client.user.create({
+  it('rejects a missing registration and never chooses a target employee from client input', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+    const noRegistrationUser = await client.user.create({
       data: {
-        email: 'race-delegate@example.test',
-        name: 'Race Delegate',
+        id: randomUUID(),
+        email: 'no-registration@example.test',
+        name: 'No Registration',
       },
     });
-    const delegation = await client.pickupDelegation.create({
+    await client.employeeLocationAssignment.create({
       data: {
-        registrationId,
-        delegateUserId: delegate.id,
-        status: 'ACCEPTED',
+        id: randomUUID(),
+        userId: noRegistrationUser.id,
+        normalizedEmail: noRegistrationUser.email,
+        employeeName: 'No Registration',
+        employeeCode: 'STAFF-NONE',
+        isActive: true,
+        role: 'STAFF',
+        serviceLocationCode: world.location.shortCode,
+        locationId: world.location.id,
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
       },
     });
 
-    type TransactionClientOwner = {
-      $transaction: (
-        callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
-        options?: unknown,
-      ) => Promise<unknown>;
-    };
-    const transactionClient =
-      cancellationClient as unknown as TransactionClientOwner;
-    const originalTransaction = transactionClient.$transaction.bind(
-      cancellationClient,
+    await expectCode(
+      resolveFor(
+        service,
+        world,
+        actor(noRegistrationUser, 'staff'),
+      ),
+      'NO_REGISTRATION',
     );
-    let transactionEntered!: () => void;
-    const transactionStarted = new Promise<void>((resolve) => {
-      transactionEntered = resolve;
-    });
-    let releaseTransaction!: () => void;
-    const transactionRelease = new Promise<void>((resolve) => {
-      releaseTransaction = resolve;
-    });
-    transactionClient.$transaction = (callback, options) =>
-      originalTransaction(
-        async (tx) => {
-          await tx.$queryRaw`SELECT id FROM registrations WHERE id = ${registrationId} FOR UPDATE`;
-          transactionEntered();
-          await transactionRelease;
-          return callback(tx);
-        },
-        options,
+    const qr = await qrFor(service, world);
+    await expectCode(
+      service.resolve(
+        world.ownerActor,
+        {
+          qr: qr.data.qr,
+          gps: gps(SERVING_TIME),
+          targetUserId: world.secondOwner.id,
+        } as never,
+        SERVING_TIME,
+      ),
+      'INVALID_QR',
+    );
+    await expect(
+      client.mealServing.count({ where: { registrationId: world.secondRegistration.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it('rejects missing, stale, inaccurate and outside-geofence GPS fixes', async () => {
+    const cases = [
+      {
+        name: 'missing',
+        input: undefined,
+        code: 'GPS_REQUIRED',
+      },
+      {
+        name: 'stale',
+        input: gps(SERVING_TIME, { ageSeconds: 61 }),
+        code: 'GPS_STALE',
+      },
+      {
+        name: 'inaccurate',
+        input: gps(SERVING_TIME, { accuracyMeters: 51 }),
+        code: 'GPS_INACCURATE',
+      },
+      {
+        name: 'outside geofence',
+        input: gps(SERVING_TIME, { latitude: 10.01 }),
+        code: 'OUTSIDE_GEOFENCE',
+      },
+    ] as const;
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+
+    for (const testCase of cases) {
+      await expectCode(
+        service.resolve(
+          world.ownerActor,
+          {
+            qr: (await qrFor(service, world)).data.qr,
+            gps: testCase.input,
+          } as never,
+          SERVING_TIME,
+        ),
+        testCase.code,
       );
-
-    vi.setSystemTime(new Date('2026-09-27T06:00:00.000Z'));
-    const cancelPromise = cancellation.service.batchRegister(world.owner.id, [
-      { mealDate: MEAL_DATE_KEY, status: 'CANCELLED' },
-    ]);
-    await transactionStarted;
-
-    const newLocation = await client.location.create({
-      data: {
-        shortCode: 'RACE-NEW-HQ',
-        displayName: 'Race New Kitchen',
-        servingPointName: 'Race New Counter',
-        address: '3 Race Street',
-        building: 'C',
-        floor: '3',
-        roomOrCounter: '3',
-        localContact: 'race-new@example.test',
-        isActive: true,
-        effectiveFrom: MEAL_DATE,
-      },
-    });
-    await client.employeeLocationAssignment.update({
-      where: { id: world.assignment.id },
-      data: { effectiveTo: MEAL_DATE },
-    });
-    const newAssignment = await client.employeeLocationAssignment.create({
-      data: {
-        userId: world.owner.id,
-        normalizedEmail: world.owner.email,
-        employeeName: 'Race Reactivated Owner',
-        employeeCode: 'RACE-REACTIVATED-001',
-        isActive: true,
-        role: 'STAFF',
-        serviceLocationCode: newLocation.shortCode,
-        locationId: newLocation.id,
-        effectiveFrom: MEAL_DATE,
-      },
-    });
-    const newRevision = await client.dailyMenuRevision.create({
-      data: {
-        dailyMenuId: world.dailyMenu.id,
-        revision: 2,
-        mealName: 'Race Reactivated Lunch',
-        description: 'Race reactivated description',
-        imageUrl: 'https://example.test/race-reactivated.jpg',
-        content: 'race-reactivated',
-      },
-    });
-    const activeWhileCancellationLocked =
-      await client.registration.findUniqueOrThrow({
-        where: { id: registrationId },
-      });
-    expect(activeWhileCancellationLocked).toMatchObject({
-      status: 'ACTIVE',
-      menuRevisionId: oldSnapshot.menuRevisionId,
-      ownerNameSnapshot: oldSnapshot.ownerNameSnapshot,
-      serviceLocationId: oldSnapshot.serviceLocationId,
-      serviceLocationAssignmentId: oldSnapshot.serviceLocationAssignmentId,
-    });
-
-    const reactivatePromise = reactivation.service.batchRegister(
-      world.owner.id,
-      [{ mealDate: MEAL_DATE_KEY, status: 'ACTIVE', mealChoice: 'REGULAR' }],
-    );
-    releaseTransaction();
-    const [cancelResult, reactivateResult] = await Promise.all([
-      cancelPromise,
-      reactivatePromise,
-    ]);
-    expect(cancelResult[0]).toMatchObject({ success: true });
-    expect(reactivateResult[0]).toMatchObject({ success: true });
-
-    const finalRegistration = await client.registration.findUniqueOrThrow({
-      where: { id: registrationId },
-    });
-    expect(finalRegistration).toMatchObject({
-      status: 'ACTIVE',
-      mealChoice: 'REGULAR',
-      menuRevisionId: newRevision.id,
-      menuNameSnapshot: 'Race Reactivated Lunch',
-      ownerNameSnapshot: newAssignment.employeeName,
-      employeeCodeSnapshot: newAssignment.employeeCode,
-      serviceLocationId: newLocation.id,
-      serviceLocationAssignmentId: newAssignment.id,
-    });
-    expect(finalRegistration.version).toBe(3);
-    expect(
-      await client.auditLog.count({
-        where: {
-          action: {
-            in: ['registration_cancelled', 'registration_reactivated'],
-          },
-          details: { contains: registrationId },
-        },
-      }),
-    ).toBe(2);
-    expect(
-      await client.auditLog.count({
-        where: { action: 'registration_cancelled' },
-      }),
-    ).toBe(1);
-    expect(
-      await client.auditLog.count({
-        where: { action: 'registration_reactivated' },
-      }),
-    ).toBe(1);
-    expect(
-      await client.pickupDelegation.findUniqueOrThrow({
-        where: { id: delegation.id },
-      }),
-    ).toMatchObject({ status: 'REVOKED' });
-    expect(
-      await client.notification.count({
-        where: {
-          kind: 'DELEGATION_REVOKED',
-          userId: delegate.id,
-        },
-      }),
-    ).toBe(1);
-    const revokedNotification = await client.notification.findFirstOrThrow({
-      where: {
-        kind: 'DELEGATION_REVOKED',
-        userId: delegate.id,
-      },
-    });
-    expect(
-      await client.outboxEvent.count({
-        where: { aggregateId: revokedNotification.id },
-      }),
-    ).toBe(1);
+    }
   });
 
-  it('resolves real registration reactivation snapshots while preserving served snapshots', async () => {
-    const client = trackClient(new PrismaClient());
-    const world = await createServingWorld(client);
-    const registrationClient = trackClient(new PrismaClient());
-    const pickupClient = trackClient(new PrismaClient());
-    const registration = await createRegistrationService(registrationClient);
-    const pickup = createPickupService(pickupClient);
-    const reactivationDate = '2026-09-29';
-    const reactivationDateValue = new Date(`${reactivationDate}T00:00:00.000Z`);
-    const reactivationMenu = await client.weeklyMenu.create({
-      data: {
-        startDate: reactivationDateValue,
-        endDate: reactivationDateValue,
-        publishedAt: SERVING_TIME,
-      },
-    });
-    const reactivationDailyMenu = await client.dailyMenu.create({
-      data: {
-        weeklyMenuId: reactivationMenu.id,
-        date: reactivationDateValue,
-      },
-    });
-    await client.dailyMenuRevision.create({
-      data: {
-        dailyMenuId: reactivationDailyMenu.id,
-        revision: 1,
-        mealName: 'Original reactivation lunch',
-        description: 'Original reactivation description',
-        imageUrl: 'https://example.test/original-reactivation.jpg',
-        content: 'original reactivation',
-      },
-    });
-    const activeOld = await registration.service.batchRegister(world.owner.id, [
-      { mealDate: reactivationDate, status: 'ACTIVE', mealChoice: 'REGULAR' },
-    ]);
-    expect(activeOld[0]).toMatchObject({ success: true });
-    const oldRegistration = await client.registration.findUniqueOrThrow({
-      where: { userId_mealDate: { userId: world.owner.id, mealDate: MEAL_DATE } },
-    });
-    const oldSnapshot = {
-      menuRevisionId: oldRegistration.menuRevisionId,
-      ownerNameSnapshot: oldRegistration.ownerNameSnapshot,
-      serviceLocationId: oldRegistration.serviceLocationId,
-    };
-
-    const served = await pickup.service.confirmPickup(
-      { pickupSessionId: world.session.id, idempotencyKey: 'snapshot-serving-key' },
-      kitchenActor,
-    );
-    expect(served.success).toBe(true);
-    const serving = await client.mealServing.findUniqueOrThrow({
-      where: { registrationId: oldRegistration.id },
-    });
-    expect(serving).toMatchObject({
-      menuRevisionId: oldSnapshot.menuRevisionId,
-      ownerNameSnapshot: oldSnapshot.ownerNameSnapshot,
-      locationId: oldSnapshot.serviceLocationId,
-    });
-
-    const reactivationRegistration = await client.registration.findUniqueOrThrow({
-      where: {
-        userId_mealDate: {
-          userId: world.owner.id,
-          mealDate: new Date(`${reactivationDate}T00:00:00.000Z`),
-        },
-      },
-    });
-    const delegate = await client.user.create({
-      data: {
-        email: 'delegate@example.test',
-        name: 'Delegate',
-      },
-    });
-    const delegation = await client.pickupDelegation.create({
-      data: {
-        registrationId: reactivationRegistration.id,
-        delegateUserId: delegate.id,
-        status: 'ACCEPTED',
-      },
-    });
-    const cancelled = await registration.service.batchRegister(world.owner.id, [
-      { mealDate: reactivationDate, status: 'CANCELLED' },
-    ]);
-    expect(cancelled[0]).toMatchObject({ success: true });
-
-    const newLocation = await client.location.create({
-      data: {
-        shortCode: 'NEW-HQ-TEST',
-        displayName: 'New Kitchen',
-        servingPointName: 'New counter',
-        address: '2 New Street',
-        building: 'B',
-        floor: '2',
-        roomOrCounter: '2',
-        localContact: 'new@example.test',
-        isActive: true,
-        effectiveFrom: new Date('2026-09-29T00:00:00.000Z'),
-      },
-    });
-    await client.employeeLocationAssignment.update({
-      where: { id: world.assignment.id },
-      data: { effectiveTo: new Date('2026-09-29T00:00:00.000Z') },
-    });
-    const newAssignment = await client.employeeLocationAssignment.create({
-      data: {
-        userId: world.owner.id,
-        normalizedEmail: world.owner.email,
-        employeeName: 'Reactivated Owner',
-        employeeCode: 'REACTIVATED-002',
-        isActive: true,
-        role: 'STAFF',
-        serviceLocationCode: newLocation.shortCode,
-        locationId: newLocation.id,
-        effectiveFrom: new Date('2026-09-29T00:00:00.000Z'),
-      },
-    });
-    const newRevision = await client.dailyMenuRevision.create({
-      data: {
-        dailyMenuId: reactivationDailyMenu.id,
-        revision: 2,
-        mealName: 'Reactivated lunch',
-        description: 'Reactivated description',
-        imageUrl: 'https://example.test/reactivated.jpg',
-        content: 'reactivated',
-      },
-    });
-
-    const reactivated = await registration.service.batchRegister(world.owner.id, [
-      { mealDate: reactivationDate, status: 'ACTIVE', mealChoice: 'REGULAR' },
-    ]);
-    expect(reactivated[0]).toMatchObject({ success: true });
-    const finalReactivated = await client.registration.findUniqueOrThrow({
-      where: { id: reactivationRegistration.id },
-    });
-    expect(finalReactivated).toMatchObject({
-      status: 'ACTIVE',
-      menuRevisionId: newRevision.id,
-      menuNameSnapshot: 'Reactivated lunch',
-      ownerNameSnapshot: newAssignment.employeeName,
-      employeeCodeSnapshot: newAssignment.employeeCode,
-      serviceLocationId: newLocation.id,
-      serviceLocationAssignmentId: newAssignment.id,
-      mealChoice: 'REGULAR',
-    });
-    expect(finalReactivated.version).toBeGreaterThan(1);
-    expect(oldRegistration.menuRevisionId).toBe(oldSnapshot.menuRevisionId);
-    expect(
-      await client.auditLog.count({
-        where: { action: 'registration_reactivated' },
-      }),
-    ).toBe(1);
-    const finalDelegation = await client.pickupDelegation.findUniqueOrThrow({
-      where: { id: delegation.id },
-    });
-    expect(finalDelegation.status).toBe('REVOKED');
-    expect(
-      await client.notification.count({
-        where: {
-          kind: 'DELEGATION_REVOKED',
-          userId: delegate.id,
-        },
-      }),
-    ).toBe(1);
-    expect(
-      await client.outboxEvent.count({
-        where: {
-          dedupeKey: `notification-delivery:${(
-            await client.notification.findFirstOrThrow({
-              where: { kind: 'DELEGATION_REVOKED', userId: delegate.id },
-            })
-          ).id}`,
-        },
-      }),
-    ).toBe(1);
-  });
-  it('rolls back production serving, idempotency, audit, delegation and notification side effects on failure', async () => {
-    const client = trackClient(new PrismaClient());
-    const world = await createServingWorld(client);
-    const delegate = await client.user.create({
-      data: {
-        email: 'failing-delegate@example.test',
-        name: 'Failing Delegate',
-      },
-    });
-    await client.pickupDelegation.create({
-      data: {
-        registrationId: world.registrations[0].id,
-        delegateUserId: delegate.id,
-        status: 'ACCEPTED',
-      },
-    });
-    await client.servingVerification.update({
-      where: { id: world.session.qrHash },
-      data: { presenterUserId: delegate.id },
-    });
-    await client.pickupSession.update({
-      where: { id: world.session.id },
-      data: { presenterUserId: delegate.id },
-    });
-    await client.pickupSession.update({
-      where: { id: world.session.id },
-      data: { userId: delegate.id },
-    });
-
-    const failingNotifications = {
-      publish: async () => {
-        throw new Error('injected notification failure');
-      },
-    };
-    const pickupClient = trackClient(new PrismaClient());
-    const pickupService = new PickupService(
-      pickupClient as never,
-      undefined,
-      failingNotifications as never,
-    );
-
-    await expect(
-      pickupService.confirmPickup(
-        { pickupSessionId: world.session.id, idempotencyKey: 'rollback-key' },
-        kitchenActor,
-      ),
-    ).rejects.toThrow('injected notification failure');
-    expect(
-      await client.mealServing.count({
-        where: { registrationId: world.registrations[0].id },
-      }),
-    ).toBe(0);
-    expect(
-      await client.mealEvent.count({
-        where: { mealServing: { registrationId: world.registrations[0].id } },
-      }),
-    ).toBe(0);
-    expect(
-      await client.auditLog.count({ where: { action: 'SERVING_CONFIRMED' } }),
-    ).toBe(0);
-    expect(
-      await client.notification.count({
-        where: { userId: world.owner.id },
-      }),
-    ).toBe(0);
-    expect(
-      await client.outboxEvent.count({
-        where: { aggregateId: world.registrations[0].id },
-      }),
-    ).toBe(0);
-    expect(
-      await client.servingConfirmRequest.count({
-        where: { callerUserId: kitchenActor.id, idempotencyKey: 'rollback-key' },
-      }),
-    ).toBe(0);
-    expect(
-      await client.pickupSession.findUniqueOrThrow({
-        where: { id: world.session.id },
-      }),
-    ).toMatchObject({ consumedAt: null });
-  });
-
-
-  it('confirms duplicate production requests idempotently and rejects a changed body', async () => {
-    const client = trackClient(new PrismaClient());
-    const world = await createServingWorld(client);
-    const firstClient = trackClient(new PrismaClient());
-    const retryClient = trackClient(new PrismaClient());
-    const first = createPickupService(firstClient);
-    const retry = createPickupService(retryClient);
-
-    const body = { pickupSessionId: world.session.id, idempotencyKey: 'same-key' };
-    const [firstResult, retryResult] = await Promise.all([
-      first.service.confirmPickup(body, kitchenActor),
-      retry.service.confirmPickup(body, kitchenActor),
-    ]);
-    expect(retryResult).toEqual(firstResult);
-    expect(await client.mealServing.count({ where: { registrationId: world.registrations[0].id } })).toBe(1);
-    expect(await client.servingConfirmRequest.count({ where: { callerUserId: kitchenActor.id, idempotencyKey: body.idempotencyKey } })).toBe(1);
-
-    await expect(
-      retry.service.confirmPickup(
-        { pickupSessionId: 'different-session', idempotencyKey: body.idempotencyKey },
-        kitchenActor,
-      ),
-    ).rejects.toMatchObject({ response: { code: 'IDEMPOTENCY_CONFLICT' } });
-    expect(await client.mealServing.count({ where: { registrationId: world.registrations[0].id } })).toBe(1);
-  });
-
-  it('rolls back the real confirmation transaction and all side effects for a stale item', async () => {
-    const client = trackClient(new PrismaClient());
-    const world = await createServingWorld(client, { registrationCount: 2 });
-    const pickupClient = trackClient(new PrismaClient());
-    const pickup = createPickupService(pickupClient);
+  it('rejects a roster/location mismatch even when QR and GPS are valid', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const otherLocation = await createLocation(client, 'OTHER-TEST', false);
     await client.registration.update({
-      where: { id: world.registrations[1].id },
+      where: { id: world.ownerRegistration.id },
       data: {
-        status: 'CANCELLED',
-        cancelledAt: SERVING_TIME,
-        cancelReason: 'TEST_STALE',
-        cancelledByUserId: world.registrations[1].userId,
+        serviceLocationId: otherLocation.location.id,
+        serviceLocationCode: otherLocation.location.shortCode,
+        serviceLocationName: otherLocation.location.displayName,
+        serviceLocationAddress: otherLocation.location.address,
       },
     });
+    const service = createCheckInService(client);
 
+    await expectCode(resolveFor(service, world), 'LOCATION_MISMATCH');
     await expect(
-      pickup.service.confirmPickup(
-        { pickupSessionId: world.session.id, idempotencyKey: 'stale-key' },
-        kitchenActor,
+      client.servingVerification.count({ where: { presenterUserId: world.owner.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it('rejects tampered intent and another authenticated owner cannot use it', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+    const resolved = await resolveFor(service, world);
+    const tamperedIntent = `${resolved.data.intentNonce!.slice(0, -1)}${
+      resolved.data.intentNonce!.endsWith('a') ? 'b' : 'a'
+    }`;
+    const baseBody = {
+      sessionId: resolved.data.sessionId,
+      idempotencyKey: `tampered-intent-${randomUUID()}`,
+      gps: gps(SERVING_TIME, { ageSeconds: 2 }),
+    };
+
+    await expectCode(
+      service.confirm(
+        world.ownerActor,
+        { ...baseBody, intentNonce: tamperedIntent },
+        SERVING_TIME,
       ),
-    ).rejects.toMatchObject({ response: { code: 'PICKUP_INTENT_CONFLICT' } });
-    expect(
-      await client.mealServing.count({
-        where: { registrationId: { in: world.registrations.map(({ id }) => id) } },
+      'INACTIVE_CHECKIN_SESSION',
+    );
+    await expectCode(
+      service.confirm(
+        world.secondActor,
+        {
+          ...baseBody,
+          intentNonce: resolved.data.intentNonce!,
+          idempotencyKey: `wrong-owner-${randomUUID()}`,
+        },
+        SERVING_TIME,
+      ),
+      'INACTIVE_CHECKIN_SESSION',
+    );
+    await expect(
+      client.mealServing.count({
+        where: { registrationId: { in: [world.ownerRegistration.id, world.secondRegistration.id] } },
       }),
-    ).toBe(0);
-    expect(
-      await client.servingConfirmRequest.count({
-        where: { callerUserId: kitchenActor.id, idempotencyKey: 'stale-key' },
+    ).resolves.toBe(0);
+  });
+
+  it('reevaluates Vietnam serving window, session date and session expiry', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+    const qr = await qrFor(service, world);
+
+    await expectCode(
+      service.resolve(
+        world.ownerActor,
+        { qr: qr.data.qr, gps: gps(BEFORE_WINDOW) },
+        BEFORE_WINDOW,
+      ),
+      'OUTSIDE_CHECKIN_WINDOW',
+    );
+    await expectCode(
+      service.resolve(
+        world.ownerActor,
+        { qr: qr.data.qr, gps: gps(AFTER_WINDOW) },
+        AFTER_WINDOW,
+      ),
+      'OUTSIDE_CHECKIN_WINDOW',
+    );
+    await expectCode(
+      service.resolve(
+        world.ownerActor,
+        { qr: qr.data.qr, gps: gps(new Date('2026-09-29T04:00:00.000Z')) },
+        new Date('2026-09-29T04:00:00.000Z'),
+      ),
+      'INACTIVE_CHECKIN_SESSION',
+    );
+  });
+
+  it('rejects new confirmations before and at/after close without creating a serving', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client, 'HQ-CONFIRM-WINDOW');
+    const service = createCheckInService(client);
+    const resolved = await resolveFor(service, world);
+
+    await expectCode(
+      service.confirm(
+        world.ownerActor,
+        {
+          sessionId: resolved.data.sessionId,
+          intentNonce: resolved.data.intentNonce!,
+          idempotencyKey: `before-confirm-${randomUUID()}`,
+          gps: gps(BEFORE_WINDOW, { ageSeconds: 2 }),
+        },
+        BEFORE_WINDOW,
+      ),
+      'OUTSIDE_CHECKIN_WINDOW',
+    );
+    await expectCode(
+      service.confirm(
+        world.ownerActor,
+        {
+          sessionId: resolved.data.sessionId,
+          intentNonce: resolved.data.intentNonce!,
+          idempotencyKey: `after-confirm-${randomUUID()}`,
+          gps: gps(AFTER_WINDOW, { ageSeconds: 2 }),
+        },
+        AFTER_WINDOW,
+      ),
+      'OUTSIDE_CHECKIN_WINDOW',
+    );
+    await expect(
+      client.mealServing.count({ where: { registrationId: world.ownerRegistration.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it('confirms one MealServing and exposes consumed history and stats', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+    const resolved = await resolveFor(service, world);
+    const response = await service.confirm(
+      world.ownerActor,
+      {
+        sessionId: resolved.data.sessionId,
+        intentNonce: resolved.data.intentNonce!,
+        idempotencyKey: `confirm-${randomUUID()}`,
+        gps: gps(SERVING_TIME, { ageSeconds: 2, accuracyMeters: 11 }),
+      },
+      SERVING_TIME,
+    );
+
+    const registration = await client.registration.findUniqueOrThrow({
+      where: { id: world.ownerRegistration.id },
+      include: { mealServing: true },
+    });
+    const serving = await client.mealServing.findUniqueOrThrow({
+      where: { registrationId: world.ownerRegistration.id },
+    });
+    const eventCount = await client.mealEvent.count({
+      where: { mealServingId: serving.id, eventType: 'CHECK_IN_CONFIRMED' },
+    });
+    const status = await service.getStatus(world.ownerActor, SERVING_TIME);
+    const registrationService = new RegistrationsService(client as never);
+    const history = await registrationService.getHistory(world.owner.id, {
+      page: 1,
+      limit: 50,
+    } as never);
+    const stats = await registrationService.getStats(world.owner.id, {
+      month: '2026-09',
+    } as never);
+
+    expect(response.data.status).toBe('CHECKED_IN');
+    expect(response.data.registrationId).toBe(world.ownerRegistration.id);
+    expect(registration.status).toBe('ACTIVE');
+    expect(registration.mealServing?.id).toBe(serving.id);
+    expect(serving).toMatchObject({
+      ownerUserId: world.owner.id,
+      presenterUserId: world.owner.id,
+      receiverType: 'SELF',
+      kitchenUserId: null,
+      checkInSessionId: resolved.data.sessionId,
+      verificationOutcome: 'GPS_VALID',
+      locationId: world.location.id,
+    });
+    expect(eventCount).toBe(1);
+    expect(status.data.state).toBe('CHECKED_IN');
+    expect(history.data[0]).toMatchObject({
+      id: world.ownerRegistration.id,
+      status: 'SERVED',
+      servedAt: SERVING_TIME.toISOString(),
+    });
+    expect(stats.data).toMatchObject({ booked: 1, enjoyed: 1 });
+  });
+
+  it('replays a committed result after session expiry and a stale retry GPS', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+    const resolved = await resolveFor(service, world);
+    const body = {
+      sessionId: resolved.data.sessionId,
+      intentNonce: resolved.data.intentNonce!,
+      idempotencyKey: `lost-response-${randomUUID()}`,
+      gps: gps(SERVING_TIME, { ageSeconds: 2 }),
+    };
+    const first = await service.confirm(world.ownerActor, body, SERVING_TIME);
+    const replay = await service.confirm(world.ownerActor, body, AFTER_WINDOW);
+
+    expect(replay).toEqual(first);
+    await expect(
+      client.mealServing.count({ where: { registrationId: world.ownerRegistration.id } }),
+    ).resolves.toBe(1);
+    await expect(
+      client.mealEvent.count({
+        where: { mealServing: { registrationId: world.ownerRegistration.id } },
       }),
-    ).toBe(0);
-    expect(
-      await client.auditLog.count({ where: { action: 'SERVING_CONFIRMED' } }),
-    ).toBe(0);
-    expect(
-      await client.mealEvent.count({
-        where: { mealServing: { registrationId: { in: world.registrations.map(({ id }) => id) } } },
+    ).resolves.toBe(1);
+    await expect(
+      client.servingConfirmRequest.count({
+        where: {
+          callerUserId: world.owner.id,
+          idempotencyKey: body.idempotencyKey,
+        },
       }),
-    ).toBe(0);
+    ).resolves.toBe(1);
+  });
+
+  it('rejects a changed body under a committed idempotency key', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+    const resolved = await resolveFor(service, world);
+    const idempotencyKey = `changed-body-${randomUUID()}`;
+    const body = {
+      sessionId: resolved.data.sessionId,
+      intentNonce: resolved.data.intentNonce!,
+      idempotencyKey,
+      gps: gps(SERVING_TIME, { ageSeconds: 2 }),
+    };
+    await service.confirm(world.ownerActor, body, SERVING_TIME);
+
+    await expectCode(
+      service.confirm(
+        world.ownerActor,
+        { ...body, gps: gps(SERVING_TIME, { ageSeconds: 3, accuracyMeters: 11 }) },
+        SERVING_TIME,
+      ),
+      'IDEMPOTENCY_CONFLICT',
+    );
+  });
+
+  it('allows concurrent duplicate confirmations to create one canonical serving', async () => {
+    const client = trackedClient();
+    const firstClient = trackedClient();
+    const secondClient = trackedClient();
+    const world = await createWorld(client);
+    const resolved = await resolveFor(createCheckInService(client), world);
+    const body = {
+      sessionId: resolved.data.sessionId,
+      intentNonce: resolved.data.intentNonce!,
+      idempotencyKey: `concurrent-${randomUUID()}`,
+      gps: gps(SERVING_TIME, { ageSeconds: 2 }),
+    };
+    const [first, second] = await Promise.allSettled([
+      createCheckInService(firstClient).confirm(world.ownerActor, body, SERVING_TIME),
+      createCheckInService(secondClient).confirm(world.ownerActor, body, SERVING_TIME),
+    ]);
+
+    expect(first.status).toBe('fulfilled');
+    expect(second.status).toBe('fulfilled');
+    if (first.status === 'fulfilled' && second.status === 'fulfilled') {
+      expect(second.value).toEqual(first.value);
+    }
+    await expect(
+      client.mealServing.count({ where: { registrationId: world.ownerRegistration.id } }),
+    ).resolves.toBe(1);
+    await expect(
+      client.mealEvent.count({
+        where: { mealServing: { registrationId: world.ownerRegistration.id } },
+      }),
+    ).resolves.toBe(1);
+  });
+
+  it('rejects an account disabled after resolve before confirm', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+    const resolved = await resolveFor(service, world);
+    await client.user.update({
+      where: { id: world.owner.id },
+      data: { isActive: false },
+    });
+
+    await expectCode(
+      service.confirm(
+        world.ownerActor,
+        {
+          sessionId: resolved.data.sessionId,
+          intentNonce: resolved.data.intentNonce!,
+          idempotencyKey: `disabled-${randomUUID()}`,
+          gps: gps(SERVING_TIME, { ageSeconds: 2 }),
+        },
+        SERVING_TIME,
+      ),
+      'INACTIVE_CHECKIN_SESSION',
+    );
+    await expect(
+      client.mealServing.count({ where: { registrationId: world.ownerRegistration.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      client.servingConfirmRequest.count({ where: { callerUserId: world.owner.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it('normalizes an unknown session before any FK-bearing idempotency insert', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+    const unknownSessionId = randomUUID();
+
+    await expectCode(
+      service.confirm(
+        world.ownerActor,
+        {
+          sessionId: unknownSessionId,
+          intentNonce: 'imeal-checkin-intent-v1.invalid.invalid',
+          idempotencyKey: `unknown-session-${randomUUID()}`,
+          gps: gps(SERVING_TIME, { ageSeconds: 2 }),
+        },
+        SERVING_TIME,
+      ),
+      'INACTIVE_CHECKIN_SESSION',
+    );
+    await expect(
+      client.servingConfirmRequest.count({ where: { callerUserId: world.owner.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it('marks only unchecked active registrations no-show at 13:45 and reports aggregate counts', async () => {
+    const client = trackedClient();
+    const world = await createWorld(client);
+    const service = createCheckInService(client);
+    const resolved = await resolveFor(service, world);
+    await service.confirm(
+      world.ownerActor,
+      {
+        sessionId: resolved.data.sessionId,
+        intentNonce: resolved.data.intentNonce!,
+        idempotencyKey: `no-show-race-${randomUUID()}`,
+        gps: gps(SERVING_TIME, { ageSeconds: 2 }),
+      },
+      SERVING_TIME,
+    );
+    const worker = await createNoShowWorker(client);
+    const workerResult = await worker.processNoShows(MEAL_DATE_KEY, {
+      force: true,
+      currentTime: NO_SHOW_TIME,
+    });
+
+    const ownerRegistration = await client.registration.findUniqueOrThrow({
+      where: { id: world.ownerRegistration.id },
+      include: { mealServing: true, penalties: true },
+    });
+    const secondRegistration = await client.registration.findUniqueOrThrow({
+      where: { id: world.secondRegistration.id },
+      include: { mealServing: true, penalties: true },
+    });
+    const dashboard = await service.getKitchenDashboard(
+      world.kitchenActor,
+      MEAL_DATE_KEY,
+      undefined,
+      NO_SHOW_TIME,
+    );
+
+    expect(workerResult.processedCount).toBe(1);
+    expect(ownerRegistration).toMatchObject({
+      status: 'ACTIVE',
+      mealServing: { id: expect.any(String) },
+      penalties: [],
+    });
+    expect(secondRegistration).toMatchObject({
+      status: 'NO_SHOW',
+      mealServing: null,
+      penalties: [expect.objectContaining({ reason: 'NO_SHOW' })],
+    });
+    expect(dashboard.data.counts).toEqual({
+      registered: 2,
+      checkedIn: 1,
+      pending: 0,
+      noShow: 1,
+      regular: 2,
+      vegetarian: 0,
+    });
   });
 });

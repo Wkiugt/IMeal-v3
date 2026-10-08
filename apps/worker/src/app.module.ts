@@ -3,7 +3,6 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { CutoffWorkerService } from './cutoff-worker.service.js';
-import { PickupWorkerService } from './pickup-worker.service.js';
 import { NoShowWorkerService } from './no-show-worker.service.js';
 import { WorkerNotificationPublisher } from './worker-notification-publisher.js';
 import { NotificationDispatchService } from './notification-dispatch.service.js';
@@ -11,9 +10,9 @@ import { NotificationReminderService } from './notification-reminder.service.js'
 import {
   OtpDeliveryWorker,
   WORKER_OTP_PROVIDER,
-  WorkerConfiguredOtpProvider,
   WorkerOtpOutboxService,
 } from './otp-delivery-worker.service.js';
+import { GmailSmtpOtpProvider } from './gmail-smtp-otp-provider.js';
 import {
   WORKER_METRICS_TRANSPORT_TOKEN,
   MetricsController,
@@ -72,9 +71,7 @@ function createWorkerMetricsSourceTransport(
   return createAuthoritativeSourceTransport(
     createAuthoritativeSourceResolver({
       registryUrl: registry.registryUrl,
-      ...(registry.bearerToken
-        ? { accessToken: registry.bearerToken }
-        : {}),
+      ...(registry.bearerToken ? { accessToken: registry.bearerToken } : {}),
       privateSource: true,
     }),
   );
@@ -176,17 +173,19 @@ function createWorkerMetricsSourceTransport(
     },
     AppService,
     CutoffWorkerService,
-    PickupWorkerService,
     NoShowWorkerService,
     WorkerNotificationPublisher,
     NotificationDispatchService,
     NotificationReminderService,
     WorkerOtpOutboxService,
-    WorkerConfiguredOtpProvider,
+    {
+      provide: GmailSmtpOtpProvider,
+      useFactory: () => new GmailSmtpOtpProvider(),
+    },
     OtpDeliveryWorker,
     {
       provide: WORKER_OTP_PROVIDER,
-      useExisting: WorkerConfiguredOtpProvider,
+      useExisting: GmailSmtpOtpProvider,
     },
   ],
 })

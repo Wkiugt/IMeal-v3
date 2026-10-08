@@ -18,7 +18,6 @@ const WORKER_JOBS = [
   'registration_reminder',
   'pickup_reminder',
   'cutoff_lock',
-  'pickup_session_cleanup',
   'no_show',
 ] as const;
 const SOURCE_BINDINGS: Record<string, string> = {

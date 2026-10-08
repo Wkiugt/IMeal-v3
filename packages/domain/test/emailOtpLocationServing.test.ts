@@ -36,6 +36,32 @@ async function connectTestClient() {
   return client;
 }
 
+async function readBusinessDate(): Promise<Date> {
+  const client = await connectTestClient();
+  try {
+    const result = await client.query<{ business_date: string }>(
+      `SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS business_date`,
+    );
+    if (result.rows.length !== 1) {
+      throw new Error('database did not return a business date');
+    }
+    const businessDate = new Date(`${result.rows[0].business_date}T00:00:00.000Z`);
+    if (!Number.isFinite(businessDate.getTime())) {
+      throw new Error(`database returned an invalid business date: ${result.rows[0].business_date}`);
+    }
+    return businessDate;
+  } finally {
+    await client.end();
+  }
+}
+
+function addDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+
 async function runBackfill() {
   const client = await connectTestClient();
   try {
@@ -57,7 +83,6 @@ async function runPreflight() {
     return report.rows as Array<{
       check_name: string;
       affected_count: number;
-      sample_ids: string[];
     }>;
   } finally {
     await client.end();
@@ -71,7 +96,10 @@ async function createUser(email: string) {
   return prisma.user.create({ data: { email, name: email.split('@')[0] } });
 }
 
-async function createLocation(shortCode: string) {
+async function createLocation(
+  shortCode: string,
+  effectiveFrom: Date = TEST_DATE,
+) {
   return prisma.location.create({
     data: {
       shortCode,
@@ -84,7 +112,7 @@ async function createLocation(shortCode: string) {
       localContact: 'Test contact',
       timeZone: 'Asia/Ho_Chi_Minh',
       isActive: true,
-      effectiveFrom: TEST_DATE,
+      effectiveFrom,
     },
   });
 }
@@ -427,9 +455,10 @@ describe('Task 2 persistence boundaries', () => {
       // transition is issued before the serving commit and must serialize
       // behind it rather than commit an invalid NO_SHOW + serving state.
       await servingClient.query('COMMIT');
-      await expect(transition).rejects.toThrow(
-        /registration_serving_consistency/,
-      );
+      await expect(transition).rejects.toMatchObject({
+        code: '23514',
+        constraint: 'registration_serving_consistency',
+      });
       await transitionClient.query('ROLLBACK');
 
       await expect(
@@ -451,10 +480,12 @@ describe('Task 2 persistence boundaries', () => {
 
 
   it('backfills_only_verified_evidence_and_is_idempotent', async () => {
-    const validDate = new Date('2026-10-01T00:00:00.000Z');
-    const ambiguousDate = new Date('2026-10-08T00:00:00.000Z');
-    const invalidDate = new Date('2026-10-15T00:00:00.000Z');
-    const absentDate = new Date('2026-10-22T00:00:00.000Z');
+    const businessDate = await readBusinessDate();
+    const validDate = addDays(businessDate, 7);
+    const ambiguousDate = addDays(validDate, 7);
+    const invalidDate = addDays(ambiguousDate, 7);
+    const absentDate = addDays(invalidDate, 7);
+    const duplicateDate = addDays(absentDate, 7);
     const createRevision = async (
       date: Date,
       endDate: Date,
@@ -473,7 +504,7 @@ describe('Task 2 persistence boundaries', () => {
 
     const validRevision = await createRevision(
       validDate,
-      new Date('2026-10-07T00:00:00.000Z'),
+      addDays(validDate, 6),
       JSON.stringify({
         revision: 1,
         mealName: '  Verified historical menu  ',
@@ -483,7 +514,7 @@ describe('Task 2 persistence boundaries', () => {
     );
     const ambiguousRevisionOne = await createRevision(
       ambiguousDate,
-      new Date('2026-10-14T00:00:00.000Z'),
+      addDays(ambiguousDate, 6),
       JSON.stringify({
         revision: 1,
         mealName: 'Ambiguous revision one',
@@ -504,12 +535,12 @@ describe('Task 2 persistence boundaries', () => {
     });
     const invalidRevision = await createRevision(
       invalidDate,
-      new Date('2026-10-21T00:00:00.000Z'),
+      addDays(invalidDate, 6),
       'legacy text without a verified structure',
     );
 
     const validUser = await createUser('backfill-valid@example.test');
-    const validLocation = await createLocation('BACKFILL');
+    const validLocation = await createLocation('BACKFILL', validDate);
     const validAssignment = await prisma.employeeLocationAssignment.create({
       data: {
         userId: validUser.id,
@@ -520,7 +551,7 @@ describe('Task 2 persistence boundaries', () => {
         role: 'staff',
         serviceLocationCode: validLocation.shortCode,
         locationId: validLocation.id,
-        effectiveFrom: TEST_DATE,
+        effectiveFrom: validDate,
       },
     });
     const mismatchUser = await createUser('backfill-mismatch@example.test');
@@ -535,7 +566,7 @@ describe('Task 2 persistence boundaries', () => {
           role: 'staff',
           serviceLocationCode: validLocation.shortCode,
           locationId: validLocation.id,
-          effectiveFrom: TEST_DATE,
+          effectiveFrom: validDate,
         },
       });
     const completeMismatchRegistration = await prisma.registration.create({
@@ -594,7 +625,7 @@ describe('Task 2 persistence boundaries', () => {
     const duplicatePenaltyRegistration = await prisma.registration.create({
       data: {
         userId: validUser.id,
-        mealDate: new Date('2026-10-23T00:00:00.000Z'),
+        mealDate: duplicateDate,
         status: 'ACTIVE',
       },
     });
@@ -617,17 +648,16 @@ describe('Task 2 persistence boundaries', () => {
       data: {
         userId: validUser.id,
         amount: 50000,
-        reason: `NO_SHOW_PENALTY_2026-10-23_${duplicatePenaltyRegistration.id}`,
+        reason: `NO_SHOW_PENALTY_${duplicateDate.toISOString().slice(0, 10)}_${duplicatePenaltyRegistration.id}`,
       },
     });
     const duplicatePenaltyTwo = await prisma.penalty.create({
       data: {
         userId: validUser.id,
         amount: 50000,
-        reason: `NO_SHOW_PENALTY_2026-10-23_${duplicatePenaltyRegistration.id}`,
+        reason: `NO_SHOW_PENALTY_${duplicateDate.toISOString().slice(0, 10)}_${duplicatePenaltyRegistration.id}`,
       },
     });
-
     const readStates = async () => ({
       registrations: await prisma.registration.findMany({
         where: {
@@ -680,11 +710,8 @@ describe('Task 2 persistence boundaries', () => {
     const futureActiveCheck = preflightReport.find(
       (check) => check.check_name === 'future_active_snapshot_incomplete',
     );
-    expect(futureActiveCheck?.affected_count).toBeGreaterThan(0);
-    expect(futureActiveCheck?.sample_ids).toContain(validRegistration.id);
-    expect(futureActiveCheck?.sample_ids).toContain(
-      completeMismatchRegistration.id,
-    );
+    const preflightAffectedCount = futureActiveCheck?.affected_count ?? 0;
+    expect(preflightAffectedCount).toBeGreaterThan(0);
 
     await runBackfill();
     const firstStates = await readStates();
@@ -695,8 +722,8 @@ describe('Task 2 persistence boundaries', () => {
     const postBackfillFutureActiveCheck = postBackfillReport.find(
       (check) => check.check_name === 'future_active_snapshot_incomplete',
     );
-    expect(postBackfillFutureActiveCheck?.sample_ids).not.toContain(
-      completeMismatchRegistration.id,
+    expect(postBackfillFutureActiveCheck?.affected_count).toBeLessThan(
+      preflightAffectedCount,
     );
 
     const validState = firstStates.registrations.find(

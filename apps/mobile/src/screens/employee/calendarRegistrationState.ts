@@ -1,4 +1,5 @@
 import type { v1 } from '@imeal/contracts';
+import type { TranslationKey } from '../../i18n/translations';
 
 export type MealChoice = v1.MealChoice;
 const REGULAR: MealChoice = 'REGULAR';
@@ -187,6 +188,58 @@ export function buildDirtyBatchPayload(
   return payload;
 }
 
+export function getCalendarReasonKey(
+  reason: v1.RegistrationDayUnavailableReason,
+): TranslationKey {
+  switch (reason) {
+    case 'HOLIDAY':
+      return 'calendar.reasonHoliday';
+    case 'DISABLED':
+      return 'calendar.reasonDisabled';
+    case 'NO_PUBLISHED_MENU':
+      return 'calendar.reasonNoPublishedMenu';
+    case 'LOCATION_UNAVAILABLE':
+      return 'calendar.reasonLocationUnavailable';
+    case 'LOCATION_AMBIGUOUS':
+      return 'calendar.reasonLocationAmbiguous';
+    case 'CUTOFF_PASSED':
+      return 'calendar.reasonCutoffPassed';
+    case 'REGISTRATION_FINALIZED':
+      return 'calendar.reasonFinalized';
+    case 'ALREADY_ACTIVE':
+      return 'calendar.reasonAlreadyActive';
+    case 'NOT_ACTIVE':
+      return 'calendar.reasonNotActive';
+    case 'NO_ALTERNATIVE_MEAL_CHOICE':
+      return 'calendar.reasonNoAlternativeMealChoice';
+    case 'REGISTRATION_WEEK_NOT_OPEN':
+      return 'calendar.reasonWeekNotOpen';
+    case 'OUTSIDE_REGISTRATION_WINDOW':
+      return 'calendar.reasonOutsideRegistrationWindow';
+  }
+}
+
+export function getCalendarFailureKey(
+  code: v1.RegistrationFailureCode,
+): TranslationKey {
+  switch (code) {
+    case 'CUTOFF_PASSED':
+      return 'calendar.reasonCutoffPassed';
+    case 'MEAL_CHOICE_UNAVAILABLE':
+      return 'calendar.reasonNoAlternativeMealChoice';
+    case 'REGISTRATION_FINALIZED':
+      return 'calendar.reasonFinalized';
+    case 'INVALID_MEAL_DATE':
+      return 'calendar.reasonInvalidDate';
+    case 'REGISTRATION_FAILED':
+      return 'calendar.reasonRegistrationFailed';
+    case 'REGISTRATION_WEEK_NOT_OPEN':
+      return 'calendar.reasonWeekNotOpen';
+    case 'OUTSIDE_REGISTRATION_WINDOW':
+      return 'calendar.reasonOutsideRegistrationWindow';
+  }
+}
+
 export function isDateSelectable(
   day: CalendarDayAvailability,
   nowAt: number,
@@ -232,6 +285,7 @@ export function isMealChoiceChangeAllowed(
     day.canChangeMealChoice && Number.isFinite(cutoffAt) && nowAt < cutoffAt
   );
 }
+
 export function isDateSelectAllEligible(
   serverDay: CalendarDayState | undefined,
   day: CalendarDayAvailability,

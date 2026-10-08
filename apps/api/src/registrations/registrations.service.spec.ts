@@ -1,31 +1,29 @@
 import { BadRequestException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { v1 } from '@imeal/contracts';
-import { NotificationsService } from '../notifications/notifications.service.js';
 import { PrismaService } from '../common/prisma.service.js';
 import { RegistrationsService } from './registrations.service.js';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 const txMock = {
   $queryRaw: vi.fn(),
-  dailyMenu: { findFirst: vi.fn() },
+  $executeRaw: vi.fn(),
   dailyMenuRevision: { findMany: vi.fn() },
+  dailyMenu: { findFirst: vi.fn() },
   employeeLocationAssignment: { findMany: vi.fn() },
   location: { findFirst: vi.fn() },
+  user: { findUnique: vi.fn() },
   registration: {
     findUnique: vi.fn(),
     update: vi.fn(),
     create: vi.fn(),
   },
-  pickupDelegation: { findMany: vi.fn(), update: vi.fn() },
   auditLog: { create: vi.fn() },
-  notification: { upsert: vi.fn() },
-  outboxEvent: { upsert: vi.fn(), create: vi.fn() },
 };
 
 const prismaMock = {
   appSetting: { findUnique: vi.fn() },
   weeklyMenu: { findFirst: vi.fn() },
-  registration: { findMany: vi.fn() },
+  registration: { findMany: vi.fn(), count: vi.fn() },
   employeeLocationAssignment: { findMany: vi.fn() },
   $transaction: vi.fn(),
 };
@@ -43,25 +41,16 @@ const completeRegistrationSnapshot = {
   serviceLocationName: 'Main Hall',
   serviceLocationAddress: '1 Main Street',
   serviceLocationEffectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
-  serviceLocationSnapshotAt: new Date('2026-09-03T07:00:00.000Z'),
-  registeredAt: new Date('2026-09-03T07:00:00.000Z'),
+  serviceLocationSnapshotAt: new Date('2026-09-20T03:00:00.000Z'),
+  registeredAt: new Date('2026-09-20T03:00:00.000Z'),
 };
 
-vi.mock('@prisma/client', () => ({
-  PrismaClient: class {
-    constructor() {
-      return prismaMock;
-    }
-  },
-}));
 
 function createService(
-  notificationsService?: NotificationsService,
   kitchenEventsService?: KitchenEventsService,
 ): RegistrationsService {
   return new RegistrationsService(
-    new PrismaService(),
-    notificationsService,
+    prismaMock as unknown as PrismaService,
     kitchenEventsService,
   );
 }
@@ -70,23 +59,16 @@ describe('RegistrationsService', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.resetAllMocks();
-    prismaMock.appSetting.findUnique.mockResolvedValue({ value: '14:00' });
     prismaMock.weeklyMenu.findFirst.mockResolvedValue(null);
     prismaMock.registration.findMany.mockResolvedValue([]);
+    prismaMock.registration.count.mockResolvedValue(0);
     prismaMock.employeeLocationAssignment.findMany.mockResolvedValue([]);
     prismaMock.$transaction.mockImplementation(async (callback) =>
       callback(txMock),
     );
     txMock.$queryRaw.mockResolvedValue([]);
-    txMock.pickupDelegation.findMany.mockResolvedValue([]);
     txMock.registration.update.mockResolvedValue({});
     txMock.registration.create.mockResolvedValue({});
-    txMock.pickupDelegation.update.mockResolvedValue({});
-    txMock.auditLog.create.mockResolvedValue({});
-    txMock.notification.upsert.mockResolvedValue({
-      id: '55555555-5555-4555-8555-555555555555',
-    });
-    txMock.outboxEvent.upsert.mockResolvedValue({});
     txMock.dailyMenu.findFirst.mockResolvedValue({ id: 'daily-menu-1' });
     txMock.dailyMenuRevision.findMany.mockResolvedValue([
       {
@@ -97,6 +79,8 @@ describe('RegistrationsService', () => {
         imageUrl: 'https://example.test/lunch.jpg',
       },
     ]);
+    txMock.user.findUnique.mockResolvedValue({ id: 'user-1', isActive: true });
+    txMock.auditLog.create.mockResolvedValue({ id: 'audit-1' });
     txMock.employeeLocationAssignment.findMany.mockResolvedValue([
       {
         id: 'assignment-1',
@@ -155,8 +139,180 @@ describe('RegistrationsService', () => {
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
   });
 
+  it('rechecks the owner account after registration lock before creating', async () => {
+    vi.setSystemTime(new Date('2026-09-04T06:59:59.000Z'));
+    txMock.registration.findUnique.mockResolvedValue(null);
+    txMock.user.findUnique.mockResolvedValue({ id: 'user-1', isActive: false });
+
+    await expect(
+      createService().batchRegister('user-1', [
+        { mealDate: '2026-09-05', status: 'ACTIVE', mealChoice: 'REGULAR' },
+      ]),
+    ).resolves.toEqual([
+      {
+        date: '2026-09-05',
+        success: false,
+        code: 'REGISTRATION_FAILED',
+        reason: 'Account is disabled.',
+      },
+    ]);
+    expect(txMock.registration.create).not.toHaveBeenCalled();
+  });
+
+  it('returns per-date weekly restrictions while preserving eligible partial success', async () => {
+    vi.setSystemTime(new Date('2026-09-04T03:00:00.000Z'));
+    txMock.registration.findUnique.mockResolvedValue(null);
+
+    await expect(
+      createService().batchRegister('user-1', [
+        { mealDate: '2026-09-06', status: 'ACTIVE', mealChoice: 'REGULAR' },
+        { mealDate: '2026-09-07', status: 'ACTIVE', mealChoice: 'REGULAR' },
+        { mealDate: '2026-09-14', status: 'ACTIVE', mealChoice: 'REGULAR' },
+      ]),
+    ).resolves.toEqual([
+      { date: '2026-09-06', success: true },
+      {
+        date: '2026-09-07',
+        success: false,
+        code: 'REGISTRATION_WEEK_NOT_OPEN',
+        reason: 'Registration week is not open',
+      },
+      {
+        date: '2026-09-14',
+        success: false,
+        code: 'OUTSIDE_REGISTRATION_WINDOW',
+        reason: 'Date is outside the registration window',
+      },
+    ]);
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens next week at exactly Saturday 17:00 before its per-meal cutoff', async () => {
+    vi.setSystemTime(new Date('2026-09-05T10:00:00.000Z'));
+    prismaMock.appSetting.findUnique.mockResolvedValue({
+      value: '18:00',
+      version: 1,
+    });
+    txMock.registration.findUnique.mockResolvedValue(null);
+
+    await expect(
+      createService().batchRegister('user-1', [
+        { mealDate: '2026-09-06', status: 'ACTIVE', mealChoice: 'REGULAR' },
+        { mealDate: '2026-09-13', status: 'ACTIVE', mealChoice: 'REGULAR' },
+        { mealDate: '2026-09-14', status: 'ACTIVE', mealChoice: 'REGULAR' },
+      ]),
+    ).resolves.toEqual([
+      { date: '2026-09-06', success: true },
+      { date: '2026-09-13', success: true },
+      {
+        date: '2026-09-14',
+        success: false,
+        code: 'OUTSIDE_REGISTRATION_WINDOW',
+        reason: 'Date is outside the registration window',
+      },
+    ]);
+  });
+
+  it.each([
+    ['current week', '2026-09-04T03:00:00.000Z', '2026-08-31', 5, true, null],
+    [
+      'closed next week',
+      '2026-09-04T03:00:00.000Z',
+      '2026-09-07',
+      0,
+      false,
+      'REGISTRATION_WEEK_NOT_OPEN',
+    ],
+    [
+      'open next week at the boundary',
+      '2026-09-05T10:00:00.000Z',
+      '2026-09-07',
+      0,
+      true,
+      null,
+    ],
+    [
+      'outside plus two weeks',
+      '2026-09-05T10:00:00.000Z',
+      '2026-09-14',
+      0,
+      false,
+      'OUTSIDE_REGISTRATION_WINDOW',
+    ],
+  ] as const)(
+    'keeps the %s week readable with weekly editability',
+    async (
+      _label,
+      instant,
+      weekStart,
+      dayIndex,
+      expectedEditable,
+      expectedReason,
+    ) => {
+      vi.setSystemTime(new Date(instant));
+      const response = await createService().getWeekData('user-1', weekStart);
+      expect(response.registrationWindow.days[dayIndex].editable).toBe(
+        expectedEditable,
+      );
+      const reasons = response.days[dayIndex].unavailableReasons.activate;
+      if (expectedReason) {
+        expect(reasons).toContain(expectedReason);
+      } else {
+        expect(reasons).not.toContain('REGISTRATION_WEEK_NOT_OPEN');
+        expect(reasons).not.toContain('OUTSIDE_REGISTRATION_WINDOW');
+      }
+    },
+  );
+
+  it('locks every action on a weekly-closed finalized registration while retaining reasons', async () => {
+    vi.setSystemTime(new Date('2026-09-04T03:00:00.000Z'));
+    prismaMock.registration.findMany.mockResolvedValue([
+      {
+        id: 'registration-closed-week',
+        mealDate: new Date('2026-09-07T00:00:00.000Z'),
+        status: 'ACTIVE',
+        mealChoice: 'REGULAR',
+        menuRevisionId: 'revision-1',
+        mealServing: { id: 'serving-1' },
+        penalties: [],
+        delegations: [],
+        serviceLocationId: 'location-1',
+        serviceLocationCode: 'LOC-A',
+        serviceLocationName: 'Main Hall',
+        serviceLocationAddress: '1 Main Street',
+      },
+    ]);
+
+    const response = await createService().getWeekData('user-1', '2026-09-07');
+
+    expect(response.registrationWindow.days[0].editable).toBe(false);
+    expect(response.days[0]).toMatchObject({
+      canActivate: false,
+      canCancel: false,
+      canChangeMealChoice: false,
+      unavailableReasons: {
+        activate: ['REGISTRATION_FINALIZED', 'REGISTRATION_WEEK_NOT_OPEN'],
+        cancel: ['REGISTRATION_FINALIZED', 'REGISTRATION_WEEK_NOT_OPEN'],
+        changeMealChoice: [
+          'REGISTRATION_FINALIZED',
+          'REGISTRATION_WEEK_NOT_OPEN',
+        ],
+      },
+    });
+  });
+
+  it('exposes the next-week opening instant from the server weekly window', async () => {
+    vi.setSystemTime(new Date('2026-09-05T10:00:00.000Z'));
+
+    const response = await createService().getWeekData('user-1', '2026-09-07');
+
+    expect(response.registrationWindow.nextWeekOpenAt).toBe(
+      '2026-09-05T10:00:00.000Z',
+    );
+  });
+
   it('publishes seven authoritative days with lunar choices and UTC dates', async () => {
-    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T06:00:00.000Z'));
     prismaMock.registration.findMany.mockResolvedValue([
       {
         id: 'registration-1',
@@ -183,7 +339,8 @@ describe('RegistrationsService', () => {
         },
       ],
       registrationWindow: {
-        serverNow: '2026-09-04T07:00:00.000Z',
+        serverNow: '2026-09-20T06:00:00.000Z',
+        nextWeekOpenAt: '2026-09-19T10:00:00.000Z',
         cutoffAt: '2026-09-20T07:00:00.000Z',
         timeZone: 'Asia/Ho_Chi_Minh',
       },
@@ -222,7 +379,7 @@ describe('RegistrationsService', () => {
     expect(response.registrations[0].mealDate).not.toBeInstanceOf(Date);
   });
   it('projects an existing serving as SERVED in legacy and presentation rows', async () => {
-    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T06:00:00.000Z'));
     prismaMock.registration.findMany.mockResolvedValue([
       {
         id: 'registration-1',
@@ -256,7 +413,7 @@ describe('RegistrationsService', () => {
   });
 
   it('does not expose an unpublished weekly menu in the response', async () => {
-    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T06:00:00.000Z'));
     const draftMenu = {
       id: 'draft-week',
       startDate: new Date('2026-09-21T00:00:00.000Z'),
@@ -296,7 +453,7 @@ describe('RegistrationsService', () => {
   });
 
   it('exposes effective roster location and activation availability for an empty day', async () => {
-    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T06:00:00.000Z'));
     prismaMock.weeklyMenu.findFirst.mockResolvedValue({
       id: 'week-1',
       startDate: new Date('2026-09-21T00:00:00.000Z'),
@@ -374,7 +531,7 @@ describe('RegistrationsService', () => {
   });
 
   it('keeps registration snapshots while resolving effective locations per date', async () => {
-    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T06:00:00.000Z'));
     const mealDates = Array.from(
       { length: 7 },
       (_, index) => `2026-09-${String(21 + index).padStart(2, '0')}`,
@@ -582,7 +739,7 @@ describe('RegistrationsService', () => {
   ])(
     'does not advertise activation with $title',
     async ({ employeeName, locationPatch }) => {
-      vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+      vi.setSystemTime(new Date('2026-09-20T06:00:00.000Z'));
       prismaMock.weeklyMenu.findFirst.mockResolvedValue({
         id: 'week-1',
         startDate: new Date('2026-09-21T00:00:00.000Z'),
@@ -650,7 +807,7 @@ describe('RegistrationsService', () => {
   );
 
   it('reports holiday, disabled, and missing-menu activation reasons separately', async () => {
-    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T06:00:00.000Z'));
     const menuDay = (
       id: string,
       date: string,
@@ -728,7 +885,7 @@ describe('RegistrationsService', () => {
   });
 
   it('serializes menu dates before strict week response parsing', async () => {
-    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T06:00:00.000Z'));
     prismaMock.weeklyMenu.findFirst.mockResolvedValue({
       id: 'week-1',
       startDate: new Date('2026-09-21T00:00:00.000Z'),
@@ -775,7 +932,7 @@ describe('RegistrationsService', () => {
   });
 
   it('maps current menu revisions and registration revision ids in the week response', async () => {
-    vi.setSystemTime(new Date('2026-09-04T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T06:00:00.000Z'));
     prismaMock.weeklyMenu.findFirst.mockResolvedValue({
       id: 'week-1',
       startDate: new Date('2026-09-21T00:00:00.000Z'),
@@ -845,7 +1002,7 @@ describe('RegistrationsService', () => {
   });
 
   it('returns ordered partial results and rejects vegetarian meals on ordinary days', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue(null);
     const service = createService();
 
@@ -885,7 +1042,7 @@ describe('RegistrationsService', () => {
   });
 
   it('creates a regular registration with version one', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue(null);
     const service = createService();
 
@@ -910,7 +1067,7 @@ describe('RegistrationsService', () => {
     });
   });
   it('requires the published menu resolution to exclude holidays', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue(null);
     txMock.dailyMenu.findFirst.mockImplementation(
       async (options: { where?: { isHoliday?: boolean } }) =>
@@ -937,7 +1094,7 @@ describe('RegistrationsService', () => {
   });
 
   it('cancels an active registration without menu or location authority', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue({
       id: 'registration-1',
       status: 'ACTIVE',
@@ -959,7 +1116,7 @@ describe('RegistrationsService', () => {
       data: {
         status: 'CANCELLED',
         version: { increment: 1 },
-        cancelledAt: new Date('2026-09-03T07:00:00.000Z'),
+        cancelledAt: new Date('2026-09-20T03:00:00.000Z'),
         cancelReason: 'REGISTRATION_CANCELLED',
         cancelledByUserId: 'user-1',
       },
@@ -967,7 +1124,7 @@ describe('RegistrationsService', () => {
   });
 
   it('changes an active meal choice without resolving fresh menu or location authority', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue({
       id: 'registration-1',
       status: 'ACTIVE',
@@ -998,7 +1155,7 @@ describe('RegistrationsService', () => {
   });
 
   it('requires fresh effective authority when reactivating a cancelled registration', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue({
       id: 'registration-1',
       status: 'CANCELLED',
@@ -1034,7 +1191,7 @@ describe('RegistrationsService', () => {
   });
 
   it('rejects registration when the published menu revision is missing', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue(null);
     txMock.dailyMenuRevision.findMany.mockResolvedValue([]);
     const service = createService();
@@ -1055,7 +1212,7 @@ describe('RegistrationsService', () => {
   });
 
   it('rejects registration when effective location assignment authority is ambiguous', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue(null);
     txMock.employeeLocationAssignment.findMany.mockResolvedValue([
       {
@@ -1088,7 +1245,7 @@ describe('RegistrationsService', () => {
     expect(txMock.location.findFirst).not.toHaveBeenCalled();
   });
   it('retries a raced first registration create as an idempotent no-op', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
@@ -1115,7 +1272,7 @@ describe('RegistrationsService', () => {
   });
 
   it('does not write when an active registration keeps the same choice', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue({
       id: 'registration-1',
       status: 'ACTIVE',
@@ -1139,7 +1296,7 @@ describe('RegistrationsService', () => {
   });
 
   it('updates an active registration choice and increments its version', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue({
       id: 'registration-1',
       status: 'ACTIVE',
@@ -1165,7 +1322,7 @@ describe('RegistrationsService', () => {
   });
 
   it('reactivates a cancelled registration with the requested choice', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue({
       id: 'registration-1',
       status: 'CANCELLED',
@@ -1190,7 +1347,7 @@ describe('RegistrationsService', () => {
         status: 'ACTIVE',
         mealChoice: 'VEGETARIAN',
         version: { increment: 1 },
-        registeredAt: new Date('2026-09-03T07:00:00.000Z'),
+        registeredAt: new Date('2026-09-20T03:00:00.000Z'),
         cancelledAt: null,
         cancelReason: null,
         cancelledByUserId: null,
@@ -1199,7 +1356,7 @@ describe('RegistrationsService', () => {
   });
 
   it('rejects reactivation when a serving or penalty already exists', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue({
       id: 'registration-1',
       status: 'CANCELLED',
@@ -1225,54 +1382,8 @@ describe('RegistrationsService', () => {
     expect(txMock.dailyMenu.findFirst).not.toHaveBeenCalled();
   });
 
-  it('cancels active registrations and revokes delegations transactionally', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
-    txMock.registration.findUnique.mockResolvedValue({
-      id: 'registration-1',
-      status: 'ACTIVE',
-      mealChoice: 'REGULAR',
-      user: { name: 'Owner', email: 'owner@example.com' },
-      delegations: [
-        {
-          id: 'delegation-1',
-          delegateUserId: 'delegate-1',
-          status: 'PENDING',
-        },
-      ],
-    });
-    txMock.pickupDelegation.findMany.mockResolvedValueOnce([
-      {
-        id: 'delegation-1',
-        delegateUserId: 'delegate-1',
-        status: 'PENDING',
-      },
-    ]);
-    const service = createService();
-
-    await expect(
-      service.batchRegister('user-1', [
-        { mealDate: '2026-09-24', status: 'CANCELLED' },
-      ]),
-    ).resolves.toEqual([{ date: '2026-09-24', success: true }]);
-    expect(txMock.registration.update).toHaveBeenCalledWith({
-      where: { id: 'registration-1' },
-      data: {
-        status: 'CANCELLED',
-        version: { increment: 1 },
-        cancelledAt: new Date('2026-09-03T07:00:00.000Z'),
-        cancelReason: 'REGISTRATION_CANCELLED',
-        cancelledByUserId: 'user-1',
-      },
-    });
-    expect(txMock.pickupDelegation.update).toHaveBeenCalledWith({
-      where: { id: 'delegation-1' },
-      data: { status: 'REVOKED' },
-    });
-    expect(txMock.notification.upsert).toHaveBeenCalled();
-    expect(txMock.outboxEvent.create).not.toHaveBeenCalled();
-  });
   it('emits cancellation lifecycle events only after the transaction commits', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue({
       id: 'registration-1',
       status: 'ACTIVE',
@@ -1290,7 +1401,7 @@ describe('RegistrationsService', () => {
       return result;
     });
 
-    const result = await createService(undefined, eventsService).batchRegister(
+    const result = await createService(eventsService).batchRegister(
       'user-1',
       [{ mealDate: '2026-09-24', status: 'CANCELLED' }],
     );
@@ -1306,7 +1417,7 @@ describe('RegistrationsService', () => {
   });
 
   it('emits reactivation lifecycle events with the committed audit identity', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockResolvedValue({
       id: 'registration-1',
       status: 'CANCELLED',
@@ -1317,7 +1428,7 @@ describe('RegistrationsService', () => {
     const eventsService = new KitchenEventsService();
     const emitEvent = vi.spyOn(eventsService, 'emitEvent');
 
-    await createService(undefined, eventsService).batchRegister('user-1', [
+    await createService(eventsService).batchRegister('user-1', [
       {
         mealDate: '2026-09-25',
         status: 'ACTIVE',
@@ -1338,42 +1449,9 @@ describe('RegistrationsService', () => {
     });
   });
 
-  it('registration_changed_event_is_not_visible_when_registration_transaction_rolls_back', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
-    txMock.registration.findUnique.mockResolvedValue({
-      id: 'registration-1',
-      status: 'ACTIVE',
-      mealChoice: 'REGULAR',
-      user: { name: 'Owner', email: 'owner@example.com' },
-      delegations: [{ id: 'delegation-1', delegateUserId: 'delegate-1' }],
-    });
-    txMock.pickupDelegation.findMany.mockResolvedValueOnce([
-      { id: 'delegation-1', delegateUserId: 'delegate-1', status: 'PENDING' },
-    ]);
-    txMock.auditLog.create.mockResolvedValueOnce({ id: 'audit-rollback' });
-    const publishError = new Error('notification write failed');
-    const notifications = new NotificationsService(new PrismaService());
-    vi.spyOn(notifications, 'publish').mockRejectedValueOnce(publishError);
-    const eventsService = new KitchenEventsService();
-    const emitEvent = vi.spyOn(eventsService, 'emitEvent');
-
-    await expect(
-      createService(notifications, eventsService).batchRegister('user-1', [
-        { mealDate: '2026-09-24', status: 'CANCELLED' },
-      ]),
-    ).resolves.toEqual([
-      {
-        date: '2026-09-24',
-        success: false,
-        code: 'REGISTRATION_FAILED',
-        reason: 'notification write failed',
-      },
-    ]);
-    expect(emitEvent).not.toHaveBeenCalled();
-  });
 
   it('makes cancellation of missing or already cancelled registrations idempotent', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
@@ -1399,7 +1477,7 @@ describe('RegistrationsService', () => {
   it.each(['SERVED', 'NO_SHOW'])(
     'does not mutate a finalized %s registration before cutoff',
     async (status) => {
-      vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+      vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
       txMock.registration.findUnique.mockResolvedValue({
         id: 'registration-1',
         status,
@@ -1481,7 +1559,7 @@ describe('RegistrationsService', () => {
   });
 
   it('returns REGISTRATION_FAILED when an item transaction fails', async () => {
-    vi.setSystemTime(new Date('2026-09-03T07:00:00.000Z'));
+    vi.setSystemTime(new Date('2026-09-20T03:00:00.000Z'));
     txMock.registration.findUnique.mockRejectedValue(
       new Error('database down'),
     );
@@ -1503,6 +1581,183 @@ describe('RegistrationsService', () => {
         reason: 'database down',
       },
     ]);
+  });
+
+  it('returns owner-scoped historical registrations with deterministic order and projections', async () => {
+    vi.setSystemTime(new Date('2026-09-30T12:00:00.000Z'));
+    const makeRow = (
+      id: string,
+      userId: string,
+      mealDate: string,
+      status: string,
+      mealServing: { servedAt: Date } | null = null,
+    ) => ({
+      id,
+      userId,
+      mealDate: new Date(`${mealDate}T00:00:00.000Z`),
+      status,
+      mealChoice: 'REGULAR',
+      menuRevisionId: id === 'legacy-cancelled' ? null : 'revision-1',
+      menuNameSnapshot: id === 'legacy-cancelled' ? null : 'Lunch',
+      menuDescriptionSnapshot: null,
+      menuImageSnapshot: null,
+      serviceLocationId: id === 'legacy-cancelled' ? null : 'location-1',
+      serviceLocationAssignmentId:
+        id === 'legacy-cancelled' ? null : 'assignment-1',
+      serviceLocationCode: id === 'legacy-cancelled' ? null : 'LOC-A',
+      serviceLocationName: id === 'legacy-cancelled' ? null : 'Main Hall',
+      serviceLocationAddress:
+        id === 'legacy-cancelled' ? null : '1 Main Street',
+      serviceLocationEffectiveFrom:
+        id === 'legacy-cancelled' ? null : new Date('2026-01-01T00:00:00.000Z'),
+      serviceLocationSnapshotAt:
+        id === 'legacy-cancelled' ? null : new Date('2026-09-30T00:00:00.000Z'),
+      registeredAt: new Date('2026-09-29T00:00:00.000Z'),
+      cancelledAt: status === 'CANCELLED' ? new Date() : null,
+      noShowAt: status === 'NO_SHOW' ? new Date() : null,
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-30T00:00:00.000Z'),
+      mealServing,
+      penalties: [
+        {
+          id: `${id}-owner-penalty`,
+          userId,
+          amount: 50000,
+          status: 'PENDING',
+          createdAt: new Date('2026-10-01T00:00:00.000Z'),
+          paidAt: null,
+          waivedAt: null,
+        },
+        {
+          id: `${id}-foreign-penalty`,
+          userId: 'other-user',
+          amount: 99999,
+          status: 'PAID',
+          createdAt: new Date('2026-10-02T00:00:00.000Z'),
+          paidAt: new Date('2026-10-03T00:00:00.000Z'),
+          waivedAt: null,
+        },
+      ],
+    });
+    const rows = [
+      makeRow('served', 'user-1', '2026-09-30', 'ACTIVE', {
+        servedAt: new Date('2026-09-30T05:30:00.000Z'),
+      }),
+      makeRow('no-show', 'user-1', '2026-09-29', 'NO_SHOW'),
+      makeRow('legacy-cancelled', 'user-1', '2026-09-28', 'CANCELLED'),
+      makeRow('future', 'user-1', '2026-10-01', 'ACTIVE'),
+      makeRow('foreign', 'other-user', '2026-09-30', 'ACTIVE'),
+    ];
+    const filteredRows = (where: {
+      userId?: string;
+      mealDate?: { lte?: Date; gte?: Date };
+    }) =>
+      rows.filter(
+        (row) =>
+          row.userId === where.userId &&
+          (!where.mealDate?.lte || row.mealDate <= where.mealDate.lte) &&
+          (!where.mealDate?.gte || row.mealDate >= where.mealDate.gte),
+      );
+    prismaMock.registration.findMany.mockImplementation(async (args) =>
+      filteredRows(args.where)
+        .sort(
+          (left, right) =>
+            right.mealDate.getTime() - left.mealDate.getTime() ||
+            right.id.localeCompare(left.id),
+        )
+        .slice(args.skip, args.skip + args.take),
+    );
+    prismaMock.registration.count.mockImplementation(
+      async ({ where }) => filteredRows(where).length,
+    );
+
+    const result = await createService().getHistory('user-1', {
+      page: 1,
+      limit: 20,
+    });
+
+    expect(result.data.map((item) => item.id)).toEqual([
+      'served',
+      'no-show',
+      'legacy-cancelled',
+    ]);
+    expect(result.data[0]?.status).toBe('SERVED');
+    expect(result.data[0]?.servedAt).toBe('2026-09-30T05:30:00.000Z');
+    expect(result.data[0]?.penalties).toHaveLength(1);
+    expect(result.data[0]?.penalties[0]?.id).toBe('served-owner-penalty');
+    expect(result.data[2]?.menuNameSnapshot).toBeNull();
+    expect(result.meta.pagination).toEqual({
+      page: 1,
+      limit: 20,
+      total: 3,
+      totalPages: 1,
+      hasNextPage: false,
+    });
+  });
+
+  it('counts stats from the selected business month with one lifecycle projection', async () => {
+    vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
+    const rows = [
+      {
+        userId: 'user-1',
+        mealDate: new Date('2026-09-05T00:00:00.000Z'),
+        status: 'ACTIVE',
+        mealServing: null,
+      },
+      {
+        userId: 'user-1',
+        mealDate: new Date('2026-09-06T00:00:00.000Z'),
+        status: 'ACTIVE',
+        mealServing: { id: 'serving-1' },
+      },
+      {
+        userId: 'user-1',
+        mealDate: new Date('2026-09-07T00:00:00.000Z'),
+        status: 'NO_SHOW',
+        mealServing: null,
+      },
+      {
+        userId: 'user-1',
+        mealDate: new Date('2026-09-08T00:00:00.000Z'),
+        status: 'CANCELLED',
+        mealServing: null,
+      },
+      {
+        userId: 'user-1',
+        mealDate: new Date('2026-09-30T00:00:00.000Z'),
+        status: 'ACTIVE',
+        mealServing: null,
+      },
+      {
+        userId: 'other-user',
+        mealDate: new Date('2026-09-05T00:00:00.000Z'),
+        status: 'ACTIVE',
+        mealServing: null,
+      },
+    ];
+    prismaMock.registration.findMany.mockImplementation(async ({ where }) =>
+      rows.filter(
+        (row) =>
+          row.userId === where.userId &&
+          row.mealDate >= where.mealDate.gte &&
+          row.mealDate <= where.mealDate.lte,
+      ),
+    );
+
+    await expect(createService().getStats('user-1', {})).resolves.toEqual({
+      data: {
+        period: {
+          month: '2026-09',
+          startDate: '2026-09-01',
+          endDate: '2026-09-30',
+        },
+        booked: 4,
+        enjoyed: 1,
+      },
+    });
+    await expect(
+      createService().getStats('user-1', { month: '2026-13' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('uses a BadRequestException for malformed week starts', async () => {

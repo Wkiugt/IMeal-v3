@@ -1,6 +1,6 @@
 import { toZonedTime } from 'date-fns-tz';
-import { Prisma } from '@prisma/client';
-import { prisma } from './db';
+import { Prisma } from './prisma.js';
+import { prisma } from './db.js';
 
 const VN_TIMEZONE = 'Asia/Ho_Chi_Minh';
 
@@ -67,7 +67,9 @@ export class RegistrationService {
       isActive: true,
       AND: [
         {
-          OR: normalizedEmail ? [{ userId }, { normalizedEmail }] : [{ userId }],
+          OR: normalizedEmail
+            ? [{ userId }, { normalizedEmail }]
+            : [{ userId }],
         },
         { effectiveFrom: { lte: targetDate } },
         {
@@ -99,62 +101,6 @@ export class RegistrationService {
     return result;
   }
 
-  static async disableUserAccount(
-    userId: string,
-    currentTime: Date,
-    actorUserId = userId,
-    db: typeof prisma = prisma,
-  ) {
-    const vnCurrent = toZonedTime(currentTime, VN_TIMEZONE);
-    const businessDate = new Date(
-      Date.UTC(
-        vnCurrent.getFullYear(),
-        vnCurrent.getMonth(),
-        vnCurrent.getDate(),
-      ),
-    );
-
-    return db.$transaction(async (tx) => {
-      const registrations = await tx.$queryRaw<Array<{ id: string }>>`
-        SELECT id
-        FROM registrations
-        WHERE user_id = ${userId}
-          AND meal_date >= ${businessDate}
-          AND status = 'ACTIVE'
-        ORDER BY meal_date ASC, id ASC
-        FOR UPDATE
-      `;
-      const user = await tx.user.findUnique({
-        where: { id: userId },
-        select: { id: true },
-      });
-      if (!user) throw new Error('Not found');
-
-      await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
-      await tx.user.update({
-        where: { id: userId },
-        data: { isActive: false },
-      });
-
-      const cancelledRegistrationIds: string[] = [];
-      for (const registration of registrations) {
-        const cancelled = await this.transitionRegistrationToCancelled(
-          tx,
-          registration.id,
-          currentTime,
-          {
-            actorUserId,
-            cancelReason: 'ACCOUNT_DISABLED',
-            enforceCutoff: false,
-            skipFinalized: true,
-          },
-        );
-        if (cancelled) cancelledRegistrationIds.push(cancelled.id);
-      }
-      return cancelledRegistrationIds;
-    });
-  }
-
   private static async transitionRegistrationToCancelled(
     tx: Prisma.TransactionClient,
     registrationId: string,
@@ -170,7 +116,6 @@ export class RegistrationService {
     const currentReg = await tx.registration.findUnique({
       where: { id: registrationId },
       include: {
-        user: { select: { name: true, email: true } },
         mealServing: { select: { id: true } },
         penalties: { select: { id: true } },
       },
@@ -187,7 +132,10 @@ export class RegistrationService {
       if (options.skipFinalized) return null;
       throw new Error('Cannot cancel this registration');
     }
-    if (options.enforceCutoff && !this.isAllowed(currentReg.mealDate, currentTime)) {
+    if (
+      options.enforceCutoff &&
+      !this.isAllowed(currentReg.mealDate, currentTime)
+    ) {
       throw new Error('Cutoff time has passed for this meal date.');
     }
 
@@ -203,66 +151,6 @@ export class RegistrationService {
       },
     });
 
-    const activeDelegations = await tx.pickupDelegation.findMany({
-      where: {
-        registrationId,
-        status: { in: ['PENDING', 'ACCEPTED'] },
-      },
-      orderBy: { id: 'asc' },
-      select: { id: true, delegateUserId: true },
-    });
-    const counterpartName =
-      currentReg.user.name?.trim() ||
-      currentReg.user.email?.trim() ||
-      'nhân viên';
-    for (const delegation of activeDelegations) {
-      await tx.pickupDelegation.update({
-        where: { id: delegation.id },
-        data: { status: 'REVOKED' },
-      });
-      await tx.auditLog.create({
-        data: {
-          userId: actorUserId,
-          action: 'delegation_revoked',
-          details: `Delegation ${delegation.id} revoked because registration ${registrationId} was cancelled with reason ${options.cancelReason}`,
-        },
-      });
-
-      const mealDate = currentReg.mealDate.toISOString().slice(0, 10);
-      const notification = await tx.notification.upsert({
-        where: {
-          dedupeKey: `delegation-revoked:${delegation.delegateUserId}:${delegation.id}`,
-        },
-        update: {},
-        create: {
-          userId: delegation.delegateUserId,
-          kind: 'DELEGATION_REVOKED',
-          payload: {
-            delegationId: delegation.id,
-            registrationId,
-            mealDate,
-            counterpartName,
-            reason: options.cancelReason,
-          },
-          titleVi: 'Ủy quyền đã thu hồi',
-          bodyVi: `Yêu cầu nhận hộ từ ${counterpartName} cho ngày ${mealDate} đã được thu hồi.`,
-          titleEn: 'Pickup delegation revoked',
-          bodyEn: `The pickup request from ${counterpartName} for ${mealDate} was revoked.`,
-          dedupeKey: `delegation-revoked:${delegation.delegateUserId}:${delegation.id}`,
-        },
-      });
-      await tx.outboxEvent.upsert({
-        where: { dedupeKey: `notification-delivery:${notification.id}` },
-        update: {},
-        create: {
-          aggregateType: 'NOTIFICATION',
-          aggregateId: notification.id,
-          eventType: 'NOTIFICATION_CREATED',
-          payload: JSON.stringify({ notificationId: notification.id }),
-          dedupeKey: `notification-delivery:${notification.id}`,
-        },
-      });
-    }
 
     await tx.auditLog.create({
       data: {
@@ -275,33 +163,6 @@ export class RegistrationService {
       },
     });
     return updatedReg;
-  }
-
-
-  static async canServe(
-    registrationId: string,
-    pickerUserId: string,
-    tx: Prisma.TransactionClient | typeof prisma = prisma,
-  ) {
-    const reg = await tx.registration.findUnique({
-      where: { id: registrationId },
-      include: {
-        delegations: { where: { status: 'ACCEPTED' } },
-        mealServing: true,
-      },
-    });
-
-    if (!reg || reg.status !== 'ACTIVE' || reg.mealServing) return false;
-    if (reg.userId === pickerUserId) return true;
-
-    if (
-      reg.delegations.length > 0 &&
-      reg.delegations[0].delegateUserId === pickerUserId
-    ) {
-      return true;
-    }
-
-    return false;
   }
 
 

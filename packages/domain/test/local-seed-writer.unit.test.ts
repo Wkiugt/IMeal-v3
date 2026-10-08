@@ -1,19 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '../src/prisma.js';
 
-import { assertLocalSeedPlan, buildLocalSeedPlan } from '../src/local-seed/plan.js';
+import {
+  assertLocalSeedPlan,
+  buildLocalSeedPlan,
+} from '../src/local-seed/plan.js';
 import {
   LocalSeedWriteError,
   writeLocalSeed,
 } from '../src/local-seed/writer.js';
-import type { LocalSeedConfig, LocalSeedPlan } from '../src/local-seed/types.js';
+import type {
+  LocalSeedConfig,
+  LocalSeedPlan,
+} from '../src/local-seed/types.js';
 
 const CONFIG: LocalSeedConfig = {
   baseEmail: 'seed@example.test',
   weekStart: '2026-09-28',
   serveDate: '2026-09-28',
   dryRun: false,
-  databaseUrl: 'postgresql://postgres:secret@localhost:5432/imeal?schema=test_seed',
+  databaseUrl:
+    'postgresql://postgres:secret@localhost:5432/imeal?schema=test_seed',
   target: {
     nodeEnv: 'test',
     host: 'localhost',
@@ -42,7 +49,9 @@ type TransactionCall = (
 ) => Promise<unknown>;
 
 function makeClient(transaction: FakeTransaction) {
-  const transactionCall = vi.fn<TransactionCall>(async (callback) => callback(transaction));
+  const transactionCall = vi.fn<TransactionCall>(async (callback) =>
+    callback(transaction),
+  );
   return {
     client: { $transaction: transactionCall } as unknown as PrismaClient,
     transactionCall,
@@ -63,12 +72,24 @@ function codedError(code: string, message = `${code} database failure`) {
   return { code, message };
 }
 
+function prismaPgTransactionWriteConflict() {
+  return {
+    cause: {
+      kind: 'TransactionWriteConflict',
+      originalCode: '40001',
+      originalMessage:
+        'could not serialize access due to read/write dependencies',
+    },
+  };
+}
 function canonicalRoleTransaction() {
   return {
     role: {
-      findUnique: vi.fn(async ({ where }: { where: { name: keyof typeof ROLE_IDS } }) => ({
-        id: ROLE_IDS[where.name],
-      })),
+      findUnique: vi.fn(
+        async ({ where }: { where: { name: keyof typeof ROLE_IDS } }) => ({
+          id: ROLE_IDS[where.name],
+        }),
+      ),
     },
   };
 }
@@ -166,7 +187,9 @@ describe('local seed writer boundaries', () => {
 
   it('caps maxAttempts at three and uses only the 25/50ms P2034 backoff sequence', async () => {
     const plan = buildPlan();
-    const { client, transactionCall } = makeFailingClient(codedError('P2034', 'serialization conflict'));
+    const { client, transactionCall } = makeFailingClient(
+      prismaPgTransactionWriteConflict(),
+    );
     const sleeps: number[] = [];
 
     await expect(
@@ -190,7 +213,8 @@ describe('local seed writer boundaries', () => {
     ['validation', 'UNKNOWN'],
   ])('does not retry %s failures', async (_label, code) => {
     const plan = buildPlan();
-    const failure = code === 'UNKNOWN' ? new Error('validation failure') : codedError(code);
+    const failure =
+      code === 'UNKNOWN' ? new Error('validation failure') : codedError(code);
     const { client, transactionCall } = makeFailingClient(failure);
     const sleeps: number[] = [];
 
@@ -234,7 +258,8 @@ describe('local seed writer boundaries', () => {
     const plan = buildPlan();
     const failure = {
       errorCode: 'P1001',
-      message: 'Can not reach postgresql://postgres:secret@remote.example/imeal',
+      message:
+        'Can not reach postgresql://postgres:secret@remote.example/imeal',
     };
     const { client } = makeFailingClient(failure);
 
@@ -253,20 +278,30 @@ describe('local seed writer boundaries', () => {
     const definitions = {
       roles: [{ id: ROLE_IDS.staff, name: 'staff' }],
       permissions: [{ id: 'permission-1', name: 'kitchen.serve' }],
-      rolePermissions: [{ roleId: ROLE_IDS.staff, permissionId: 'permission-1' }],
+      rolePermissions: [
+        { roleId: ROLE_IDS.staff, permissionId: 'permission-1' },
+      ],
     };
     const before = structuredClone(definitions);
     const transaction = {
       role: {
         findUnique: vi.fn(async () => null),
-        create: vi.fn(async (row: unknown) => definitions.roles.push(row as (typeof definitions.roles)[number])),
+        create: vi.fn(async (row: unknown) =>
+          definitions.roles.push(row as (typeof definitions.roles)[number]),
+        ),
       },
       permission: {
-        create: vi.fn(async (row: unknown) => definitions.permissions.push(row as (typeof definitions.permissions)[number])),
+        create: vi.fn(async (row: unknown) =>
+          definitions.permissions.push(
+            row as (typeof definitions.permissions)[number],
+          ),
+        ),
       },
       rolePermission: {
         create: vi.fn(async (row: unknown) =>
-          definitions.rolePermissions.push(row as (typeof definitions.rolePermissions)[number]),
+          definitions.rolePermissions.push(
+            row as (typeof definitions.rolePermissions)[number],
+          ),
         ),
       },
     };

@@ -3,14 +3,15 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
-import { DelegationsModule } from './delegations/delegations.module.js';
-import { WeeklyMenusModule } from './admin/weekly-menus/weekly-menus.module.js';
+import { AdminUsersModule } from './admin/users/admin-users.module.js';
+import { AdminOperationsModule } from './admin/operations/admin-operations.module.js';
 import { PenaltiesModule } from './admin/penalties/penalties.module.js';
+import { EmployeePenaltiesModule } from './penalties/employee-penalties.module.js';
 import { RegistrationsModule } from './registrations/registrations.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
-import { PickupModule } from './pickup/pickup.module.js';
 import { KitchenModule } from './kitchen/kitchen.module.js';
 import { LocationsModule } from './locations/locations.module.js';
+import { CheckInModule } from './check-in/check-in.module.js';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import type { StructuredLogger } from '@imeal/observability';
 import { MetricRegistry } from '@imeal/observability';
@@ -43,14 +44,15 @@ import { PrismaService } from './common/prisma.service.js';
   imports: [
     ScheduleModule.forRoot(),
     AuthModule,
-    DelegationsModule,
-    WeeklyMenusModule,
+    AdminUsersModule,
+    AdminOperationsModule,
     PenaltiesModule,
+    EmployeePenaltiesModule,
     RegistrationsModule,
     NotificationsModule,
-    PickupModule,
     KitchenModule,
     LocationsModule,
+    CheckInModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
@@ -109,6 +111,7 @@ import { PrismaService } from './common/prisma.service.js';
     MetricRegistry,
     ApiMetricsService,
     ApiMetricsSourceAdapter,
+    HealthService,
   ],
 })
 export class AppModule {}

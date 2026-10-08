@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient, PrismaClient } from '../prisma.js';
 
 import {
   formatLocalSeedTarget,
@@ -46,12 +46,7 @@ export async function runLocalSeed(
 
   const createPrisma =
     deps.createPrisma ??
-    ((databaseUrl: string) =>
-      new PrismaClient({
-        datasources: {
-          db: { url: databaseUrl },
-        },
-      }));
+    ((databaseUrl: string) => createPrismaClient(databaseUrl));
   const writePlan = deps.writePlan ?? writeLocalSeed;
   const prisma = createPrisma(config.databaseUrl);
 

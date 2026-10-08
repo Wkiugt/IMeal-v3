@@ -66,6 +66,7 @@ async function bootstrap() {
   const port = process.env.PORT ?? 3001;
   try {
     await app.listen(port, '0.0.0.0');
+    app.get(HealthService).markSchedulerInitialized();
     resolveListenReady();
   } catch (error: unknown) {
     rejectListenReady(error);

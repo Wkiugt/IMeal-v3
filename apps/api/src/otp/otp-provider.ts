@@ -1,5 +1,9 @@
-import { Injectable } from '@nestjs/common';
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from 'node:crypto';
 
 export type OtpPurpose = 'SESSION_LOGIN';
 
@@ -18,12 +22,12 @@ export interface OtpProvider {
 const PAYLOAD_VERSION = 'v1';
 const PAYLOAD_AAD = 'imeal:otp-delivery:v1';
 const MIN_SECRET_LENGTH = 32;
-const OTP_MESSAGE = (code: string) =>
-  `Your verification code is ${code}. It expires soon.`;
 
 function encryptionKey(secret: string): Buffer {
   if (secret.trim().length < MIN_SECRET_LENGTH) {
-    throw new Error('OTP_DELIVERY_ENCRYPTION_KEY must contain at least 32 characters');
+    throw new Error(
+      'OTP_DELIVERY_ENCRYPTION_KEY must contain at least 32 characters',
+    );
   }
   return createHash('sha256').update(secret, 'utf8').digest();
 }
@@ -77,7 +81,8 @@ export function decryptOtpProviderPayload(
   secret: string,
 ): OtpProviderPayload {
   try {
-    const [version, encodedIv, encodedTag, encodedCiphertext] = reference.split('.');
+    const [version, encodedIv, encodedTag, encodedCiphertext] =
+      reference.split('.');
     if (
       version !== PAYLOAD_VERSION ||
       !encodedIv ||
@@ -114,103 +119,4 @@ export function otpDeliveryEncryptionSecret(
     return 'test-only-otp-delivery-encryption-secret';
   }
   throw new Error('OTP_DELIVERY_ENCRYPTION_KEY is not configured');
-}
-
-export function otpProviderConfiguration(
-  env: NodeJS.ProcessEnv = process.env,
-): { url: string | null; apiKey: string | null; from: string | null } {
-  const url = env.OTP_PROVIDER_URL?.trim() || null;
-  const apiKey = env.OTP_PROVIDER_API_KEY?.trim() || null;
-  const from = env.OTP_PROVIDER_FROM?.trim() || null;
-  if (env.NODE_ENV === 'production') {
-    let validHttpsUrl = /^https:\/\//i.test(url ?? '');
-    if (validHttpsUrl && url) {
-      const authority = url.slice('https://'.length).split(/[/?#]/, 1)[0];
-      validHttpsUrl = authority.length > 0;
-      try {
-        const parsed = new URL(url);
-        validHttpsUrl =
-          validHttpsUrl &&
-          parsed.protocol === 'https:' &&
-          parsed.hostname.length > 0;
-      } catch {
-        validHttpsUrl = false;
-      }
-    }
-    if (!validHttpsUrl) {
-      throw new Error(
-        'OTP_PROVIDER_URL must be a valid HTTPS URL with a hostname in production',
-      );
-    }
-    if (!apiKey) {
-      throw new Error('OTP_PROVIDER_API_KEY is required in production');
-    }
-    if (!from) {
-      throw new Error('OTP_PROVIDER_FROM is required in production');
-    }
-  }
-  return { url, apiKey, from };
-}
-
-export class OtpProviderError extends Error {
-  constructor(
-    readonly providerCode: string,
-    message: string,
-    readonly status?: number,
-  ) {
-    super(message);
-    this.name = 'OtpProviderError';
-  }
-}
-
-@Injectable()
-export class ConfiguredOtpProvider implements OtpProvider {
-  private readonly config: { url: string | null; apiKey: string | null; from: string | null };
-
-  constructor() {
-    this.config = otpProviderConfiguration();
-  }
-
-  async send(input: OtpProviderInput): Promise<void> {
-    assertPayload(input);
-    const { url, apiKey, from } = this.config;
-    if (!url || !apiKey) {
-      throw new OtpProviderError(
-        'CONFIGURATION',
-        'OTP provider configuration is incomplete',
-      );
-    }
-
-    const body: { to: string; message: string; from?: string } = {
-      to: input.destination,
-      message: OTP_MESSAGE(input.code),
-    };
-    if (from) body.from = from;
-
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          accept: 'application/json',
-          authorization: `Bearer ${apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-    } catch {
-      throw new OtpProviderError(
-        'NETWORK',
-        'OTP provider request failed before receiving a response',
-      );
-    }
-
-    if (!response.ok) {
-      throw new OtpProviderError(
-        `HTTP_${response.status}`,
-        `OTP provider returned HTTP ${response.status}`,
-        response.status,
-      );
-    }
-  }
 }

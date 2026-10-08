@@ -18,7 +18,7 @@ const composeText = composeFiles
 const stagingComposeText = readFileSync(
   resolve(root, 'docker-compose.staging.yml'),
   'utf8',
-);
+).replaceAll('\r\n', '\n');
 const caddyText = readFileSync(
   resolve(root, 'infra/staging/Caddyfile'),
   'utf8',
@@ -26,7 +26,7 @@ const caddyText = readFileSync(
 const productionComposeText = readFileSync(
   resolve(root, 'docker-compose.production.yml'),
   'utf8',
-);
+).replaceAll('\r\n', '\n');
 const productionCaddyText = readFileSync(
   resolve(root, 'Caddyfile.production'),
   'utf8',
@@ -50,7 +50,7 @@ const secretNames = new Set([
   'OTP_HASH_SECRET',
   'OTP_DELIVERY_ENCRYPTION_KEY',
   'SESSION_HASH_SECRET',
-  'OTP_PROVIDER_API_KEY',
+  'OTP_SMTP_PASSWORD',
   'WORKER_METRICS_SOURCE_BEARER_TOKEN',
 ]);
 
@@ -69,8 +69,6 @@ function fixtureValues() {
         ];
       }
       if (secretNames.has(name)) return [name, 'x'.repeat(48)];
-      if (name === 'OTP_PROVIDER_URL')
-        return [name, 'https://otp.example.test/send'];
       if (name === 'PUBLIC_HOSTNAME') return [name, 'staging.example.test'];
       if (name === 'ACME_EMAIL') return [name, 'ops@example.test'];
       if (name === 'PROXY_HTTP_PORT') return [name, '18080'];
@@ -107,9 +105,6 @@ function fixtureValues() {
     SERVING_WINDOW_START: '10:30',
     SERVING_WINDOW_END: '13:30',
     NO_SHOW_PROCESSING_TIME: '13:45',
-    QR_TTL_SECONDS: '5',
-    QR_CLOCK_SKEW_SECONDS: '2',
-    PICKUP_SESSION_TTL_SECONDS: '30',
   });
   return values;
 }
@@ -161,6 +156,16 @@ function environment(service) {
   );
 }
 
+function attachedNetworks(service) {
+  const networks = service?.networks;
+  if (!networks) return [];
+  if (Array.isArray(networks)) {
+    return networks.map((network) =>
+      typeof network === 'string' ? network : network.target,
+    );
+  }
+  return Object.keys(networks);
+}
 test('renders an isolated immutable staging boundary', () => {
   const values = fixtureValues();
   const config = renderCompose(values);
@@ -273,7 +278,39 @@ test('renders an isolated immutable staging boundary', () => {
     /infra\/staging\/Caddyfile/,
   );
   assert.equal(config.networks.app.internal, true);
-  assert.deepEqual(Object.keys(services.worker.networks ?? {}), ['data']);
+  assert.deepEqual(attachedNetworks(services.worker).sort(), [
+    'data',
+    'egress',
+  ]);
+  assert.ok(config.networks.egress, 'staging egress network must exist');
+  assert.notEqual(config.networks.egress.internal, true);
+  assert.equal(services.worker.ports, undefined);
+  for (const [name, service] of Object.entries(services)) {
+    assert.equal(
+      name === 'worker' || !attachedNetworks(service).includes('egress'),
+      true,
+      `${name} must not attach to egress`,
+    );
+  }
+  const stagingWorkerEnv = environment(services.worker);
+  const stagingApiEnv = environment(services.api);
+  assert.equal(stagingWorkerEnv.OTP_SMTP_HOST, 'smtp.gmail.com');
+  assert.equal(stagingWorkerEnv.OTP_SMTP_PORT, '587');
+  assert.equal(
+    Boolean(stagingWorkerEnv.OTP_SMTP_PASSWORD),
+    true,
+    'worker must receive OTP_SMTP_PASSWORD',
+  );
+  assert.equal(Object.hasOwn(stagingWorkerEnv, 'OTP_PROVIDER_URL'), false);
+  assert.equal(Object.hasOwn(stagingWorkerEnv, 'OTP_PROVIDER_API_KEY'), false);
+  assert.equal(
+    Object.hasOwn(stagingApiEnv, 'OTP_SMTP_PASSWORD'),
+    false,
+    'api must not receive OTP_SMTP_PASSWORD',
+  );
+  assert.equal(Object.hasOwn(stagingApiEnv, 'OTP_PROVIDER_URL'), false);
+  assert.equal(Object.hasOwn(stagingApiEnv, 'OTP_PROVIDER_API_KEY'), false);
+  assert.equal(Object.hasOwn(stagingApiEnv, 'OTP_PROVIDER_FROM'), false);
   assert.equal(config.networks.data.internal, true);
   const bucketCommand = services['minio-create-bucket'].command.join('\n');
   assert.match(bucketCommand, /anonymous set private/);
@@ -284,16 +321,6 @@ test('renders an isolated immutable staging boundary', () => {
   }
   const rendered = JSON.stringify(config);
   assert.doesNotMatch(rendered, /CHANGE_ME_LOCAL|:latest\b/);
-});
-
-test('base Compose explicitly selects the Admin Dockerfile without changing local defaults', () => {
-  const baseText = readFileSync(resolve(root, 'docker-compose.yml'), 'utf8');
-  assert.match(
-    baseText,
-    /admin-web:\s+\n\s+build:\s+\n\s+context: \.\s+\n\s+dockerfile: apps\/admin-web\/Dockerfile/,
-  );
-  assert.match(baseText, /NODE_ENV: \$\{NODE_ENV:-development\}/);
-  assert.match(baseText, /POSTGRES_PORT:-5432/);
 });
 
 test('Caddy owns HTTPS redirect, health routes, headers and request IDs without stock rate-limit directives', () => {
@@ -332,7 +359,9 @@ test('production worker metrics stay private and transport bindings remain prote
   assert.ok(apiBlock, 'production api service must be present');
   assert.doesNotMatch(workerBlock, /^\s+ports:/m);
   assert.match(workerBlock, /networks:\s*(?:!override\s*)?\n\s+- data\b/);
+  assert.match(workerBlock, /^\s+- egress\b/m);
   assert.doesNotMatch(workerBlock, /^\s+- app\b/m);
+  assert.doesNotMatch(workerBlock, /^\s+- edge\b/m);
 
   const productionValues = fixtureValues();
   const productionConfig = renderCompose(productionValues, [
@@ -342,12 +371,46 @@ test('production worker metrics stay private and transport bindings remain prote
   const productionApi = productionConfig.services.api;
   const productionWorker = productionConfig.services.worker;
   assert.equal(productionWorker.ports, undefined);
-  const productionWorkerNetworks = Array.isArray(productionWorker.networks)
-    ? productionWorker.networks.map((network) =>
-        typeof network === 'string' ? network : network.target,
-      )
-    : Object.keys(productionWorker.networks ?? {});
-  assert.deepEqual(productionWorkerNetworks, ['data']);
+  const productionWorkerNetworks = attachedNetworks(productionWorker).sort();
+  assert.deepEqual(productionWorkerNetworks, ['data', 'egress']);
+  assert.ok(
+    productionConfig.networks.egress,
+    'production egress network must exist',
+  );
+  assert.notEqual(productionConfig.networks.egress.internal, true);
+  assert.equal(productionConfig.networks.data.internal, true);
+  assert.equal(productionConfig.networks.app.internal, true);
+  assert.notEqual(productionConfig.networks.data.internal, false);
+  assert.equal(productionWorker.ports, undefined);
+  const productionWorkerEnv = environment(productionWorker);
+  const productionApiEnv = environment(productionApi);
+  assert.equal(productionWorkerEnv.OTP_SMTP_HOST, 'smtp.gmail.com');
+  assert.equal(productionWorkerEnv.OTP_SMTP_PORT, '587');
+  assert.equal(
+    Boolean(productionWorkerEnv.OTP_SMTP_PASSWORD),
+    true,
+    'worker must receive OTP_SMTP_PASSWORD',
+  );
+  assert.equal(Object.hasOwn(productionWorkerEnv, 'OTP_PROVIDER_URL'), false);
+  assert.equal(
+    Object.hasOwn(productionWorkerEnv, 'OTP_PROVIDER_API_KEY'),
+    false,
+  );
+  assert.equal(
+    Object.hasOwn(productionApiEnv, 'OTP_SMTP_PASSWORD'),
+    false,
+    'api must not receive OTP_SMTP_PASSWORD',
+  );
+  assert.equal(Object.hasOwn(productionApiEnv, 'OTP_PROVIDER_URL'), false);
+  assert.equal(Object.hasOwn(productionApiEnv, 'OTP_PROVIDER_API_KEY'), false);
+  assert.equal(Object.hasOwn(productionApiEnv, 'OTP_PROVIDER_FROM'), false);
+  for (const [name, service] of Object.entries(productionConfig.services)) {
+    assert.equal(
+      name === 'worker' || !attachedNetworks(service).includes('egress'),
+      true,
+      `${name} must not attach to egress`,
+    );
+  }
   for (const name of [
     'WORKER_METRICS_TRANSPORT_URL',
     'WORKER_METRICS_TRANSPORT_TOKEN',
@@ -406,7 +469,10 @@ test('production worker metrics stay private and transport bindings remain prote
   const metricsHandle = productionCaddyText.match(
     /handle @metrics \{[\s\S]*?\n\s*\}/,
   )?.[0];
-  assert.ok(metricsHandle, 'production Caddy must define an explicit /metrics deny route');
+  assert.ok(
+    metricsHandle,
+    'production Caddy must define an explicit /metrics deny route',
+  );
   assert.match(metricsHandle, /respond 404/);
   assert.doesNotMatch(metricsHandle, /reverse_proxy/);
   const metricsIndex = productionCaddyText.indexOf('handle @metrics');
@@ -414,7 +480,6 @@ test('production worker metrics stay private and transport bindings remain prote
   assert.ok(metricsIndex < productionCaddyText.lastIndexOf('handle {'));
   assert.match(productionCaddyText, /Strict-Transport-Security/);
 });
-
 
 test('alert rules use the hardening-owned metric and alert names', () => {
   for (const name of [

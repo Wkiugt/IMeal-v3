@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../common/prisma.service.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '@imeal/core';
 import { v1 } from '@imeal/contracts';
 import { renderNotificationCopy } from './notification-copy.js';
 

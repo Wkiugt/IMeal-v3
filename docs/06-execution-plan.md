@@ -1,6 +1,11 @@
 # IMeal v2 — Re-platforming and Execution Plan
 
-**Goal:** Chuyển IMeal từ web Next.js/Firebase/Firestore sang IMeal v2 mobile-first, sử dụng allowlist-A email OTP với opaque PostgreSQL-backed sessions, NestJS, PostgreSQL và Linux self-host, đồng thời redesign weekly menu/registration, delegation và Kitchen serving flow.
+**Goal:** Chuyển IMeal sang mobile-first Staff self check-in với email OTP,
+PostgreSQL/NestJS và Linux self-host: Staff đăng ký tuần, quét một QR Kitchen
+ổn định theo ngày/địa điểm, gửi GPS foreground mới để resolve rồi xác nhận
+chính đăng ký của mình bằng GPS mới lần hai; Kitchen chỉ hiển thị QR chung và
+dashboard aggregate. Các bảng pickup/delegation lịch sử được giữ để tương
+thích, không còn là flow active.
 
 ## Global constraints
 
@@ -14,15 +19,23 @@
   an opaque PostgreSQL-backed session and never auto-provisions a privileged
   role.
 - Kitchen/Admin role manually assigned.
-- QR TTL 5 seconds, clock skew 2 seconds, pickup session TTL 30 seconds.
-- Serving/check-in requires authenticated Kitchen role/permission and server-side pickup validation.
+- Shared Kitchen QR is stable for one active day/location session; current
+  Staff self check-in requires a fresh foreground GPS sample at resolve and a
+  second fresh sample at confirm.
+- `MealServing.registrationId` is unique canonical outcome; confirm is
+  authenticated, own-user-only, transactional and idempotent.
+- Kitchen dashboard is aggregate-only, polls every 10 seconds only while
+  focused/foregrounded, normally converges within approximately 15 seconds
+  under healthy polling, and on refresh failure retains the last good snapshot
+  indefinitely with a stale indicator; no SSE/WebSocket dependency.
 - No mandatory check-out in core v2.
 - PostgreSQL is business source of truth; mobile never writes DB directly.
 - Every no-show creates one 50,000 VND penalty; exceptions use audited waive.
 - Clean slate: Firebase contains demo-pitching data only and is deleted/decommissioned at re-development kickoff; do not migrate, retain for v2, map, reconcile, dual-write or roll data back to Firebase.
 - Meal lifecycle/business audit history retention is 1 year.
 - Persisted notification inbox is mandatory; Expo Push is the default delivery provider.
-- Staff selects multi-item pickup intent before QR; Kitchen scans and confirms that exact set without per-item ticking/editing. Multi-item serving remains all-or-nothing and successful confirm is final; core v2 has no reversal.
+- Staff reviews and confirms only the authenticated caller's own registration;
+  current flow has no multi-item pickup intent or active proxy/delegation.
 
 ---
 
@@ -35,8 +48,8 @@
 | 2                                                                                              | PostgreSQL schema + domain/test safety net                            | P0              |
 | 3                                                                                              | Allowlist-A email OTP + opaque sessions/RBAC                          | P0              |
 | 4                                                                                              | Weekly menu + weekly registration                                     | P0              |
-| 5                                                                                              | Delegation + notifications                                            | P0              |
-| 6                                                                                              | Dynamic QR + Kitchen serving + realtime dashboard                     | P0              |
+| 5                                                                                              | Historical delegation compatibility + current notifications            | P0              |
+| 6                                                                                              | Staff self check-in + Kitchen shared QR/aggregate dashboard            | P0              |
 | 7                                                                                              | No-show/penalty/admin/audit/jobs                                      | P0/P1           |
 | 8                                                                                              | Clean-slate qualification + security/load/UAT                         | P0 release gate |
 | 9                                                                                              | Production rollout + mobile distribution + operations                 | P0 release gate |
@@ -48,24 +61,28 @@
 
 ## Task 0.1 — Verify canonical policy package
 
-- [ ] Product/API/backend/UX docs agree on Monday week, cutoff, 10:30–13:30 serving and 13:45 no-show.
-- [ ] QR 5s/skew 2s/pickup session 30s represented in contracts/tests.
-- [ ] Staff-side pickup intent, Kitchen scan→final-confirm flow, no manual-code
-      recovery/bypass and all-or-nothing batch serving represented consistently; no
-      Kitchen item-edit or reversal flow remains.
+- [ ] Product/API/backend/UX docs agree on Monday week, cutoff, 10:30–13:30
+      serving, 13:45 no-show and the Staff self check-in contract.
+- [ ] One stable day/location Kitchen QR, Staff fresh GPS at resolve and a
+      second fresh GPS at confirm are represented in contracts/tests.
+- [ ] Own-user-only resolve/confirm, no manual-code recovery/bypass, unique
+      `MealServing.registrationId` and idempotent final serving are consistent;
+      no Kitchen employee scanner or active delegation flow remains.
 - [ ] Persisted inbox + Expo Push, 50,000 VND penalty, 1-year history retention and permission model represented consistently.
 - [ ] Firebase removal-at-redevelopment-start/no-migration policy appears in technical/backend/rollout sections.
 
 ## Task 0.2 — OTP/provider/organization prerequisites
 
 Coordinate with the organization owner for allowlist-A provisioning and the
-approved OTP provider. No federated identity provider, tenant/client/redirect
-registration or local production login is part of the current contract:
+dedicated Gmail or Google Workspace mailbox used for OTP. No federated identity
+provider, tenant/client/redirect registration or local production login is part
+of the current contract:
 
 - [ ] Approve the source and owner for exactly the active allowlist-A emails.
-- [ ] Configure an HTTPS OTP provider URL, API key and sender identity outside
-      source control.
-- [ ] Confirm provider delivery, rate limits, expiry and support ownership.
+- [ ] Create a Google App Password for the OTP mailbox and store
+      `OTP_SMTP_USERNAME`, `OTP_SMTP_PASSWORD`, and `OTP_SMTP_FROM` outside
+      source control. Do not store the normal Google account password.
+- [ ] Confirm Gmail delivery, App Password rotation, expiry and support ownership.
 - [ ] Record synthetic test addresses and role assignments without storing
       secrets or real employee data in docs.
 - [ ] Approve the one-shot server-side first-Admin provisioning operation and
@@ -80,8 +97,8 @@ request/verify is exercised at the authentication exit.
 - [ ] Define public API hostname for Staff and Kitchen features.
 - [ ] Configure HTTPS certificate trusted by target iOS/Android devices.
 - [ ] Deny public/general LAN access to PostgreSQL port.
-- [ ] Allow API outbound HTTPS to the approved OTP provider and chosen
-      push/image providers.
+- [ ] Allow the worker outbound TCP to `smtp.gmail.com:587`. Do not publish
+      worker ports. Allow API outbound HTTPS only to chosen push/image providers.
 
 **Exit:** HTTPS API reachability, authentication/permission boundaries and PostgreSQL isolation are documented and testable.
 
@@ -98,7 +115,7 @@ request/verify is exercised at the authentication exit.
 
 This gate is explicitly **NOT COMPLETE / NO-GO**. It records local/disposable
 evidence only and does not close the staging, production, mobile-release,
-security, backup/restore or realtime client gates.
+security, backup/restore or focused/foreground aggregate dashboard polling gates.
 
 - [x] Fresh Step 2 expand at HEAD `75a9d719deb511503dfc55a11b52a81ab6d049a6`:
       `DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal?schema=phase0_step2_20260928131738' yarn workspace @imeal/core exec prisma migrate deploy`
@@ -210,7 +227,8 @@ Docker Compose
 
 - [ ] Versioned DTO/schema package consumed by mobile/Admin/API/worker.
 - [ ] Success/error envelopes, stable error-code registry and cursor pagination.
-- [ ] `X-Request-Id`, `Idempotency-Key` and realtime event envelope.
+- [ ] `X-Request-Id`, idempotency keys and aggregate dashboard snapshot
+      envelope (`lastUpdated`, stale recovery); no SSE/WebSocket contract.
 - [ ] Contract tests run in CI for every consumer.
 - [ ] Requirement ID → task → test/evidence → approver matrix initialized.
 
@@ -226,9 +244,9 @@ Create canonical tables:
 
 - [ ] users/roles/user_roles/permissions/role_permissions/user_permissions.
 - [ ] weekly_menus/daily_menus/daily_menu_revisions/meal_days.
-- [ ] registrations.
-- [ ] pickup_delegations.
-- [ ] serving_confirm_requests/meal_servings/meal_events.
+- [ ] registrations and additive `check_in_sessions`.
+- [ ] historical `pickup_delegations`/pickup context retained for compatibility.
+- [ ] `meal_servings`/`meal_events` and idempotency claims.
 - [ ] penalties.
 - [ ] notifications (mandatory) and push_devices.
 - [ ] job_runs/audit_logs.
@@ -239,8 +257,10 @@ Add constraints:
 - [ ] one daily menu per meal date.
 - [ ] daily-menu check constraint represents enabled date with meal vs explicit disabled holiday without fake meal.
 - [ ] `UNIQUE(registration_id)` final serving; no reversal/re-serve state.
-- [ ] `UNIQUE(caller_user_id, idempotency_key)` request-level serving confirm result.
-- [ ] one active delegation per registration.
+- [ ] `UNIQUE(caller_user_id, idempotency_key)` request-level check-in confirm
+      result.
+- [ ] historical delegation rows remain linkable/readable but do not authorize
+      current check-in.
 - [ ] foreign keys and required indexes.
 
 ## Task 2.2 — Domain tests
@@ -249,22 +269,21 @@ Add constraints:
 - [ ] Registration transitions.
 - [ ] Menu week/date rules.
 - [ ] Canceled registration keeps immutable menu revision; active registration follows approved pre-cutoff revision.
-- [ ] Delegation state machine.
-- [ ] Serving eligibility self/proxy.
+- [ ] Staff own-user eligibility and current status/resolve/confirm boundaries.
+- [ ] Check-in GPS freshness/accuracy/geofence and service-window errors.
 - [ ] No-show/penalty idempotency.
 - [ ] Exact 14:00, 10:30, 13:30, 13:45 boundaries.
-- [ ] Cancel registration atomically revokes active delegation.
-- [ ] Account-disable preview + mandatory confirmed no-penalty future-commitment cleanup.
-- [ ] Final serving and all-or-nothing multi-item serving.
+- [ ] Cancel registration/account-disable cleanup preserves historical rows
+      without making them current check-in eligible.
+- [ ] Final serving and idempotent single-registration confirm.
 
 ## Task 2.3 — Database concurrency tests
 
 - [ ] Concurrent register same user/date → one row.
-- [ ] Two scanners same registration → one serving.
-- [ ] Owner vs delegate simultaneous serving → one serving.
-- [ ] Revoke vs serve race → one deterministic outcome.
-- [ ] Retry same idempotency key → original result/no duplicate.
-- [ ] Multi-item batch with one stale item → zero servings committed.
+- [ ] Concurrent confirms for one own registration → one serving.
+- [ ] Wrong caller cannot resolve/confirm another user's registration.
+- [ ] Resolve does not consume; retry same idempotency key replays result.
+- [ ] Fresh GPS is required on both resolve and confirm.
 - [ ] Successful confirm is immutable/final; duplicate or retry creates no second serving.
 
 **Exit Phase 2:** DB invariants protect P0 correctness independent of UI.
@@ -311,8 +330,9 @@ Add constraints:
 - [ ] Seed canonical Admin role permissions; authorization still checks
       permission, never Admin bypass.
 - [ ] Admin role alone does not grant Kitchen serving.
-- [ ] Kitchen role does not grant Staff registration/QR/delegation; dual-role
-      users require explicit `staff + kitchen`.
+- [ ] Kitchen role does not grant Staff self check-in or own-registration
+      mutation; dual-role users require explicit `staff + kitchen` where both
+      surfaces are needed. No delegation permission is active.
 
 ## Task 3.5 — Admin bootstrap / server-side Admin lifecycle
 
@@ -361,7 +381,9 @@ authorization.
 - [ ] Feature: Document/Application workflow to allow admins to change the cutoff time.
 - [ ] Enforce strict "UTC everywhere" for `mealDate` and DB timestamps.
 - [ ] Unique constraint protects duplicate, backed by a Composite Index `@@index([userId, mealDate])`.
-- [ ] Cancel atomically revokes pending/accepted delegation with notifications/audit (Implement strict modular boundaries / Domain-Driven Design).
+- [ ] Cancel atomically marks the registration canceled and quarantines any
+      retained historical delegation row with notifications/audit; it never
+      grants current check-in eligibility.
 
 ## Task 4.4 — Staff weekly mobile UI
 
@@ -375,110 +397,129 @@ authorization.
 
 ---
 
-# Phase 5 — Delegation and notifications
+# Phase 5 — Historical delegation compatibility and notifications
 
-## Task 5.1 — Delegation API
+The historical delegation/pickup schema and audit rows remain readable for
+accounting and migration compatibility. They are not an active authorization,
+mobile UI or Kitchen serving flow in the current cutover.
 
-- [ ] Owner request delegate.
-- [ ] Delegate accept/decline.
-- [ ] Owner revoke.
-- [ ] Prevent self-delegate.
-- [ ] Prevent delegation chain.
-- [ ] One active delegation per registration.
-- [ ] No create/revoke after serving.
+## Task 5.1 — Retain historical delegation data
 
-## Task 5.2 — Delegation mobile UX
+- [ ] Preserve historical delegation/pickup tables, immutable rows and audit
+      references during migration.
+- [ ] Keep old records readable without exposing them as current
+      check-in eligibility or dashboard counts.
+- [ ] Ensure current status/resolve/confirm routes never accept a delegate,
+      proxy, multi-registration intent or historical pickup session.
 
-- [ ] Owner search by employee/name.
-- [ ] Pending/accepted/declined state.
-- [ ] Incoming requests screen.
-- [ ] Deep-link from notification.
-- [ ] Reconcile serve/revoke race outcomes.
+## Task 5.2 — Current owner notifications
 
-## Task 5.3 — Notification inbox
+- [ ] Persist menu-revision, cancellation, current Staff check-in reminder and
+      no-show notifications in PostgreSQL.
+- [ ] Read/unread support remains owner-scoped.
+- [ ] Historical delegation/proxy notification rows remain readable but are not
+      emitted by current check-in.
+- [ ] Public cursor-paginated inbox API and owner-only mark-read API remain
+      authorization-protected.
 
-- [ ] Persist delegation, menu-revision, cancellation and proxy-serving notifications in PostgreSQL.
-- [ ] Read/unread support.
-- [ ] Notify owner on proxy serving.
-- [ ] Public cursor-paginated inbox API and owner-only mark-read API.
-
-## Task 5.4 — Push transport
+## Task 5.3 — Push transport
 
 - [ ] Register device tokens.
 - [ ] Use Expo Push as default provider.
-- [ ] Dispatch delegation events.
-- [ ] Retry safe failures.
-- [ ] App remains correct when push not delivered.
+- [ ] Retry safe failures and keep app correctness when push is not delivered.
 
-**Exit Phase 5:** A→B authorization requires explicit B consent and is visible/auditable on both devices.
+**Exit Phase 5:** historical delegation data is retained/readable, while current
+notifications are owner-scoped and no active delegation/proxy authorization or
+UI remains.
 
 ---
 
-# Phase 6 — QR, Kitchen serving and realtime dashboard
+# Phase 6 — Staff self check-in and Kitchen aggregate dashboard
 
-## Task 6.1 — Dynamic QR + Staff pickup intent
+## Task 6.1 — Stable Kitchen QR and Staff status
 
-- [ ] Server-signed QR.
-- [ ] 5-second TTL and 2-second maximum skew.
-- [ ] `GET /me/pickup-options` returns own + accepted-delegation eligible items.
-- [ ] One eligible item is selected automatically; multiple eligible items are selected by Staff before QR presentation.
-- [ ] `POST /me/qr` validates the selected registration IDs and issues/refreshes the signed QR.
-- [ ] Automatic mobile refresh preserves pickup intent.
-- [ ] Wrong date/expired/forged/stale-intent tests.
-- [ ] QR identifies presenter + signed pickup intent; intent never overrides DB eligibility.
+- [ ] `GET /api/kitchen/check-in/qr` requires authenticated
+      `kitchen.serve`, resolves the caller's active location and lazily
+      creates/reuses one stable day/location QR.
+- [ ] QR contains no employee identity and does not rotate per Staff; server
+      returns `date`, `location`, `activeFrom` and `expiresAt`.
+- [ ] `GET /api/me/check-in` returns authoritative own-user status and action
+      flags for reconciliation.
+- [ ] No Kitchen employee scanner/search/list or Staff-generated QR remains.
 
-## Task 6.2 — Pickup resolve API
+## Task 6.2 — Staff resolve API
 
-Authenticated Kitchen role/permission required.
+- [ ] `POST /api/me/check-in/resolve` accepts only the shared QR and a fresh
+      foreground GPS sample `{ capturedAt, latitude, longitude, accuracyMeters }`.
+- [ ] When eligible, persist a `VALID` `ServingVerification` and return an
+      opaque signed `intentNonce` scoped to caller, own registration, session
+      and location; return nonce nullable when `eligibility=false`.
+- [ ] Authenticate the caller and return only that caller's normalized
+      employee/menu/location/registration/eligibility.
+- [ ] Revalidate QR/session, active roster location, 10:30–13:30 window and
+      GPS freshness/accuracy/geofence.
+- [ ] Resolve creates no `MealServing` and no serving event.
+- [ ] Cover `INVALID_QR`, `INACTIVE_CHECKIN_SESSION`, `NO_REGISTRATION`,
+      `REGISTRATION_CANCELLED`, `OUTSIDE_CHECKIN_WINDOW`, `LOCATION_MISMATCH`,
+      `GPS_REQUIRED`, `GPS_STALE`, `GPS_INACCURATE` and `OUTSIDE_GEOFENCE`.
 
-- [ ] Verify QR TTL/signature.
-- [ ] Load presenter own active registration + accepted proxy registrations.
-- [ ] Revalidate every registration in Staff-selected pickup intent.
-- [ ] Exclude served/revoked/ineligible registrations and reject stale intent without silent substitution.
-- [ ] Enforce 10:30–13:30 service window.
-- [ ] Return 30-second pickup session with validated intended items.
+## Task 6.3 — Staff confirm transaction
 
-## Task 6.3 — Pickup confirm transaction
+- [ ] `POST /api/me/check-in/confirm` accepts `sessionId`, non-empty
+      `intentNonce`, `idempotencyKey` and a **new** fresh foreground GPS sample.
+- [ ] Validate nonce scope against caller/session/own registration/location.
+- [ ] Lock the idempotency claim, `CheckInSession` and caller-owned
+      registration; replay same caller/key/body and reject a different body.
+- [ ] Revalidate session/date/location/window, account, own registration and
+      GPS policy transactionally.
+- [ ] Insert one unique `MealServing` linked to the check-in session and one
+      Staff-owned canonical event; return `CHECKED_IN`, IDs and `servedAt`.
+- [ ] Concurrent/retried confirm creates at most one serving; successful
+      confirm is final and has no reversal endpoint/UI.
+- [ ] Raw latitude/longitude never enters logs or retained operational evidence;
+      retain only safe verification result/context required by policy.
 
-- [ ] Accept selected registration IDs only.
-- [ ] Row lock registration/delegation.
-- [ ] Revalidate current eligibility.
-- [ ] Insert serving + immutable event.
-- [ ] Consume delegation for proxy.
-- [ ] Enforce unique/idempotency constraints.
-- [ ] Store one request-level idempotency/result record linked to all batch serving rows.
-- [ ] Return existing serving on duplicate attempt.
-- [ ] Entire multi-item batch rolls back if any item changed.
-- [ ] Disabled owner/receiver/actor rejected after DB status lookup.
+## Task 6.4 — Staff self check-in UI
 
-## Task 6.4 — Kitchen scanner UI
+- [ ] Staff scans the shared Kitchen QR, sees only own registration/menu/location,
+      and explicitly taps Confirm after reviewing it.
+- [ ] Capture fresh foreground GPS on resolve and again on confirm; stop
+      collection on blur, background, completion, cancellation or unmount.
+- [ ] Denial/stale/inaccurate/outside-geofence states offer Retry/Refresh only.
+- [ ] Timeout/lost response retries the same idempotency key or reconciles via
+      `GET /api/me/check-in`; never show local success first.
+- [ ] Current UI has no delegation/proxy selection, multi-item intent,
+      manual-code bypass or Kitchen employee resolve/confirm.
 
-- [ ] Large scanner surface.
-- [ ] Resolved self/proxy intended-item list with prominent total count.
-- [ ] No per-item checkbox or item-edit action; Kitchen verifies the Staff-selected set and uses one big final-confirm CTA.
-- [ ] Big confirm CTA includes count.
-- [ ] Expired pickup session recovery requires scanning a fresh QR and resolving
-      the exact presenter-selected set again.
-- [ ] Duplicate serving warning includes receiver/time.
+## Task 6.5 — Kitchen aggregate dashboard
 
-## Task 6.5 — Realtime dashboard
+- [ ] `GET /api/kitchen/check-in/dashboard?date=YYYY-MM-DD` returns only
+      `date`, `location`, `window`, `lastUpdated` and aggregate
+      `registered`, `checkedIn`, `pending`, `noShow`, `regular`,
+      `vegetarian` counts.
+- [ ] Poll every 10 seconds only while focused and foregrounded; refresh
+      immediately on re-entry.
+- [ ] On temporary failure retain the last good snapshot and mark it stale
+      until successful refresh; never reset to zero/empty. Under healthy
+      polling, the visible snapshot normally converges within approximately
+      15 seconds.
+- [ ] Enforce `checkedIn + pending + noShow = registered` and
+      `regular + vegetarian = registered`; exclude canceled/disabled rows.
+- [ ] No SSE/WebSocket dependency, per-person list, employee log or delegation
+      detail; multiple Kitchen displays converge through fresh snapshots.
 
-- [ ] Initial `served/total/remaining` snapshot.
-- [ ] Recent log.
-- [ ] `Đã nhận / Chưa nhận / Tất cả` lists.
-- [ ] After reconciliation, distinct `Vắng mặt` count/list; never label absence before service closes.
-- [ ] WebSocket/SSE updates after DB commit.
-- [ ] Two+ Kitchen devices stay consistent.
-- [ ] Reconnect re-fetches snapshot.
+## Task 6.6 — Migration compatibility
 
-## Task 6.6 — Serving finality
+- [ ] `MealServing.registrationId` remains the unique canonical serving source.
+- [ ] Additive `CheckInSession` and safe verification metadata do not create a
+      second outcome table.
+- [ ] Historical pickup/delegation tables and audit rows remain retained/readable
+      but no longer authorize current check-in.
 
-- [ ] Kitchen confirms only the server-revalidated Staff-selected set.
-- [ ] Confirm CTA explains the displayed count and is enabled only while the pickup session is valid.
-- [ ] Successful confirm is immutable/final; no Kitchen/Admin reversal endpoint or UI exists.
-- [ ] Operational guidance requires Kitchen to complete any temporarily missing trays physically rather than rewriting serving history.
-
-**Exit Phase 6:** concurrent/retried confirm creates at most one immutable final serving, and all serving is authenticated, permission-protected and realtime-visible.
+**Exit Phase 6:** authenticated Staff can resolve and explicitly confirm only
+their own registration with fresh GPS twice; concurrent/retried confirm creates
+at most one final `MealServing`, and Kitchen sees aggregate snapshots through
+focused/foreground 10-second polling with stale-snapshot recovery.
 
 ---
 
@@ -504,10 +545,10 @@ Authenticated Kitchen role/permission required.
 
 ## Task 7.3 — Audit views
 
-- [ ] Registration owner.
-- [ ] Delegation lifecycle.
-- [ ] Receiver.
-- [ ] Kitchen actor/time/source.
+- [ ] Historical delegation lifecycle and receiver references remain readable
+      as audit data; current audit shows authenticated Staff check-in actor,
+      registration and immutable serving ID.
+- [ ] Kitchen actor has no per-person serving authority in the current flow.
 - [ ] Role changes and account status.
 
 ## Task 7.4 — Health/observability
@@ -521,9 +562,11 @@ Authenticated Kitchen role/permission required.
 ## Task 7.5 — Lifecycle workers and recovery
 
 - [ ] Menu lock/snapshot at cutoff with retry and reconciliation.
-- [ ] Delegation expiry after service end.
+- [ ] Historical delegation rows remain retained/readable; no active delegation
+      expiry worker authorizes or mutates current check-in.
 - [ ] Notification delivery/retry without losing inbox state.
-- [ ] Reconciliation job compares authoritative DB-derived dashboard state.
+- [ ] Reconciliation job compares authoritative DB-derived aggregate dashboard
+      state.
 - [ ] Every run writes `job_runs`; manual retry requires confirmed actor/date/scope.
 
 ## Task 7.6 — One-year retention cleanup
@@ -566,8 +609,9 @@ location, DNS/TLS, OTP, WAF/rate-limit, alert-delivery, or UAT gates.
 ## Task 8.2 — Synthetic staging dataset/load
 
 - [ ] 300 users.
-- [ ] Several weeks of menu/registration/delegation/serving/no-show data.
-- [ ] Concurrent scan test burst.
+- [ ] Several weeks of menu/registration/historical-serving/no-show data; any
+      retained delegation rows are compatibility fixtures only.
+- [ ] Concurrent Staff confirm/retry test burst.
 - [ ] Weekly registration burst near cutoff.
 - [ ] Verify target P95 and zero duplicate serving.
 - [ ] Tag synthetic accounts/data so production-safe cleanup is deterministic and audited.
@@ -577,11 +621,14 @@ location, DNS/TLS, OTP, WAF/rate-limit, alert-delivery, or UAT gates.
 - [ ] Unknown/disabled allowlist addresses receive the same generic response
       and cannot create a session.
 - [ ] Staff cannot self-grant Kitchen/Admin.
-- [ ] Staff cannot call Kitchen serving mutation.
-- [ ] Kitchen serving requires authenticated Kitchen role/permission and all server-side pickup invariants.
-- [ ] Forged/expired QR denied.
-- [ ] Delegation cannot be accepted by wrong user.
-- [ ] Stale pickup session cannot bypass revoke/already-served state.
+- [ ] Staff cannot call any Kitchen-only mutation or self-check-in for another
+      user.
+- [ ] Kitchen QR/dashboard require authenticated `kitchen.serve`; Staff
+      resolve/confirm require the authenticated own user.
+- [ ] Forged, wrong-day/location or inactive shared QR denied.
+- [ ] Stale/inaccurate GPS, stale check-in session and already-checked-in state
+      cannot bypass current eligibility.
+- [ ] Historical delegation cannot authorize current check-in.
 - [ ] API rate/input validation tested.
 - [ ] Disabled account denied across the API authorization matrix.
 - [ ] Permission boundaries for Admin, independent Staff/Kitchen roles and penalties tested; no reversal endpoint exists.
@@ -604,24 +651,31 @@ Staff:
 - [ ] Allowlist-A email OTP request/verify and opaque-session restore/logout.
 - [ ] Weekly tick/untick/mixed cutoff.
 - [ ] History and penalty detail.
-- [ ] Pre-cutoff canceled registration still shows its immutable menu revision after later menu edit.
-- [ ] QR refresh.
-- [ ] Delegation request/accept/revoke.
-- [ ] Proxy serving notification.
+- [ ] Pre-cutoff canceled registration still shows its immutable menu revision
+      after later menu edit.
+- [ ] `GET /api/me/check-in` returns own status before and after the flow.
+- [ ] Staff scans the stable shared Kitchen QR and resolves with fresh
+      foreground GPS; response contains only the caller's own registration.
+- [ ] Staff confirms with a second fresh foreground GPS sample and an
+      idempotency key; result is `CHECKED_IN` and one unique `MealServing`.
+- [ ] Lost-response retry/reconciliation returns the same result with no
+      duplicate serving.
+- [ ] Exercise invalid QR, inactive session, no registration, cancellation,
+      already checked-in, window/location and all canonical GPS errors.
 
 Kitchen:
 
 - [ ] Weekly menu draft/publish.
-- [ ] Self pickup.
-- [ ] Proxy pickup.
-- [ ] Staff preselects multiple pickup items; Kitchen scan shows the intended set/count without requiring item ticking.
-- [ ] One stale intended item rolls back entire multi-item batch.
-- [ ] 20 consecutive self/proxy/duplicate scans retain scanner context and use the scan→confirm happy path.
-- [ ] Unselected eligible registrations are never served; any pre-confirm
-      change requires refreshed presenter intent and QR re-resolve.
-- [ ] Duplicate scan.
-- [ ] Two-device realtime dashboard.
-- [ ] Serving resolve/confirm works for valid Kitchen callers regardless of client network location.
+- [ ] `GET /api/kitchen/check-in/qr` returns a stable day/location QR with no
+      employee identity.
+- [ ] Dashboard returns aggregate-only counts and `lastUpdated`.
+- [ ] Focused/foreground poll every 10 seconds, immediate re-entry refresh and
+      normal convergence within approximately 15 seconds; on errors retain the
+      stale last-good snapshot indefinitely until a successful refresh.
+- [ ] No employee scanner/search/list/log, delegation/proxy action or SSE/
+      WebSocket requirement.
+- [ ] Concurrent/retried Staff confirms converge to one serving and dashboard
+      invariants hold.
 
 Admin:
 
@@ -634,7 +688,8 @@ Admin:
 Accessibility/device:
 
 - [ ] Android/iOS representative devices.
-- [ ] Kitchen tablet/phone camera.
+- [ ] Kitchen tablet/phone displays the shared QR and aggregate dashboard;
+      Staff devices provide camera and foreground-GPS permissions.
 - [ ] Large text/reduced motion/screen reader critical flows.
 
 Traceability gate:
@@ -699,8 +754,8 @@ Linux LTS
 The project has not yet selected package/bundle IDs, signing ownership, minimum OS versions or distribution channel. These are intentionally deferred and must be resolved before production release, not during core domain implementation.
 
 - [ ] Configure Android signing/package ID.
-- [ ] OTP provider HTTPS URL/sender settings and opaque-session behavior match
-      release configuration.
+- [ ] Worker Gmail SMTP sender settings (`smtp.gmail.com:587`, App Password,
+      approved From) and opaque-session behavior match release configuration.
 - [ ] Decide organization distribution channel (managed/internal store/public private listing as approved).
 - [ ] Test upgrade path and deep links/push on release build.
 - [ ] Define API/mobile compatibility matrix, minimum supported app version and pilot cohort.
@@ -715,8 +770,9 @@ The project has not yet selected package/bundle IDs, signing ownership, minimum 
 - [ ] Verify allowlist-A OTP request/verify, opaque-session restore/logout and
       current server-side role/status enforcement.
 - [ ] Verify one tagged synthetic weekly registration.
-- [ ] Verify tagged synthetic self/proxy final serving and audited synthetic cleanup.
-- [ ] Verify realtime dashboard.
+- [ ] Verify tagged synthetic Staff own-registration check-in and audited
+      synthetic cleanup; historical proxy/delegation rows are not exercised.
+- [ ] Verify aggregate dashboard polling/stale recovery on controlled target.
 - [ ] Verify no-show job on controlled staging/production-safe target.
 - [ ] Monitor first complete meal lifecycle.
 
@@ -739,14 +795,21 @@ Do not go live if any condition remains:
 - Server-side role provisioning can grant a privileged role without audit.
 - Weekly registration cutoff enforced only on client.
 - Duplicate registration/serving reproduced under concurrency.
-- QR scan directly marks serving without Kitchen confirmation.
-- Delegation can be used without delegate acceptance.
-- Serving authorization can be bypassed without authenticated Kitchen permission and server-side business validation.
-- Realtime dashboard can permanently diverge from DB without recovery.
+- Staff can resolve or confirm another user's registration, or confirm without
+  fresh foreground GPS at both resolve and confirm.
+- Kitchen QR rotates per Staff, contains employee data, or directly authorizes a
+  serving without Staff's explicit confirm.
+- Active delegation/proxy or multi-item serving can authorize a current
+  check-in; historical tables must remain read-only compatibility data.
+- Kitchen aggregate dashboard can permanently diverge from DB, reset to zero on
+  a temporary poll error, or require SSE/WebSocket for correctness.
+- Serving/check-in authorization can be bypassed without authenticated
+  permissions and server-side registration, window, location and GPS validation.
 - No-show/penalty retry can duplicate financial state.
 - PostgreSQL backup exists but restore has never been tested.
 - Server-side Admin bootstrap/lifecycle is unaudited/reusable or can leave the system without a controlled Admin recovery path.
-- Multi-item serving can partially commit.
+- Single-registration confirm can partially commit a `MealServing`, event or
+  idempotency result.
 - Disabled account can call any protected API.
 - Rollback authority/window, API/mobile compatibility or backward-compatible schema procedure is untested.
 - Android/iOS release builds have not been tested against production-like OTP
@@ -758,6 +821,7 @@ After stable operation:
 
 - Track registration vs served vs no-show trend per day/week.
 - Add optional `prepared_count`/remaining-food metrics if Kitchen needs actual waste measurement.
-- Review proxy pickup frequency for operational anomalies without treating proxy use itself as fraud.
+- Review retained delegation/pickup history for migration/accounting anomalies;
+  do not treat historical proxy rows as current authorization or a fraud signal.
 - Evaluate forecasting only after enough trustworthy history exists; do not automatically under-prepare meals in MVP.
 - Reassess server sizing from actual CPU/RAM/DB/latency metrics before introducing Redis, queue brokers or horizontal scaling.

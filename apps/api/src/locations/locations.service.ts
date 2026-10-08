@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '@imeal/core';
 import { v1 } from '@imeal/contracts';
 import { randomUUID } from 'node:crypto';
 const VN_TIME_ZONE = 'Asia/Ho_Chi_Minh' as const;
@@ -74,12 +74,17 @@ export type GpsVerificationResult =
         | 'GPS_UNAVAILABLE'
         | 'GPS_STALE'
         | 'GPS_INACCURATE'
+        | 'OUTSIDE_GEOFENCE'
         | 'GPS_RETRY_REQUIRED';
       details: { action: 'RETRY' | 'REFRESH' };
     };
 
 type GpsFailureCode =
-  'GPS_UNAVAILABLE' | 'GPS_STALE' | 'GPS_INACCURATE' | 'GPS_RETRY_REQUIRED';
+  | 'GPS_UNAVAILABLE'
+  | 'GPS_STALE'
+  | 'GPS_INACCURATE'
+  | 'OUTSIDE_GEOFENCE'
+  | 'GPS_RETRY_REQUIRED';
 
 export interface LocationConfigurationInput {
   id?: string;
@@ -262,7 +267,7 @@ export class LocationsService {
       locationPolicy.longitude,
     );
     if (distance > locationPolicy.geofenceRadiusMeters) {
-      return this.retry(locationId, 'GPS_RETRY_REQUIRED', 'REFRESH');
+      return this.retry(locationId, 'OUTSIDE_GEOFENCE', 'REFRESH');
     }
 
     return {

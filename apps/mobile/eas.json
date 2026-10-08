@@ -1,0 +1,53 @@
+{
+  "cli": {
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": false,
+      "distribution": "internal",
+      "channel": "development",
+      "environment": "development",
+      "credentialsSource": "remote",
+      "autoIncrement": false,
+      "corepack": true,
+      "node": "24.18.1",
+      "yarn": "4.18.0",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "IMEAL_MOBILE_RELEASE": "development"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "environment": "preview",
+      "credentialsSource": "remote",
+      "autoIncrement": false,
+      "corepack": true,
+      "node": "24.18.1",
+      "yarn": "4.18.0",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "IMEAL_MOBILE_RELEASE": "preview"
+      }
+    },
+    "production": {
+      "autoIncrement": false,
+      "distribution": "store",
+      "channel": "production",
+      "environment": "production",
+      "credentialsSource": "remote",
+      "corepack": true,
+      "node": "24.18.1",
+      "yarn": "4.18.0",
+      "env": {
+        "IMEAL_MOBILE_RELEASE": "production"
+      }
+    }
+  }
+}

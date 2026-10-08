@@ -74,11 +74,3 @@ export type {
   StatisticsCardProps,
   StatisticsMetric,
 } from './Cards';
-
-export { QrRefreshIndicator, QrTicket } from './QrTicket';
-export type {
-  QrRefreshIndicatorProps,
-  QrRefreshIndicatorState,
-  QrTicketProps,
-  QrTicketState,
-} from './QrTicket';

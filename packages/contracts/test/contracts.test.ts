@@ -39,6 +39,180 @@ describe('Contracts v1', () => {
     });
   });
 
+  describe('Employee activity', () => {
+    const registrationBase = {
+      id: 'registration-1',
+      mealDate: '2026-09-30',
+      status: 'SERVED' as const,
+      mealChoice: 'REGULAR' as const,
+      menuRevisionId: 'revision-1',
+      menuNameSnapshot: 'Cơm gà',
+      menuDescriptionSnapshot: null,
+      menuImageSnapshot: null,
+      serviceLocationId: 'location-1',
+      serviceLocationAssignmentId: 'assignment-1',
+      serviceLocationCode: 'LOC-A',
+      serviceLocationName: 'Main Hall',
+      serviceLocationAddress: '1 Main Street',
+      serviceLocationEffectiveFrom: '2026-01-01T00:00:00.000Z',
+      serviceLocationSnapshotAt: '2026-09-30T00:00:00.000Z',
+      registeredAt: '2026-09-29T07:00:00.000Z',
+      cancelledAt: null,
+      noShowAt: null,
+      servedAt: '2026-09-30T05:30:00.000Z',
+      createdAt: '2026-09-29T07:00:00.000Z',
+      updatedAt: '2026-09-30T05:30:00.000Z',
+    };
+
+    it('validates page pagination defaults and safe maximum', () => {
+      expect(v1.PagePaginationRequestSchema.parse({})).toEqual({
+        page: 1,
+        limit: 20,
+      });
+      expect(
+        v1.PagePaginationRequestSchema.safeParse({
+          page: 21_474_837,
+          limit: 100,
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.PagePaginationRequestSchema.safeParse({
+          page: 21_474_838,
+          limit: 100,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.PagePaginationRequestSchema.safeParse({
+          page: Number.MAX_SAFE_INTEGER + 1,
+          limit: 20,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.PagePaginationRequestSchema.safeParse({ page: 1, limit: 101 })
+          .success,
+      ).toBe(false);
+      expect(
+        v1.PagePaginationRequestSchema.safeParse({
+          page: 1,
+          limit: 20,
+          userId: 'not-accepted',
+        }).success,
+      ).toBe(false);
+    });
+
+    it('validates history snapshots, timestamps, and penalty summaries', () => {
+      const result = v1.EmployeeRegistrationActivitySchema.safeParse({
+        ...registrationBase,
+        penalties: [
+          {
+            id: 'penalty-1',
+            amount: 50000,
+            status: 'PENDING',
+            createdAt: '2026-10-01T06:45:00.000Z',
+            paidAt: null,
+            waivedAt: null,
+          },
+        ],
+      });
+      expect(result.success).toBe(true);
+      expect(
+        v1.EmployeeRegistrationActivitySchema.safeParse({
+          ...registrationBase,
+          status: 'UNKNOWN',
+          penalties: [],
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.EmployeeRegistrationActivitySchema.safeParse({
+          ...registrationBase,
+          menuRevisionId: null,
+          menuNameSnapshot: null,
+          menuDescriptionSnapshot: null,
+          menuImageSnapshot: null,
+          serviceLocationId: null,
+          serviceLocationAssignmentId: null,
+          serviceLocationCode: null,
+          serviceLocationName: null,
+          serviceLocationAddress: null,
+          serviceLocationEffectiveFrom: null,
+          serviceLocationSnapshotAt: null,
+          registeredAt: null,
+          cancelledAt: null,
+          noShowAt: null,
+          servedAt: null,
+          penalties: [],
+        }).success,
+      ).toBe(true);
+    });
+
+    it('validates stats defaults, period metadata, and zero counts', () => {
+      expect(v1.RegistrationStatsQuerySchema.parse({})).toEqual({});
+      expect(
+        v1.RegistrationStatsQuerySchema.safeParse({ month: '2026-13' }).success,
+      ).toBe(false);
+      expect(
+        v1.RegistrationStatsResponseSchema.safeParse({
+          data: {
+            period: {
+              month: '2026-09',
+              startDate: '2026-09-01',
+              endDate: '2026-09-30',
+            },
+            booked: 0,
+            enjoyed: 0,
+          },
+        }).success,
+      ).toBe(true);
+    });
+
+    it('validates self penalty context without nested summaries', () => {
+      const result = v1.SelfPenaltyListResponseSchema.safeParse({
+        data: [
+          {
+            id: 'penalty-1',
+            amount: 50000,
+            reason: 'NO_SHOW_PENALTY_2026-09-30',
+            status: 'WAIVED',
+            mealDate: '2026-09-30',
+            createdAt: '2026-10-01T06:45:00.000Z',
+            paidAt: null,
+            waivedAt: '2026-10-02T06:45:00.000Z',
+            waiveReason: 'Approved leave',
+            registration: {
+              ...registrationBase,
+              status: 'NO_SHOW',
+              servedAt: null,
+            },
+          },
+        ],
+        meta: {
+          pagination: {
+            page: 1,
+            limit: 20,
+            total: 1,
+            totalPages: 1,
+            hasNextPage: false,
+          },
+        },
+      });
+      expect(result.success).toBe(true);
+      expect(
+        v1.SelfPenaltySchema.safeParse({
+          id: 'penalty-legacy',
+          amount: 50000,
+          reason: 'legacy',
+          status: 'PENDING',
+          mealDate: null,
+          createdAt: '2026-10-01T06:45:00.000Z',
+          paidAt: null,
+          waivedAt: null,
+          waiveReason: null,
+          registration: null,
+        }).success,
+      ).toBe(true);
+    });
+  });
+
   describe('Headers', () => {
     it('validates standard headers', () => {
       const result = v1.StandardHeadersSchema.safeParse({
@@ -162,49 +336,6 @@ describe('Contracts v1', () => {
       ).toBe(true);
     });
   });
-  describe('Pickup availability', () => {
-    const details = {
-      availableFrom: '10:30' as const,
-      availableUntil: '13:30' as const,
-      timeZone: 'Asia/Ho_Chi_Minh' as const,
-    };
-
-    it('validates the closed-window error with its exact details', () => {
-      const result = v1.PickupAvailabilityErrorSchema.safeParse({
-        code: 'PICKUP_WINDOW_CLOSED',
-        message:
-          'Meal pickup is only available from 10:30 through 13:30 Vietnam time.',
-        details,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.success && result.data.code).toBe('PICKUP_WINDOW_CLOSED');
-      expect(result.success && result.data.details).toEqual(details);
-    });
-
-    it('validates the not-ready error with its exact details', () => {
-      const result = v1.PickupAvailabilityErrorSchema.safeParse({
-        code: 'PICKUP_NOT_READY',
-        message:
-          'Meal pickup is not currently available. Please wait for the kitchen signal.',
-        details,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.success && result.data.code).toBe('PICKUP_NOT_READY');
-      expect(result.success && result.data.details).toEqual(details);
-    });
-
-    it('rejects missing or incorrect availability details', () => {
-      expect(
-        v1.PickupAvailabilityErrorSchema.safeParse({
-          code: 'PICKUP_WINDOW_CLOSED',
-          message: 'closed',
-          details: { ...details, availableUntil: '14:00' },
-        }).success,
-      ).toBe(false);
-    });
-  });
   describe('Registrations', () => {
     it('validates meal choices and strict status-specific batch items', () => {
       expect(
@@ -255,6 +386,35 @@ describe('Contracts v1', () => {
           '2026-09-06',
         ]);
       }
+    });
+
+    it('accepts weekly registration restriction failure and day reasons', () => {
+      expect(
+        v1.BatchRegistrationResponseSchema.safeParse([
+          {
+            date: '2026-09-07',
+            success: false,
+            code: 'REGISTRATION_WEEK_NOT_OPEN',
+            reason: 'Registration week is not open',
+          },
+          {
+            date: '2026-09-14',
+            success: false,
+            code: 'OUTSIDE_REGISTRATION_WINDOW',
+            reason: 'Date is outside the registration window',
+          },
+        ]).success,
+      ).toBe(true);
+      expect(
+        v1.RegistrationDayUnavailableReasonSchema.safeParse(
+          'REGISTRATION_WEEK_NOT_OPEN',
+        ).success,
+      ).toBe(true);
+      expect(
+        v1.RegistrationDayUnavailableReasonSchema.safeParse(
+          'OUTSIDE_REGISTRATION_WINDOW',
+        ).success,
+      ).toBe(true);
     });
 
     it('rejects unknown failure codes and result branch fields', () => {
@@ -344,6 +504,48 @@ describe('Contracts v1', () => {
       expect(
         v1.BatchRegistrationRequestSchema.safeParse({
           registrations: [{ ...activeRegistration, mealName: 'Lunch' }],
+        }).success,
+      ).toBe(false);
+    });
+
+    it('requires the exact UTC next-week opening timestamp', () => {
+      const window = {
+        serverNow: '2026-09-05T10:00:00.000Z',
+        cutoffAt: '2026-09-04T07:00:00.000Z',
+        timeZone: 'Asia/Ho_Chi_Minh' as const,
+        nextWeekOpenAt: '2026-09-05T10:00:00.000Z',
+        days: Array.from({ length: 7 }, (_, index) => ({
+          mealDate: `2026-09-${String(5 + index).padStart(2, '0')}`,
+          cutoffAt: '2026-09-04T07:00:00.000Z',
+          editable: true,
+          lunarDate: {
+            day: 1,
+            month: 8,
+            year: 2026,
+            isLeapMonth: false,
+          },
+          availableMealChoices: ['REGULAR' as const],
+        })),
+      };
+
+      expect(v1.RegistrationWindowSchema.safeParse(window).success).toBe(true);
+      expect(
+        v1.RegistrationWindowSchema.safeParse({
+          ...window,
+          nextWeekOpenAt: undefined,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.RegistrationWindowSchema.safeParse({
+          ...window,
+          nextWeekOpenAt: '2026-09-05T17:00:00+07:00',
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.RegistrationWindowSchema.safeParse({
+          ...window,
+          nextWeekOpenAt: '2026-09-05T10:00:00.000Z',
+          unknown: true,
         }).success,
       ).toBe(false);
     });
@@ -485,14 +687,6 @@ describe('Contracts v1', () => {
             changeMealChoice:
               registration?.status === 'ACTIVE' ? [] : ['NOT_ACTIVE'],
           },
-          delegation:
-            registration?.status === 'ACTIVE'
-              ? {
-                  id: 'delegation-1',
-                  status: 'PENDING',
-                  delegateName: 'Delegate',
-                }
-              : null,
         };
       });
       const registrationWindowDays = mealDates.map((mealDate, index) => ({
@@ -516,6 +710,7 @@ describe('Contracts v1', () => {
         days,
         registrationWindow: {
           serverNow: '2026-09-20T06:00:00.000Z',
+          nextWeekOpenAt: '2026-09-19T10:00:00.000Z',
           cutoffAt: '2026-09-20T07:00:00.000Z',
           timeZone: 'Asia/Ho_Chi_Minh',
           days: registrationWindowDays,
@@ -568,7 +763,6 @@ describe('Contracts v1', () => {
           cancel: ['NOT_ACTIVE'],
           changeMealChoice: ['NOT_ACTIVE'],
         },
-        delegation: null,
       };
 
       expect(v1.WeekRegistrationDaySchema.safeParse(day).success).toBe(false);
@@ -615,7 +809,6 @@ describe('Contracts v1', () => {
           cancel: ['NOT_ACTIVE'],
           changeMealChoice: ['NOT_ACTIVE'],
         },
-        delegation: null,
       });
       const validWindowDay = (mealDate: string) => ({
         mealDate,
@@ -635,6 +828,7 @@ describe('Contracts v1', () => {
         days: mealDates.map(validDay),
         registrationWindow: {
           serverNow: '2026-09-20T06:00:00.000Z',
+          nextWeekOpenAt: '2026-09-19T10:00:00.000Z',
           cutoffAt: '2026-09-20T07:00:00.000Z',
           timeZone: 'Asia/Ho_Chi_Minh',
           days: mealDates.map(validWindowDay),
@@ -689,268 +883,6 @@ describe('Contracts v1', () => {
     });
   });
 
-  describe('Pickup and kitchen meal choice transport', () => {
-    const owner = {
-      id: 'owner-1',
-      name: 'Meal Owner',
-      email: 'owner@example.com',
-    };
-    const pickupOption = {
-      type: 'DELEGATED' as const,
-      registrationId: 'registration-1',
-      delegationId: 'delegation-1',
-      mealDate: '2026-09-25',
-      mealChoice: 'VEGETARIAN' as const,
-      owner,
-    };
-
-    it('requires mealChoice on pickup options and serving intent items', () => {
-      expect(
-        v1.PickupOptionsResponseSchema.safeParse({
-          options: [pickupOption],
-        }).success,
-      ).toBe(true);
-      expect(
-        v1.PickupOptionsResponseSchema.safeParse({
-          options: [{ ...pickupOption, mealChoice: undefined }],
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.ServingIntentItemSchema.safeParse({
-          id: 'registration-1',
-          itemName: 'Lunch',
-          quantity: 1,
-          mealChoice: 'VEGETARIAN',
-        }).success,
-      ).toBe(true);
-      expect(
-        v1.PickupOptionsResponseSchema.safeParse({
-          options: [{ ...pickupOption, owner: undefined }],
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.PickupOptionsResponseSchema.safeParse({
-          options: [
-            {
-              ...pickupOption,
-              type: 'OWN',
-              delegationId: 'delegation-1',
-              owner,
-            },
-          ],
-        }).success,
-      ).toBe(false);
-    });
-
-    it('validates resolved serving payloads with choice on every item', () => {
-      const payload = {
-        session: {
-          id: 'session-1',
-          userId: 'delegate-1',
-          registrationIds: ['registration-1'],
-          expiresAt: '2026-09-04T04:00:30.000Z',
-          createdAt: '2026-09-04T04:00:00.000Z',
-        },
-        items: [pickupOption],
-        pickupSessionToken: 'session-1',
-        intent: {
-          userId: 'delegate-1',
-          items: [
-            {
-              id: 'registration-1',
-              itemName: 'Lunch',
-              quantity: 1,
-              mealChoice: 'VEGETARIAN',
-            },
-          ],
-          totalCount: 1,
-          isProxy: true,
-        },
-      };
-      expect(v1.ResolveServingResponseSchema.safeParse(payload).success).toBe(
-        true,
-      );
-      expect(
-        v1.ResolveServingResponseSchema.safeParse({
-          ...payload,
-          intent: {
-            ...payload.intent,
-            items: [{ ...payload.intent.items[0], mealChoice: undefined }],
-          },
-        }).success,
-      ).toBe(false);
-    });
-
-    it('requires meal choice and partitions kitchen counters', () => {
-      expect(
-        v1.KitchenDashboardCountersSchema.parse({
-          totalRegistered: 3,
-          regularTotal: 2,
-          vegetarianTotal: 1,
-          servedTotal: 1,
-          remaining: 2,
-          noShowTotal: 0,
-        }),
-      ).toMatchObject({ regularTotal: 2, vegetarianTotal: 1 });
-      expect(
-        v1.KitchenDashboardCountersSchema.safeParse({
-          totalRegistered: 3,
-          regularTotal: 3,
-          vegetarianTotal: 1,
-          servedTotal: 1,
-          remaining: 2,
-          noShowTotal: 0,
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.KitchenRegistrationItemSchema.safeParse({
-          registrationId: 'registration-1',
-          userId: 'user-1',
-          userName: 'Meal Owner',
-          userEmail: 'owner@example.com',
-          mealChoice: 'VEGETARIAN',
-          state: 'PENDING',
-          isServed: false,
-          servedAt: null,
-        }).success,
-      ).toBe(true);
-      expect(
-        v1.ServingLogItemSchema.safeParse({
-          id: 'serving-1',
-          registrationId: 'registration-1',
-          userId: 'user-1',
-          userName: 'Meal Owner',
-          userEmail: 'owner@example.com',
-          mealChoice: 'VEGETARIAN',
-          servedAt: '2026-09-25T04:00:00.000Z',
-          isProxy: false,
-        }).success,
-      ).toBe(true);
-    });
-    it('parses_dashboard_pending_served_and_no_show_states', () => {
-      const baseItem = {
-        registrationId: 'registration-1',
-        userId: 'user-1',
-        userName: 'Meal Owner',
-        userEmail: 'owner@example.com',
-        mealChoice: 'REGULAR' as const,
-      };
-
-      expect(
-        v1.KitchenRegistrationItemSchema.safeParse({
-          ...baseItem,
-          state: 'PENDING',
-          isServed: false,
-          servedAt: null,
-        }).success,
-      ).toBe(true);
-      expect(
-        v1.KitchenRegistrationItemSchema.safeParse({
-          ...baseItem,
-          state: 'SERVED',
-          isServed: true,
-          servedAt: '2026-09-25T04:00:00.000Z',
-        }).success,
-      ).toBe(true);
-      expect(
-        v1.KitchenRegistrationItemSchema.safeParse({
-          ...baseItem,
-          state: 'NO_SHOW',
-          isServed: false,
-          servedAt: null,
-        }).success,
-      ).toBe(true);
-    });
-
-    it('rejects dashboard state when isServed does not match', () => {
-      expect(
-        v1.KitchenRegistrationItemSchema.safeParse({
-          registrationId: 'registration-1',
-          userId: 'user-1',
-          userName: 'Meal Owner',
-          userEmail: 'owner@example.com',
-          mealChoice: 'REGULAR',
-          state: 'SERVED',
-          isServed: false,
-          servedAt: null,
-        }).success,
-      ).toBe(false);
-    });
-
-    it('rejects unknown fields in all kitchen response objects and lists', () => {
-      const counters = {
-        totalRegistered: 1,
-        regularTotal: 1,
-        vegetarianTotal: 0,
-        servedTotal: 1,
-        remaining: 0,
-        noShowTotal: 0,
-      };
-      const registrationItem = {
-        registrationId: 'registration-1',
-        userId: 'user-1',
-        userName: 'Meal Owner',
-        userEmail: 'owner@example.com',
-        mealChoice: 'REGULAR' as const,
-        state: 'SERVED' as const,
-        isServed: true,
-        servedAt: '2026-09-25T04:00:00.000Z',
-      };
-      const servingLog = {
-        id: 'serving-1',
-        registrationId: 'registration-1',
-        userId: 'user-1',
-        userName: 'Meal Owner',
-        userEmail: 'owner@example.com',
-        mealChoice: 'REGULAR' as const,
-        servedAt: '2026-09-25T04:00:00.000Z',
-        isProxy: false,
-      };
-      const snapshot = {
-        date: '2026-09-25',
-        isServingReady: true,
-        counters,
-        recentLogs: [servingLog],
-        lists: {
-          served: [registrationItem],
-          pending: [],
-          all: [registrationItem],
-          noShow: [],
-        },
-      };
-
-      expect(
-        v1.KitchenDashboardCountersSchema.safeParse({
-          ...counters,
-          extra: true,
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.ServingLogItemSchema.safeParse({
-          ...servingLog,
-          extra: true,
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.KitchenRegistrationItemSchema.safeParse({
-          ...registrationItem,
-          extra: true,
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.KitchenDashboardSnapshotSchema.safeParse({
-          ...snapshot,
-          extra: true,
-        }).success,
-      ).toBe(false);
-      expect(
-        v1.KitchenDashboardSnapshotSchema.safeParse({
-          ...snapshot,
-          lists: { ...snapshot.lists, extra: true },
-        }).success,
-      ).toBe(false);
-    });
-  });
 
   describe('Notifications', () => {
     const id = '11111111-1111-4111-8111-111111111111';
@@ -1195,107 +1127,7 @@ describe('Contracts v1', () => {
       ).toThrow();
     });
 
-    it('requires canonical sorted unique registration IDs for Generate QR', () => {
-      const evidence = {
-        capturedAt: '2026-09-24T03:00:00.000Z',
-        latitude: 10.77,
-        longitude: 106.69,
-        accuracyMeters: 12,
-      };
-      expect(
-        v1.GenerateQrSchema.parse({
-          registrationIds: ['a', 'b'],
-          presenterEvidence: evidence,
-        }).registrationIds,
-      ).toEqual(['a', 'b']);
-      expect(() =>
-        v1.GenerateQrSchema.parse({
-          registrationIds: ['a', 'a'],
-          presenterEvidence: evidence,
-        }),
-      ).toThrow();
-      expect(() =>
-        v1.GenerateQrSchema.parse({
-          registrationIds: ['b', 'a'],
-          presenterEvidence: evidence,
-        }),
-      ).toThrow();
-      expect(() =>
-        v1.GenerateQrSchema.parse({
-          registrationIds: ['a', ''],
-          presenterEvidence: evidence,
-        }),
-      ).toThrow();
-    });
 
-    it('keeps resolve QR-only and confirm session-only', () => {
-      expect(v1.ResolvePickupSchema.parse({ qr: 'signed-qr' })).toEqual({
-        qr: 'signed-qr',
-      });
-      expect(() =>
-        v1.ResolvePickupSchema.parse({
-          qr: 'signed-qr',
-          presenterEvidence: {},
-        }),
-      ).toThrow();
-      expect(
-        v1.ConfirmPickupSchema.parse({
-          pickupSessionId: 's',
-          idempotencyKey: 'k',
-        }),
-      ).toEqual({
-        pickupSessionId: 's',
-        idempotencyKey: 'k',
-      });
-      expect(() =>
-        v1.ConfirmPickupSchema.parse({
-          pickupSessionId: '',
-          idempotencyKey: 'k',
-        }),
-      ).toThrow();
-      expect(() =>
-        v1.ErrorDetailSchema.parse({
-          code: 'BAD_REQUEST',
-          message: 'bad request',
-          details: { reason: 'invalid input' },
-          legacyField: 'preserved',
-        }),
-      ).not.toThrow();
-      expect(
-        v1.ErrorDetailSchema.parse({
-          code: 'GPS_STALE',
-          message: 'retry location',
-          details: { action: 'RETRY' },
-        }).details,
-      ).toEqual({ action: 'RETRY' });
-      expect(() =>
-        v1.ErrorDetailSchema.parse({
-          code: 'GPS_STALE',
-          message: 'retry location',
-          details: { action: 'RETRY', latitude: 10.77 },
-        }),
-      ).toThrow();
-      expect(() =>
-        v1.ErrorDetailSchema.parse({
-          code: 'GPS_INACCURATE',
-          message: 'refresh location',
-          details: { action: 'REFRESH', distanceMeters: 2 },
-        }),
-      ).toThrow();
-      expect(() =>
-        v1.ConfirmPickupSchema.parse({
-          pickupSessionId: 's',
-          idempotencyKey: '',
-        }),
-      ).toThrow();
-      expect(() =>
-        v1.ConfirmPickupSchema.parse({
-          pickupSessionId: 's',
-          idempotencyKey: 'k',
-          registrationIds: ['r'],
-        }),
-      ).toThrow();
-    });
 
     it('accepts safe GPS recovery details and canonical stable error codes', () => {
       expect(v1.GpsFailureDetailsSchema.parse({ action: 'RETRY' })).toEqual({
@@ -1324,7 +1156,7 @@ describe('Contracts v1', () => {
           distanceMeters: 1,
         }),
       ).toThrow();
-      expect(v1.PickupErrorCodeSchema.options).toEqual(
+      expect(v1.OperationalErrorCodeSchema.options).toEqual(
         expect.arrayContaining([
           'OTP_REQUEST_ACCEPTED',
           'OTP_INVALID_OR_EXPIRED',
@@ -1333,18 +1165,198 @@ describe('Contracts v1', () => {
           'GPS_UNAVAILABLE',
           'GPS_STALE',
           'GPS_INACCURATE',
-          'PICKUP_INTENT_REQUIRED',
-          'PICKUP_INTENT_CONFLICT',
-          'PICKUP_SESSION_EXPIRED',
+          'INVALID_QR',
+          'INACTIVE_CHECKIN_SESSION',
           'IDEMPOTENCY_CONFLICT',
         ]),
       );
-      expect(v1.PickupErrorCodeSchema.options).not.toEqual(
+      expect(v1.OperationalErrorCodeSchema.options).not.toEqual(
         expect.arrayContaining([
+          'PICKUP_INTENT_REQUIRED',
+          'PICKUP_INTENT_CONFLICT',
+          'PICKUP_SESSION_EXPIRED',
           'EXACT_INTENT_REQUIRED',
           'GPS_FIX_TOO_OLD',
           'GPS_ACCURACY_TOO_LOW',
         ]),
+      );
+    });
+  describe('Self check-in contracts', () => {
+    const location = {
+      id: 'location-1',
+      shortCode: 'LOC-A',
+      displayName: 'Main Hall',
+      servingPointName: 'Lunch counter',
+      address: '1 Main Street',
+    } as const;
+    const window = {
+      opensAt: '2026-09-30T03:30:00.000Z',
+      closesAt: '2026-09-30T06:30:00.000Z',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    } as const;
+
+    it('requires GPS evidence when resolving a shared QR', () => {
+      expect(
+        v1.ResolveCheckInSchema.safeParse({
+          qr: 'opaque-shared-qr',
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.ResolveCheckInSchema.safeParse({
+          qr: 'opaque-shared-qr',
+          gps: {
+            capturedAt: '2026-09-30T03:35:00.000Z',
+            latitude: 10.77,
+            longitude: 106.69,
+            accuracyMeters: 12,
+          },
+        }).success,
+      ).toBe(true);
+    });
+
+    it('requires the resolved intent nonce for confirmation', () => {
+      const gps = {
+        capturedAt: '2026-09-30T03:35:00.000Z',
+        latitude: 10.77,
+        longitude: 106.69,
+        accuracyMeters: 12,
+      };
+      expect(
+        v1.ConfirmCheckInSchema.safeParse({
+          sessionId: 'check-in-session-1',
+          idempotencyKey: 'idempotency-1',
+          gps,
+        }).success,
+      ).toBe(false);
+      expect(
+        v1.ConfirmCheckInSchema.safeParse({
+          sessionId: 'check-in-session-1',
+          intentNonce: 'opaque-resolve-intent',
+          idempotencyKey: 'idempotency-1',
+          gps,
+        }).success,
+      ).toBe(true);
+    });
+
+    it('accepts stable location QR and enforces aggregate counter invariants', () => {
+      expect(
+        v1.KitchenCheckInQrResponseSchema.safeParse({
+          data: {
+            qr: 'opaque-shared-qr',
+            date: '2026-09-30',
+            location,
+            activeFrom: window.opensAt,
+            expiresAt: window.closesAt,
+          },
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.KitchenCheckInDashboardSchema.safeParse({
+          date: '2026-09-30',
+          location,
+          window,
+          lastUpdated: '2026-09-30T04:00:00.000Z',
+          counts: {
+            registered: 4,
+            checkedIn: 2,
+            pending: 1,
+            noShow: 1,
+            regular: 3,
+            vegetarian: 1,
+          },
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.KitchenCheckInDashboardSchema.safeParse({
+          date: '2026-09-30',
+          location,
+          window,
+          lastUpdated: '2026-09-30T04:00:00.000Z',
+          counts: {
+            registered: 4,
+            checkedIn: 3,
+            pending: 1,
+            noShow: 1,
+            regular: 3,
+            vegetarian: 1,
+          },
+        }).success,
+      ).toBe(false);
+    });
+
+    it('exposes only the requested stable check-in error codes', () => {
+      expect(v1.CheckInErrorCodeSchema.options).toEqual(
+        expect.arrayContaining([
+          'INVALID_QR',
+          'INACTIVE_CHECKIN_SESSION',
+          'NO_REGISTRATION',
+          'REGISTRATION_CANCELLED',
+          'ALREADY_CHECKED_IN',
+          'OUTSIDE_CHECKIN_WINDOW',
+          'LOCATION_MISMATCH',
+          'GPS_REQUIRED',
+          'GPS_STALE',
+          'GPS_INACCURATE',
+          'OUTSIDE_GEOFENCE',
+        ]),
+      );
+    });
+  });
+  });
+  describe('Public error-code runtime set', () => {
+    it('matches canonical code schemas with true-valued own keys only', () => {
+      const keys = Object.keys(v1.PUBLIC_ERROR_CODES).sort();
+      expect(keys).toEqual([...v1.PUBLIC_ERROR_CODE_VALUES].sort());
+      for (const key of keys) {
+        expect(v1.PUBLIC_ERROR_CODES[key]).toBe(true);
+      }
+
+      const canonicalSchemaCodes = [
+        ...v1.ErrorCodeSchema.options,
+        ...v1.OperationalErrorCodeSchema.options,
+        ...v1.CheckInErrorCodeSchema.options,
+        ...v1.RegistrationFailureCodeSchema.options,
+      ];
+      const providerOtpCodes = [
+        'OTP_PROVIDER_UNAVAILABLE',
+        'OTP_REQUEST_ACCEPTED',
+        'OTP_INVALID_OR_EXPIRED',
+        'OTP_RATE_LIMITED',
+      ] as const;
+      const menuRosterLocationCodes = [
+        'MENU_NOT_FOUND',
+        'INVALID_EFFECTIVE_RANGE',
+        'ROSTER_BATCH_NOT_FOUND',
+        'ROSTER_IMPORT_REJECTED',
+        'UNKNOWN_SERVICE_LOCATION',
+        'INVALID_LOCATION_POLICY',
+        'LOCATION_COORDINATES_REQUIRED',
+      ] as const;
+      const adminCodes = [
+        'ADMIN_MANAGED_ROLES_UNAVAILABLE',
+        'ADMIN_SELF_DISABLE_FORBIDDEN',
+        'ADMIN_LAST_ACTIVE_ADMIN',
+      ] as const;
+      const notificationCodes = [
+        'INVALID_NOTIFICATION_CURSOR',
+        'INVALID_NOTIFICATION_PREFERENCE',
+        'INVALID_PUSH_TOKEN',
+        'INVALID_NOTIFICATION_KIND',
+        'NOTIFICATION_NOT_FOUND',
+      ] as const;
+
+      for (const code of [
+        ...canonicalSchemaCodes,
+        ...providerOtpCodes,
+        ...menuRosterLocationCodes,
+        ...adminCodes,
+        ...notificationCodes,
+      ]) {
+        expect(Object.hasOwn(v1.PUBLIC_ERROR_CODES, code), code).toBe(true);
+      }
+      expect(Object.hasOwn(v1.PUBLIC_ERROR_CODES, 'toString')).toBe(false);
+      expect(Object.hasOwn(v1.PUBLIC_ERROR_CODES, 'password=secret')).toBe(
+        false,
       );
     });
   });

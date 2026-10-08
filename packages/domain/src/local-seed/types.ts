@@ -313,9 +313,9 @@ export interface SeedCounts {
   mealDays: 7;
   menuRevisions: 7;
   registrations: 126;
-  pendingDelegations: 4;
-  acceptedDelegations: 4;
-  completedDelegations: 8;
+  pendingDelegations: 0;
+  acceptedDelegations: 0;
+  completedDelegations: 0;
   penalties: 10;
   servingVerifications: 40;
   pickupSessions: 40;

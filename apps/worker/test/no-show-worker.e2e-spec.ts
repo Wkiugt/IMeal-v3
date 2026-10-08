@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Client as PgClient } from 'pg';
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@imeal/core';
 import type { WorkerPublishInput } from '../src/worker-notification-publisher.js';
 
 type WorkerResult = {
@@ -54,7 +54,7 @@ databaseDescribe('PostgreSQL no-show worker', () => {
     const [{ Client }, prismaModule, workerModule, publisherModule] =
       await Promise.all([
         import('pg'),
-        import('@prisma/client'),
+        import('@imeal/core'),
         import('../src/no-show-worker.service.js'),
         import('../src/worker-notification-publisher.js'),
       ]);
@@ -72,7 +72,7 @@ databaseDescribe('PostgreSQL no-show worker', () => {
       stdio: 'ignore',
     });
 
-    prisma = new prismaModule.PrismaClient();
+    prisma = prismaModule.createPrismaClient(parsedDatabaseUrl.toString());
     await prisma.$connect();
   });
 

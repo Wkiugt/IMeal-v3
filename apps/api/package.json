@@ -8,6 +8,7 @@
   "type": "module",
   "scripts": {
     "build": "nest build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "deploy": "nest deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "dotenv -e ../../.env -- nest start",
@@ -16,6 +17,8 @@
     "start:prod": "node dist/main",
     "lint": "oxlint src/ test/",
     "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:db": "vitest run --config ./vitest.config.e2e.ts",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
@@ -30,7 +33,6 @@
     "@nestjs/core": "^12.0.1",
     "@nestjs/platform-fastify": "^12.0.1",
     "@nestjs/schedule": "^12.0.1",
-    "@prisma/client": "^5.22.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "zod": "^3.25.76"
@@ -41,7 +43,7 @@
     "@nestjs/schematics": "^12.0.0",
     "@nestjs/testing": "^12.0.1",
     "@types/express": "^5.0.0",
-    "@types/node": "^24.0.0",
+    "@types/node": "24.19.1",
     "@types/supertest": "^7.0.0",
     "@vitest/coverage-v8": "^4.1.2",
     "dotenv-cli": "^11.0.0",

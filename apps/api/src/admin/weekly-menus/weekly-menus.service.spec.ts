@@ -34,13 +34,6 @@ const mockTx = {
 
 const notificationsServiceMock = { publish: vi.fn() };
 
-vi.mock('@prisma/client', () => ({
-  PrismaClient: class {
-    constructor() {
-      return mockPrisma;
-    }
-  },
-}));
 
 describe('WeeklyMenusService', () => {
   let service: WeeklyMenusService;
@@ -69,6 +62,44 @@ describe('WeeklyMenusService', () => {
     mockTx.auditLog.create.mockResolvedValue({});
     mockTx.registration.findMany.mockResolvedValue([]);
     mockTx.registration.update.mockResolvedValue({});
+  });
+
+  it('loads only the deterministic latest verified revision for each day', async () => {
+    const latest = {
+      id: 'revision-2',
+      revision: 2,
+      mealName: 'New lunch',
+      description: 'New description',
+      imageUrl: null,
+      content: 'New lunch',
+    };
+    mockPrisma.weeklyMenu.findMany.mockResolvedValueOnce([
+      {
+        id: 'weekly-menu-1',
+        startDate: new Date('2026-09-01T00:00:00.000Z'),
+        endDate: new Date('2026-09-07T00:00:00.000Z'),
+        dailyMenus: [{ id: 'daily-menu-1', revisions: [latest] }],
+      },
+    ]);
+
+    const result = await service.getWeeklyMenus();
+
+    expect(mockPrisma.weeklyMenu.findMany).toHaveBeenCalledWith({
+      orderBy: { startDate: 'asc' },
+      include: {
+        dailyMenus: {
+          include: {
+            mealDays: true,
+            revisions: {
+              where: { revision: { not: null } },
+              orderBy: [{ revision: 'desc' }, { id: 'desc' }],
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+    expect(result[0]?.dailyMenus[0]?.revisions).toEqual([latest]);
   });
 
   it('rejects disabling a registered day', async () => {

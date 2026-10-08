@@ -4,7 +4,7 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { createPrismaAdapter, PrismaClient } from '@imeal/core';
 
 const PRISMA_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 30;
@@ -29,6 +29,12 @@ export class PrismaService
 {
   private readonly logger = new Logger(PrismaService.name);
   private ready = false;
+
+  constructor() {
+    super({
+      adapter: createPrismaAdapter(process.env.DATABASE_URL ?? ''),
+    });
+  }
 
   async onModuleInit(): Promise<void> {
     let timeout: NodeJS.Timeout | undefined;

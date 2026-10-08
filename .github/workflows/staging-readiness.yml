@@ -4,10 +4,15 @@ on:
   pull_request:
   push:
     branches:
-      - main
-    tags:
-      - 'imeal-*'
+      - deploy/develop
+      - deploy/staging
   workflow_dispatch:
+    inputs:
+      deploy_staging:
+        description: Explicitly qualify the protected ephemeral staging target
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -17,176 +22,407 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: '20.x'
+  NODE_VERSION: '24.x'
   YARN_VERSION: '4.18.0'
   CI: 'true'
+  CI_DOCKER_AUTHORIZED: 'true'
+  RELEASE_ID: imeal-${{ github.run_id }}-${{ github.sha }}
   TRIVY_IMAGE: aquasec/trivy@sha256:fa9a2d2a839e69bfc0e774e885c526b5db20dc1feba5bcd1bfb59e51e7855ae0
 
 jobs:
-  checks:
-    name: Immutable checks and release inputs
+  static:
+    name: Static checks
     runs-on: ubuntu-latest
-    outputs:
-      release_id: ${{ steps.release.outputs.release_id }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: |
+          corepack enable
+          corepack install --global "yarn@${YARN_VERSION}"
+          test "$(corepack yarn --version)" = "${YARN_VERSION}"
+          yarn install --immutable
+      - id: produce
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci/static"
+          node scripts/ci/checks.mjs --lane static --output "$RUNNER_TEMP/ci/static"
+          node scripts/ci/ci-dispatcher.mjs --release-id "$RELEASE_ID" --lane-id static --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/static/commands.json" --output "$RUNNER_TEMP/ci/static"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-static
+          path: ${{ runner.temp }}/ci/static
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+      - if: steps.produce.outcome != 'success'
+        run: exit 1
+
+  suites:
+    name: Workspace suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: |
+          corepack enable
+          corepack install --global "yarn@${YARN_VERSION}"
+          yarn install --immutable
+      - id: produce
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci/suites"
+          node scripts/ci/checks.mjs --lane suites --output "$RUNNER_TEMP/ci/suites"
+          node scripts/ci/ci-dispatcher.mjs --release-id "$RELEASE_ID" --lane-id suites --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/suites/commands.json" --output "$RUNNER_TEMP/ci/suites"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-suites
+          path: ${{ runner.temp }}/ci/suites
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+      - if: steps.produce.outcome != 'success'
+        run: exit 1
+
+  mobile-export:
+    name: Mobile production export
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: |
+          corepack enable
+          corepack install --global "yarn@${YARN_VERSION}"
+          yarn install --immutable
+      - id: produce
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci/mobile-export"
+          node scripts/ci/checks.mjs --lane mobile-export --output "$RUNNER_TEMP/ci/mobile-export"
+          node scripts/ci/ci-dispatcher.mjs --release-id "$RELEASE_ID" --lane-id mobile-export --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/mobile-export/commands.json" --output "$RUNNER_TEMP/ci/mobile-export"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-mobile-export
+          path: ${{ runner.temp }}/ci/mobile-export
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+  mobile-smoke:
+    name: Mobile HTTP smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: |
+          corepack enable
+          corepack install --global "yarn@${YARN_VERSION}"
+          yarn install --immutable
+      - id: produce
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci/mobile-smoke"
+          node scripts/ci/checks.mjs --lane mobile-smoke --output "$RUNNER_TEMP/ci/mobile-smoke"
+          node scripts/ci/ci-dispatcher.mjs --release-id "$RELEASE_ID" --lane-id mobile-smoke --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/mobile-smoke/commands.json" --output "$RUNNER_TEMP/ci/mobile-smoke"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-mobile-smoke
+          path: ${{ runner.temp }}/ci/mobile-smoke
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+  db:
+    name: Disposable PostgreSQL suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public
     services:
       postgres:
         image: postgres:16.4
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: imeal_ci
-        ports:
-          - 5432:5432
+        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres, POSTGRES_DB: imeal_ci }
+        ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U postgres -d imeal_ci"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
+          --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
-      - name: Check out the exact source commit
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
+          node-version: ${{ env.NODE_VERSION }}
+      - run: |
+          corepack enable
+          corepack install --global "yarn@${YARN_VERSION}"
+          yarn install --immutable
+      - id: produce
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci/db"
+          node scripts/ci/checks.mjs --lane db --output "$RUNNER_TEMP/ci/db"
+          node scripts/ci/ci-dispatcher.mjs --release-id "$RELEASE_ID" --lane-id db --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/db/commands.json" --output "$RUNNER_TEMP/ci/db" --preserve-database-url
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-db
+          path: ${{ runner.temp }}/ci/db
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+      - if: steps.produce.outcome != 'success'
+        run: exit 1
 
-      - name: Set up Node
+  tooling:
+    name: Staging tooling and Compose tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: |
+          corepack enable
+          corepack install --global "yarn@${YARN_VERSION}"
+          yarn install --immutable
+      - id: produce
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci/tooling"
+          node scripts/ci/checks.mjs --lane tooling --output "$RUNNER_TEMP/ci/tooling"
+          node scripts/ci/ci-dispatcher.mjs --allow-docker --release-id "$RELEASE_ID" --lane-id tooling --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/tooling/commands.json" --output "$RUNNER_TEMP/ci/tooling"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-tooling
+          path: ${{ runner.temp }}/ci/tooling
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+      - if: steps.produce.outcome != 'success'
+        run: exit 1
+
+  security:
+    name: Security matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [audit, secrets]
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: |
+          corepack enable
+          corepack install --global "yarn@${YARN_VERSION}"
+          yarn install --immutable
+      - id: produce
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci/security-${{ matrix.kind }}"
+          node scripts/ci/checks.mjs --lane "security-${{ matrix.kind }}" --output "$RUNNER_TEMP/ci/security-${{ matrix.kind }}"
+          node scripts/ci/ci-dispatcher.mjs --allow-docker --release-id "$RELEASE_ID" --lane-id "security-${{ matrix.kind }}" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/security-${{ matrix.kind }}/commands.json" --output "$RUNNER_TEMP/ci/security-${{ matrix.kind }}"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-security-${{ matrix.kind }}
+          path: ${{ runner.temp }}/ci/security-${{ matrix.kind }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+  images:
+    name: Image build scan SBOM matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, worker, admin-web]
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: |
+          corepack enable
+          corepack install --global "yarn@${YARN_VERSION}"
+          yarn install --immutable
+      - id: produce
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci/images-${{ matrix.service }}"
+          node scripts/ci/checks.mjs --lane "images-${{ matrix.service }}" --output "$RUNNER_TEMP/ci/images-${{ matrix.service }}"
+          set +e
+          node scripts/ci/ci-dispatcher.mjs --allow-docker --release-id "$RELEASE_ID" --lane-id "images-${{ matrix.service }}" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --commands-json "$RUNNER_TEMP/ci/images-${{ matrix.service }}/commands.json" --output "$RUNNER_TEMP/ci/images-${{ matrix.service }}"
+          dispatch_status=$?
+          set -e
+          image_id=''
+          if image_id="$(docker image inspect --format '{{.Id}}' "imeal/${{ matrix.service }}:${GITHUB_SHA}" 2>/dev/null)"; then
+            sbom_path="$RUNNER_TEMP/ci/images-${{ matrix.service }}/build-image-sbom-${{ matrix.service }}.spdx.json"
+            if [ -f "$sbom_path" ]; then
+              sbom_hash="$(sha256sum "$sbom_path" | cut -d' ' -f1)"
+              printf '%s\n' "$image_id" > "$RUNNER_TEMP/ci/images-${{ matrix.service }}/image-inspection.txt"
+              node scripts/ci/record-built-image.mjs "$RUNNER_TEMP/ci/images-${{ matrix.service }}/producer-result.json" "$image_id" "$sbom_hash" "${{ matrix.service }}" "$GITHUB_SHA"
+            fi
+          fi
+          test -f "$RUNNER_TEMP/ci/images-${{ matrix.service }}/producer-result.json"
+          exit "$dispatch_status"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-images-${{ matrix.service }}
+          path: ${{ runner.temp }}/ci/images-${{ matrix.service }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+  checks:
+    name: Secretless qualification (disposable PostgreSQL)
+    needs: [static, suites, mobile-export, mobile-smoke, db, tooling, security, images]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+    steps:
+      - if: always()
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - if: always()
+        id: release
+        run: |
+          printf 'release_id=%s\n' "$RELEASE_ID" >> "$GITHUB_OUTPUT"
+      - if: always()
+        name: Set up Node 24 for aggregation
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: yarn
-
-      - name: Enable Corepack and select Yarn 4.18
+      - if: always() && !cancelled()
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-static
+          path: ${{ runner.temp }}/ci/evidence/static
+      - if: always() && !cancelled()
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-suites
+          path: ${{ runner.temp }}/ci/evidence/suites
+      - if: always() && !cancelled()
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-mobile-export
+          path: ${{ runner.temp }}/ci/evidence/mobile-export
+      - if: always() && !cancelled()
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-mobile-smoke
+          path: ${{ runner.temp }}/ci/evidence/mobile-smoke
+      - if: always() && !cancelled()
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-db
+          path: ${{ runner.temp }}/ci/evidence/db
+      - if: always() && !cancelled()
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-tooling
+          path: ${{ runner.temp }}/ci/evidence/tooling
+      - if: always() && !cancelled()
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-security-audit
+          path: ${{ runner.temp }}/ci/evidence/security-audit
+      - if: always() && !cancelled()
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-security-secrets
+          path: ${{ runner.temp }}/ci/evidence/security-secrets
+      - if: always() && !cancelled()
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-images-api
+          path: ${{ runner.temp }}/ci/evidence/images-api
+      - if: always() && !cancelled()
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-images-worker
+          path: ${{ runner.temp }}/ci/evidence/images-worker
+      - if: always() && !cancelled()
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-qualification-${{ env.RELEASE_ID }}-images-admin-web
+          path: ${{ runner.temp }}/ci/evidence/images-admin-web
+      - if: cancelled()
+        id: global_cancellation
         run: |
-          corepack enable
-          corepack prepare "yarn@${YARN_VERSION}" --activate
-          test "$(yarn --version)" = "${YARN_VERSION}"
-
-      - name: Install dependencies immutably
-        run: yarn install --immutable
-
-      - name: Record release identity
-        id: release
+          printf 'cancelled=true\n' >> "$GITHUB_OUTPUT"
+      - if: always()
+        name: Aggregate qualification evidence
+        id: aggregate
         run: |
-          release_id="imeal-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          printf 'release_id=%s\n' "$release_id" >> "$GITHUB_OUTPUT"
-          printf 'commit=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
-
-      - name: Typecheck contracts, domain, API, worker, mobile and Admin Web
-        run: yarn typecheck
-
-      - name: Lint the workspace
-        run: yarn lint
-
-      - name: Run unit and contract tests
-        run: yarn test:unit
-
-      - name: Validate and generate Prisma client
-        run: |
-          yarn workspace @imeal/core exec prisma validate --schema prisma/schema.prisma
-          yarn workspace @imeal/core exec prisma generate --schema prisma/schema.prisma
-
-      - name: Apply migrations to disposable PostgreSQL
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public
-        run: yarn workspace @imeal/core exec prisma migrate deploy --schema prisma/schema.prisma
-
-      - name: Run disposable domain database checks
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public
-        run: yarn workspace @imeal/core test
-
-      - name: Run disposable API database checks
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public
-        run: yarn workspace @imeal/api test:e2e
-
-      - name: Run disposable worker database checks
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public
-        run: yarn workspace @imeal/worker test:e2e
-
-      - name: Run staging tooling and manifest contract tests
-        run: yarn test:staging-tools
-      - name: Validate staging Compose boundary
-        run: node --test scripts/staging/compose-config.test.mjs
-
-      - name: Build API, worker and Admin Web images
-        run: |
-          docker build --file apps/api/Dockerfile --tag imeal/api:${GITHUB_SHA} .
-          docker build --file apps/worker/Dockerfile --tag imeal/worker:${GITHUB_SHA} .
-          docker build --file apps/admin-web/Dockerfile --tag imeal/admin-web:${GITHUB_SHA} .
-
-      - name: Audit dependencies
-        run: yarn npm audit --all --recursive
-
-      - name: Scan source for secrets with redacted output
-        run: >-
-          docker run --rm
-          --volume "${GITHUB_WORKSPACE}:/repo:ro"
-          zricethezav/gitleaks:v8.18.4
-          detect --source=/repo --redact --no-banner --exit-code=1
-
-      - name: Scan built images for high and critical vulnerabilities
-        run: |
-          for image in \
-            "imeal/api:${GITHUB_SHA}" \
-            "imeal/worker:${GITHUB_SHA}" \
-            "imeal/admin-web:${GITHUB_SHA}"; do
-            docker run --rm \
-              --volume /var/run/docker.sock:/var/run/docker.sock \
-              "${TRIVY_IMAGE}" \
-              image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$image"
-          done
-
-      - name: Generate SBOMs for built images
-        run: |
-          mkdir -p "$RUNNER_TEMP/staging-artifacts"
-          for service in api worker admin-web; do
-            docker run --rm \
-              --volume /var/run/docker.sock:/var/run/docker.sock \
-              --volume "$RUNNER_TEMP/staging-artifacts:/out" \
-              anchore/syft:v1.18.1 \
-              "docker://imeal/${service}:${GITHUB_SHA}" \
-              --output "spdx-json=/out/build-image-sbom-${service}.spdx.json"
-          done
-          cat > "$RUNNER_TEMP/staging-artifacts/build-image-sbom-index.json" <<'JSON'
-          {
-            "api": "artifacts/build-image-sbom-api.spdx.json",
-            "worker": "artifacts/build-image-sbom-worker.spdx.json",
-            "adminWeb": "artifacts/build-image-sbom-admin-web.spdx.json"
-          }
+          mkdir -p "$RUNNER_TEMP/ci/aggregate"
+          cat > "$RUNNER_TEMP/ci/needs.json" <<'JSON'
+          ${{ toJSON(needs) }}
           JSON
-
-      - name: Write verified check results
+          node scripts/ci/aggregate-qualification.mjs --evidence-root "$RUNNER_TEMP/ci/evidence" --output-directory "$RUNNER_TEMP/ci/aggregate" --needs-json "$RUNNER_TEMP/ci/needs.json" --release-id "$RELEASE_ID" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$GITHUB_SHA" --workflow-sha "$GITHUB_WORKFLOW_SHA" --cancelled "${{ steps.global_cancellation.outputs.cancelled || 'false' }}"
+      - if: always()
         run: |
-          cat > "$RUNNER_TEMP/staging-artifacts/check-results.json" <<'JSON'
-          {
-            "typecheck": "PASS",
-            "lint": "PASS",
-            "unit": "PASS",
-            "prisma": "PASS",
-            "db": "PASS",
-            "compose": "PASS",
-            "stagingTools": "PASS",
-            "sbom": "artifacts/build-image-sbom-index.json"
-          }
-          JSON
-
-      - name: Upload checked source evidence
+          mkdir -p "$RUNNER_TEMP/ci/aggregate"
+          test -f "$RUNNER_TEMP/ci/aggregate/check-results.json" || printf '%s\n' '{"result":"FAIL","reason":"aggregate evidence missing"}' > "$RUNNER_TEMP/ci/aggregate/check-results.json"
+      - if: success() && !cancelled() && steps.aggregate.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: staging-readiness-inputs-${{ steps.release.outputs.release_id }}
-          path: ${{ runner.temp }}/staging-artifacts
+          path: ${{ runner.temp }}/ci/aggregate
           if-no-files-found: error
+          overwrite: true
           retention-days: 14
-
+      - if: always() && (cancelled() || steps.aggregate.outcome != 'success')
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-qualification-diagnostics-${{ env.RELEASE_ID }}
+          path: ${{ runner.temp }}/ci/aggregate
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+      - if: always() && (cancelled() || steps.aggregate.outcome != 'success')
+        run: exit 1
   staging-deploy:
-    name: Protected staging deploy and smoke
+    name: Protected staging qualification (ephemeral Compose)
     needs: checks
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/tags/imeal-')
+      needs.checks.result == 'success' && (
+        (
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/deploy/staging'
+        ) ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/deploy/staging' &&
+          inputs.deploy_staging == true
+        )
+      )
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment:
       name: staging
     permissions:
@@ -202,13 +438,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: yarn
+          # Do not enable setup-node Yarn caching: it queries Yarn before Corepack activation.
 
       - name: Enable Corepack and select Yarn 4.18
         run: |
           corepack enable
-          corepack prepare "yarn@${YARN_VERSION}" --activate
-          test "$(yarn --version)" = "${YARN_VERSION}"
+          corepack install --global "yarn@${YARN_VERSION}"
+          test "$(corepack yarn --version)" = "${YARN_VERSION}"
 
       - name: Install dependencies immutably
         run: yarn install --immutable
@@ -218,6 +454,33 @@ jobs:
         with:
           name: staging-readiness-inputs-${{ needs.checks.outputs.release_id }}
           path: ${{ runner.temp }}/staging-artifacts
+
+      - name: Validate source qualification provenance
+        env:
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_SOURCE_SHA: ${{ github.sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EXPECTED_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          node --input-type=module - "$RUNNER_TEMP/staging-artifacts/check-results.json" <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          const [path] = process.argv.slice(2);
+          const checks = JSON.parse(await readFile(path, 'utf8'));
+          const provenance = checks.provenance;
+          if (checks.result !== 'PASS') throw new Error('source qualification did not PASS');
+          if (
+            provenance?.runId !== process.env.EXPECTED_RUN_ID ||
+            provenance?.sourceSha !== process.env.EXPECTED_SOURCE_SHA ||
+            provenance?.workflowSha !== process.env.EXPECTED_WORKFLOW_SHA ||
+            !Number.isInteger(provenance?.currentAttempt) ||
+            provenance.currentAttempt > Number(process.env.EXPECTED_ATTEMPT)
+          ) throw new Error('source qualification provenance mismatch');
+          for (const [laneId, reference] of Object.entries(checks.producerReferences ?? {})) {
+            if (reference.result !== 'PASS' || reference.runAttempt > Number(process.env.EXPECTED_ATTEMPT)) {
+              throw new Error(`producer ${laneId} is not a verified PASS for this attempt`);
+            }
+          }
+          NODE
 
       - name: Require protected staging deployment inputs
         env:
@@ -312,34 +575,48 @@ jobs:
           await writeFile(releasePath, releaseVersion);
           NODE
 
-      - name: Scan exact protected deployment image digests
+      - name: Verify immutable digests including migration gate
         run: |
           mkdir -p "$RUNNER_TEMP/staging-artifacts"
+          node scripts/staging/protected-qualification.mjs verify-images \
+            --images-json "$RUNNER_TEMP/images.json" \
+            --env-file "$RUNNER_TEMP/staging.env" \
+            --output "$RUNNER_TEMP/staging-artifacts/image-contract.json"
+          node scripts/staging/protected-qualification.mjs print-migration-gate \
+            --contract "$RUNNER_TEMP/staging-artifacts/image-contract.json" \
+            > "$RUNNER_TEMP/migration-gate-image.txt"
+
+      - name: Scan exact protected deployment image digests
+        run: |
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
+          mkdir -p "$RUNNER_TEMP/staging-artifacts"
+          cleanup_scan_archives() {
+            rm -f "$RUNNER_TEMP"/deployed-image-*.tar
+          }
+          trap cleanup_scan_archives EXIT
           for service in api worker admin-web; do
-            image="$(
-              node --input-type=module - \
-                "$RUNNER_TEMP/images.json" "$service" <<'NODE'
-          import { readFile } from 'node:fs/promises';
-          const [path, service] = process.argv.slice(2);
-          const images = JSON.parse(await readFile(path, 'utf8'));
-          const key = service === 'admin-web' ? 'adminWeb' : service;
-          process.stdout.write(images[key]);
-          NODE
-            )"
-            if ! docker pull "$image" \
-              >"$RUNNER_TEMP/staging-artifacts/deployed-image-pull-${service}.log" 2>&1; then
-              echo 'failed to pull a protected deployment image digest' >&2
-              exit 1
-            fi
-            if ! docker run --rm --pull=always \
-              --volume /var/run/docker.sock:/var/run/docker.sock \
-              "${TRIVY_IMAGE}" \
-              image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$image" \
-              >"$RUNNER_TEMP/staging-artifacts/deployed-image-trivy-${service}.log" 2>&1; then
-              echo 'protected deployment image security scan failed' >&2
-              exit 1
-            fi
+            node scripts/staging/image-scan.mjs \
+              --images-json "$RUNNER_TEMP/images.json" \
+              --service "$service" \
+              --trivy-image "${TRIVY_IMAGE}" \
+              --cache-directory "$RUNNER_TEMP/trivy-cache" \
+              --archive "$RUNNER_TEMP/deployed-image-${service}.tar" \
+              --report "$RUNNER_TEMP/staging-artifacts/deployed-image-trivy-${service}.log" \
+              || {
+                echo 'protected deployment image security scan failed' >&2
+                exit 1
+              }
           done
+          node scripts/staging/image-scan.mjs \
+            --image "$(cat "$RUNNER_TEMP/migration-gate-image.txt")" \
+            --trivy-image "${TRIVY_IMAGE}" \
+            --cache-directory "$RUNNER_TEMP/trivy-cache" \
+            --archive "$RUNNER_TEMP/deployed-image-migration-gate.tar" \
+            --report "$RUNNER_TEMP/staging-artifacts/deployed-image-trivy-migration-gate.log" \
+            || {
+              echo 'migration-gate image security scan failed' >&2
+              exit 1
+            }
 
       - name: Render protected staging Compose configuration
         run: >-
@@ -351,6 +628,17 @@ jobs:
           docker compose --env-file "$RUNNER_TEMP/staging.env"
           -f docker-compose.yml -f docker-compose.staging.yml up
           --detach --wait --remove-orphans
+
+      - name: Wait for migration gate and runtime health
+        run: |
+          node scripts/staging/protected-qualification.mjs wait-runtime \
+            --env-file "$RUNNER_TEMP/staging.env" \
+            --compose-file docker-compose.yml \
+            --compose-file docker-compose.staging.yml \
+            --contract "$RUNNER_TEMP/staging-artifacts/image-contract.json" \
+            --gate-service migrate \
+            --expected-release-file "$RUNNER_TEMP/release-version.txt" \
+            --output-directory "$RUNNER_TEMP/staging-artifacts"
 
       - name: Generate SBOMs for deployed image digests
         run: |
@@ -368,15 +656,23 @@ jobs:
             docker run --rm \
               --volume /var/run/docker.sock:/var/run/docker.sock \
               --volume "$RUNNER_TEMP/staging-artifacts:/out" \
-              anchore/syft:v1.18.1 \
-              "docker://${image}" \
+              anchore/syft@sha256:b8c170b8e51bfc4779ec3ef4399942c57290f5ce76a9c3af564c9d00d4946a6b \
+              "docker:${image}" \
               --output "spdx-json=/out/deployed-image-sbom-${service}.spdx.json"
           done
+          migration_image="$(cat "$RUNNER_TEMP/migration-gate-image.txt")"
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$RUNNER_TEMP/staging-artifacts:/out" \
+            anchore/syft@sha256:b8c170b8e51bfc4779ec3ef4399942c57290f5ce76a9c3af564c9d00d4946a6b \
+            "docker:${migration_image}" \
+            --output "spdx-json=/out/deployed-image-sbom-migration-gate.spdx.json"
           cat > "$RUNNER_TEMP/staging-artifacts/deployed-image-sbom-index.json" <<'JSON'
           {
             "api": "artifacts/deployed-image-sbom-api.spdx.json",
             "worker": "artifacts/deployed-image-sbom-worker.spdx.json",
-            "adminWeb": "artifacts/deployed-image-sbom-admin-web.spdx.json"
+            "adminWeb": "artifacts/deployed-image-sbom-admin-web.spdx.json",
+            "migrationGate": "artifacts/deployed-image-sbom-migration-gate.spdx.json"
           }
           JSON
 
@@ -516,6 +812,18 @@ jobs:
             --rollback-artifact "$(cat "$RUNNER_TEMP/rollback-artifact.txt")" \
             --output "$RUNNER_TEMP/staging-artifacts/release-manifest.json"
 
+      - name: Capture rollback reference
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          node scripts/staging/protected-qualification.mjs rollback-reference \
+            --release-id "${{ needs.checks.outputs.release_id }}" \
+            --commit "$RELEASE_COMMIT" \
+            --images-json "$RUNNER_TEMP/images.json" \
+            --migration-gate-image-file "$RUNNER_TEMP/migration-gate-image.txt" \
+            --rollback-artifact-file "$RUNNER_TEMP/rollback-artifact.txt" \
+            --output "$RUNNER_TEMP/staging-artifacts/rollback-reference.json"
+
       - name: Include protected manifest inputs in uploaded evidence
         if: always()
         run: |
@@ -528,11 +836,18 @@ jobs:
             "$RUNNER_TEMP/release-version.txt" \
             "$RUNNER_TEMP/staging-artifacts/release-version.txt"
 
-      - name: Upload protected staging evidence
+      - name: Reject secret-bearing staging artifacts
+        id: redact
         if: always()
+        run: |
+          node scripts/staging/protected-qualification.mjs assert-artifacts \
+            --directory "$RUNNER_TEMP/staging-artifacts"
+
+      - name: Upload protected staging evidence
+        if: always() && steps.redact.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: staging-release-${{ needs.checks.outputs.release_id }}
+          name: staging-release-${{ needs.checks.outputs.release_id }}-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/staging-artifacts
           if-no-files-found: error
           retention-days: 30

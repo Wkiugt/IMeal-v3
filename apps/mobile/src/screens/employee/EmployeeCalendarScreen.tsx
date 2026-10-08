@@ -39,13 +39,14 @@ import {
   buildDirtyBatchPayload,
   getCalendarDayLifecycle,
   getCalendarDayPresentation,
+  getCalendarFailureKey,
+  getCalendarReasonKey,
   getDirtyDates,
   getDirtyDatesForWeek,
   isAuthoritativeCalendarMealChoiceRestore,
   isAuthoritativeCalendarRestore,
   isCalendarDayBooked,
   isCalendarDayFinalized,
-  isDateSelectable,
   isDateSelectAllEligible,
   isMealChoiceChangeAllowed,
   mergeAuthoritativeWeek,
@@ -57,6 +58,7 @@ import {
   type CalendarServerState,
   type MealChoice,
 } from './calendarRegistrationState';
+import { getCalendarRefreshDelay } from './calendarRefreshSchedule';
 import {
   ActionButton,
   AppText,
@@ -74,7 +76,6 @@ import { useScreenLoadingGate } from '../../ui/useScreenLoadingGate';
 import { useNotice } from '../../ui/BrandNotice';
 import { useLanguage } from '../../i18n/LanguageProvider';
 import { getMobileErrorMessage } from '../../api/mobileApiError';
-import type { TranslationKey } from '../../i18n/translations';
 import { ProfileLogoutModal } from '../profile/ProfileComposition';
 import { designTokens } from '../../ui/designTokens';
 
@@ -83,6 +84,7 @@ type CalendarDay = v1.WeekRegistrationDay;
 type WindowSnapshot = {
   serverNowAt: number;
   receiptAt: number;
+  nextWeekOpenAt: string;
   days: Record<string, CalendarDay>;
 };
 type CalendarError =
@@ -99,13 +101,19 @@ function getWindowSnapshot(
   receiptAt: number,
 ): WindowSnapshot | null {
   const serverNowAt = Date.parse(response.registrationWindow.serverNow);
-  if (!Number.isFinite(serverNowAt) || response.days.length !== 7) return null;
+  const nextWeekOpenAt = response.registrationWindow.nextWeekOpenAt;
+  if (
+    !Number.isFinite(serverNowAt) ||
+    !Number.isFinite(Date.parse(nextWeekOpenAt)) ||
+    response.days.length !== 7
+  )
+    return null;
   const days: Record<string, CalendarDay> = {};
   for (const day of response.days) {
     if (!Number.isFinite(Date.parse(day.cutoffAt))) return null;
     days[day.mealDate] = day;
   }
-  return { serverNowAt, receiptAt, days };
+  return { serverNowAt, receiptAt, nextWeekOpenAt, days };
 }
 
 function createServerState(days: readonly CalendarDay[]): CalendarServerState {
@@ -117,33 +125,6 @@ function createServerState(days: readonly CalendarDay[]): CalendarServerState {
     };
   }
   return state;
-}
-
-function reasonKey(
-  reason: v1.RegistrationDayUnavailableReason,
-): TranslationKey {
-  switch (reason) {
-    case 'HOLIDAY':
-      return 'calendar.reasonHoliday';
-    case 'DISABLED':
-      return 'calendar.reasonDisabled';
-    case 'NO_PUBLISHED_MENU':
-      return 'calendar.reasonNoPublishedMenu';
-    case 'LOCATION_UNAVAILABLE':
-      return 'calendar.reasonLocationUnavailable';
-    case 'LOCATION_AMBIGUOUS':
-      return 'calendar.reasonLocationAmbiguous';
-    case 'CUTOFF_PASSED':
-      return 'calendar.reasonCutoffPassed';
-    case 'REGISTRATION_FINALIZED':
-      return 'calendar.reasonFinalized';
-    case 'ALREADY_ACTIVE':
-      return 'calendar.reasonAlreadyActive';
-    case 'NOT_ACTIVE':
-      return 'calendar.reasonNotActive';
-    case 'NO_ALTERNATIVE_MEAL_CHOICE':
-      return 'calendar.reasonNoAlternativeMealChoice';
-  }
 }
 
 function getDayReason(
@@ -158,25 +139,11 @@ function getDayReason(
     : day.unavailableReasons.activate;
   return reasons[0] ?? null;
 }
-
-function failureKey(code: v1.RegistrationFailureCode): TranslationKey {
-  switch (code) {
-    case 'CUTOFF_PASSED':
-      return 'calendar.reasonCutoffPassed';
-    case 'MEAL_CHOICE_UNAVAILABLE':
-      return 'calendar.reasonNoAlternativeMealChoice';
-    case 'REGISTRATION_FINALIZED':
-      return 'calendar.reasonFinalized';
-    case 'INVALID_MEAL_DATE':
-      return 'calendar.reasonInvalidDate';
-    case 'REGISTRATION_FAILED':
-      return 'calendar.reasonRegistrationFailed';
-  }
-}
 function isBeforeCutoff(day: CalendarDay, nowAt: number): boolean {
   const cutoffAt = Date.parse(day.cutoffAt);
   return Number.isFinite(cutoffAt) && nowAt < cutoffAt;
 }
+
 export function EmployeeCalendarScreen({ navigation, route }: Props) {
   const { token } = useSession();
   const { showNotice } = useNotice();
@@ -209,10 +176,6 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
     new Set(),
   );
   const [refreshIssue, setRefreshIssue] = useState(false);
-  const [delegationWarning, setDelegationWarning] = useState<{
-    dateKey: string;
-    delegateName: string;
-  } | null>(null);
   const [weekDiscardWarning, setWeekDiscardWarning] = useState<Date | null>(
     null,
   );
@@ -433,27 +396,27 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
       };
     }, [refreshCurrentWeek]),
   );
-
   useEffect(() => {
     if (!windowSnapshot || !isFocused || saving || weekLoading) return;
-    const estimatedServerNow =
-      windowSnapshot.serverNowAt + (Date.now() - windowSnapshot.receiptAt);
-    const cutoffTimes = Object.values(windowSnapshot.days)
-      .filter(
-        (day) => day.canActivate || day.canCancel || day.canChangeMealChoice,
-      )
-      .map((day) => Date.parse(day.cutoffAt))
-      .filter((value) => Number.isFinite(value) && value > estimatedServerNow);
-    if (cutoffTimes.length === 0) return;
-    const remaining = Math.min(...cutoffTimes) - estimatedServerNow;
-    const timer = setTimeout(
-      () => {
-        if (!savingRef.current) void refreshCurrentWeek();
+    const remaining = getCalendarRefreshDelay(
+      {
+        serverNowAt: windowSnapshot.serverNowAt,
+        receiptAt: windowSnapshot.receiptAt,
+        nextWeekOpenAt: windowSnapshot.nextWeekOpenAt,
+        days: Object.values(windowSnapshot.days),
       },
-      Math.max(0, remaining),
+      Date.now(),
     );
+    if (remaining === null) return;
+    const timer = setTimeout(() => {
+      if (!savingRef.current) void refreshCurrentWeek();
+    }, remaining);
     return () => clearTimeout(timer);
   }, [isFocused, refreshCurrentWeek, saving, weekLoading, windowSnapshot]);
+
+  const nowAt = windowSnapshot
+    ? windowSnapshot.serverNowAt + (Date.now() - windowSnapshot.receiptAt)
+    : Date.now();
 
   const dirtyDates = useMemo(
     () => getDirtyDates(serverState, draftState),
@@ -463,9 +426,6 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
     () => dirtyDates.filter((dateKey) => dayByDate[dateKey] !== undefined),
     [dayByDate, dirtyDates],
   );
-  const nowAt = windowSnapshot
-    ? windowSnapshot.serverNowAt + (Date.now() - windowSnapshot.receiptAt)
-    : Date.now();
   const monthRows = useMemo(() => buildMonthRows(month), [month]);
   const hasMonthData = monthDataKey === toDateKey(month);
   const hasInitialWeekResult = Object.keys(dayByDate).length > 0;
@@ -561,47 +521,11 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
       if (!allowed) return;
       const apply = () =>
         updateDraftDay(dateKey, { ...currentDay, active: nextActive });
-      const delegation = day.delegation;
-      if (
-        serverDay.active &&
-        currentDay.active &&
-        !nextActive &&
-        delegation &&
-        (delegation.status === 'PENDING' || delegation.status === 'ACCEPTED')
-      ) {
-        setDelegationWarning({
-          dateKey,
-          delegateName:
-            delegation.delegateName || t('calendar.unknownDelegate'),
-        });
-        return;
-      }
       apply();
     },
-    [dayByDate, t, updateDraftDay, windowSnapshot],
+    [dayByDate, updateDraftDay, windowSnapshot],
   );
 
-  const confirmDelegationCancel = useCallback(() => {
-    const warning = delegationWarning;
-    if (!warning || savingRef.current) return;
-    const day = dayByDate[warning.dateKey];
-    const serverDay =
-      serverStateRef.current[warning.dateKey] ?? EMPTY_DAY_STATE;
-    const currentDay = draftStateRef.current[warning.dateKey] ?? serverDay;
-    const estimatedNowAt = windowSnapshot
-      ? windowSnapshot.serverNowAt + (Date.now() - windowSnapshot.receiptAt)
-      : Date.now();
-    if (
-      day &&
-      serverDay.active &&
-      currentDay.active &&
-      day.canCancel &&
-      isBeforeCutoff(day, estimatedNowAt)
-    ) {
-      updateDraftDay(warning.dateKey, { ...currentDay, active: false });
-    }
-    setDelegationWarning(null);
-  }, [dayByDate, delegationWarning, updateDraftDay, windowSnapshot]);
 
   const selectMealChoice = useCallback(
     (dateKey: string, choice: MealChoice) => {
@@ -741,7 +665,7 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
         const failureDetails = failures
           .map(
             (failure) =>
-              `${formatDay(parseDateKey(failure.date), locale)}: ${t(failureKey(failure.code))}`,
+              `${formatDay(parseDateKey(failure.date), locale)}: ${t(getCalendarFailureKey(failure.code))}`,
           )
           .join(' · ');
         showNotice({
@@ -1098,7 +1022,9 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
                     nowAt,
                   );
                 const reason = getDayReason(day, serverDay, state);
-                const reasonText = reason ? t(reasonKey(reason)) : undefined;
+                const reasonText = reason
+                  ? t(getCalendarReasonKey(reason))
+                  : undefined;
                 const lifecycleText =
                   presentation.lifecycle === 'SERVED'
                     ? t('dashboard.todayServed')
@@ -1239,20 +1165,6 @@ export function EmployeeCalendarScreen({ navigation, route }: Props) {
           </>
         )}
       </StateTransition>
-      <ProfileLogoutModal
-        visible={delegationWarning !== null}
-        title={t('calendar.cancelDelegationTitle')}
-        message={t('calendar.cancelDelegationMessage', {
-          delegate:
-            delegationWarning?.delegateName ?? t('calendar.unknownDelegate'),
-        })}
-        cancelLabel={t('common.cancel')}
-        confirmLabel={t('common.confirm')}
-        processingLabel={t('common.processing')}
-        processing={false}
-        onClose={() => setDelegationWarning(null)}
-        onConfirm={confirmDelegationCancel}
-      />
       <ProfileLogoutModal
         visible={weekDiscardWarning !== null}
         title={t('calendar.discardWeekTitle')}

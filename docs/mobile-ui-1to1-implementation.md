@@ -2,13 +2,19 @@
 
 ## Scope
 
-This change converts the mobile Staff and Kitchen actors to the preserved prototypes in `docs/System-design-UI/` without changing the server-authoritative meal, pickup, delegation, or serving workflows. Admin Web is outside this mobile scope.
+This note records an earlier mobile UI pass. It is not the current contract
+where it describes a Kitchen employee scanner, Staff-generated pickup QR,
+active delegation, or proxy pickup. The current flow is: Kitchen publishes the
+menu, Staff registers, Kitchen displays one shared daily/location QR, Staff
+scans that QR and sends fresh foreground GPS, the server resolves only that
+Staff user's own registration, Staff confirms, and confirm creates exactly one
+`MealServing`.
 
 ## Mobile navigation
 
-- Staff: `Dashboard | Calendar | Ticket | Profile`
-- Staff + Kitchen: `Dashboard | Calendar | Ticket | Check-in | Profile`
-- Kitchen-only: `Dashboard | Scanner | Profile`
+- Staff: Dashboard, Calendar, self check-in, Notifications, Profile.
+- Kitchen-only: Dashboard, shared QR, Profile. There is no Kitchen scanner tab.
+- Staff + Kitchen uses the Staff navigation; Kitchen does not gain an employee scanner.
 
 Protected routes no longer receive access tokens or roles through navigation
 parameters. `SessionProvider` restores the opaque session from secure storage
@@ -17,24 +23,23 @@ redirect unauthenticated users to the allowlist-A email OTP screen.
 
 ## Implemented surfaces
 
-- Employee dashboard: business-date greeting, authoritative daily lifecycle/menu/location summary and registration denominator; QR is shown only for an active registration whose server response allows opening it.
-- Employee calendar: seven server-returned days (including weekends and disabled/unpublished days), monthly booking markers, authoritative per-day toggle/choice flags, draft batch save, per-date partial-success reconciliation, cutoff/delegation warnings and explicit refresh retry.
-- Employee profile: identity, account metadata, preferences surface, delegation entry, logout.
-- Kitchen profile: server-backed kitchen identity, language selection, persistence warning, logout confirmation; no Staff-only meal or delegation controls.
-- Delegations: outgoing/incoming tabs, search, status pills, accept/decline/revoke actions.
-- Kitchen dashboard: serving slider, compact non-mirrored 40/60 bento metrics on normal phones, stacked narrow/large-text fallback, polling, pull-to-refresh, search, registration tabs, logs.
-- Kitchen scanner: centered transparent scan guide over the live camera preview with viewport scrim, camera permission state, QR resolve, explicit confirmation, proxy indicator, thirty-second pickup-session expiry, reduced-motion scan treatment.
+- Employee dashboard and calendar remain registration surfaces. They do not
+  generate an employee QR for Kitchen to scan.
+- Employee profile links to Meal History and Penalty list/detail. Those screens
+  are not missing. There is no active delegation entry.
+- Kitchen profile is identity/settings/logout. Kitchen displays the shared QR
+  and does not scan employees.
+- Delegation Create/Search and proxy pickup are not current surfaces.
+
 
 ## API details
 
 The employee registration client uses the existing API controller paths:
 
-- `GET /registrations/week?startDate=YYYY-MM-DD` returns exactly seven `days` with menu, registration, location, lunar date, choices, cutoff, delegation and authoritative action/reason fields. The client uses `serverNowAt` for business-date/week alignment and does not infer weekday availability.
+- `GET /registrations/week?startDate=YYYY-MM-DD` returns the week days with menu, registration, location, cutoff, and authoritative action fields. Delegation is not an active check-in field. The client uses `serverNowAt` for business-date/week alignment and does not infer weekday availability.
 - `PUT /registrations/batch` accepts only dirty date changes. The response is per-date: successful changes commit, failed changes remain in the draft, and all returned failure reasons are shown.
 
-The mobile API base strips a trailing `/api` for registration, auth, and direct controller paths. Pickup and serving endpoints use the shared API origin. In Expo development, the host is derived from the Metro session as `http://<Metro-host>:3000/api`; every connected device uses that endpoint.
-Serving authorization no longer depends on an internal LAN source IP; an active
-opaque session with `kitchen.serve` permission is required.
+The mobile API base is `EXPO_PUBLIC_API_URL`, which the client expects to end in `/api`. Staff check-in calls that base; Kitchen does not resolve or confirm employees. `kitchen.serve` authorizes the shared QR and aggregate dashboard only.
 
 ## Run
 

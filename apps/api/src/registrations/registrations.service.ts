@@ -8,21 +8,30 @@ import {
 } from '@nestjs/common';
 import type { StructuredLogger } from '@imeal/observability';
 import { PrismaService } from '../common/prisma.service.js';
+import { lockUserLifecycle } from '../common/transaction-locks.js';
 import {
   apiLogFields,
   createApiStructuredLogger,
   API_STRUCTURED_LOGGER,
 } from '../common/structured-logger.js';
-import type { Prisma } from '@prisma/client';
-import { NotificationsService } from '../notifications/notifications.service.js';
+import type { Prisma } from '@imeal/core';
 import { KitchenEventsService } from '../kitchen/kitchen-events.service.js';
 import { v1 } from '@imeal/contracts';
 import type { VietnameseLunarDate } from '../common/vietnamese-lunar.js';
 import {
   BUSINESS_TIME_ZONE,
+  getBusinessDate,
+  getBusinessMonthRange,
   getCutoffInstant,
   parseMealDate,
+  resolveRegistrationWeekRestriction,
+  resolveRegistrationWeekWindow,
 } from '../common/business-time.js';
+import {
+  serializeEmployeeRegistrationBase,
+  toNullableIso,
+} from '../common/employee-activity.js';
+import { projectRegistrationStatus } from '../common/registration-status.js';
 import {
   getAvailableMealChoices,
   getVietnameseLunarDate,
@@ -30,6 +39,9 @@ import {
 
 const INVALID_MEAL_DATE_MESSAGE = 'Invalid meal date';
 const CUTOFF_PASSED_MESSAGE = 'Cutoff time exceeded';
+const REGISTRATION_WEEK_NOT_OPEN_MESSAGE = 'Registration week is not open';
+const OUTSIDE_REGISTRATION_WINDOW_MESSAGE =
+  'Date is outside the registration window';
 const MEAL_CHOICE_UNAVAILABLE_MESSAGE =
   'Meal choice is unavailable for this date';
 const REGISTRATION_FINALIZED_MESSAGE = 'Registration is finalized';
@@ -98,8 +110,6 @@ type RegistrationLifecycleEvent = {
   status: 'ACTIVE' | 'CANCELLED';
 };
 
-type RegistrationStatusValue = v1.RegistrationRecordStatus;
-
 type RegistrationLocationFields = {
   serviceLocationId?: string | null;
   serviceLocationCode?: string | null;
@@ -131,11 +141,6 @@ type EffectiveLocationResolution =
   | { kind: 'UNAVAILABLE'; reason: 'LOCATION_UNAVAILABLE' }
   | { kind: 'AMBIGUOUS'; reason: 'LOCATION_AMBIGUOUS' };
 
-type WeekDelegation = {
-  id: string;
-  status: string;
-  delegateUser?: { name: string | null } | null;
-};
 
 function hasText(value: string | null | undefined): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -236,55 +241,168 @@ function isRegistrationFinalized(registration: {
   );
 }
 
-function projectRegistrationStatus(
-  status: string,
-  mealServing: unknown,
-): RegistrationStatusValue {
-  if (mealServing !== null && mealServing !== undefined) return 'SERVED';
-  if (
-    status === 'ACTIVE' ||
-    status === 'CANCELLED' ||
-    status === 'SERVED' ||
-    status === 'NO_SHOW'
-  ) {
-    return status;
-  }
-  throw new Error('Unknown registration status');
+const registrationActivitySelect = {
+  id: true,
+  mealDate: true,
+  status: true,
+  mealChoice: true,
+  menuRevisionId: true,
+  menuNameSnapshot: true,
+  menuDescriptionSnapshot: true,
+  menuImageSnapshot: true,
+  serviceLocationId: true,
+  serviceLocationAssignmentId: true,
+  serviceLocationCode: true,
+  serviceLocationName: true,
+  serviceLocationAddress: true,
+  serviceLocationEffectiveFrom: true,
+  serviceLocationSnapshotAt: true,
+  registeredAt: true,
+  cancelledAt: true,
+  noShowAt: true,
+  createdAt: true,
+  updatedAt: true,
+  mealServing: { select: { servedAt: true } },
+  penalties: {
+    select: {
+      id: true,
+      userId: true,
+      amount: true,
+      status: true,
+      createdAt: true,
+      paidAt: true,
+      waivedAt: true,
+    },
+  },
+} satisfies Prisma.RegistrationSelect;
+
+function registrationActivitySelectForUser(userId: string) {
+  return {
+    ...registrationActivitySelect,
+    penalties: {
+      ...registrationActivitySelect.penalties,
+      where: { userId },
+    },
+  } satisfies Prisma.RegistrationSelect;
 }
 
-function serializeDelegation(
-  delegations: readonly WeekDelegation[] | undefined,
-): v1.WeekRegistrationDayDelegation | null {
-  const delegation = delegations?.find(
-    (candidate) =>
-      candidate.status === 'PENDING' || candidate.status === 'ACCEPTED',
-  );
-  if (!delegation) return null;
+type RegistrationActivityRow = Prisma.RegistrationGetPayload<{
+  select: typeof registrationActivitySelect;
+}>;
+
+function serializeRegistrationActivity(
+  registration: RegistrationActivityRow,
+  userId: string,
+): v1.EmployeeRegistrationActivity {
+  const base = serializeEmployeeRegistrationBase(registration);
   return {
-    id: delegation.id,
-    status: delegation.status === 'PENDING' ? 'PENDING' : 'ACCEPTED',
-    delegateName: hasText(delegation.delegateUser?.name)
-      ? delegation.delegateUser.name.trim()
-      : null,
+    ...base,
+    penalties: registration.penalties
+      .filter((penalty) => penalty.userId === userId)
+      .map((penalty) => ({
+        id: penalty.id,
+        amount: penalty.amount,
+        status: penalty.status,
+        createdAt: penalty.createdAt.toISOString(),
+        paidAt: toNullableIso(penalty.paidAt),
+        waivedAt: toNullableIso(penalty.waivedAt),
+      })),
   };
 }
 
 @Injectable()
 export class RegistrationsService {
-  private readonly notificationsService: NotificationsService;
   private readonly kitchenEventsService?: KitchenEventsService;
   private readonly logger: StructuredLogger;
 
   constructor(
     private readonly prisma: PrismaService,
-    @Optional() notificationsService?: NotificationsService,
     @Optional() kitchenEventsService?: KitchenEventsService,
     @Optional() @Inject(API_STRUCTURED_LOGGER) logger?: StructuredLogger,
   ) {
-    this.notificationsService =
-      notificationsService ?? new NotificationsService(this.prisma);
     this.kitchenEventsService = kitchenEventsService;
     this.logger = logger ?? createApiStructuredLogger();
+  }
+  async getHistory(
+    userId: string,
+    query: v1.RegistrationHistoryQuery,
+  ): Promise<v1.RegistrationHistoryResponse> {
+    const businessDate = parseMealDate(getBusinessDate());
+    const where: Prisma.RegistrationWhereInput = {
+      userId,
+      mealDate: { lte: businessDate },
+    };
+    const skip = (query.page - 1) * query.limit;
+    const [rows, total] = await Promise.all([
+      this.prisma.registration.findMany({
+        where,
+        select: registrationActivitySelectForUser(userId),
+        orderBy: [{ mealDate: 'desc' }, { id: 'desc' }],
+        skip,
+        take: query.limit,
+      }),
+      this.prisma.registration.count({ where }),
+    ]);
+    const totalPages = Math.ceil(total / query.limit);
+    return {
+      data: rows.map((row) => serializeRegistrationActivity(row, userId)),
+      meta: {
+        pagination: {
+          page: query.page,
+          limit: query.limit,
+          total,
+          totalPages,
+          hasNextPage: query.page < totalPages,
+        },
+      },
+    };
+  }
+
+  async getStats(
+    userId: string,
+    query: v1.RegistrationStatsQuery,
+  ): Promise<v1.RegistrationStatsResponse> {
+    const businessMonth = getBusinessDate().slice(0, 7);
+    const month = query.month ?? businessMonth;
+    let startDate: Date;
+    let endDate: Date;
+    try {
+      ({ startDate, endDate } = getBusinessMonthRange(month));
+    } catch {
+      throw new BadRequestException();
+    }
+    const rows = await this.prisma.registration.findMany({
+      where: {
+        userId,
+        mealDate: { gte: startDate, lte: endDate },
+      },
+      select: {
+        status: true,
+        mealServing: { select: { id: true } },
+      },
+    });
+    let booked = 0;
+    let enjoyed = 0;
+    for (const row of rows) {
+      const status = projectRegistrationStatus(row.status, row.mealServing);
+      if (status === 'ACTIVE' || status === 'SERVED' || status === 'NO_SHOW') {
+        booked += 1;
+      }
+      if (status === 'SERVED') {
+        enjoyed += 1;
+      }
+    }
+    return {
+      data: {
+        period: {
+          month,
+          startDate: startDate.toISOString().slice(0, 10),
+          endDate: endDate.toISOString().slice(0, 10),
+        },
+        booked,
+        enjoyed,
+      },
+    };
   }
 
   async getWeekData(userId: string, weekStart: string) {
@@ -322,12 +440,18 @@ export class RegistrationsService {
     endDate.setUTCDate(startDate.getUTCDate() + 6);
     const cutoffSetting = await this.getCutoffTime();
     const serverNow = new Date();
+    const weeklyWindow = resolveRegistrationWeekWindow(serverNow);
     const windowDays = mealDates.map((mealDateKey, index) => {
       const cutoffAt = getCutoffInstant(mealDateKey, cutoffSetting.time);
+      const weeklyRestriction = resolveRegistrationWeekRestriction(
+        weeklyWindow,
+        mealDateKey,
+      );
       return {
         mealDate: mealDateKey,
         cutoffAt: cutoffAt.toISOString(),
-        editable: serverNow < cutoffAt,
+        editable: serverNow < cutoffAt && weeklyRestriction === null,
+        weeklyRestriction,
         lunarDate: lunarDates[index],
         availableMealChoices: getAvailableMealChoices(mealDateKey),
       };
@@ -361,14 +485,6 @@ export class RegistrationsService {
       include: {
         mealServing: { select: { id: true } },
         penalties: { select: { id: true } },
-        delegations: {
-          where: { status: { in: ['PENDING', 'ACCEPTED'] } },
-          orderBy: { id: 'asc' },
-          take: 1,
-          include: {
-            delegateUser: { select: { name: true } },
-          },
-        },
       },
     });
     const rosterAssignments =
@@ -519,6 +635,12 @@ export class RegistrationsService {
         changeMealChoiceReasons.push('NO_ALTERNATIVE_MEAL_CHOICE');
       }
 
+      if (windowDay.weeklyRestriction !== null) {
+        activateReasons.push(windowDay.weeklyRestriction);
+        cancelReasons.push(windowDay.weeklyRestriction);
+        changeMealChoiceReasons.push(windowDay.weeklyRestriction);
+      }
+
       return {
         mealDate: windowDay.mealDate,
         menu,
@@ -535,7 +657,6 @@ export class RegistrationsService {
           cancel: cancelReasons,
           changeMealChoice: changeMealChoiceReasons,
         },
-        delegation: serializeDelegation(registration?.delegations),
       };
     });
 
@@ -545,9 +666,16 @@ export class RegistrationsService {
       days,
       registrationWindow: {
         serverNow: serverNow.toISOString(),
+        nextWeekOpenAt: weeklyWindow.nextWeekOpenAt.toISOString(),
         cutoffAt: windowDays[0].cutoffAt,
         timeZone: BUSINESS_TIME_ZONE,
-        days: windowDays,
+        days: windowDays.map((windowDay) => ({
+          mealDate: windowDay.mealDate,
+          cutoffAt: windowDay.cutoffAt,
+          editable: windowDay.editable,
+          lunarDate: windowDay.lunarDate,
+          availableMealChoices: windowDay.availableMealChoices,
+        })),
       },
     });
   }
@@ -730,6 +858,7 @@ export class RegistrationsService {
     const cutoffSetting = await this.getCutoffTime();
     const cutoffTimeStr = cutoffSetting.time;
     const serverNow = new Date();
+    const weeklyWindow = resolveRegistrationWeekWindow(serverNow);
     const results: v1.BatchRegistrationResult[] = [];
 
     // Partial success handling: loop each item independently
@@ -751,6 +880,23 @@ export class RegistrationsService {
       }
 
       try {
+        const weeklyRestriction = resolveRegistrationWeekRestriction(
+          weeklyWindow,
+          mealDateStr,
+        );
+        if (weeklyRestriction !== null) {
+          results.push({
+            date: mealDateStr,
+            success: false,
+            code: weeklyRestriction,
+            reason:
+              weeklyRestriction === 'REGISTRATION_WEEK_NOT_OPEN'
+                ? REGISTRATION_WEEK_NOT_OPEN_MESSAGE
+                : OUTSIDE_REGISTRATION_WINDOW_MESSAGE,
+          });
+          continue;
+        }
+
         const cutoffDate = getCutoffInstant(mealDateStr, cutoffTimeStr);
         if (serverNow >= cutoffDate) {
           results.push({
@@ -767,6 +913,7 @@ export class RegistrationsService {
           try {
             const transactionResult = await this.prisma.$transaction(
               async (tx) => {
+                await lockUserLifecycle(tx);
                 let lifecycleEvent: RegistrationLifecycleEvent | null = null;
                 let registration = await tx.registration.findUnique({
                   where: {
@@ -776,7 +923,6 @@ export class RegistrationsService {
                     },
                   },
                   include: {
-                    user: true,
                     mealServing: true,
                     penalties: true,
                   },
@@ -787,11 +933,22 @@ export class RegistrationsService {
                   registration = await tx.registration.findUnique({
                     where: { id: registration.id },
                     include: {
-                      user: true,
                       mealServing: true,
                       penalties: true,
                     },
                   });
+                }
+
+                await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+                const owner = await tx.user.findUnique({
+                  where: { id: userId },
+                  select: { id: true, isActive: true },
+                });
+                if (!owner) {
+                  throw new BadRequestException('Account not found.');
+                }
+                if (!owner.isActive) {
+                  throw new BadRequestException('Account is disabled.');
                 }
 
                 if (
@@ -906,15 +1063,6 @@ export class RegistrationsService {
                     },
                   });
 
-                  const activeDelegations = (
-                    (await tx.pickupDelegation.findMany({
-                      where: {
-                        registrationId: registration.id,
-                        status: { in: ['PENDING', 'ACCEPTED'] },
-                      },
-                      orderBy: { id: 'asc' },
-                    })) ?? []
-                  ).sort((left, right) => left.id.localeCompare(right.id));
                   const audit = await tx.auditLog.create({
                     data: {
                       userId,
@@ -930,34 +1078,6 @@ export class RegistrationsService {
                       registrationId: registration.id,
                       status: 'CANCELLED',
                     };
-                  }
-                  for (const delegation of activeDelegations) {
-                    await tx.pickupDelegation.update({
-                      where: { id: delegation.id },
-                      data: { status: 'REVOKED' },
-                    });
-                    await tx.auditLog.create({
-                      data: {
-                        userId,
-                        action: 'delegation_revoked',
-                        details: `Delegation ${delegation.id} revoked because registration ${registration.id} was cancelled`,
-                      },
-                    });
-                    await this.notificationsService.publish(tx, {
-                      userId: delegation.delegateUserId,
-                      kind: 'DELEGATION_REVOKED',
-                      payload: {
-                        delegationId: delegation.id,
-                        registrationId: registration.id,
-                        mealDate: mealDate.toISOString().slice(0, 10),
-                        counterpartName:
-                          registration.user?.name?.trim() ||
-                          registration.user?.email?.trim() ||
-                          'nhân viên',
-                        reason: 'REGISTRATION_CANCELLED',
-                      },
-                      dedupeKey: `delegation-revoked:${delegation.delegateUserId}:${delegation.id}`,
-                    });
                   }
                 }
                 return lifecycleEvent;

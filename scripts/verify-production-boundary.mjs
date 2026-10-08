@@ -12,13 +12,12 @@ const composeText = composeFiles
   .join('\n');
 const requiredNames = [
   ...new Set(
-    [...composeText.matchAll(/\$\{([A-Z0-9_]+):\?/g)].map(
-      ([, name]) => name,
-    ),
+    [...composeText.matchAll(/\$\{([A-Z0-9_]+):\?/g)].map(([, name]) => name),
   ),
 ];
 const imageNames = requiredNames.filter((name) => name.endsWith('_IMAGE'));
-const IMAGE_DIGEST_PATTERN = /^(?:[a-z0-9.-]+(?::[0-9]+)?\/)?[a-z0-9]+(?:[._\/-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/i;
+const IMAGE_DIGEST_PATTERN =
+  /^(?:[a-z0-9.-]+(?::[0-9]+)?\/)?[a-z0-9]+(?:[._\/-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/i;
 const DRAIN_MARGIN_SECONDS = 5;
 const secretNames = new Set([
   'POSTGRES_PASSWORD',
@@ -27,7 +26,7 @@ const secretNames = new Set([
   'OTP_HASH_SECRET',
   'OTP_DELIVERY_ENCRYPTION_KEY',
   'SESSION_HASH_SECRET',
-  'OTP_PROVIDER_API_KEY',
+  'OTP_SMTP_PASSWORD',
 ]);
 function parseSecondsDuration(value, name) {
   const duration = String(value);
@@ -37,10 +36,24 @@ function parseSecondsDuration(value, name) {
     `${name} must be expressed as whole seconds with an s suffix`,
   );
   const seconds = Number(duration.slice(0, -1));
-  assert.equal(Number.isSafeInteger(seconds), true, `${name} must be a safe integer`);
+  assert.equal(
+    Number.isSafeInteger(seconds),
+    true,
+    `${name} must be a safe integer`,
+  );
   return seconds;
 }
 
+function attachedNetworks(service) {
+  const networks = service?.networks;
+  if (!networks) return [];
+  if (Array.isArray(networks)) {
+    return networks.map((network) =>
+      typeof network === 'string' ? network : network.target,
+    );
+  }
+  return Object.keys(networks);
+}
 
 function parseArguments() {
   const args = process.argv.slice(2);
@@ -91,7 +104,6 @@ function syntheticValues() {
         ];
       }
       if (secretNames.has(name)) return [name, 'x'.repeat(48)];
-      if (name === 'OTP_PROVIDER_URL') return [name, 'https://otp.example.com'];
       if (name === 'STOP_GRACE_PERIOD') return [name, '45s'];
       if (name === 'PROXY_HTTP_PORT') return [name, '80'];
       if (name === 'PROXY_HTTPS_PORT') return [name, '443'];
@@ -125,9 +137,6 @@ function syntheticValues() {
     SERVING_WINDOW_START: '10:30',
     SERVING_WINDOW_END: '13:30',
     NO_SHOW_PROCESSING_TIME: '13:45',
-    QR_TTL_SECONDS: '5',
-    QR_CLOCK_SKEW_SECONDS: '2',
-    PICKUP_SESSION_TTL_SECONDS: '30',
   });
   return values;
 }
@@ -213,9 +222,15 @@ try {
       );
     }
   }
-  assert.equal(services.caddy.ports.length, 2, 'Caddy must publish only HTTP and HTTPS');
   assert.equal(
-    services.caddy.ports.every((port) => port.target === 80 || port.target === 443),
+    services.caddy.ports.length,
+    2,
+    'Caddy must publish only HTTP and HTTPS',
+  );
+  assert.equal(
+    services.caddy.ports.every(
+      (port) => port.target === 80 || port.target === 443,
+    ),
     true,
   );
 
@@ -233,7 +248,11 @@ try {
     `stop grace must be at least shutdown timeout plus ${DRAIN_MARGIN_SECONDS}s drain margin`,
   );
   for (const name of ['api', 'worker']) {
-    assert.equal(services[name].user, '1000:1000', `${name} must run as the non-root node user`);
+    assert.equal(
+      services[name].user,
+      '1000:1000',
+      `${name} must run as the non-root node user`,
+    );
     assert.equal(
       Object.hasOwn(services[name].environment, 'MIGRATION_DATABASE_URL'),
       false,
@@ -260,15 +279,23 @@ try {
     'AUTH_TYPE: plain',
     'CHANGE_ME_LOCAL',
   ]) {
-    assert.equal(rendered.includes(forbidden), false, `production config contains ${forbidden}`);
+    assert.equal(
+      rendered.includes(forbidden),
+      false,
+      `production config contains ${forbidden}`,
+    );
   }
 
   assert.equal(
-    Object.hasOwn(services['migration-gate'].environment, 'MIGRATION_DATABASE_URL'),
+    Object.hasOwn(
+      services['migration-gate'].environment,
+      'MIGRATION_DATABASE_URL',
+    ),
     true,
     'migration-gate must receive the direct database URL',
   );
-  const targetSchema = services['migration-gate'].environment.MIGRATION_TARGET_SCHEMA;
+  const targetSchema =
+    services['migration-gate'].environment.MIGRATION_TARGET_SCHEMA;
   assert.match(
     targetSchema ?? '',
     /^[A-Za-z_][A-Za-z0-9_]*$/,
@@ -309,12 +336,88 @@ try {
       (mount) => mount.target === '/run/imeal',
     );
     assert.ok(evidenceMount, `${name} must mount migration evidence`);
-    assert.equal(evidenceMount.read_only, true, `${name} migration evidence must be read-only`);
+    assert.equal(
+      evidenceMount.read_only,
+      true,
+      `${name} migration evidence must be read-only`,
+    );
   }
 
-  assert.equal(services['admin-web'].user, '101:101', 'admin-web must run as nginx UID 101');
-  assert.equal(config.networks.app.internal, true, 'app network must be private');
-  assert.equal(config.networks.data.internal, true, 'data network must be private');
+  assert.equal(
+    services['admin-web'].user,
+    '101:101',
+    'admin-web must run as nginx UID 101',
+  );
+  assert.equal(
+    config.networks.app.internal,
+    true,
+    'app network must be private',
+  );
+  assert.equal(
+    config.networks.data.internal,
+    true,
+    'data network must be private',
+  );
+  assert.ok(config.networks.egress, 'egress network must exist');
+  assert.notEqual(
+    config.networks.egress.internal,
+    true,
+    'egress network must not be internal',
+  );
+  const workerNetworks = attachedNetworks(services.worker).sort();
+  assert.deepEqual(workerNetworks, ['data', 'egress']);
+  assert.equal(
+    workerNetworks.includes('edge'),
+    false,
+    'worker must not join edge',
+  );
+  assert.equal(
+    workerNetworks.includes('app'),
+    false,
+    'worker must not join app',
+  );
+  assert.equal(
+    services.worker.ports,
+    undefined,
+    'worker must not publish ports',
+  );
+  for (const [name, service] of Object.entries(services)) {
+    const onEgress = attachedNetworks(service).includes('egress');
+    assert.equal(
+      name === 'worker' || !onEgress,
+      true,
+      `${name} must not attach to egress`,
+    );
+  }
+  const workerEnv = services.worker.environment;
+  const apiEnv = services.api.environment;
+  assert.equal(workerEnv.OTP_SMTP_HOST, 'smtp.gmail.com');
+  assert.equal(String(workerEnv.OTP_SMTP_PORT), '587');
+  assert.equal(
+    Boolean(workerEnv.OTP_SMTP_USERNAME),
+    true,
+    'worker must receive OTP_SMTP_USERNAME',
+  );
+  assert.equal(
+    Boolean(workerEnv.OTP_SMTP_PASSWORD),
+    true,
+    'worker must receive OTP_SMTP_PASSWORD',
+  );
+  assert.equal(
+    Boolean(workerEnv.OTP_SMTP_FROM),
+    true,
+    'worker must receive OTP_SMTP_FROM',
+  );
+  assert.equal(Object.hasOwn(workerEnv, 'OTP_PROVIDER_URL'), false);
+  assert.equal(Object.hasOwn(workerEnv, 'OTP_PROVIDER_API_KEY'), false);
+  assert.equal(
+    Object.hasOwn(apiEnv, 'OTP_SMTP_PASSWORD'),
+    false,
+    'api must not receive OTP_SMTP_PASSWORD',
+  );
+  assert.equal(Object.hasOwn(apiEnv, 'OTP_PROVIDER_URL'), false);
+  assert.equal(Object.hasOwn(apiEnv, 'OTP_PROVIDER_API_KEY'), false);
+  assert.equal(Object.hasOwn(apiEnv, 'OTP_PROVIDER_FROM'), false);
 
   const caddyfile = readFileSync(resolve(root, 'Caddyfile.production'), 'utf8');
   for (const required of [
@@ -325,27 +428,52 @@ try {
     'reverse_proxy api:3000',
     'reverse_proxy admin-web:80',
   ]) {
-    assert.equal(caddyfile.includes(required), true, `Caddy production config lacks ${required}`);
+    assert.equal(
+      caddyfile.includes(required),
+      true,
+      `Caddy production config lacks ${required}`,
+    );
   }
-  assert.equal(caddyfile.includes('/storage/'), false, 'MinIO storage must not be public');
+  assert.equal(
+    caddyfile.includes('/storage/'),
+    false,
+    'MinIO storage must not be public',
+  );
 
   for (const dockerfile of ['apps/api/Dockerfile', 'apps/worker/Dockerfile']) {
     const text = readFileSync(resolve(root, dockerfile), 'utf8');
-    assert.match(text, /^FROM .*@sha256:[0-9a-f]{64}/m, `${dockerfile} base must be immutable`);
-    assert.match(text, /^USER node$/m, `${dockerfile} must run as a non-root user`);
+    assert.match(
+      text,
+      /^FROM .*@sha256:[0-9a-f]{64}/m,
+      `${dockerfile} base must be immutable`,
+    );
+    assert.match(
+      text,
+      /^USER node$/m,
+      `${dockerfile} must run as a non-root user`,
+    );
     assert.equal(
-      text.includes('FROM base AS runner\nWORKDIR /app\nENV NODE_ENV=production\nCOPY . .'),
+      text.includes(
+        'FROM base AS runner\nWORKDIR /app\nENV NODE_ENV=production\nCOPY . .',
+      ),
       false,
       `${dockerfile} runner must not copy source files`,
     );
   }
-  const adminDockerfile = readFileSync(resolve(root, 'apps/admin-web/Dockerfile'), 'utf8');
+  const adminDockerfile = readFileSync(
+    resolve(root, 'apps/admin-web/Dockerfile'),
+    'utf8',
+  );
   assert.match(adminDockerfile, /^FROM .*@sha256:[0-9a-f]{64}/m);
   assert.match(adminDockerfile, /^USER nginx$/m);
 
   const dockerignore = readFileSync(resolve(root, '.dockerignore'), 'utf8');
   for (const required of ['.env.*', '/run/imeal/', '**/migration-gate.json']) {
-    assert.equal(dockerignore.includes(required), true, `.dockerignore lacks ${required}`);
+    assert.equal(
+      dockerignore.includes(required),
+      true,
+      `.dockerignore lacks ${required}`,
+    );
   }
 
   console.log(

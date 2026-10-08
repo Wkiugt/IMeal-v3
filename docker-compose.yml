@@ -51,7 +51,7 @@ services:
       retries: 5
 
   minio:
-    image: quay.io/minio/minio:latest
+    image: ${MINIO_IMAGE:-cgr.dev/chainguard/minio:latest}
     container_name: imeal_minio
     restart: always
     environment:
@@ -64,24 +64,28 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      test: ['CMD', '/usr/bin/mc', 'ready', 'local']
       interval: 10s
       timeout: 5s
       retries: 5
 
   minio-create-bucket:
-    image: quay.io/minio/mc:latest
+    image: ${MINIO_MC_IMAGE:-cgr.dev/chainguard/minio-client:latest}
     container_name: imeal_minio_setup
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      /usr/bin/mc config host add myminio http://minio:9000 ${MINIO_ROOT_USER:-CHANGE_ME_LOCAL} ${MINIO_ROOT_PASSWORD:-CHANGE_ME_LOCAL};
-      /usr/bin/mc mb myminio/${MINIO_BUCKET_NAME:-imeal-bucket} --ignore-existing;
-      /usr/bin/mc anonymous set public myminio/${MINIO_BUCKET_NAME:-imeal-bucket};
-      exit 0;
-      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-CHANGE_ME_LOCAL}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-CHANGE_ME_LOCAL}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-imeal-bucket}
+    entrypoint: ['/usr/bin/bash', '-ec']
+    command:
+      - >-
+        /usr/bin/mc alias set myminio http://minio:9000
+        "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}";
+        /usr/bin/mc mb "myminio/$${MINIO_BUCKET_NAME}" --ignore-existing;
+        /usr/bin/mc anonymous set public "myminio/$${MINIO_BUCKET_NAME}";
 
   migrate:
     build:
@@ -117,9 +121,6 @@ services:
       QR_SIGNING_SECRET: ${QR_SIGNING_SECRET:?QR_SIGNING_SECRET is required}
       OTP_HASH_SECRET: ${OTP_HASH_SECRET:?OTP_HASH_SECRET is required}
       OTP_DELIVERY_ENCRYPTION_KEY: ${OTP_DELIVERY_ENCRYPTION_KEY:?OTP_DELIVERY_ENCRYPTION_KEY is required}
-      OTP_PROVIDER_URL: ${OTP_PROVIDER_URL:?OTP_PROVIDER_URL is required}
-      OTP_PROVIDER_API_KEY: ${OTP_PROVIDER_API_KEY:?OTP_PROVIDER_API_KEY is required}
-      OTP_PROVIDER_FROM: ${OTP_PROVIDER_FROM:?OTP_PROVIDER_FROM is required}
       OTP_EXPIRY_SECONDS: ${OTP_EXPIRY_SECONDS:?OTP_EXPIRY_SECONDS is required}
       OTP_RESEND_SECONDS: ${OTP_RESEND_SECONDS:?OTP_RESEND_SECONDS is required}
       OTP_ATTEMPT_LIMIT: ${OTP_ATTEMPT_LIMIT:?OTP_ATTEMPT_LIMIT is required}
@@ -136,9 +137,6 @@ services:
       SERVING_WINDOW_START: ${SERVING_WINDOW_START:?SERVING_WINDOW_START is required}
       SERVING_WINDOW_END: ${SERVING_WINDOW_END:?SERVING_WINDOW_END is required}
       NO_SHOW_PROCESSING_TIME: ${NO_SHOW_PROCESSING_TIME:?NO_SHOW_PROCESSING_TIME is required}
-      QR_TTL_SECONDS: ${QR_TTL_SECONDS:?QR_TTL_SECONDS is required}
-      QR_CLOCK_SKEW_SECONDS: ${QR_CLOCK_SKEW_SECONDS:?QR_CLOCK_SKEW_SECONDS is required}
-      PICKUP_SESSION_TTL_SECONDS: ${PICKUP_SESSION_TTL_SECONDS:?PICKUP_SESSION_TTL_SECONDS is required}
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -175,9 +173,14 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-CHANGE_ME_LOCAL}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-CHANGE_ME_LOCAL}
       OTP_DELIVERY_ENCRYPTION_KEY: ${OTP_DELIVERY_ENCRYPTION_KEY:?OTP_DELIVERY_ENCRYPTION_KEY is required}
-      OTP_PROVIDER_URL: ${OTP_PROVIDER_URL:?OTP_PROVIDER_URL is required}
-      OTP_PROVIDER_API_KEY: ${OTP_PROVIDER_API_KEY:?OTP_PROVIDER_API_KEY is required}
-      OTP_PROVIDER_FROM: ${OTP_PROVIDER_FROM:?OTP_PROVIDER_FROM is required}
+      OTP_SMTP_HOST: ${OTP_SMTP_HOST:-smtp.gmail.com}
+      OTP_SMTP_PORT: ${OTP_SMTP_PORT:-587}
+      OTP_SMTP_REQUIRE_TLS: ${OTP_SMTP_REQUIRE_TLS:-true}
+      OTP_SMTP_USERNAME: ${OTP_SMTP_USERNAME:?OTP_SMTP_USERNAME is required}
+      OTP_SMTP_PASSWORD: ${OTP_SMTP_PASSWORD:?OTP_SMTP_PASSWORD is required}
+      OTP_SMTP_FROM: ${OTP_SMTP_FROM:?OTP_SMTP_FROM is required}
+      OTP_SMTP_FROM_NAME: ${OTP_SMTP_FROM_NAME:-IMeal}
+      OTP_EXPIRY_SECONDS: ${OTP_EXPIRY_SECONDS:?OTP_EXPIRY_SECONDS is required}
       OTP_DELIVERY_BATCH_SIZE: ${OTP_DELIVERY_BATCH_SIZE:?OTP_DELIVERY_BATCH_SIZE is required}
       OTP_DELIVERY_MAX_ATTEMPTS: ${OTP_DELIVERY_MAX_ATTEMPTS:?OTP_DELIVERY_MAX_ATTEMPTS is required}
       OTP_DELIVERY_RETRY_BASE_SECONDS: ${OTP_DELIVERY_RETRY_BASE_SECONDS:?OTP_DELIVERY_RETRY_BASE_SECONDS is required}
@@ -187,9 +190,6 @@ services:
       SERVING_WINDOW_START: ${SERVING_WINDOW_START:?SERVING_WINDOW_START is required}
       SERVING_WINDOW_END: ${SERVING_WINDOW_END:?SERVING_WINDOW_END is required}
       NO_SHOW_PROCESSING_TIME: ${NO_SHOW_PROCESSING_TIME:?NO_SHOW_PROCESSING_TIME is required}
-      QR_TTL_SECONDS: ${QR_TTL_SECONDS:?QR_TTL_SECONDS is required}
-      QR_CLOCK_SKEW_SECONDS: ${QR_CLOCK_SKEW_SECONDS:?QR_CLOCK_SKEW_SECONDS is required}
-      PICKUP_SESSION_TTL_SECONDS: ${PICKUP_SESSION_TTL_SECONDS:?PICKUP_SESSION_TTL_SECONDS is required}
     depends_on:
       pgbouncer:
         condition: service_healthy

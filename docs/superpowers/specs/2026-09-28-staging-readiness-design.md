@@ -57,7 +57,7 @@ Current deployment inputs and their design implications:
 | --- | --- | --- |
 | `docker-compose.yml:1-250` | PostgreSQL 15, PgBouncer, MinIO, one-shot `migrate`, API, worker, Admin Web and Caddy | A production/staging override is required before public exposure; internal ports, image tags, TLS and bucket policy must be hardened. |
 | `Caddyfile:1-18` | HTTP listener, API/storage path routing, Admin Web fallback | Staging must use an owned HTTPS hostname and must not expose storage anonymously. |
-| `apps/api/Dockerfile:1-16` | Node 20, Yarn 4.18, Prisma generate, API build | Build output must be produced from an immutable source/artifact and runtime secrets must stay out of the image. |
+| `apps/api/Dockerfile:1-16` | Node 24, Yarn 4.18, Prisma 7.10 generate, API build | Build output must be produced from an immutable source/artifact and runtime secrets must stay out of the image. |
 | `apps/worker/Dockerfile:1-16` | Same build baseline for worker | Worker artifact must carry the same domain/contracts migration compatibility as API. |
 | `apps/admin-web/Dockerfile:1-11` | Vite build followed by Nginx static serving | Compose must explicitly select this Dockerfile. `VITE_API_URL` is a build-time public value. |
 | `apps/mobile/app.config.ts:1-28` | Expo config and optional `EXPO_PUBLIC_EAS_PROJECT_ID` | Production-like staging requires a provisioned EAS project/release build or a documented device test build. |

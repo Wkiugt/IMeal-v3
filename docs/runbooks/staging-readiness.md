@@ -12,6 +12,28 @@ only the checked-in tooling and disposable fixtures. The release manager must
 keep the gate closed until the external staging gates in this runbook have
 independent approval.
 
+## CI qualification modes
+
+The checked-in workflow has two independent gates. Pull requests and pushes to
+`deploy/develop` run **secretless qualification** only. That job uses the
+disposable PostgreSQL service at
+`postgresql://postgres:postgres@127.0.0.1:5432/imeal_ci?schema=public` for
+Prisma validation/generation, migrations, and database-backed checks; it never
+reads a repository or GitHub staging secret.
+
+Pushes to `deploy/staging` may enter **protected staging qualification** after
+the secretless job passes. A manual `workflow_dispatch` defaults to
+qualification only; the protected job is eligible only when the caller
+explicitly sets `deploy_staging=true` and the selected ref is exactly
+`deploy/staging`. Dispatching any other ref, omitting the protected input, or
+providing incomplete/malformed protected environment values cannot deploy.
+
+The protected job runs the approved Compose release on its GitHub-hosted runner
+only for ephemeral qualification. Its `always()` teardown removes the
+containers, networks, and volumes before the runner is discarded. This is not a
+persistent staging deployment and is not evidence that a long-lived staging
+host, DNS/TLS endpoint, provider, backup, or alert route exists.
+
 ## Ownership, prerequisites, and decision authority
 
 | Responsibility                                               | Owner                                     | Required evidence                                                                                                                                        |
@@ -114,7 +136,7 @@ that MUST remain visible in the release decision are:
   credentials, targets, or source payloads;
 - the approved edge WAF/rate-limit control and the alert delivery route are not
   provisioned;
-- no real staging environment, DNS, TLS certificate, OTP provider path,
+- no real staging environment, DNS, TLS certificate, Gmail SMTP OTP path,
   backup/restore rehearsal, alert delivery, UAT, identity approval, or
   location/roster approval has been observed;
 - no production data, credentials, or real operational domains are present in
@@ -125,6 +147,20 @@ qualification. It uses `.github/workflows/staging-readiness.yml`, the
 immutable image references from `STAGING_IMAGE_DIGESTS_JSON`, and
 `STAGING_SMOKE_SESSION_TOKEN` through `--session-token-env`. A missing runtime
 collector or endpoint is a failed gate, not a reason to mark PASS manually.
+
+## Worker readiness bootstrap smoke evidence (2026-10-05)
+
+The disposable Docker/Linux real-entrypoint qualification is recorded in [`docs/superpowers/evidence/2026-10-05-worker-readiness.md`](../superpowers/evidence/2026-10-05-worker-readiness.md). It is implementation evidence only and does not change the repository decision: staging and production remain **CONDITIONAL / NO-GO**.
+
+- With the valid disposable migration marker and database, `/health/live` returned HTTP 200 with startup checks not configured except `draining=ok`; `/health/ready` returned HTTP 200 with `environment=ok`, `database=ok`, `migration=ok`, `scheduler=ok`, and `draining=ok`, while `lastLoop=not_configured` remained diagnostic. This supersedes only the earlier source-wiring qualification that lacked the post-listen scheduler marker; it does not supersede the historical r5 image record.
+- `/metrics` returned HTTP 503 because protected metrics authority inputs were unavailable. No synthetic snapshot, provider, target, credential, or health bypass was introduced.
+- Missing and mismatched migration markers remained HTTP 503 with `migration=down`; stopping the disposable database after startup remained HTTP 503 with `database=down`; invalid OTP configuration exited before a listener; and the planned app-level collision exited with `EADDRINUSE`.
+- The healthy-database SIGTERM supplement had pre-signal `/health/ready` HTTP 200 with all five gates `ok` and `lastLoop=not_configured`, then native SIGTERM exit 0. The listener closed before the post-signal curl could capture a response (exit 52, HTTP 000/empty reply); graceful shutdown completed, but no HTTP 503 was captured and no healthy 200→503 drain transition is claimed. The earlier database-down/draining sample remains a combined case.
+- The smoke harness corrected the PostgreSQL initialization race by waiting on bounded TCP `psql -h 127.0.0.1 -U postgres -d imeal -v ON_ERROR_STOP=1 -c "SELECT 1;"`, rather than treating early `pg_isready` success as target-database readiness. Images were built through the genuine Dockerfiles without a host Yarn build.
+- The final corrected run captured the exact PostgreSQL mount and removed only label-owned resources, including `docker rm --force --volumes`; final read-only verification found its containers, network, and images absent. The healthy-database supplement captured its own mount and likewise verified its worker, PostgreSQL container, network, and images absent. An earlier failed attempt left anonymous-volume identity unavailable from bounded Docker events, so this evidence does not claim every resource from every attempt was proven clean.
+- The separate earlier debug cleanup proof records exact smoke-owned container/network names and labels and successful label-guarded removals, but its exact container ID was not retained. No later exact-ID or all-session cleanup claim is made.
+
+No unit/e2e suite was run for this qualification. Protected environment values, source endpoints, target fingerprints, provider credentials, approval records, real metrics authority, DNS/TLS, alert delivery, and production approval remain external prerequisites.
 
 ## 1. Candidate, fingerprint, and migration status
 
@@ -395,6 +431,55 @@ must provide separately reviewed, target-bound PASS artifacts named
 `smoke-auth-rbac.json`, `smoke-business.json`, `smoke-mobile-admin.json`, and
 `smoke-worker.json` for the corresponding identity, business, client, and
 worker paths. Do not turn local test mode into staging evidence.
+
+### 5.1 Current Staff self check-in qualification (external UAT gate)
+
+The following checklist is required for the current cutover and is **not**
+evidence that staging has been provisioned. Each box must be independently
+observed against the target release and recorded in the target-bound
+`smoke-business.json`/`smoke-mobile-admin.json` artifacts. Never mark a box
+PASS from a local seed, a mocked provider, a guessed endpoint or source review.
+
+- [ ] Product operations provision approved staging identities, `staff` and
+      `kitchen` roles, `kitchen.serve`, active roster/location assignments, menus
+      and registrations; record the approval outside this repository.
+- [ ] Kitchen `GET /api/kitchen/check-in/qr` returns the same stable day/location
+      QR on repeated reads, exposes only server `date`/`location`/window metadata,
+      and contains no employee identity. Confirm it is not a rotating per-Staff QR.
+- [ ] Staff `GET /api/me/check-in` shows the authenticated caller's own
+      registration/status only. Staff scans the shared Kitchen QR and
+      `POST /api/me/check-in/resolve` accepts a fresh foreground GPS sample and
+      returns only that caller's normalized registration/menu/location/eligibility;
+      when eligible it persists a `VALID` `ServingVerification` and returns a
+      scoped opaque `intentNonce` bound to caller/session/registration/location,
+      nullable when `eligibility=false`.
+- [ ] Staff reviews the result, captures a **new** fresh foreground GPS sample,
+      and `POST /api/me/check-in/confirm` with the same `sessionId`, non-empty
+      `intentNonce` and unique idempotency key; confirm validates the persisted
+      verification and returns `CHECKED_IN` plus one
+      `registrationId`/`servingId`/`servedAt`.
+- [ ] Retry the same confirm after an intentionally lost/timeout response;
+      verify the same caller/key/body replays safely or `GET /api/me/check-in`
+      reconciles to `CHECKED_IN`, with no second `MealServing`.
+- [ ] Independently exercise wrong/expired QR, no own registration, canceled
+      registration, already checked-in, outside window, wrong location and each
+      GPS failure (`GPS_REQUIRED`, `GPS_STALE`, `GPS_INACCURATE`,
+      `OUTSIDE_GEOFENCE`) and capture the canonical safe recovery behavior.
+- [ ] Kitchen `GET /api/kitchen/check-in/dashboard?date=YYYY-MM-DD` returns
+      aggregate-only counts and `lastUpdated`; verify focused/foreground polling
+      every 10 seconds, immediate refresh on re-entry, normal visible convergence
+      within approximately 15 seconds under healthy polling, and indefinite
+      retention/`stale` marking of the last good snapshot after a refresh failure.
+- [ ] Confirm there is no Kitchen employee scanner, employee search/list,
+      per-person serving log, delegation/proxy check-in or SSE/WebSocket
+      requirement in the current staging surface.
+- [ ] Verify `MealServing.registrationId` is the unique canonical outcome
+      source, concurrent/retried confirm creates at most one serving, historical
+      pickup/delegation tables remain retained/readable, and raw GPS coordinates
+      do not appear in logs or evidence.
+
+Until every applicable box has target-bound evidence and independent review,
+the staging qualification remains **CONDITIONAL / NO-GO**.
 The protected workflow invokes `runRuntimeIntegration` from
 `scripts/staging/runtime-integration.mjs` after deployment and before it records
 `runtimeIntegration: PASS`. A qualification PASS requires API and worker live

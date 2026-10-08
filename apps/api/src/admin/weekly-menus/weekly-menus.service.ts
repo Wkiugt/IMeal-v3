@@ -1,6 +1,6 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma.service.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '@imeal/core';
 import { NotificationsService } from '../../notifications/notifications.service.js';
 import type { UpdateDailyMenuInput } from './dto/weekly-menus.schema.js';
 function mealDate(value: Date): string {
@@ -27,7 +27,14 @@ export class WeeklyMenusService {
       orderBy: { startDate: 'asc' },
       include: {
         dailyMenus: {
-          include: { mealDays: true, revisions: true },
+          include: {
+            mealDays: true,
+            revisions: {
+              where: { revision: { not: null } },
+              orderBy: [{ revision: 'desc' }, { id: 'desc' }],
+              take: 1,
+            },
+          },
         },
       },
     });

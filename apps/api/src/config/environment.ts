@@ -1,6 +1,5 @@
-import { isIP } from 'node:net';
 import { API_METRICS_EVIDENCE_DIGEST_ENV } from '@imeal/observability';
-import { otpProviderConfiguration } from '../otp/otp-provider.js';
+import { validateTrustedProxyConfiguration } from '../common/trusted-client-ip.js';
 
 export { API_METRICS_EVIDENCE_DIGEST_ENV };
 export const API_METRICS_EVIDENCE_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -29,9 +28,6 @@ const FIXED_OPERATIONAL_SETTINGS = [
   ['SERVING_WINDOW_START', '10:30'],
   ['SERVING_WINDOW_END', '13:30'],
   ['NO_SHOW_PROCESSING_TIME', '13:45'],
-  ['QR_TTL_SECONDS', '5'],
-  ['QR_CLOCK_SKEW_SECONDS', '2'],
-  ['PICKUP_SESSION_TTL_SECONDS', '30'],
 ] as const;
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 const PLACEHOLDER_MARKERS = [
@@ -141,28 +137,6 @@ function requireSupportedNodeEnvironment(
   return normalized;
 }
 
-function requireProductionProviderUrl(env: NodeJS.ProcessEnv): void {
-  const value = requireValue('OTP_PROVIDER_URL', env);
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error('OTP_PROVIDER_URL must be a valid HTTPS URL in production');
-  }
-
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  if (
-    parsed.protocol !== 'https:' ||
-    hostname.length === 0 ||
-    hostname === 'localhost' ||
-    isIP(hostname) !== 0
-  ) {
-    throw new Error(
-      'OTP_PROVIDER_URL must not target loopback or IP-literal destinations in production',
-    );
-  }
-}
-
 export function isTestAuthBypassEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
@@ -203,14 +177,11 @@ export function validateApiEnvironment(
   requireSecret(OTP_DELIVERY_ENCRYPTION_KEY, env);
   requireSecret(SESSION_HASH_SECRET, env);
   if (isProduction) {
-    requireProductionProviderUrl(env);
-    requireValue('OTP_PROVIDER_API_KEY', env);
-    requireValue('OTP_PROVIDER_FROM', env);
     requireProductionRuntimeSettings(env);
+    validateTrustedProxyConfiguration(env, true);
+  } else {
+    validateTrustedProxyConfiguration(env, false);
   }
-  const providerEnvironment =
-    env.NODE_ENV === nodeEnv ? env : { ...env, NODE_ENV: nodeEnv };
-  otpProviderConfiguration(providerEnvironment);
 
   for (const [name, minimum] of OTP_NUMERIC_SETTINGS) {
     requireInteger(name, minimum, env);

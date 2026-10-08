@@ -1,0 +1,39 @@
+title = "IMeal Gitleaks configuration"
+minVersion = "v8.30.1"
+
+[extend]
+useDefault = true
+# Keep the default generic-api-key detector enabled everywhere. The reviewed
+# exceptions cover synthetic fixtures and public image-binding metadata only;
+# each requires an exact repository path and exact detector match.
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "Reviewed synthetic fixtures and public image-binding metadata only; preserve generic-api-key detection elsewhere."
+condition = "AND"
+paths = [
+  '''(?:^|/)apps/api/README\.md$''',
+  '''(?:^|/)apps/api/src/otp/otp-provider\.spec\.ts$''',
+  '''(?:^|/)apps/mobile/src/api/checkInAPI\.test\.ts$''',
+  '''(?:^|/)apps/mobile/src/notifications/NotificationProvider\.tsx$''',
+  '''(?:^|/)apps/mobile/src/screens/checkIn/SelfCheckInScreen\.test\.tsx$''',
+  '''(?:^|/)apps/worker/README\.md$''',
+  '''(?:^|/)apps/worker/src/otp-delivery-worker\.service\.spec\.ts$''',
+  '''(?:^|/)packages/contracts/test/contracts\.test\.ts$''',
+  '''(?:^|/)apps/api/src/pickup/pickup.service\.spec\.ts$''',
+  '''(?:^|/)apps/mobile/src/api/pickupAPI\.test\.ts$''',
+  '''(?:^|/)\.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/review-e0c274a\.\.task9-fix\.diff$''',
+  '''(?:^|/)\.superpowers/sdd/2026-09-24-imeal-email-otp-presenter-gps-plan/review-bbcb622\.\.task9\.diff$''',
+  '''(?:^|/)docs/superpowers/evidence/2026-10-04-image-scans\.md$''',
+  '''(?:^|/)docs/superpowers/evidence/2026-10-04-prisma7-checkpoint\.md$''',
+]
+regexTarget = "match"
+regexes = [
+  '''^token=abc123def456\r?$''',
+  '''^SECRET = 'delivery-encryption-secret-that-is-at-least-32-bytes'\r?$''',
+  '''^idempotencyKey: 'idempotency-1',?\s*$''',
+  '''^EXPLAINER_KEY = 'imeal\.notification-explainer-seen\.v1'\r?$''',
+  '''^QR_SIGNING_SECRET', 'test-qr-signing-secret-at-least-32'\r?$''',
+  '''^imeal-api-prisma7:final-20261004-r5`?$''',
+  '''^api:d61af2c9463b1f3597c8288184fbde0ae41d503e`?$''',
+]

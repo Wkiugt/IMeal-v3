@@ -16,6 +16,7 @@ import { PermissionsGuard } from '../../auth/permissions.guard.js';
 import { RequirePermission } from '../../auth/require-permission.decorator.js';
 import { CurrentUser } from '../../auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../../auth/authenticated-user.js';
+import type { Prisma } from '@imeal/core';
 
 const AllowlistInputSchema = z
   .object({
@@ -27,6 +28,24 @@ const AllowlistInputSchema = z
     reason: z.string().trim().max(500).nullable().optional(),
   })
   .strict();
+const ALLOWLIST_SELECT = {
+  id: true,
+  normalizedEmail: true,
+  userId: true,
+  state: true,
+  purpose: true,
+  effectiveFrom: true,
+  effectiveTo: true,
+  reason: true,
+  createdBy: true,
+  updatedBy: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.OtpAllowlistSelect;
+
+type AllowlistListItem = Prisma.OtpAllowlistGetPayload<{
+  select: typeof ALLOWLIST_SELECT;
+}>;
 
 function normalizeEmail(email: string): string {
   return email.normalize('NFKC').trim().toLowerCase();
@@ -53,23 +72,10 @@ export class AllowlistController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  list() {
+  list(): Promise<AllowlistListItem[]> {
     return this.prisma.otpAllowlist.findMany({
       orderBy: { normalizedEmail: 'asc' },
-      select: {
-        id: true,
-        normalizedEmail: true,
-        userId: true,
-        state: true,
-        purpose: true,
-        effectiveFrom: true,
-        effectiveTo: true,
-        reason: true,
-        createdBy: true,
-        updatedBy: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: ALLOWLIST_SELECT,
     });
   }
 

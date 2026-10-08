@@ -86,7 +86,7 @@ The following are the concrete seams this design addresses:
 
 ## 4. Non-goals
 
-- Implementing the missing admin user/role/disable lifecycle. That remains a separate product/security workstream; this design only ensures its runtime boundary is hardened.
+- Implementing Admin user/role/disable lifecycle inside this hardening design. That lifecycle is not missing; it is a separate product surface and is outside this design.
 - Changing OTP, QR, GPS, registration, serving, delegation, penalty, or notification business rules.
 - Designing a new backup product. Backup destination, encryption ownership, restore rehearsal, RPO/RTO, and rollback authority remain external release prerequisites.
 - Adding horizontal API/worker scaling, a distributed event broker, Redis, Kafka, or Kubernetes.

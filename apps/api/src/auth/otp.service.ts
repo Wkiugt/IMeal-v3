@@ -6,6 +6,7 @@ import { OtpOutboxService } from '../otp/otp-outbox.service.js';
 import { otpDeliveryEncryptionSecret } from '../otp/otp-provider.js';
 import { AllowlistService } from './allowlist.service.js';
 import { ApiMetricsService } from '../common/metrics.service.js';
+import { auditColumnsFromDetails } from '../admin/operations/audit-redaction.js';
 import type {
   AuthenticatedUser,
   VerifiedOtpPrincipal,
@@ -536,6 +537,9 @@ export class OtpService {
             userId?: string;
             action: string;
             details: string;
+            targetUserId?: string | null;
+            result?: string | null;
+            resourceType?: string | null;
           };
         }) => Promise<{ id: string }>;
       };
@@ -552,15 +556,21 @@ export class OtpService {
     const subjectHash = createHash('sha256')
       .update(input.normalizedEmail, 'utf8')
       .digest('hex');
+    const details = JSON.stringify({
+      purpose: 'SESSION_LOGIN',
+      result: input.result,
+      requestId: input.requestId,
+      subjectHash,
+    });
     return tx.auditLog.create({
       data: {
         ...(input.userId ? { userId: input.userId } : {}),
         action: input.action,
-        details: JSON.stringify({
-          purpose: 'SESSION_LOGIN',
+        details,
+        ...auditColumnsFromDetails(details, {
+          targetUserId: input.userId ?? null,
           result: input.result,
-          requestId: input.requestId,
-          subjectHash,
+          resourceType: 'otp',
         }),
       },
     });

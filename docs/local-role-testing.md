@@ -21,7 +21,7 @@ client-role login path.
 
 ## 2. Prerequisites
 
-- Node.js `>=18`
+- Node.js `>=24 <25`
 - Corepack with Yarn `4.18.0`
 - Docker Desktop with Linux containers for PostgreSQL-backed checks
 - A disposable database/schema for DB or API e2e tests
@@ -43,12 +43,13 @@ docker compose up --build
 ```
 
 The API startup validator requires the OTP/session/GPS/serving settings in every
-non-test runtime; its HTTPS provider URL, API key and sender identity are
-required only when `NODE_ENV=production`. The worker has a separate startup
-validator: the encrypted delivery key is always required, while production
-additionally requires database/provider settings, every `OTP_DELIVERY_*` value
-and the fixed serving/QR/session values. Selected worker numeric/fixed defaults
-are available outside production for unit tests. These validators are
+non-test runtime. It does not receive SMTP credentials. The worker has a
+separate startup validator: the encrypted delivery key is always required, while
+production additionally requires database settings, Gmail SMTP username,
+App Password, and From address, `OTP_EXPIRY_SECONDS`, every `OTP_DELIVERY_*`
+value, and the fixed serving values. Host and port default to
+`smtp.gmail.com:587`, and TLS cannot be disabled. Selected worker numeric/fixed
+defaults are available outside production for unit tests. These validators are
 intentionally not identical, and the API test-harness bypass does not make a
 worker runtime safe to deploy.
 
@@ -70,16 +71,19 @@ database. The command requires all of these safety variables:
 The `seed:local` CLI reads the current process environment only; it does not
 load `.env` automatically. A local `.env` file may still be used by other
 services, but operators must explicitly set the seed variables in the current
-PowerShell session before invoking the CLI. The URL below is a clearly
-synthetic local target and must not be replaced with a shared or production
-connection string.
+PowerShell session before invoking the CLI. The seed CLI does not create
+databases. The example below targets the canonical local Compose database
+`${POSTGRES_DB:-imeal}` on localhost port 5432; the operator must match
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` from the ignored
+`.env`, and must not use port 6432. Do not point this URL at a shared or
+production database.
 
 ```powershell
 $env:NODE_ENV='test'
 $env:IMEAL_LOCAL_SEED='1'
 $env:IMEAL_LOCAL_SEED_CONFIRM='I_UNDERSTAND_LOCAL_ONLY'
 $env:IMEAL_LOCAL_SEED_BASE_EMAIL='imeal.seed@example.test'
-$env:DATABASE_URL='postgresql://postgres:postgres@localhost:5432/imeal_local?schema=public'
+$env:DATABASE_URL='postgresql://CHANGE_ME_LOCAL:CHANGE_ME_LOCAL@localhost:5432/imeal?schema=public'
 yarn workspace @imeal/core seed:local --dry-run
 yarn workspace @imeal/core seed:local
 ```
@@ -153,8 +157,8 @@ codes or account state in a token or request body.
 
 | Principal | Expected local assertion |
 | --- | --- |
-| Synthetic Staff | Own registration/history/delegation APIs resolve from server state |
-| Synthetic Kitchen | Resolve/confirm requires `kitchen.serve`; scanner sends QR only and no GPS |
+| Synthetic Staff | Own registration, meal history, and penalty APIs resolve from server state; no active delegation API |
+| Synthetic Kitchen | Displays the shared QR and aggregate dashboard; it does not scan employees or collect GPS |
 | Synthetic Staff + Kitchen | Can use both surfaces only when both server assignments exist |
 | Synthetic Admin | Can use explicitly permitted allowlist/location/roster/audit operations; cannot grant `admin` in Admin Web |
 | Disabled synthetic user | Protected request resolves current status and is rejected; active sessions are revoked |
@@ -181,29 +185,38 @@ the final delivery boundary:
 5. Reusing a confirmation idempotency key with the same body returns the stored
    result; changing the intent/body returns a conflict.
 
-## 7. Presenter GPS and Kitchen checks
+## 7. Staff self check-in and Kitchen checks
 
-- Presenter mobile captures a fresh **foreground** fix only during QR generate or
-  refresh and stops collection on blur, completion, cancellation or unmount.
-- GPS policy is resolved from the server-managed employee location. It cannot
-  select a more permissive location or grant entitlement.
-- Unavailable, denied, stale, inaccurate and outside-geofence results expose
-  only `Retry` and `Refresh`; there is no manual fallback.
-- Owner GPS is not collected for proxy pickup. Kitchen resolve receives only the
-  QR; confirm receives only `pickupSessionId` and `idempotencyKey`.
-- The exact sorted registration set is preserved through QR, resolve and the
-  30-second session. Kitchen cannot add/remove items.
-- Serving is only 10:30–13:30 in `Asia/Ho_Chi_Minh`; multi-item confirmation is
-  all-or-nothing and idempotent; successful serving is final.
+- Staff scans the stable shared Kitchen QR for the serving date and location,
+  captures a fresh foreground GPS fix, and resolves eligibility without
+  consuming the registration; the app presents a review step before confirm.
+- Confirm captures a new fresh foreground GPS fix and submits only the
+  server-bound `sessionId`, `intentNonce` and idempotency key for the
+  authenticated user's own registration. Target employee and delegation
+  fields are not accepted.
+- Server time enforces serving only from 10:30–13:30 in `Asia/Ho_Chi_Minh`.
+  A timed-out confirm reconciles with `GET /api/me/check-in` while preserving
+  the confirm body and idempotency key; stale responses cannot replace newer
+  checked-in state.
+- Kitchen displays the shared QR and aggregate dashboard; it does not scan
+  employee QR codes or collect GPS. Dashboard polling runs every 10 seconds
+  only while focused and in the foreground, pauses in the background, and
+  cleans up on blur/unmount. Refresh errors retain the last successful snapshot
+  and show a stale warning.
+- GPS policy is resolved from the server-managed employee location. Unavailable,
+  denied, stale, inaccurate and outside-geofence fixes expose only `Retry` and
+  `Refresh`; there is no manual location fallback or location selection.
 
 Focused checks:
 
 ```powershell
 yarn workspace @imeal/contracts test
-yarn workspace @imeal/api exec vitest run src/pickup src/admin
+yarn workspace @imeal/api exec vitest run src/check-in src/admin
 yarn workspace @imeal/worker exec vitest run src/otp-delivery-worker.service.spec.ts
 yarn workspace @imeal/core test
 ```
+
+PostgreSQL-backed Vitest files serialize schema migrations to avoid database-global advisory-lock contention, while explicit transaction-level `Promise.all` race checks remain concurrent; the API health e2e requires an isolated migration-evidence fixture and does not establish production readiness.
 
 ## 8. Client environment names
 

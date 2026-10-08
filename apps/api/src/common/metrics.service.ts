@@ -16,7 +16,6 @@ type HttpRouteLabel =
   | 'registrations'
   | 'kitchen'
   | 'notifications'
-  | 'delegations'
   | 'admin'
   | 'other';
 type HttpMethodLabel =
@@ -76,7 +75,6 @@ function normalizeRoute(route: string): HttpRouteLabel | null {
     ['/registrations', 'registrations'],
     ['/kitchen', 'kitchen'],
     ['/notifications', 'notifications'],
-    ['/delegations', 'delegations'],
     ['/admin', 'admin'],
   ];
   return (

@@ -3,6 +3,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { Platform } from 'react-native';
@@ -12,10 +13,12 @@ import {
   type MobileProfile,
   type RequestOtpResponse,
 } from '../api/authAPI';
-import { getMobileErrorMessage } from '../api/mobileApiError';
+import { MobileApiError, getMobileErrorMessage } from '../api/mobileApiError';
 import { RequestTimeoutError } from '../api/requestWithTimeout';
 import { useLanguage } from '../i18n/LanguageProvider';
 import type { Translate } from '../i18n/translations';
+import { navigationRef } from '../navigation';
+import { registerAuthInvalidationHandler } from './authInvalidation';
 import { attemptSessionStorage } from './sessionStorage';
 
 export type { MobileProfile } from '../api/authAPI';
@@ -59,7 +62,7 @@ async function clearStoredToken(): Promise<void> {
   await SecureStore.deleteItemAsync(SESSION_KEY);
 }
 
-type SessionContextValue = {
+export type SessionContextValue = {
   token: string | null;
   profile: MobileProfile | null;
   isRestoring: boolean;
@@ -87,6 +90,30 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [authErrorState, setAuthErrorState] = useState<AuthErrorState | null>(
     null,
   );
+
+  const tokenRef = useRef<string | null>(null);
+  tokenRef.current = token;
+
+  useEffect(() => {
+    const unregister = registerAuthInvalidationHandler((offendingToken) => {
+      if (tokenRef.current !== offendingToken) return;
+      tokenRef.current = null;
+      void attemptSessionStorage(clearStoredToken);
+      setToken(null);
+      setProfile(null);
+      setAuthErrorState({
+        error: new MobileApiError('SESSION_INVALID', 'errors.sessionInvalid'),
+        fallbackKey: 'errors.restoreSession',
+      });
+      if (navigationRef.isReady()) {
+        navigationRef.reset({
+          index: 0,
+          routes: [{ name: 'Auth' }],
+        });
+      }
+    });
+    return unregister;
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -146,16 +173,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const verifyOtp = async (email: string, code: string): Promise<void> => {
     setIsVerifyingOtp(true);
     setAuthErrorState(null);
+    let issuedToken: string | null = null;
     try {
       const result = await authAPI.verifyOtp({ email, code });
-      await storeToken(result.sessionToken);
-      const nextProfile = await authAPI.bootstrapSession(result.sessionToken);
-      setToken(result.sessionToken);
+      issuedToken = result.sessionToken;
+      await storeToken(issuedToken);
+      tokenRef.current = issuedToken;
+      const nextProfile = await authAPI.bootstrapSession(issuedToken);
+      setToken(issuedToken);
       setProfile(nextProfile);
     } catch (error: unknown) {
-      await attemptSessionStorage(clearStoredToken);
-      setToken(null);
-      setProfile(null);
+      if (issuedToken) {
+        await attemptSessionStorage(clearStoredToken);
+        tokenRef.current = null;
+        setToken(null);
+        setProfile(null);
+      }
       setAuthErrorState({ error, fallbackKey: 'errors.verifyOtp' });
       throw error;
     } finally {

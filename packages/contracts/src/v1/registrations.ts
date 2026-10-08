@@ -59,6 +59,8 @@ export type BatchRegistrationRequest = z.infer<
 export const RegistrationFailureCodeSchema = z.enum([
   'INVALID_MEAL_DATE',
   'CUTOFF_PASSED',
+  'REGISTRATION_WEEK_NOT_OPEN',
+  'OUTSIDE_REGISTRATION_WINDOW',
   'MEAL_CHOICE_UNAVAILABLE',
   'REGISTRATION_FINALIZED',
   'REGISTRATION_FAILED',
@@ -143,6 +145,7 @@ export type RegistrationWindowDay = z.infer<typeof RegistrationWindowDaySchema>;
 export const RegistrationWindowSchema = z
   .object({
     serverNow: UtcDateTimeSchema,
+    nextWeekOpenAt: UtcDateTimeSchema,
     cutoffAt: UtcDateTimeSchema,
     timeZone: z.literal('Asia/Ho_Chi_Minh'),
     days: z.array(RegistrationWindowDaySchema).length(7),
@@ -172,6 +175,8 @@ export const RegistrationDayUnavailableReasonSchema = z.enum([
   'LOCATION_UNAVAILABLE',
   'LOCATION_AMBIGUOUS',
   'CUTOFF_PASSED',
+  'REGISTRATION_WEEK_NOT_OPEN',
+  'OUTSIDE_REGISTRATION_WINDOW',
   'REGISTRATION_FINALIZED',
   'ALREADY_ACTIVE',
   'NOT_ACTIVE',
@@ -192,16 +197,6 @@ export const WeekDayLocationSchema = z
   .strict();
 export type WeekDayLocation = z.infer<typeof WeekDayLocationSchema>;
 
-export const WeekRegistrationDayDelegationSchema = z
-  .object({
-    id: z.string(),
-    status: z.enum(['PENDING', 'ACCEPTED']),
-    delegateName: z.string().nullable(),
-  })
-  .strict();
-export type WeekRegistrationDayDelegation = z.infer<
-  typeof WeekRegistrationDayDelegationSchema
->;
 
 export const WeekRegistrationDaySchema = z
   .object({
@@ -222,7 +217,6 @@ export const WeekRegistrationDaySchema = z
         changeMealChoice: z.array(RegistrationDayUnavailableReasonSchema),
       })
       .strict(),
-    delegation: WeekRegistrationDayDelegationSchema.nullable(),
   })
   .strict();
 export type WeekRegistrationDay = z.infer<typeof WeekRegistrationDaySchema>;

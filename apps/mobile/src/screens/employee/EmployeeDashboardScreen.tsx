@@ -239,10 +239,10 @@ export function EmployeeDashboardScreen({ navigation }: Props) {
           />
           {showTicketAction ? (
             <TicketActionCard
-              title={t('dashboard.openMealTicket')}
-              supportingText={t('dashboard.showDynamicQr')}
-              accessibilityLabel={t('dashboard.openMealTicket')}
-              onPress={() => navigation.navigate('PickupIntent')}
+              title={t('checkIn.title')}
+              supportingText={t('checkIn.subtitle')}
+              accessibilityLabel={t('checkIn.title')}
+              onPress={() => navigation.navigate('SelfCheckIn')}
               style={styles.ticketAction}
             />
           ) : null}

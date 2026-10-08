@@ -89,7 +89,7 @@ test('parses both named constraints and requires exact valid rows', async () => 
   assert.throws(
     () =>
       parseConstraintValidation(
-        valid.replace(/registration_serving_consistency.*\n/, ''),
+        valid.replace(/registration_serving_consistency[^\r\n]*\r?\n/, ''),
       ),
     /constraint|rows|incomplete/i,
   );

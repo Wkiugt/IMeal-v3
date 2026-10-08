@@ -52,9 +52,7 @@ describe('local seed plan', () => {
     expect(plan.dailyMenus).toHaveLength(7);
     expect(plan.mealDays).toHaveLength(7);
     expect(plan.menuRevisions).toHaveLength(7);
-    expect(plan.delegations.filter((row) => row.status === 'PENDING')).toHaveLength(4);
-    expect(plan.delegations.filter((row) => row.status === 'ACCEPTED')).toHaveLength(4);
-    expect(plan.delegations.filter((row) => row.status === 'COMPLETED')).toHaveLength(8);
+    expect(plan.delegations).toHaveLength(0);
     expect(plan.appSettings).toEqual([
       { key: 'isServingReady:2026-09-28', value: 'true', version: 1 },
     ]);
@@ -70,9 +68,9 @@ describe('local seed plan', () => {
       mealDays: 7,
       menuRevisions: 7,
       registrations: 126,
-      pendingDelegations: 4,
-      acceptedDelegations: 4,
-      completedDelegations: 8,
+      pendingDelegations: 0,
+      acceptedDelegations: 0,
+      completedDelegations: 0,
       penalties: 10,
       servingVerifications: 40,
       pickupSessions: 40,
@@ -173,12 +171,12 @@ describe('local seed plan', () => {
     }
   });
 
-  it('creates complete self and proxy serving histories', () => {
+  it('creates self-only serving histories without delegation rows', () => {
     const plan = buildLocalSeedPlan(CONFIG);
-    expect(plan.mealServings.filter((row) => row.receiverType === 'SELF')).toHaveLength(32);
-    expect(plan.mealServings.filter((row) => row.receiverType === 'PROXY')).toHaveLength(8);
+    expect(plan.mealServings).toHaveLength(40);
+    expect(plan.mealServings.every((row) => row.receiverType === 'SELF')).toBe(true);
+    expect(plan.mealServings.every((row) => row.delegationId === null)).toBe(true);
 
-    const delegationsById = new Map(plan.delegations.map((row) => [row.id, row]));
     const servingIds = new Set(plan.mealServings.map((row) => row.id));
     for (const serving of plan.mealServings) {
       expect(serving.kitchenPermissionContext).toBe('kitchen.serve');
@@ -187,15 +185,8 @@ describe('local seed plan', () => {
       expect(serving.pickupSessionId).toBeTruthy();
       expect(serving.requestId).toBeTruthy();
       expect(serving.intentHash).toBeTruthy();
+      expect(serving.ownerUserId).toBe(serving.presenterUserId);
       expect(plan.mealEvents.filter((row) => row.mealServingId === serving.id)).toHaveLength(1);
-      if (serving.receiverType === 'SELF') {
-        expect(serving.ownerUserId).toBe(serving.presenterUserId);
-        expect(serving.delegationId).toBeNull();
-      } else {
-        expect(serving.ownerUserId).not.toBe(serving.presenterUserId);
-        expect(serving.delegationId).toBeTruthy();
-        expect(delegationsById.get(serving.delegationId!)?.status).toBe('COMPLETED');
-      }
     }
     expect(plan.servingConfirmRequests.every((row) => row.status === 'SUCCESS')).toBe(true);
     expect(plan.servingConfirmRequests.every((row) => row.resultServingIds.every((id) => servingIds.has(id)))).toBe(true);
@@ -335,40 +326,20 @@ describe('local seed plan', () => {
     expect(() => assertLocalSeedPlan(duplicateMealEventId)).toThrow(/mealEvents/i);
   });
 
-  it('isolates the exact self/proxy serving split assertion', () => {
+  it('rejects a proxy serving in the self-only seed', () => {
     const plan = buildLocalSeedPlan(CONFIG);
-    const selfIndex = plan.mealServings.findIndex((row) => row.receiverType === 'SELF');
-    const invalidSplit = {
+    const invalidPlan = {
       ...plan,
       mealServings: plan.mealServings.map((row, index) =>
-        index === selfIndex ? { ...row, receiverType: 'PROXY' as const } : row,
+        index === 0 ? { ...row, receiverType: 'PROXY' as const } : row,
       ),
     };
 
-    expect(() => assertLocalSeedPlan(invalidSplit)).toThrow(
-      'expected 32 SELF and 8 PROXY servings',
+    expect(() => assertLocalSeedPlan(invalidPlan)).toThrow(
+      'expected 40 SELF and 0 PROXY servings',
     );
   });
 
-  it('isolates exactly-once completed-delegation consumption', () => {
-    const plan = buildLocalSeedPlan(CONFIG);
-    const proxyIndexes = plan.mealServings
-      .map((row, index) => (row.receiverType === 'PROXY' ? index : -1))
-      .filter((index) => index >= 0);
-    const firstProxyIndex = proxyIndexes[0];
-    const secondProxyIndex = proxyIndexes[1];
-    const firstDelegationId = plan.mealServings[firstProxyIndex].delegationId!;
-    const invalidConsumption = {
-      ...plan,
-      mealServings: plan.mealServings.map((row, index) =>
-        index === secondProxyIndex ? { ...row, delegationId: firstDelegationId } : row,
-      ),
-    };
-
-    expect(() => assertLocalSeedPlan(invalidConsumption)).toThrow(
-      'every completed delegation must be consumed by exactly one proxy serving',
-    );
-  });
 
   it('requires exact pickup intent history and consumed timestamps', () => {
     const plan = buildLocalSeedPlan(CONFIG);

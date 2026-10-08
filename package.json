@@ -6,21 +6,30 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=24 <25"
   },
   "packageManager": "yarn@4.18.0",
   "scripts": {
     "build": "turbo run build",
     "lint": "turbo run lint",
-    "typecheck": "yarn workspace @imeal/contracts exec tsc --noEmit -p tsconfig.json && yarn workspace @imeal/core exec tsc --noEmit -p tsconfig.json && yarn workspace @imeal/api exec tsc --noEmit -p tsconfig.json && yarn workspace @imeal/worker exec tsc --noEmit -p tsconfig.json && yarn workspace @imeal/mobile exec tsc --noEmit -p tsconfig.json && yarn workspace @imeal/admin-web typecheck",
-    "test:unit": "yarn workspace @imeal/core test:unit && yarn workspace @imeal/contracts test && yarn workspace @imeal/api test && yarn workspace @imeal/worker test",
-    "test:db": "yarn workspace @imeal/core test && yarn workspace @imeal/api test:e2e && yarn workspace @imeal/worker test:e2e",
+    "typecheck": "turbo run typecheck",
+    "test:unit": "turbo run test:unit --concurrency=1 --filter=@imeal/core --filter=@imeal/contracts --filter=@imeal/api --filter=@imeal/worker",
+    "test:db": "turbo run test:db --concurrency=1 --filter=@imeal/core --filter=@imeal/api --filter=@imeal/worker",
+    "test:build-order": "node --test scripts/build-order.test.mjs",
+    "ci:verify": "node scripts/ci/ci-verify.mjs",
     "verify:production-boundary": "node scripts/verify-production-boundary.mjs",
     "test:production-boundary": "node --test scripts/verify-production-boundary.test.mjs",
     "test:staging-tools": "node --test scripts/staging/*.test.mjs",
     "staging:manifest": "node scripts/staging/release-manifest.mjs",
     "staging:smoke": "node scripts/staging/smoke-staging.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,md,html,css,json}\""
+  },
+  "resolutions": {
+    "undici@npm:6.20.1": "6.28.1",
+    "mysql2@npm:3.15.3": "3.23.1",
+    "deepmerge-ts@npm:7.1.5": "8.0.2",
+    "uuid@npm:^7.0.3": "11.1.1",
+    "tmp@npm:^0.0.33": "0.2.7"
   },
   "devDependencies": {
     "eslint": "^8.57.0",

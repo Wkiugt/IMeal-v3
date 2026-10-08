@@ -3,13 +3,38 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**"]
+      "outputs": ["dist/**", "src/generated/**", ".next/**"]
     },
     "lint": {
       "dependsOn": ["^lint"]
     },
+    "typecheck": {
+      "dependsOn": ["^build"]
+    },
     "test": {
       "dependsOn": ["^build"]
+    },
+    "test:unit": {
+      "dependsOn": ["^build"]
+    },
+    "test:db": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "env": ["DATABASE_URL"]
+    },
+    "@imeal/core#typecheck": {
+      "dependsOn": ["build"]
+    },
+    "@imeal/core#test": {
+      "dependsOn": ["build"]
+    },
+    "@imeal/core#test:unit": {
+      "dependsOn": ["build"]
+    },
+    "@imeal/core#test:db": {
+      "dependsOn": ["build"],
+      "cache": false,
+      "env": ["DATABASE_URL"]
     },
     "dev": {
       "cache": false,

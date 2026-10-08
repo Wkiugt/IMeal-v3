@@ -1,9 +1,13 @@
 import { createDecipheriv, createHash, randomUUID } from 'node:crypto';
-import { isIP } from 'node:net';
+import {
+  GmailSmtpOtpProvider,
+  gmailSmtpConfiguration,
+  smtpFailureCategory,
+} from './gmail-smtp-otp-provider.js';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { StructuredLogger } from '@imeal/observability';
 import { Cron } from '@nestjs/schedule';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@imeal/core';
 import { PrismaService } from './common/prisma.service.js';
 import {
   createWorkerStructuredLogger,
@@ -15,6 +19,7 @@ import {
   type WorkerShutdownCoordinatorLike,
 } from './health.service.js';
 import { WorkerMetricsService } from './metrics/metrics.service.js';
+import { recordScheduledJobRun } from './job-run-fields.js';
 
 export type OtpPurpose = 'SESSION_LOGIN';
 
@@ -93,6 +98,10 @@ const MESSAGE_RETRY_PATTERN =
 const KNOWN_PROVIDER_CODES = new Set([
   'CONFIGURATION',
   'NETWORK',
+  'TLS',
+  'AUTHENTICATION',
+  'SMTP_RATE_LIMIT',
+  'SMTP_PERMANENT',
   'HTTP_408',
   'HTTP_429',
 ]);
@@ -183,9 +192,6 @@ const FIXED_OPERATIONAL_SETTINGS = [
   ['SERVING_WINDOW_START', '10:30'],
   ['SERVING_WINDOW_END', '13:30'],
   ['NO_SHOW_PROCESSING_TIME', '13:45'],
-  ['QR_TTL_SECONDS', '5'],
-  ['QR_CLOCK_SKEW_SECONDS', '2'],
-  ['PICKUP_SESSION_TTL_SECONDS', '30'],
 ] as const;
 
 function requireFixedSetting(
@@ -212,28 +218,6 @@ function requireProductionRuntimeSettings(env: NodeJS.ProcessEnv): void {
     throw new Error('MIGRATION_EVIDENCE_PATH must be an absolute path');
   }
   requireWorkerValue('MIGRATION_TARGET_IDENTITY', env);
-}
-
-function requireProductionProviderUrl(env: NodeJS.ProcessEnv): void {
-  const value = requireWorkerValue('OTP_PROVIDER_URL', env);
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error('OTP_PROVIDER_URL must be a valid HTTPS URL in production');
-  }
-
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  if (
-    parsed.protocol !== 'https:' ||
-    hostname.length === 0 ||
-    hostname === 'localhost' ||
-    isIP(hostname) !== 0
-  ) {
-    throw new Error(
-      'OTP_PROVIDER_URL must not target loopback or IP-literal destinations in production',
-    );
-  }
 }
 
 function safeProviderCode(value: unknown): string {
@@ -263,6 +247,8 @@ function providerCode(error: unknown): string {
       const code = safeProviderCode(Reflect.get(error, 'providerCode'));
       if (code !== 'UNKNOWN') return code;
     }
+    const smtp = smtpFailureCategory(error);
+    if (smtp) return smtp;
     for (const key of ['code', 'status', 'statusCode']) {
       const code = safeProviderCode(Reflect.get(error, key));
       if (code !== 'UNKNOWN') return code;
@@ -279,8 +265,22 @@ function providerCode(error: unknown): string {
 }
 
 function isTransientProviderFailure(code: string, error: unknown): boolean {
-  if (code === 'NETWORK' || code === 'HTTP_408' || code === 'HTTP_429')
+  if (
+    code === 'AUTHENTICATION' ||
+    code === 'SMTP_PERMANENT' ||
+    code === 'CONFIGURATION'
+  ) {
+    return false;
+  }
+  if (
+    code === 'NETWORK' ||
+    code === 'TLS' ||
+    code === 'SMTP_RATE_LIMIT' ||
+    code === 'HTTP_408' ||
+    code === 'HTTP_429'
+  ) {
     return true;
+  }
   if (/^HTTP_5\d\d$/.test(code)) return true;
   if (error instanceof Error && MESSAGE_RETRY_PATTERN.test(error.message))
     return true;
@@ -356,50 +356,6 @@ function encryptionSecret(env: NodeJS.ProcessEnv): string {
   throw new Error('OTP_DELIVERY_ENCRYPTION_KEY is not configured');
 }
 
-export type WorkerOtpProviderConfig = {
-  url: string | null;
-  apiKey: string | null;
-  from: string | null;
-};
-
-function providerConfig(env: NodeJS.ProcessEnv): WorkerOtpProviderConfig {
-  const url = env.OTP_PROVIDER_URL?.trim() || null;
-  const apiKey = env.OTP_PROVIDER_API_KEY?.trim() || null;
-  const from = env.OTP_PROVIDER_FROM?.trim() || null;
-  const isProduction = env.NODE_ENV?.trim() === 'production';
-  if (isProduction) {
-    requireProductionProviderUrl(env);
-    requireWorkerValue('OTP_PROVIDER_API_KEY', env);
-    requireWorkerValue('OTP_PROVIDER_FROM', env);
-    let validHttpsUrl = /^https:\/\//i.test(url ?? '');
-    if (validHttpsUrl && url) {
-      const authority = url.slice('https://'.length).split(/[/?#]/, 1)[0];
-      validHttpsUrl = authority.length > 0;
-      try {
-        const parsed = new URL(url);
-        validHttpsUrl =
-          validHttpsUrl &&
-          parsed.protocol === 'https:' &&
-          parsed.hostname.length > 0;
-      } catch {
-        validHttpsUrl = false;
-      }
-    }
-    if (!validHttpsUrl) {
-      throw new Error(
-        'OTP_PROVIDER_URL must be a valid HTTPS URL with a hostname in production',
-      );
-    }
-    if (!apiKey) {
-      throw new Error('OTP_PROVIDER_API_KEY is required in production');
-    }
-    if (!from) {
-      throw new Error('OTP_PROVIDER_FROM is required in production');
-    }
-  }
-  return { url, apiKey, from };
-}
-
 export function validateWorkerEnvironment(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
@@ -419,7 +375,7 @@ export function validateWorkerEnvironment(
   }
   const providerEnvironment =
     env.NODE_ENV === nodeEnv ? env : { ...env, NODE_ENV: nodeEnv };
-  providerConfig(providerEnvironment);
+  gmailSmtpConfiguration(providerEnvironment);
 
   let retryBaseSeconds: number | undefined;
   let retryMaxSeconds: number | undefined;
@@ -447,63 +403,6 @@ export function validateWorkerEnvironment(
     }
   }
 }
-
-@Injectable()
-export class WorkerConfiguredOtpProvider implements OtpProvider {
-  private readonly config: WorkerOtpProviderConfig;
-
-  constructor() {
-    this.config = providerConfig(process.env);
-  }
-
-  async send(input: OtpProviderInput): Promise<void> {
-    const { url, apiKey, from } = this.config;
-    if (!url || !apiKey) {
-      const error = new Error(
-        'OTP provider configuration is incomplete',
-      ) as Error & {
-        providerCode?: string;
-      };
-      error.providerCode = 'CONFIGURATION';
-      throw error;
-    }
-    const body: { to: string; message: string; from?: string } = {
-      to: input.destination,
-      message: `Your verification code is ${input.code}. It expires soon.`,
-    };
-    if (from) body.from = from;
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          accept: 'application/json',
-          authorization: `Bearer ${apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-    } catch {
-      const error = new Error(
-        'OTP provider request failed before receiving a response',
-      ) as Error & {
-        providerCode?: string;
-      };
-      error.providerCode = 'NETWORK';
-      throw error;
-    }
-    if (!response.ok) {
-      const error = new Error(
-        `OTP provider returned HTTP ${response.status}`,
-      ) as Error & {
-        providerCode?: string;
-      };
-      error.providerCode = `HTTP_${response.status}`;
-      throw error;
-    }
-  }
-}
-
 type ClaimedRow = {
   id: string;
   challenge_id: string;
@@ -776,8 +675,9 @@ export class OtpDeliveryWorker {
     @Optional() private readonly metrics?: WorkerMetricsService,
   ) {
     this.logger = logger ?? createWorkerStructuredLogger();
-    this.provider = provider ?? new WorkerConfiguredOtpProvider();
-    this.outbox = outbox ?? new WorkerOtpOutboxService(this.prisma, this.metrics);
+    this.provider = provider ?? new GmailSmtpOtpProvider();
+    this.outbox =
+      outbox ?? new WorkerOtpOutboxService(this.prisma, this.metrics);
     this.clock = clock ?? (() => new Date());
   }
 
@@ -804,13 +704,40 @@ export class OtpDeliveryWorker {
       const result = await this.processOnce(new Date());
       this.metrics?.recordWorkerRun('otp_delivery', 'success');
       await this.metrics?.refreshOutboxAge();
+      await this.recordDeliveryJobRun(result).catch(() => undefined);
       return result;
     } catch (error) {
       this.metrics?.recordWorkerRun('otp_delivery', 'failure');
+      await this.recordDeliveryJobRun(undefined).catch(() => undefined);
       throw error;
     } finally {
       release?.();
     }
+  }
+
+  private recordDeliveryJobRun(
+    result: DeliveryRunResult | undefined,
+  ): Promise<void> {
+    const failed = result?.failed ?? 1;
+    return recordScheduledJobRun(
+      typeof this.prisma.jobRun?.create === 'function'
+        ? (data: Prisma.JobRunCreateInput) =>
+            this.prisma.jobRun.create({ data })
+        : undefined,
+      {
+        prefix: 'otp_delivery_',
+        status: result && result.failed === 0 ? 'COMPLETED' : 'FAILED',
+        successCount: result?.sent ?? 0,
+        failureCount: result ? result.failed : 1,
+        ...(failed > 0
+          ? {
+              failureCode: result
+                ? 'OTP_DELIVERY_PARTIAL'
+                : 'OTP_DELIVERY_FAILURE',
+            }
+          : {}),
+      },
+    );
   }
 
   async processOnce(now: Date): Promise<DeliveryRunResult> {
@@ -849,10 +776,15 @@ export class OtpDeliveryWorker {
       const currentNow = this.clock();
       const attemptsBeforeClaim = row.attemptsBeforeClaim ?? row.attemptCount;
       if (attemptsBeforeClaim >= maxAttempts) {
-        const marked = await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
-          code: 'MAX_ATTEMPTS',
-          retryAt: null,
-        });
+        const marked = await this.outbox.markFailed(
+          row.id,
+          row.claimToken,
+          currentNow,
+          {
+            code: 'MAX_ATTEMPTS',
+            retryAt: null,
+          },
+        );
         if (marked) this.metrics?.recordOtpDeliveryFailure();
         result.failed += 1;
         this.logger.warn(
@@ -883,10 +815,15 @@ export class OtpDeliveryWorker {
         }
         const code =
           validation.reason === 'CONSUMED' ? 'OTP_CONSUMED' : 'OTP_EXPIRED';
-        const marked = await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
-          code,
-          retryAt: null,
-        });
+        const marked = await this.outbox.markFailed(
+          row.id,
+          row.claimToken,
+          currentNow,
+          {
+            code,
+            retryAt: null,
+          },
+        );
         if (marked) this.metrics?.recordOtpDeliveryFailure();
         result.suppressed += 1;
         this.logger.warn(
@@ -906,10 +843,15 @@ export class OtpDeliveryWorker {
           encryptionSecret(env),
         );
       } catch {
-        const marked = await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
-          code: 'PAYLOAD_INVALID',
-          retryAt: null,
-        });
+        const marked = await this.outbox.markFailed(
+          row.id,
+          row.claimToken,
+          currentNow,
+          {
+            code: 'PAYLOAD_INVALID',
+            retryAt: null,
+          },
+        );
         if (marked) this.metrics?.recordOtpDeliveryFailure();
         result.failed += 1;
         this.logger.error(
@@ -925,10 +867,15 @@ export class OtpDeliveryWorker {
         payload.destination !== validation.destination ||
         payload.purpose !== validation.purpose
       ) {
-        const marked = await this.outbox.markFailed(row.id, row.claimToken, currentNow, {
-          code: 'PAYLOAD_MISMATCH',
-          retryAt: null,
-        });
+        const marked = await this.outbox.markFailed(
+          row.id,
+          row.claimToken,
+          currentNow,
+          {
+            code: 'PAYLOAD_MISMATCH',
+            retryAt: null,
+          },
+        );
         if (marked) this.metrics?.recordOtpDeliveryFailure();
         result.failed += 1;
         this.logger.error(
@@ -962,10 +909,15 @@ export class OtpDeliveryWorker {
           finalValidation.reason === 'CONSUMED'
             ? 'OTP_CONSUMED'
             : 'OTP_EXPIRED';
-        const marked = await this.outbox.markFailed(row.id, row.claimToken, finalNow, {
-          code,
-          retryAt: null,
-        });
+        const marked = await this.outbox.markFailed(
+          row.id,
+          row.claimToken,
+          finalNow,
+          {
+            code,
+            retryAt: null,
+          },
+        );
         if (marked) this.metrics?.recordOtpDeliveryFailure();
         result.suppressed += 1;
         this.logger.warn(
@@ -981,10 +933,15 @@ export class OtpDeliveryWorker {
         payload.destination !== finalValidation.destination ||
         payload.purpose !== finalValidation.purpose
       ) {
-        const marked = await this.outbox.markFailed(row.id, row.claimToken, finalNow, {
-          code: 'PAYLOAD_MISMATCH',
-          retryAt: null,
-        });
+        const marked = await this.outbox.markFailed(
+          row.id,
+          row.claimToken,
+          finalNow,
+          {
+            code: 'PAYLOAD_MISMATCH',
+            retryAt: null,
+          },
+        );
         if (marked) this.metrics?.recordOtpDeliveryFailure();
         result.failed += 1;
         this.logger.error(
@@ -1010,6 +967,7 @@ export class OtpDeliveryWorker {
           'worker.otp.sent',
           workerLogFields('worker.otp.sent', {
             jobRunId: row.id,
+            provider: 'gmail-smtp',
           }),
         );
       } catch (error) {
@@ -1049,6 +1007,7 @@ export class OtpDeliveryWorker {
           'worker.otp.delivery_failed',
           workerLogFields('worker.otp.delivery_failed', {
             jobRunId: row.id,
+            provider: 'gmail-smtp',
             providerCode: code,
             attempt: row.attemptCount,
             retry: canRetry,

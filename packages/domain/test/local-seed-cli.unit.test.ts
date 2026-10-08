@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '../src/prisma.js';
 import { LocalSeedConfigError, parseLocalSeedConfig } from '../src/local-seed/config.js';
 import { buildLocalSeedPlan } from '../src/local-seed/plan.js';
 import type { LocalSeedCliDeps } from '../src/local-seed/index.js';
@@ -26,9 +26,9 @@ const EXPECTED_COUNT_LABELS = [
   'mealDays=7',
   'menuRevisions=7',
   'registrations=126',
-  'pendingDelegations=4',
-  'acceptedDelegations=4',
-  'completedDelegations=8',
+  'pendingDelegations=0',
+  'acceptedDelegations=0',
+  'completedDelegations=0',
   'penalties=10',
   'servingVerifications=40',
   'pickupSessions=40',

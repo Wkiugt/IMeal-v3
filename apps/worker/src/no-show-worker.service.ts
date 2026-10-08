@@ -6,7 +6,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import type { StructuredLogger } from '@imeal/observability';
-import { Prisma, type JobRunStatus } from '@prisma/client';
+import { Prisma, type JobRunStatus } from '@imeal/core';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from './common/prisma.service.js';
 import { WorkerNotificationPublisher } from './worker-notification-publisher.js';
@@ -21,6 +21,7 @@ import {
 } from './health.service.js';
 
 import { WorkerMetricsService } from './metrics/metrics.service.js';
+import { jobRunBookkeeping } from './job-run-fields.js';
 export interface ProcessNoShowsOptions {
   force?: boolean;
   currentTime?: Date;
@@ -180,10 +181,11 @@ export class NoShowWorkerService {
     }
 
     try {
-      await this.recordJobRun(
-        dateStr,
-        failures.length === 0 ? 'COMPLETED' : 'FAILED',
-      );
+      await this.recordJobRun(dateStr, failures.length === 0 ? 'COMPLETED' : 'FAILED', {
+        successCount: processedCount,
+        failureCount: failures.length,
+        failureCode: failures.length === 0 ? undefined : 'REGISTRATION_FAILURE',
+      });
     } catch (error) {
       failures.push(error);
       this.logger.error(
@@ -354,7 +356,13 @@ export class NoShowWorkerService {
   private async recordJobRun(
     dateStr: string,
     status: JobRunStatus,
+    counts: {
+      successCount: number;
+      failureCount: number;
+      failureCode?: string;
+    },
   ): Promise<void> {
+    const bookkeeping = jobRunBookkeeping({ status, ...counts });
     await this.prisma.$transaction(async (tx) => {
       const jobName = `no_show_worker_${dateStr}`;
       const existingJob = await tx.jobRun.findFirst({
@@ -367,6 +375,7 @@ export class NoShowWorkerService {
           data: {
             status,
             completedAt: new Date(),
+            ...bookkeeping,
           },
         });
       } else {
@@ -376,6 +385,7 @@ export class NoShowWorkerService {
             jobName,
             status,
             completedAt: new Date(),
+            ...bookkeeping,
           },
         });
       }

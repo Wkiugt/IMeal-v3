@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@imeal/core';
 import type { StructuredLogger } from '@imeal/observability';
 import { PrismaService } from './common/prisma.service.js';
 import { WorkerNotificationPublisher } from './worker-notification-publisher.js';
@@ -15,6 +15,7 @@ import {
   type WorkerShutdownCoordinatorLike,
 } from './health.service.js';
 import { WorkerMetricsService } from './metrics/metrics.service.js';
+import { jobRunBookkeeping } from './job-run-fields.js';
 
 const TIME_ZONE = 'Asia/Ho_Chi_Minh';
 
@@ -207,21 +208,12 @@ export class NotificationReminderService {
         select: {
           id: true,
           user: { select: { id: true, remindersEnabled: true } },
-          delegations: {
-            where: { status: 'ACCEPTED' },
-            orderBy: { createdAt: 'asc' },
-            take: 1,
-            select: {
-              delegateUser: { select: { id: true, remindersEnabled: true } },
-            },
-          },
         },
       });
 
       const grouped = new Map<string, string[]>();
       for (const registration of registrations) {
-        const recipient =
-          registration.delegations[0]?.delegateUser ?? registration.user;
+        const recipient = registration.user;
         if (!recipient.remindersEnabled) continue;
         const ids = grouped.get(recipient.id) ?? [];
         ids.push(registration.id);
@@ -251,14 +243,27 @@ export class NotificationReminderService {
     work: (tx: Prisma.TransactionClient) => Promise<ReminderResult>,
   ): Promise<ReminderResult> {
     const job = await this.prisma.jobRun.create({
-      data: { id: randomUUID(), jobName, status: 'RUNNING' },
+      data: {
+        id: randomUUID(),
+        jobName,
+        status: 'RUNNING',
+        ...jobRunBookkeeping({ status: 'RUNNING' }),
+      },
       select: { id: true, jobName: true },
     });
     try {
       const result = await this.prisma.$transaction((tx) => work(tx));
       await this.prisma.jobRun.update({
         where: { id: job.id },
-        data: { status: 'COMPLETED', completedAt: new Date() },
+        data: {
+          status: 'COMPLETED',
+          completedAt: new Date(),
+          ...jobRunBookkeeping({
+            status: 'COMPLETED',
+            successCount: result.publishedCount,
+            failureCount: 0,
+          }),
+        },
       });
       this.logger.info(
         'worker.notification_reminder.completed',
@@ -272,7 +277,16 @@ export class NotificationReminderService {
     } catch (error) {
       await this.prisma.jobRun.update({
         where: { id: job.id },
-        data: { status: 'FAILED', completedAt: new Date() },
+        data: {
+          status: 'FAILED',
+          completedAt: new Date(),
+          ...jobRunBookkeeping({
+            status: 'FAILED',
+            successCount: 0,
+            failureCount: 1,
+            failureCode: 'REMINDER_FAILURE',
+          }),
+        },
       });
       this.logger.error(
         'worker.notification_reminder.failed',

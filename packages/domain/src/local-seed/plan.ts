@@ -59,9 +59,9 @@ const EXPECTED_COUNTS: SeedCounts = {
   mealDays: 7,
   menuRevisions: 7,
   registrations: 126,
-  pendingDelegations: 4,
-  acceptedDelegations: 4,
-  completedDelegations: 8,
+  pendingDelegations: 0,
+  acceptedDelegations: 0,
+  completedDelegations: 0,
   penalties: 10,
   servingVerifications: 40,
   pickupSessions: 40,
@@ -468,6 +468,7 @@ function buildRegistrations(
   const assignmentsByUser = new Map(assignments.map((assignment) => [assignment.userId, assignment]));
   const owners = users.filter((user) => user.roles.includes('staff'));
   const registrations: SeedRegistrationRow[] = [];
+  const delegations: SeedDelegationRow[] = [];
   const penalties: SeedPenaltyRow[] = [];
 
   for (const [ownerOrdinal, owner] of owners.entries()) {
@@ -518,40 +519,6 @@ function buildRegistrations(
     }
   }
 
-  const delegations: SeedDelegationRow[] = [];
-  for (let index = 0; index < 8; index += 1) {
-    const registration = registrations[index];
-    const ownerOrdinal = owners.findIndex((owner) => owner.id === registration.userId);
-    const delegate = owners[(ownerOrdinal + index + 1) % owners.length];
-    const key = stableSeedKey(config.baseEmail, config.weekStart, 'delegation-active', index);
-    delegations.push({
-      id: stableSeedId('delegation', key),
-      registrationId: registration.id,
-      delegateUserId: delegate.id,
-      status: index < 4 ? 'PENDING' : 'ACCEPTED',
-      createdAt: seedInstant(key),
-      updatedAt: seedInstant(key),
-    });
-  }
-
-  const servedRegistrations = registrations.filter((registration) => registration.status === 'SERVED');
-  const completedDelegationByRegistration = new Map<string, SeedDelegationRow>();
-  for (let index = 0; index < 8; index += 1) {
-    const registration = servedRegistrations[32 + index];
-    const ownerOrdinal = owners.findIndex((owner) => owner.id === registration.userId);
-    const delegate = owners[(ownerOrdinal + index + 1) % owners.length];
-    const key = stableSeedKey(config.baseEmail, config.weekStart, 'delegation-completed', index);
-    const delegation: SeedDelegationRow = {
-      id: stableSeedId('delegation', key),
-      registrationId: registration.id,
-      delegateUserId: delegate.id,
-      status: 'COMPLETED',
-      createdAt: seedInstant(key),
-      updatedAt: seedInstant(key),
-    };
-    delegations.push(delegation);
-    completedDelegationByRegistration.set(registration.id, delegation);
-  }
 
   const servingVerifications: SeedServingVerificationRow[] = [];
   const pickupSessions: SeedPickupSessionRow[] = [];
@@ -565,15 +532,16 @@ function buildRegistrations(
     throw new LocalSeedPlanError('mealServings', 'kitchen', 'kitchen-only user is missing');
   }
 
+  const servedRegistrations = registrations.filter(
+    (registration) => registration.status === 'SERVED',
+  );
   for (const [servedOrdinal, registration] of servedRegistrations.entries()) {
     const owner = usersById.get(registration.userId);
     const assignment = assignmentsByUser.get(registration.userId);
     if (!owner || !assignment) {
       throw new LocalSeedPlanError('mealServings', registration.id, 'owner graph is incomplete');
     }
-    const completedDelegation = completedDelegationByRegistration.get(registration.id);
-    const isProxy = Boolean(completedDelegation);
-    const presenterUserId = completedDelegation?.delegateUserId ?? owner.id;
+    const presenterUserId = owner.id;
     const location = locationDetails(registration.serviceLocationCode);
     const servingKey = stableSeedKey(config.baseEmail, config.weekStart, 'meal-serving', servedOrdinal);
     const servingId = stableSeedId('meal-serving', servingKey);
@@ -664,7 +632,7 @@ function buildRegistrations(
       ownerEmailSnapshot: owner.email,
       ownerNameSnapshot: owner.name,
       presenterUserId,
-      receiverType: isProxy ? 'PROXY' : 'SELF',
+      receiverType: 'SELF',
       kitchenUserId: kitchenUser.id,
       kitchenPermissionContext: 'kitchen.serve',
       scannerDeviceId: null,
@@ -679,7 +647,7 @@ function buildRegistrations(
       intentHash,
       verificationOutcome: 'VALID',
       servingVerificationId: verificationId,
-      delegationId: completedDelegation?.id ?? null,
+      delegationId: null,
       servedAt: new Date(servedAt),
     });
     mealEvents.push({
@@ -1210,9 +1178,9 @@ function assertDelegations(
     }
   }
   if (
-    delegationStatuses.PENDING !== 4 ||
-    delegationStatuses.ACCEPTED !== 4 ||
-    delegationStatuses.COMPLETED !== 8 ||
+    delegationStatuses.PENDING !== 0 ||
+    delegationStatuses.ACCEPTED !== 0 ||
+    delegationStatuses.COMPLETED !== 0 ||
     delegationsById.size !== plan.delegations.length
   ) {
     throw new LocalSeedPlanError('delegations', 'statuses', 'delegation status distribution is invalid');
@@ -1274,11 +1242,11 @@ function assertServingAggregateInvariants(plan: LocalSeedPlan): void {
       );
     }
   }
-  if (receiverCounts.SELF !== 32 || receiverCounts.PROXY !== 8) {
+  if (receiverCounts.SELF !== 40 || receiverCounts.PROXY !== 0) {
     throw new LocalSeedPlanError(
       'mealServings',
       'receiverType',
-      `expected 32 SELF and 8 PROXY servings, got ${receiverCounts.SELF} SELF and ${receiverCounts.PROXY} PROXY`,
+      `expected 40 SELF and 0 PROXY servings, got ${receiverCounts.SELF} SELF and ${receiverCounts.PROXY} PROXY`,
     );
   }
   for (const delegation of plan.delegations) {

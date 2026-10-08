@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@imeal/core';
 import { PrismaService } from '../common/prisma.service.js';
 import {
   encryptOtpProviderPayload,

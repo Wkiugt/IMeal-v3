@@ -79,7 +79,6 @@ test('uses exact bounded status and result label selectors with absence coverage
     'registration_reminder',
     'pickup_reminder',
     'cutoff_lock',
-    'pickup_session_cleanup',
     'no_show',
   ]) {
     assert.match(

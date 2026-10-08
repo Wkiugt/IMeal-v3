@@ -6,7 +6,7 @@
 
 **Architecture:** PostgreSQL remains the source of truth. Additive schema/migration work preserves legacy rows without fabricating facts; new registration writes resolve menu revision and roster/location snapshots in one transaction. `meal_servings` is the canonical served projection, dashboard reads one consistent registration/serving state set, and each no-show transaction locks its registration before creating one unique penalty and its post-commit outbox event.
 
-**Tech Stack:** NestJS/Fastify + TypeScript, Prisma 5.22/PostgreSQL, Zod shared contracts, Vitest, `@imeal/core` domain tests, API/worker e2e tests, PostgreSQL `FOR UPDATE`/unique indexes, transactional `OutboxEvent`.
+**Tech Stack:** NestJS/Fastify + TypeScript, Prisma 7.10.0/PostgreSQL, Zod shared contracts, Vitest 4.1.11, `@imeal/core` domain tests, API/worker e2e tests, PostgreSQL `FOR UPDATE`/unique indexes, transactional `OutboxEvent`.
 
 **Spec:** `docs/superpowers/specs/2026-09-28-imeal-phase0-domain-correctness-design.md`
 

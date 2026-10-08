@@ -23,7 +23,6 @@ export const WORKER_METRIC_JOBS = [
   'registration_reminder',
   'pickup_reminder',
   'cutoff_lock',
-  'pickup_session_cleanup',
   'no_show',
 ] as const;
 
@@ -39,7 +38,6 @@ const DB_JOB_HISTORY = new Set<WorkerMetricJob>([
 const SECOND_INTERVALS: Partial<Record<WorkerMetricJob, number>> = {
   otp_delivery: 15,
   notification_dispatch: 15,
-  pickup_session_cleanup: 10,
 };
 const DAY_MS = 24 * 60 * 60 * 1000;
 function dateAtVietnamTime(now: Date, hour: number, minute: number): Date {

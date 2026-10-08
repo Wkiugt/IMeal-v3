@@ -1,5 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service.js';
+import { lockUserLifecycle } from '../common/transaction-locks.js';
+import { auditColumnsFromDetails } from '../admin/operations/audit-redaction.js';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { AuthenticatedUser } from './authenticated-user.js';
 
@@ -105,14 +107,31 @@ export class SessionService {
     const tokenHash = hashSessionToken(token);
 
     await this.prisma.$transaction(async (tx) => {
+      await lockUserLifecycle(tx);
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${input.userId} FOR UPDATE`;
+      const user = await tx.user.findUnique({
+        where: { id: input.userId },
+        select: { id: true, isActive: true },
+      });
+      if (!user?.isActive) {
+        throw new UnauthorizedException({
+          code: 'SESSION_INVALID',
+          message: 'Invalid or expired session.',
+        });
+      }
+      const details = JSON.stringify({
+        purpose: input.purpose,
+        authMethod: 'EMAIL_OTP',
+        requestId: input.requestId,
+      });
       const audit = await tx.auditLog.create({
         data: {
           userId: input.userId,
           action: 'SESSION_CREATED',
-          details: JSON.stringify({
-            purpose: input.purpose,
-            authMethod: 'EMAIL_OTP',
-            requestId: input.requestId,
+          details,
+          ...auditColumnsFromDetails(details, {
+            targetUserId: input.userId,
+            resourceType: 'session',
           }),
         },
       });
@@ -257,11 +276,17 @@ export class SessionService {
       });
       if (revoked.count === 0) return;
 
+      const details = JSON.stringify({ reason, requestId });
       await tx.auditLog.create({
         data: {
           userId,
           action: 'SESSION_REVOKED',
-          details: JSON.stringify({ reason, requestId }),
+          details,
+          ...auditColumnsFromDetails(details, {
+            targetUserId: userId,
+            result: reason,
+            resourceType: 'session',
+          }),
         },
       });
     });
