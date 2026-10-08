@@ -27,7 +27,14 @@ export class WeeklyMenusService {
       orderBy: { startDate: 'asc' },
       include: {
         dailyMenus: {
-          include: { mealDays: true, revisions: true },
+          include: {
+            mealDays: true,
+            revisions: {
+              where: { revision: { not: null } },
+              orderBy: [{ revision: 'desc' }, { id: 'desc' }],
+              take: 1,
+            },
+          },
         },
       },
     });

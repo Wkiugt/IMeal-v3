@@ -1,9 +1,15 @@
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { runWithRequestContext } from '../common/request-context.js';
 import { HealthController } from './health.controller.js';
 import type { ApiHealthResult } from './health.types.js';
 
-function result(statusCode: 200 | 503 = 200): ApiHealthResult {
+const DEFAULT_REQUEST_ID = '123e4567-e89b-42d3-a456-426614174000';
+
+function result(
+  statusCode: 200 | 503 = 200,
+  requestId = DEFAULT_REQUEST_ID,
+): ApiHealthResult {
   return {
     statusCode,
     body: {
@@ -16,7 +22,7 @@ function result(statusCode: 200 | 503 = 200): ApiHealthResult {
         migration: 'ok',
         draining: 'ok',
       },
-      requestId: 'request-1',
+      requestId,
     },
   };
 }
@@ -53,7 +59,7 @@ describe('HealthController', () => {
       response as never,
     );
 
-    expect(body.status).toBe('ok');
+    expect(body).toHaveProperty('status', 'ok');
     expect(service.live).toHaveBeenCalledWith(expect.any(String));
     expect(response.status).toHaveBeenCalledWith(200);
     expect(response.header).toHaveBeenCalledWith(
@@ -65,29 +71,77 @@ describe('HealthController', () => {
     ).toBeUndefined();
   });
 
-  it('maps readiness failures to HTTP 503', async () => {
-    service.ready.mockResolvedValueOnce(result(503));
+  it('returns the canonical error response for readiness failures', async () => {
+    const requestId = '123e4567-e89b-42d3-a456-426614174001';
+    service.ready.mockResolvedValueOnce(result(503, requestId));
 
-    const body = await controller.ready(
-      '123e4567-e89b-42d3-a456-426614174001',
-      response as never,
-    );
+    const body = await controller.ready(requestId, response as never);
 
-    expect(body.status).toBe('error');
+    expect(body).toEqual({
+      statusCode: 503,
+      errorCode: 'SERVICE_UNAVAILABLE',
+      message: 'The service is temporarily unavailable. Please try again.',
+      requestId,
+    });
     expect(response.status).toHaveBeenCalledWith(503);
-    expect(response.header).toHaveBeenCalledWith('x-request-id', 'request-1');
+    expect(response.header).toHaveBeenCalledWith('x-request-id', requestId);
+  });
+  it('keeps the legacy health alias canonical on readiness failure', async () => {
+    const requestId = '123e4567-e89b-42d3-a456-426614174002';
+    service.ready.mockResolvedValueOnce(result(503, requestId));
+
+    const body = await controller.legacy(requestId, response as never);
+
+    expect(body).toEqual({
+      statusCode: 503,
+      errorCode: 'SERVICE_UNAVAILABLE',
+      message: 'The service is temporarily unavailable. Please try again.',
+      requestId,
+    });
+    expect(response.status).toHaveBeenCalledWith(503);
   });
 
-  it('keeps the legacy health alias sanitized', async () => {
-    service.ready.mockResolvedValueOnce(result(503));
+  it('returns the canonical error response when live is draining', () => {
+    const requestId = '123e4567-e89b-42d3-a456-426614174005';
+    service.live.mockReturnValueOnce(result(503, requestId));
 
-    const body = await controller.legacy(
-      '123e4567-e89b-42d3-a456-426614174002',
-      response as never,
+    const body = controller.live(requestId, response as never);
+
+    expect(body).toEqual({
+      statusCode: 503,
+      errorCode: 'SERVICE_UNAVAILABLE',
+      message: 'The service is temporarily unavailable. Please try again.',
+      requestId,
+    });
+    expect(response.status).toHaveBeenCalledWith(503);
+    expect(response.header).toHaveBeenCalledWith('x-request-id', requestId);
+  });
+  it('uses established request IDs for malformed and missing headers', async () => {
+    const requestId = '123e4567-e89b-42d3-a456-426614174003';
+    service.ready.mockResolvedValueOnce(result(503, requestId));
+
+    const body = await runWithRequestContext(requestId, () =>
+      controller.ready('not-a-request-id', response as never),
     );
 
-    expect(body.db).toBe('disconnected');
-    expect(body).not.toHaveProperty('error');
-    expect(response.status).toHaveBeenCalledWith(503);
+    expect(service.ready).toHaveBeenCalledWith(requestId);
+    expect(body).toEqual({
+      statusCode: 503,
+      errorCode: 'SERVICE_UNAVAILABLE',
+      message: 'The service is temporarily unavailable. Please try again.',
+      requestId,
+    });
+    expect(response.header).toHaveBeenCalledWith('x-request-id', requestId);
   });
+
+  it('uses the request context ID when the health header is missing', () => {
+    const requestId = '123e4567-e89b-42d3-a456-426614174004';
+
+    const body = controller.live(undefined, response as never, { requestId });
+
+    expect(service.live).toHaveBeenCalledWith(requestId);
+    expect(body.requestId).toBe(requestId);
+    expect(response.header).toHaveBeenCalledWith('x-request-id', requestId);
+  });
+
 });
