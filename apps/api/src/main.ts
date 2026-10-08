@@ -3,7 +3,6 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
-import type { LoggerService } from '@nestjs/common';
 import { JsonStructuredLogger } from '@imeal/observability';
 import { AppModule } from './app.module.js';
 import {
@@ -12,27 +11,15 @@ import {
   ShutdownCoordinator,
 } from './common/shutdown-coordinator.js';
 import {
+  apiStartedFields,
+  nestLoggerAdapter,
+} from './common/nest-logger.adapter.js';
+import {
   API_STRUCTURED_LOGGER,
   apiLogFields,
 } from './common/structured-logger.js';
 import { validateApiEnvironment } from './config/environment.js';
 validateApiEnvironment();
-
-function nestLoggerAdapter(logger: JsonStructuredLogger): LoggerService {
-  const fields = (event: string) => ({
-    service: 'api' as const,
-    release: process.env.RELEASE_VERSION?.trim() || 'unconfigured',
-    event,
-  });
-  return {
-    log: () => logger.info('nestjs.log', fields('nestjs.log')),
-    error: () => logger.error('nestjs.error', fields('nestjs.error')),
-    warn: () => logger.warn('nestjs.warn', fields('nestjs.warn')),
-    debug: () => logger.debug('nestjs.debug', fields('nestjs.debug')),
-    verbose: () => logger.debug('nestjs.verbose', fields('nestjs.verbose')),
-    fatal: () => logger.error('nestjs.fatal', fields('nestjs.fatal')),
-  };
-}
 
 async function bootstrap() {
   // trustProxy stays false. Client identity is resolved by the one-hop helper
@@ -74,11 +61,7 @@ async function bootstrap() {
     disposeShutdownHandlers();
     throw error;
   }
-  logger.info('api.started', {
-    service: 'api',
-    release: process.env.RELEASE_VERSION?.trim() || 'unconfigured',
-    event: 'api.started',
-  });
+  logger.info('api.started', apiStartedFields('0.0.0.0', port));
 }
 
 bootstrap();

@@ -13,9 +13,13 @@ export type ApiLogFields = Partial<
     | 'statusCode'
     | 'durationMs'
     | 'errorCode'
+    | 'errorClass'
     | 'providerCode'
     | 'method'
+    | 'path'
     | 'route'
+    | 'message'
+    | 'stack'
     | 'status'
     | 'count'
     | 'total'
@@ -23,7 +27,6 @@ export type ApiLogFields = Partial<
     | 'retry'
   >
 >;
-
 export function createApiStructuredLogger(): StructuredLogger {
   return new JsonStructuredLogger(
     'api',

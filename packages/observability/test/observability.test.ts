@@ -7,6 +7,7 @@ import {
   REQUEST_ID_PATTERN,
   readMigrationEvidence,
   resolveRequestId,
+  sanitizeLogText,
 } from '../src/index.js';
 
 const temporaryDirectories: string[] = [];
@@ -50,12 +51,12 @@ describe('JSON structured logging', () => {
     const logger = new JsonStructuredLogger('api', 'r1', (line) =>
       lines.push(line),
     );
-
     logger.info('http.request', {
       service: 'api',
       release: 'r1',
       requestId: '550e8400-e29b-41d4-a716-446655440000',
       method: 'GET',
+      path: '/api/health',
       route: '/api/health',
       statusCode: 200,
       durationMs: 4,
@@ -64,6 +65,8 @@ describe('JSON structured logging', () => {
       payload: 'ExpoPushToken[secret]',
       coordinates: '10.7769,106.7009',
       databaseUrl: 'postgresql://user:password@db.internal/imeal',
+      body: 'raw-body-secret',
+      query: 'raw-query-secret',
     });
 
     expect(lines).toHaveLength(1);
@@ -71,10 +74,8 @@ describe('JSON structured logging', () => {
     expect(output).toMatchObject({
       level: 'info',
       service: 'api',
-      release: 'r1',
-      event: 'http.request',
-      requestId: '550e8400-e29b-41d4-a716-446655440000',
       method: 'GET',
+      path: '/api/health',
       route: '/api/health',
       statusCode: 200,
       durationMs: 4,
@@ -87,7 +88,16 @@ describe('JSON structured logging', () => {
     expect(lines[0]).not.toContain(
       'postgresql://user:password@db.internal/imeal',
     );
+    expect(lines[0]).not.toContain('raw-body-secret');
+    expect(lines[0]).not.toContain('raw-query-secret');
   });
+  it('exports bounded redaction for arbitrary log text', () => {
+    expect(sanitizeLogText('authorization=Bearer opaque-token')).not.toContain(
+      'opaque-token',
+    );
+    expect(sanitizeLogText('a'.repeat(20), 8)).toBe('aaaaaaaa');
+  });
+
   it('redacts provider and QR secrets embedded in safe string fields', () => {
     const lines: string[] = [];
     const logger = new JsonStructuredLogger('api', 'r1', (line) =>
@@ -255,6 +265,177 @@ describe('JSON structured logging', () => {
       'warn',
       'error',
     ]);
+  });
+
+  it('includes safe message, context, host, and port', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.info('api.started', {
+      service: 'api',
+      release: 'r1',
+      message: 'API listening on 0.0.0.0:3000',
+      context: 'NestApplication',
+      host: '0.0.0.0',
+      port: 3000,
+    });
+    logger.info('api.started', {
+      service: 'api',
+      release: 'r1',
+      host: '0.0.0.0',
+      port: 0,
+    });
+    logger.info('api.started', {
+      service: 'api',
+      release: 'r1',
+      host: '0.0.0.0',
+      port: 65535,
+    });
+
+    expect(JSON.parse(lines[0])).toMatchObject({
+      service: 'api',
+      release: 'r1',
+      event: 'api.started',
+      message: 'API listening on 0.0.0.0:3000',
+      context: 'NestApplication',
+      host: '0.0.0.0',
+      port: 3000,
+    });
+    expect(JSON.parse(lines[1]).port).toBe(0);
+    expect(JSON.parse(lines[2]).port).toBe(65535);
+  });
+
+  it('redacts passwords, bearer tokens, OTP codes, and payload labels in messages', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+    const password = 'super-secret-password';
+    const bearer = 'opaque-bearer-token';
+    const otp = '654321';
+    const body = 'opaque-body-value';
+
+    logger.info('nestjs.log', {
+      service: 'api',
+      release: 'r1',
+      message: `startup password=${password} Bearer ${bearer} otp=${otp} body=${body}`,
+    });
+
+    const output = JSON.parse(lines[0]);
+    expect(output.message).toContain('startup');
+    expect(output.message).toContain('[REDACTED]');
+    expect(output.message).not.toContain(password);
+    expect(output.message).not.toContain(bearer);
+    expect(output.message).not.toContain(otp);
+    expect(output.message).not.toContain(body);
+    expect(lines[0]).not.toContain(password);
+    expect(lines[0]).not.toContain(bearer);
+    expect(lines[0]).not.toContain(otp);
+    expect(lines[0]).not.toContain(body);
+  });
+
+  it('does not echo invalid host, context, or port values', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.info('nestjs.log', {
+      service: 'api',
+      release: 'r1',
+      host: 'user:secretpass@0.0.0.0',
+      context: 'Error: boom\n    at Foo.bar (file.js:1:2)',
+      port: 70000,
+    });
+    logger.info('nestjs.log', {
+      service: 'api',
+      release: 'r1',
+      host: 'http://0.0.0.0/hidden-path',
+      context: 'not a context',
+      port: -1,
+    });
+    logger.info('nestjs.log', {
+      service: 'api',
+      release: 'r1',
+      host: '0.0.0.0:3000',
+      context: '123BadContext',
+      port: 1.5,
+    });
+    logger.info('nestjs.log', {
+      service: 'api',
+      release: 'r1',
+      host: '0.0.0.0 evil-host',
+      context: 'A'.repeat(65),
+      port: 'secret-port' as never,
+    });
+    logger.info('nestjs.log', {
+      service: 'api',
+      release: 'r1',
+      host: 'localhost',
+      port: '3000' as never,
+    });
+    logger.info('nestjs.log', {
+      service: 'api',
+      release: 'r1',
+      host: 'secret0.0.0.0',
+      port: 70000,
+    });
+    logger.info('nestjs.log', {
+      service: 'api',
+      release: 'r1',
+      host: 'password.0.0.0.0',
+      port: -1,
+    });
+
+    const serialized = lines.join('\n');
+    expect(serialized).not.toContain('secret0.0.0.0');
+    expect(serialized).not.toContain('password.0.0.0.0');
+    expect(serialized).not.toContain('secretpass');
+    expect(serialized).not.toContain('file.js');
+    expect(serialized).not.toContain('70000');
+    expect(serialized).not.toContain('hidden-path');
+    expect(serialized).not.toContain('not a context');
+    expect(serialized).not.toContain('123BadContext');
+    expect(serialized).not.toContain('evil-host');
+    expect(serialized).not.toContain('secret-port');
+    expect(serialized).not.toContain('A'.repeat(65));
+    expect(serialized).not.toContain('localhost');
+    expect(serialized).not.toContain('0.0.0.0:3000');
+
+    for (const line of lines) {
+      const output = JSON.parse(line);
+      expect(output.host).toBe('[REDACTED]');
+      expect(output.port).toBe('[REDACTED]');
+    }
+    expect(JSON.parse(lines[0]).context).toBe('[REDACTED]');
+    expect(JSON.parse(lines[1]).context).toBe('[REDACTED]');
+    expect(JSON.parse(lines[2]).context).toBe('[REDACTED]');
+    expect(JSON.parse(lines[3]).context).toBe('[REDACTED]');
+  });
+
+  it('truncates free-form messages and does not dump non-string messages', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+    const secret = 'object-secret-value';
+
+    logger.info('nestjs.log', {
+      service: 'api',
+      release: 'r1',
+      message: 'm'.repeat(1100),
+    });
+    logger.info('nestjs.log', {
+      service: 'api',
+      release: 'r1',
+      message: { password: secret } as never,
+    });
+
+    expect(JSON.parse(lines[0]).message).toBe('m'.repeat(1024));
+    expect(JSON.parse(lines[1]).message).toBe('[REDACTED]');
+    expect(lines[1]).not.toContain(secret);
   });
 });
 

@@ -1303,4 +1303,61 @@ describe('Contracts v1', () => {
     });
   });
   });
+  describe('Public error-code runtime set', () => {
+    it('matches canonical code schemas with true-valued own keys only', () => {
+      const keys = Object.keys(v1.PUBLIC_ERROR_CODES).sort();
+      expect(keys).toEqual([...v1.PUBLIC_ERROR_CODE_VALUES].sort());
+      for (const key of keys) {
+        expect(v1.PUBLIC_ERROR_CODES[key]).toBe(true);
+      }
+
+      const canonicalSchemaCodes = [
+        ...v1.ErrorCodeSchema.options,
+        ...v1.OperationalErrorCodeSchema.options,
+        ...v1.CheckInErrorCodeSchema.options,
+        ...v1.RegistrationFailureCodeSchema.options,
+      ];
+      const providerOtpCodes = [
+        'OTP_PROVIDER_UNAVAILABLE',
+        'OTP_REQUEST_ACCEPTED',
+        'OTP_INVALID_OR_EXPIRED',
+        'OTP_RATE_LIMITED',
+      ] as const;
+      const menuRosterLocationCodes = [
+        'MENU_NOT_FOUND',
+        'INVALID_EFFECTIVE_RANGE',
+        'ROSTER_BATCH_NOT_FOUND',
+        'ROSTER_IMPORT_REJECTED',
+        'UNKNOWN_SERVICE_LOCATION',
+        'INVALID_LOCATION_POLICY',
+        'LOCATION_COORDINATES_REQUIRED',
+      ] as const;
+      const adminCodes = [
+        'ADMIN_MANAGED_ROLES_UNAVAILABLE',
+        'ADMIN_SELF_DISABLE_FORBIDDEN',
+        'ADMIN_LAST_ACTIVE_ADMIN',
+      ] as const;
+      const notificationCodes = [
+        'INVALID_NOTIFICATION_CURSOR',
+        'INVALID_NOTIFICATION_PREFERENCE',
+        'INVALID_PUSH_TOKEN',
+        'INVALID_NOTIFICATION_KIND',
+        'NOTIFICATION_NOT_FOUND',
+      ] as const;
+
+      for (const code of [
+        ...canonicalSchemaCodes,
+        ...providerOtpCodes,
+        ...menuRosterLocationCodes,
+        ...adminCodes,
+        ...notificationCodes,
+      ]) {
+        expect(Object.hasOwn(v1.PUBLIC_ERROR_CODES, code), code).toBe(true);
+      }
+      expect(Object.hasOwn(v1.PUBLIC_ERROR_CODES, 'toString')).toBe(false);
+      expect(Object.hasOwn(v1.PUBLIC_ERROR_CODES, 'password=secret')).toBe(
+        false,
+      );
+    });
+  });
 });

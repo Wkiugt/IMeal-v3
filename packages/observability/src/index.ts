@@ -23,8 +23,17 @@ export type SafeLogFields = {
   statusCode?: number;
   durationMs?: number;
   errorCode?: string;
+  errorClass?: string;
   providerCode?: string;
   provider?: string;
+  method?: string;
+  path?: string;
+  route?: string;
+  message?: string;
+  stack?: string;
+  context?: string;
+  host?: string;
+  port?: number;
   [key: string]: string | number | boolean | undefined;
 };
 
@@ -44,27 +53,36 @@ const SAFE_FIELD_KEYS: Record<string, true> = {
   statusCode: true,
   durationMs: true,
   errorCode: true,
+  errorClass: true,
   providerCode: true,
   provider: true,
   method: true,
+  path: true,
   route: true,
   status: true,
   count: true,
   total: true,
   attempt: true,
   retry: true,
+  message: true,
+  stack: true,
+  context: true,
+  host: true,
+  port: true,
 };
 
 const SENSITIVE_LABEL_PATTERN =
-  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)(["'])(?:\\.|(?!\2)[^\r\n])*\2/gi;
+  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|cookie|otp|refresh[-_ ]?token|smtp[-_ ]?password|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)(["'])(?:\\.|(?!\2)[^\r\n])*\2/gi;
 const SENSITIVE_UNQUOTED_PATTERN =
-  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)[^\s"'`&#,;}\])]+/gi;
+  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|cookie|otp|refresh[-_ ]?token|smtp[-_ ]?password|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)[^\s"'`&#,;}\])]+/gi;
 const PAYLOAD_LABEL_PATTERN =
   /((?:^|[\s,{}(]|\[)["']?(?:body|title|data|to|payload|message)["']?\s*[:=]\s*)(["'])(?:\\.|(?!\2)[^\r\n])*\2/gi;
 const PAYLOAD_UNQUOTED_PATTERN =
   /((?:^|[\s,{}(]|\[)["']?(?:body|title|data|to|payload|message)["']?\s*[:=]\s*)[^\s"'`&#,;}\])]+/gi;
 const OTP_LABEL_PATTERN =
   /(\b(?:otp|one[- ]time|verification|auth(?:entication)?)(?:\s+(?:code|password))?(?:(?:\s*[:=]\s*)|\s+))(\d{6})\b/gi;
+const STRUCTURED_PAYLOAD_PATTERN =
+  /((?:response|headers|cause)\s*[:=]\s*)\{[\s\S]*$/gi;
 
 function redactPayloadLabels(value: string): string {
   return value
@@ -103,11 +121,67 @@ function redactString(
     .replace(/\b-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+\b/g, REDACTED)
     .replace(OTP_LABEL_PATTERN, `$1${REDACTED}`);
 
-  if (context === 'event' || key === 'providerCode') {
+  if (context === 'event' || key === 'providerCode' || key === 'message') {
     redacted = redactPayloadLabels(redacted);
   }
+  redacted = redacted.replace(
+    STRUCTURED_PAYLOAD_PATTERN,
+    `$1${REDACTED}`,
+  );
 
   return redacted;
+}
+
+const MESSAGE_MAX_LENGTH = 1024;
+const CONTEXT_TOKEN = /^[A-Za-z][A-Za-z0-9_$.-]{0,63}$/;
+
+function isCredentialFreeBindHost(value: string): boolean {
+  if (
+    value.includes('@') ||
+    value.includes('/') ||
+    value.includes('\\') ||
+    value.includes(':') ||
+    /\s/.test(value)
+  ) {
+    return false;
+  }
+  return value === '0.0.0.0';
+}
+
+export function sanitizeLogText(
+  value: unknown,
+  maxLength = MESSAGE_MAX_LENGTH,
+): string {
+  if (typeof value !== 'string') return REDACTED;
+  return redactString(value, 'field', 'message').slice(0, maxLength);
+}
+
+function sanitizeMessage(value: unknown): string {
+  return sanitizeLogText(value);
+}
+
+function sanitizeContext(value: unknown): string {
+  if (typeof value === 'string' && CONTEXT_TOKEN.test(value)) return value;
+  return REDACTED;
+}
+
+function sanitizeHost(value: unknown): string {
+  if (typeof value === 'string' && isCredentialFreeBindHost(value)) {
+    return value;
+  }
+  return REDACTED;
+}
+
+function sanitizePort(value: unknown): number | string {
+  if (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= 65535
+  ) {
+    return value;
+  }
+  return REDACTED;
 }
 
 function sanitizeField(
@@ -115,6 +189,10 @@ function sanitizeField(
   value: unknown,
 ): string | number | boolean | undefined {
   if (SAFE_FIELD_KEYS[key] !== true) return undefined;
+  if (key === 'message') return sanitizeMessage(value);
+  if (key === 'context') return sanitizeContext(value);
+  if (key === 'host') return sanitizeHost(value);
+  if (key === 'port') return sanitizePort(value);
 
   if (typeof value === 'string') {
     if (key === 'requestId' && !REQUEST_ID_PATTERN.test(value)) {
@@ -124,7 +202,9 @@ function sanitizeField(
       return REDACTED;
     }
     const redacted = redactString(value, 'field', key);
-    return key === 'route' ? redacted.split('?')[0] : redacted;
+    return key === 'path' || key === 'route'
+      ? redacted.split('?')[0]
+      : redacted;
   }
 
   if (typeof value === 'number')

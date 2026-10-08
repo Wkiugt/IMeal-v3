@@ -241,7 +241,23 @@ Exact path spelling may change only with the shared API contract. Mobile, Admin 
 
 ### 8.1 API-wide contract
 
-- JSON success envelope: `{ data, meta?: { requestId, pagination? } }`.
+- JSON success shape is route-specific. Envelope-backed versioned routes use
+  `{ data, meta?: { requestId, pagination? } }` (with `meta.pagination` where
+  the route is paginated). Current raw authentication endpoints under `/auth`
+  return their documented raw payloads, and `GET /admin/weekly-menus` returns
+  its documented raw weekly-menu array; these routes are not wrapped solely
+  because the general API guidance describes envelope-backed routes.
+- Implementation references: `apps/api/src/auth/auth.controller.ts` returns
+  raw OTP request/verify, logout, and `/auth/me` values consumed by the raw
+  schemas in `apps/mobile/src/api/authAPI.ts`;
+  `apps/api/src/admin/weekly-menus/weekly-menus.controller.ts` delegates raw
+  weekly-menu values; `apps/admin-web/src/main.ts` consumes the raw
+  weekly-menu array and maps each daily menu’s revisions/current meal fields;
+  envelope-backed check-in and employee-activity schemas in
+  `packages/contracts/src/v1/check-in.ts` and
+  `packages/contracts/src/v1/employee-activity.ts` are parsed by
+  `apps/mobile/src/api/checkInAPI.ts` and
+  `apps/mobile/src/api/employeeActivityAPI.ts`.
 - JSON error envelope: `{ error: { code, message, details? }, requestId }`; clients branch on stable `code`, never localized `message`.
 - Every request receives/returns `X-Request-Id`; server replaces malformed/untrusted values.
 - Retry-safe mutations use `Idempotency-Key`. For
