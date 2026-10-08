@@ -89,7 +89,12 @@ describe('Check-in controller (e2e)', () => {
       .send({ qr: 'imeal-checkin-v1.signed' });
 
     expect(response.status).toBe(400);
-    expect(response.body.error.code).toBe('GPS_REQUIRED');
+    expect(response.body).toEqual({
+      statusCode: 400,
+      errorCode: 'GPS_REQUIRED',
+      message: 'The provided information is not valid. Please check it and try again.',
+      requestId: response.headers['x-request-id'],
+    });
   });
 
   it('rejects a target-user field instead of allowing delegated check-in', async () => {
@@ -107,7 +112,12 @@ describe('Check-in controller (e2e)', () => {
       });
 
     expect(response.status).toBe(400);
-    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+    expect(response.body).toEqual({
+      statusCode: 400,
+      errorCode: 'VALIDATION_ERROR',
+      message: 'The provided information is not valid. Please check it and try again.',
+      requestId: response.headers['x-request-id'],
+    });
   });
 
   it('rejects confirmation without its resolved intent nonce', async () => {
@@ -125,7 +135,12 @@ describe('Check-in controller (e2e)', () => {
       });
 
     expect(response.status).toBe(400);
-    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+    expect(response.body).toEqual({
+      statusCode: 400,
+      errorCode: 'VALIDATION_ERROR',
+      message: 'The provided information is not valid. Please check it and try again.',
+      requestId: response.headers['x-request-id'],
+    });
   });
 
   it('returns the confirmed check-in response', async () => {
@@ -266,9 +281,11 @@ describe('Check-in real-service HTTP boundaries (e2e)', () => {
     const response = await request(app.getHttpServer()).get('/api/kitchen/check-in/qr');
 
     expect(response.status).toBe(500);
-    expect(response.body.error).toEqual({
-      code: 'INTERNAL_SERVER_ERROR',
-      message: 'Internal server error',
+    expect(response.body).toEqual({
+      statusCode: 500,
+      errorCode: 'INTERNAL_SERVER_ERROR',
+      message: 'Something went wrong on our side. Please try again later.',
+      requestId: response.headers['x-request-id'],
     });
     expect(JSON.stringify(response.body)).not.toContain('unexpected-hash');
   });
