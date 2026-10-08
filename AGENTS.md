@@ -88,8 +88,9 @@ Useful workspace commands include `yarn workspace @imeal/api start:dev`, `yarn w
 - Implementation references: `apps/api/src/auth/auth.controller.ts` returns
   raw OTP request/verify, logout, and `/auth/me` values consumed by the raw
   schemas in `apps/mobile/src/api/authAPI.ts`;
-  `apps/api/src/admin/weekly-menus/weekly-menus.controller.ts` delegates raw
-  weekly-menu values consumed as an array by `apps/admin-web/src/main.ts`;
+-  `apps/api/src/admin/weekly-menus/weekly-menus.controller.ts` delegates raw
+  weekly-menu values; `apps/admin-web/src/main.ts` consumes the raw
+  weekly-menu array and maps each daily menu’s revisions/current meal fields;
   envelope-backed check-in and employee-activity schemas in
   `packages/contracts/src/v1/check-in.ts` and
   `packages/contracts/src/v1/employee-activity.ts` are parsed by
