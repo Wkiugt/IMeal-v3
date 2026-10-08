@@ -72,9 +72,9 @@ const SAFE_FIELD_KEYS: Record<string, true> = {
 };
 
 const SENSITIVE_LABEL_PATTERN =
-  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|cookie|otp|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)(["'])(?:\\.|(?!\2)[^\r\n])*\2/gi;
+  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|cookie|otp|refresh[-_ ]?token|smtp[-_ ]?password|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)(["'])(?:\\.|(?!\2)[^\r\n])*\2/gi;
 const SENSITIVE_UNQUOTED_PATTERN =
-  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|cookie|otp|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)[^\s"'`&#,;}\])]+/gi;
+  /((?:^|[\s?&,;{}(]|\[)["']?(?:authorization|bearer|cookie|otp|refresh[-_ ]?token|smtp[-_ ]?password|session(?:[-_]?(?:token|id))?|client(?:[-_ ]|\s)*secret|provider(?:[-_ ]|\s)*(?:secret|api[-_ ]?key)|api[-_ ]?key|access[-_ ]?token|password|secret|signature|sig|qr(?:[-_ ]?(?:payload|token|code))?)["']?\s*[:=](?!\/\/)\s*)[^\s"'`&#,;}\])]+/gi;
 const PAYLOAD_LABEL_PATTERN =
   /((?:^|[\s,{}(]|\[)["']?(?:body|title|data|to|payload|message)["']?\s*[:=]\s*)(["'])(?:\\.|(?!\2)[^\r\n])*\2/gi;
 const PAYLOAD_UNQUOTED_PATTERN =

@@ -18,6 +18,7 @@ export type ApiLogFields = Partial<
     | 'method'
     | 'path'
     | 'route'
+    | 'message'
     | 'stack'
     | 'status'
     | 'count'

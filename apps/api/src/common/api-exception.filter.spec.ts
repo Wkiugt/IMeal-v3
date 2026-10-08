@@ -2,6 +2,7 @@ import { BadRequestException, HttpException } from '@nestjs/common';
 import { JsonStructuredLogger, type StructuredLogger } from '@imeal/observability';
 import { describe, expect, it, vi } from 'vitest';
 import { ApiExceptionFilter } from './api-exception.filter.js';
+import { apiLogFields } from './structured-logger.js';
 
 function host(
   request: Record<string, unknown>,
@@ -371,6 +372,53 @@ describe('ApiExceptionFilter', () => {
       requestId: request.requestId,
     });
   });
+  it('retains safe API log fields while excluding raw request data', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'test-release', (line) =>
+      lines.push(line),
+    );
+
+    logger.error(
+      'http.exception',
+      {
+        ...apiLogFields('http.exception', {
+          path: '/v1/items/42?access_token=query-secret',
+          errorClass: 'SERVER_ERROR',
+          message:
+            'diagnostic-marker authorization=Bearer access-secret smtpPassword=smtp-secret',
+          stack:
+            'diagnostic-stack session_token=session-secret refresh_token=refresh-secret',
+        }),
+        body: 'raw-body-secret',
+        query: 'raw-query-secret',
+        cookie: 'cookie-secret',
+        otp: '123456',
+      },
+    );
+
+    const output = JSON.parse(lines[0] ?? '{}') as Record<string, unknown>;
+    expect(output).toMatchObject({
+      path: '/v1/items/42',
+      errorClass: 'SERVER_ERROR',
+      message: expect.stringContaining('diagnostic-marker'),
+      stack: expect.stringContaining('diagnostic-stack'),
+    });
+    const serialized = JSON.stringify(output);
+    for (const secret of [
+      'query-secret',
+      'access-secret',
+      'smtp-secret',
+      'session-secret',
+      'refresh-secret',
+      'raw-body-secret',
+      'raw-query-secret',
+      'cookie-secret',
+      '123456',
+    ]) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
+
   it.each([
     {
       name: 'prefers a valid body.errorCode over body.code',
@@ -837,6 +885,12 @@ describe('ApiExceptionFilter', () => {
       expect(output.message).toContain(diagnosticMarker);
       expect(output.stack).toContain(stackMarker);
       const response = send.mock.calls[0]?.[0];
+      expect(Object.keys(response as Record<string, unknown>).sort()).toEqual([
+        'errorCode',
+        'message',
+        'requestId',
+        'statusCode',
+      ]);
       const serialized = JSON.stringify({ output, response });
       expect(JSON.stringify(response)).not.toContain(diagnosticMarker);
       for (const secret of [
