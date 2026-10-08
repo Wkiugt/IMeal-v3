@@ -15,7 +15,10 @@ export const ErrorEnvelopeSchema = z.object({
 });
 
 export const EnvelopeSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
-  z.union([SuccessEnvelopeSchema(dataSchema), ErrorEnvelopeSchema]);
+  z.discriminatedUnion('success', [
+    SuccessEnvelopeSchema(dataSchema),
+    ErrorEnvelopeSchema,
+  ]);
 
 export type SuccessEnvelope<T> = {
   success: true;

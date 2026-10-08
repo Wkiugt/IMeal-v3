@@ -11,15 +11,122 @@ describe('Contracts v1', () => {
       const result = schema.safeParse({ success: true, data: { id: 1 } });
       expect(result.success).toBe(true);
     });
+    it('preserves the v1 namespace and restored error exports', () => {
+      const code: v1.ErrorCode = 'BAD_REQUEST';
+      const detail: v1.ErrorDetail = { code, message: 'Invalid request' };
 
-    it('validates error envelope', () => {
-      const schema = v1.ErrorEnvelopeSchema;
-      const result = schema.safeParse({
-        success: false,
-        error: { code: 'BAD_REQUEST', message: 'Invalid request' },
-      });
-      expect(result.success).toBe(true);
+      expect(v1.ErrorCodeSchema.safeParse(code).success).toBe(true);
+      expect(v1.ErrorDetailSchema.safeParse(detail).success).toBe(true);
+      expect(v1.ErrorCodeSchema.safeParse('METHOD_NOT_ALLOWED').success).toBe(false);
+      expect(v1.ErrorDetailSchema.safeParse({ code: 'BAD_REQUEST' }).success).toBe(false);
+      expect(v1.ErrorEnvelopeSchema.safeParse({ success: false, error: detail }).success).toBe(
+        true,
+      );
+      expect(v1.GpsRecoveryActionSchema.safeParse('RETRY').success).toBe(true);
+      expect(v1.GpsFailureDetailsSchema.safeParse({ action: 'RETRY' }).success).toBe(true);
     });
+
+    it('accepts the legacy discriminated error envelope and rejects the raw API shape', () => {
+      expect(
+        v1.ErrorEnvelopeSchema.safeParse({
+          success: false,
+          error: { code: 'BAD_REQUEST', message: 'Invalid request' },
+          meta: { requestId: 'request-1' },
+        }).success,
+      ).toBe(true);
+      expect(
+        v1.ErrorEnvelopeSchema.safeParse({
+          statusCode: 400,
+          errorCode: 'BAD_REQUEST',
+          message: 'Invalid request',
+          requestId: 'request-1',
+        }).success,
+      ).toBe(false);
+    });
+
+    it('discriminates success and failure envelopes on success', () => {
+      const schema = v1.EnvelopeSchema(TestDataSchema);
+
+      expect(schema.safeParse({ success: true, data: { id: 1 } }).success).toBe(true);
+      expect(
+        schema.safeParse({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Missing resource' },
+        }).success,
+      ).toBe(true);
+      expect(schema.safeParse({ success: false, data: { id: 1 } }).success).toBe(false);
+    });
+
+    it('keeps ApiErrorResponseSchema separate with 400-through-599 status bounds', () => {
+      const response = {
+        statusCode: 400,
+        errorCode: 'BAD_REQUEST' as const,
+        message: 'Invalid request',
+        requestId: '550e8400-e29b-41d4-a716-446655440000',
+      };
+
+      expect(v1.ApiErrorResponseSchema.safeParse(response).success).toBe(true);
+      expect(v1.ErrorEnvelopeSchema.safeParse(response).success).toBe(false);
+      expect(
+        v1.ApiErrorResponseSchema.safeParse({ ...response, statusCode: 399 }).success,
+      ).toBe(false);
+      expect(
+        v1.ApiErrorResponseSchema.safeParse({ ...response, statusCode: 600 }).success,
+      ).toBe(false);
+    });
+
+    it('preserves GPS recovery details and action types', () => {
+      expect(v1.GpsRecoveryActionSchema.safeParse('RETRY').success).toBe(true);
+      expect(v1.GpsRecoveryActionSchema.safeParse('REFRESH').success).toBe(true);
+      expect(v1.GpsFailureDetailsSchema.safeParse({ action: 'RETRY' }).success).toBe(true);
+      expect(v1.GpsFailureDetailsSchema.safeParse({ action: 'RECALIBRATE' }).success).toBe(
+        false,
+      );
+    });
+
+
+    it('validates the canonical API error response exactly', () => {
+      const schema = v1.ApiErrorResponseSchema;
+      const response = {
+        statusCode: 400,
+        errorCode: 'INVALID_EFFECTIVE_RANGE',
+        message: 'The request could not be processed.',
+        requestId: '550e8400-e29b-41d4-a716-446655440000',
+      };
+      const result = schema.safeParse(response);
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).toEqual(response);
+      expect(schema.safeParse({ ...response, details: { field: 'email' } }).success).toBe(
+        false,
+      );
+      expect(schema.safeParse({ ...response, error: { code: 'NOT_FOUND' } }).success).toBe(
+        false,
+      );
+    });
+
+    it('accepts intentional public domain codes but rejects arbitrary codes', () => {
+      expect(
+        v1.PublicErrorCodeSchema.safeParse('REGISTRATION_FAILED').success,
+      ).toBe(true);
+      expect(v1.PublicErrorCodeSchema.safeParse('P2002').success).toBe(false);
+      expect(v1.PublicErrorCodeSchema.safeParse('SMTP_PROVIDER_ERROR').success).toBe(
+        false,
+      );
+    });
+    it.each([
+      'METHOD_NOT_ALLOWED',
+      'REQUEST_TIMEOUT',
+      'GONE',
+      'PAYLOAD_TOO_LARGE',
+      'UNSUPPORTED_MEDIA_TYPE',
+      'UNPROCESSABLE_ENTITY',
+      'NOT_IMPLEMENTED',
+      'BAD_GATEWAY',
+      'GATEWAY_TIMEOUT',
+    ] as const)('accepts canonical HTTP error code %s', (code) => {
+      expect(v1.PublicErrorCodeSchema.safeParse(code).success).toBe(true);
+    });
+
   });
 
   describe('Pagination', () => {

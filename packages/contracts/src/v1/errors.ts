@@ -79,7 +79,15 @@ export const ErrorCodeSchema = z.enum([
   'VALIDATION_ERROR',
   'RATE_LIMITED',
 ]);
+export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
+export const ErrorDetailSchema = z.object({
+  code: ErrorCodeSchema,
+  message: z.string(),
+  details: z.record(z.unknown()).optional(),
+  path: z.array(z.union([z.string(), z.number()])).optional(),
+});
+export type ErrorDetail = z.infer<typeof ErrorDetailSchema>;
 export const OperationalErrorCodeSchema = z.enum([
   'OTP_REQUEST_ACCEPTED',
   'OTP_INVALID_OR_EXPIRED',
@@ -109,27 +117,12 @@ export const GpsFailureDetailsSchema = z.object({
   action: GpsRecoveryActionSchema,
 }).strict();
 export type GpsFailureDetails = z.infer<typeof GpsFailureDetailsSchema>;
-const CanonicalErrorCodeSchema = z.union([
-  ErrorCodeSchema,
-  OperationalErrorCodeSchema,
-]);
-export type ErrorCode = z.infer<typeof CanonicalErrorCodeSchema>;
-
-export const ErrorDetailSchema = z.object({
-  code: CanonicalErrorCodeSchema,
-  message: z.string(),
-  details: z.record(z.unknown()).optional(),
-  path: z.array(z.union([z.string(), z.number()])).optional(),
-}).superRefine((value, ctx) => {
-  if (!value.code.startsWith('GPS_')) return;
-  const parsed = GpsFailureDetailsSchema.safeParse(value.details);
-  if (!parsed.success) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['details'],
-      message: 'GPS error details must contain only a safe recovery action',
-    });
-  }
-});
-
-export type ErrorDetail = z.infer<typeof ErrorDetailSchema>;
+export const ApiErrorResponseSchema = z
+  .object({
+    statusCode: z.number().int().min(400).max(599),
+    errorCode: PublicErrorCodeSchema,
+    message: z.string(),
+    requestId: z.string().uuid(),
+  })
+  .strict();
+export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;
