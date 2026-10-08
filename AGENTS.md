@@ -79,7 +79,22 @@ Useful workspace commands include `yarn workspace @imeal/api start:dev`, `yarn w
 - Use strict TypeScript. API/worker code follows Nest modules, controllers, services, guards, and DTO boundaries; inject collaborators through constructors when available.
 - Prefer `async`/`await`. Use Prisma `$transaction` for invariants spanning writes. Reserve raw SQL for explicit row locks and atomic outbox claims.
 - Translate domain failures into Nest HTTP exceptions at API boundaries. Return stable error codes and structured envelopes rather than making clients branch on message text.
-- API success responses follow `{ data, meta? }`; errors follow `{ error: { code, message, details? }, requestId }`. Preserve `X-Request-Id` and `Idempotency-Key` behavior.
+- JSON success shape is route-specific. Envelope-backed versioned routes use
+  `{ data, meta?: { requestId, pagination? } }` (with `meta.pagination` where
+  the route is paginated). Current raw authentication endpoints under `/auth`
+  return their documented raw payloads, and `GET /admin/weekly-menus` returns
+  its documented raw weekly-menu array; these routes are not wrapped solely
+  because the general API guidance describes envelope-backed routes.
+- Implementation references: `apps/api/src/auth/auth.controller.ts` returns
+  raw OTP request/verify, logout, and `/auth/me` values consumed by the raw
+  schemas in `apps/mobile/src/api/authAPI.ts`;
+  `apps/api/src/admin/weekly-menus/weekly-menus.controller.ts` delegates raw
+  weekly-menu values consumed as an array by `apps/admin-web/src/main.ts`;
+  envelope-backed check-in and employee-activity schemas in
+  `packages/contracts/src/v1/check-in.ts` and
+  `packages/contracts/src/v1/employee-activity.ts` are parsed by
+  `apps/mobile/src/api/checkInAPI.ts` and
+  `apps/mobile/src/api/employeeActivityAPI.ts`.
 - Use Zod schemas from `packages/contracts/src/v1` for transport contracts; add or change versioned contracts before changing consumers.
 - Represent business dates explicitly and use existing Vietnam-time helpers (`apps/api/src/common/business-time.ts`); do not introduce ad-hoc local/UTC conversions.
 - Keep side effects such as push notifications outside committed database transactions when possible; log delivery failures without rolling back the business state.
