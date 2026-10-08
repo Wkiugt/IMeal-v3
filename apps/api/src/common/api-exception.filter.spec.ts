@@ -446,7 +446,7 @@ describe('ApiExceptionFilter', () => {
         message:
           status === 500
             ? 'Something went wrong on our side. Please try again later.'
-            : 'The service is temporarily unavailable. Please try again later.',
+            : 'The service is temporarily unavailable. Please try again.',
         requestId: request.requestId,
       });
       expect(JSON.stringify(send.mock.calls)).not.toContain(
@@ -485,7 +485,7 @@ describe('ApiExceptionFilter', () => {
     expect(send).toHaveBeenCalledWith({
       statusCode: 503,
       errorCode: 'SERVICE_UNAVAILABLE',
-      message: 'The service is temporarily unavailable. Please try again later.',
+      message: 'The service is temporarily unavailable. Please try again.',
       requestId: request.requestId,
     });
     expect(JSON.stringify(send.mock.calls)).not.toContain('raw-secret');
@@ -518,7 +518,7 @@ describe('ApiExceptionFilter', () => {
       expect(send).toHaveBeenCalledWith({
         statusCode: 503,
         errorCode: 'SERVICE_UNAVAILABLE',
-        message: 'The service is temporarily unavailable. Please try again later.',
+        message: 'The service is temporarily unavailable. Please try again.',
         requestId: request.requestId,
       });
       expect(error.mock.calls[0]?.[1]).toEqual(
@@ -553,7 +553,7 @@ describe('ApiExceptionFilter', () => {
       statusCode: 503,
       errorCode: 'OTP_PROVIDER_UNAVAILABLE',
       message:
-        'The service is temporarily unavailable. Please try again later.',
+        'The service is temporarily unavailable. Please try again.',
       requestId: request.requestId,
     });
     expect(error.mock.calls[0]?.[1]).toEqual(
@@ -727,7 +727,7 @@ describe('ApiExceptionFilter', () => {
     {
       status: 503,
       errorCode: 'SERVICE_UNAVAILABLE',
-      message: 'The service is temporarily unavailable. Please try again later.',
+      message: 'The service is temporarily unavailable. Please try again.',
     },
     {
       status: 504,
