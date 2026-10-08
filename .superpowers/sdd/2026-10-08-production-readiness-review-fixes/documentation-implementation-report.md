@@ -29,3 +29,8 @@ The worktree contains unrelated pre-existing user changes, including README and 
 - Updated both route-specific envelope cross-references so they explicitly state that `apps/admin-web/src/main.ts` consumes the raw weekly-menu array and maps each daily menu’s revisions/current meal fields.
 - Corrected the stale README-check note above; the amended destination-based check passes and verifies both destinations at `README.md:250` and `README.md:329`.
 - Focused static documentation checks only; tests, builds, lint, and typecheck were intentionally not run.
+
+## Re-review fix report
+
+- Removed the stray leading `-` from the Admin weekly-menu continuation line in both `AGENTS.md` and `docs/02-technical-requirements.md`; wording and route-specific envelope policy are unchanged.
+- Focused Markdown/static checks passed; tests, builds, lint, and typecheck were intentionally not run.
