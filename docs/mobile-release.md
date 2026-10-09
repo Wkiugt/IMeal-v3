@@ -102,6 +102,14 @@ store credentials and submission are done separately in EAS.
   off.
 - `expo-secure-store` stays for session storage.
 
+Expo Go from SDK 53 does not support Android remote push notifications. A local
+Expo Go bundle remains usable for flows that do not require push, but push-token
+registration must be tested with a native development build, for example:
+
+```text
+eas build --profile development --platform android
+```
+
 ## What this does not do
 
 No real EAS project id, keystore, provisioning profile, or store submission is

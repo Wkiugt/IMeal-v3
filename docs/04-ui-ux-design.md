@@ -501,11 +501,15 @@ Requirements:
 Desktop-first tables/cards for:
 
 - User + `staff`/`kitchen` role management; no Admin-role grant control.
+- Allowlist A single-record add/list/toggle and bulk provisioning. The bulk
+  control is a textarea for up to 500 email entries plus shared state, effective-date
+  range and reason fields; the server normalizes and deduplicates them, then
+  shows linked/unlinked counts returned by the server using the explicit
+  `allowlist.manage` permission.
 - Account status.
 - Penalties.
 - Serving/delegation audit (read-only serving history; no reversal control).
 - Jobs/health.
-
 Bulk/destructive actions require confirmation and visible actor/date/scope.
 
 Admin account disable shows active roles, future registrations and retained

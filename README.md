@@ -113,6 +113,18 @@ Both modes use STARTTLS over TCP `587`; production validation remains fail-close
 
 Để trống `EXPO_PUBLIC_API_URL` khi chạy local hoặc cùng LAN. App tự dùng `http://<Metro-host>:3000/api`.
 
+Android Expo Go từ SDK 53 không còn hỗ trợ remote push notifications của
+`expo-notifications`. Khi chạy bundle bằng Expo Go, app sẽ giữ inbox và các
+chức năng khác hoạt động nhưng tắt phần đăng ký push; muốn kiểm thử push phải
+dùng native development build:
+
+```powershell
+cd apps/mobile
+eas build --profile development --platform android
+```
+
+Không dùng `expo start`/Expo Go để kiểm thử việc nhận push.
+
 | Thiết bị | Lệnh | Điều kiện thấy được |
 | --- | --- | --- |
 | Một máy ADB | `corepack yarn workspace @imeal/mobile android:local` | `adb` trong `PATH`, một target, Expo Go SDK 57 |

@@ -286,6 +286,51 @@ button {
   color: #17663f;
   font-weight: 650;
 }
+.bulk-allowlist-form input,
+.bulk-allowlist-form select,
+.bulk-allowlist-form textarea,
+.bulk-allowlist-form .button {
+  min-height: 44px;
+}
+.bulk-allowlist-form textarea {
+  width: 100%;
+  min-height: 132px;
+  border: 1px solid #bdc9d8;
+  border-radius: 7px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.bulk-allowlist-form input:focus-visible,
+.bulk-allowlist-form select:focus-visible,
+.bulk-allowlist-form textarea:focus-visible,
+.bulk-allowlist-form button:focus-visible {
+  outline: 3px solid #f2b544;
+  outline-offset: 2px;
+}
+.bulk-allowlist-counts {
+  margin: 0;
+}
+.bulk-feedback-success {
+  color: #17663f;
+}
+.bulk-feedback-loading {
+  color: #4c5b70;
+}
+.bulk-feedback-error {
+  color: #a32727;
+}
+.list-loading {
+  padding: 10px 12px;
+  color: #4c5b70;
+  background: #f7f9fc;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bulk-allowlist-form,
+  .bulk-allowlist-form * {
+    scroll-behavior: auto;
+    transition: none;
+  }
+}
 .stack {
   display: grid;
   gap: 10px;

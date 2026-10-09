@@ -152,8 +152,13 @@ revokes sessions.
 - `kitchen`: menu management, stable shared check-in QR and aggregate dashboard
   protected by explicit `kitchen.serve`; it does not inherit `staff` and does
   not scan or confirm employees.
-- `admin`: user/account + `staff`/`kitchen` role management, penalty/audit/jobs; Admin-role lifecycle is outside Admin Web.
-- Sensitive capabilities are explicit permissions: at minimum `penalty.read`, `penalty.resolve`.
+- `admin`: user/account + `staff`/`kitchen` role management, allowlist
+  administration, penalty/audit/jobs; Admin-role lifecycle is outside Admin Web.
+- Sensitive capabilities are explicit permissions: at minimum `allowlist.manage`,
+  `penalty.read`, and `penalty.resolve`.
+- Allowlist administration is server-authoritative and requires
+  `allowlist.manage`; the existing single-record add/list/toggle operations and
+  the bulk operation do not create users or grant roles.
 - `admin` does not imply Kitchen serving permission; callers need the exact role/permission required by each operation.
 - Admin Web may manage `staff`/`kitchen` assignments but cannot grant or revoke
   `admin`; any Admin-role lifecycle remains a separately audited server-side
@@ -169,7 +174,7 @@ revokes sessions.
   require explicit confirmation; set `users.is_active=false`; cancel
   actionable registrations with `ACCOUNT_DISABLED`; revoke active sessions with
   `ACCOUNT_DISABLED` and actionable delegations; persist audit/notifications.
-  `ACCOUNT_DISABLED` cancellations are excluded from Kitchen
+- `ACCOUNT_DISABLED` cancellations are excluded from Kitchen
   preparation/dashboard totals and no-show/penalty selection. The transaction
   recomputes the authoritative actionable set after locks and reports actual
   mutation counts without partial cleanup. Account role replacement, enable
@@ -240,6 +245,10 @@ Canonical v2 endpoint semantics:
 | POST       | `/v1/kitchen/menu/weeks/:weekStart/publish` | kitchen                | Publish weekly menu                                                                                                                                 |
 | GET        | `/api/kitchen/check-in/qr`                  | `kitchen.serve`        | Lazily create/reuse stable day/location QR (may prepare/display before 10:30; never usable at/after 13:30); no body; response includes `qr`, `date`, `location`, `activeFrom`, `expiresAt`                         |
 | GET        | `/api/kitchen/check-in/dashboard?date=YYYY-MM-DD` | `kitchen.serve`   | Aggregate-only counts + `lastUpdated`; poll focused/foreground every 10 seconds, retain stale snapshot, no SSE                                     |
+| POST       | `/v1/admin/allowlist`                      | `allowlist.manage`       | Existing single allowlist add/upsert                                                                                                               |
+| GET        | `/v1/admin/allowlist`                      | `allowlist.manage`       | Existing allowlist list                                                                                                                            |
+| PUT        | `/v1/admin/allowlist/:id`                  | `allowlist.manage`       | Existing single allowlist update/toggle                                                                                                             |
+| POST       | `/v1/admin/allowlist/bulk`                 | `allowlist.manage`       | Bulk add/upsert; accepts up to 500 submitted email entries, normalizes before deduplication, and returns linked/unlinked outcomes; also mounted at `/admin/allowlist/bulk`                 |
 | POST/PATCH | `/v1/admin/users/*`                         | admin                  | Independent Staff/Kitchen roles + account lifecycle; disable requires preview and confirmed future-commitment cleanup; no Admin-role grant endpoint |
 | GET/PATCH  | `/v1/admin/penalties/*`                     | `penalty.read/resolve` | Admin penalty reporting/resolve; existing explicit permissions remain unchanged |
 | GET        | `/v1/admin/audit/*`                         | admin                  | Audit lookup                                                                                                                                        |
@@ -338,6 +347,30 @@ Mobile uses only `EXPO_PUBLIC_API_URL` (plus the optional
 `EXPO_PACKAGER_PROXY_URL` for remote Metro sessions); Admin Web uses `VITE_API_URL`.
 Neither client receives secrets, provider keys, GPS policy coordinates or
 authorization claims.
+
+### Allowlist administration
+
+Allowlist records are administrator-managed PostgreSQL data and remain
+independent from account status, role assignments and roster facts. All
+allowlist routes require an authenticated session and the explicit
+`allowlist.manage` permission; Admin Web is a client of these server-authoritative
+operations, not a source of identity or authorization.
+
+The existing single-record add, list and toggle/update operations remain
+available. `POST /v1/admin/allowlist/bulk` (also mounted at
+`POST /admin/allowlist/bulk`) accepts up to 500 submitted email entries from
+one request. The server normalizes each email before deduplicating them; the
+request supplies one shared state, effective-date range and reason for the
+batch. Validation is atomic: an invalid batch produces no partial writes.
+A valid batch upserts every deduplicated email in one PostgreSQL transaction.
+
+Bulk upsert may link an existing user whose normalized email is the same as the
+allowlist email. It never creates users, roles or other authorization grants.
+The result reports which normalized addresses linked to existing users and which
+remain unlinked. Each committed bulk operation emits a safe aggregate audit event;
+audit and logs must not disclose OTPs, session tokens, hashes, raw GPS or other
+secrets.
+
 
 ### 8.3 Staff notification contract
 
@@ -716,9 +749,10 @@ Do not add Kubernetes, Kafka or Redis solely for the baseline 200–300 users.
 - Production accepts only allowlist-A email OTP and opaque server sessions.
   `REQUIRE_AUTH=false` is rejected outside the test harness.
 - Rate limit/auth abuse protection covers OTP request/verify and public APIs.
-- OTP clear codes, session secrets, QR payloads, provider payloads and raw
-  coordinates are not logged; retained verification evidence is minimized,
-  access-controlled and audited.
+- Bulk allowlist requests are bounded to 500 submitted email entries,
+  normalized before deduplication, and validated atomically before one-transaction
+  upsert. They may link existing same-email users but never create users or roles;
+  results report linked and unlinked outcomes and audit is safe and aggregate.
 - Self check-in endpoints require an active opaque session, explicit Staff
   authorization, shared QR/check-in-session/window/own-registration validation
   and transactional idempotency. Kitchen QR/dashboard require explicit

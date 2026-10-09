@@ -17,6 +17,7 @@ import { RequirePermission } from '../../auth/require-permission.decorator.js';
 import { CurrentUser } from '../../auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../../auth/authenticated-user.js';
 import type { Prisma } from '@imeal/core';
+import { AllowlistService } from './allowlist.service.js';
 
 const AllowlistInputSchema = z
   .object({
@@ -69,7 +70,10 @@ function parseDate(value: string): Date {
 @UseGuards(SessionGuard, PermissionsGuard)
 @RequirePermission('allowlist.manage')
 export class AllowlistController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly allowlistService: AllowlistService,
+  ) {}
 
   @Get()
   list(): Promise<AllowlistListItem[]> {
@@ -82,6 +86,11 @@ export class AllowlistController {
   @Post()
   create(@Body() body: unknown, @CurrentUser() actor: AuthenticatedUser) {
     return this.save(body, actor.id);
+  }
+
+  @Post('bulk')
+  bulk(@Body() body: unknown, @CurrentUser() actor: AuthenticatedUser) {
+    return this.allowlistService.bulkUpsert(body, actor.id);
   }
 
   @Put(':id')

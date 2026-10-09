@@ -469,6 +469,14 @@ Admin cần tối thiểu:
 
 - Search/list user.
 - Quản lý/cấp-gỡ role `staff`/`kitchen` với audit; **không có action cấp role `admin` trong Admin Web**.
+- Quản lý Allowlist A với quyền `allowlist.manage`: các thao tác add/list/toggle
+  từng địa chỉ đã có sẵn; Admin Web cũng cung cấp bulk textarea để gửi tối đa
+  500 dòng email đầu vào trong một lần với cùng state, effective-date range và
+  reason; server chuẩn hóa rồi loại trùng.
+- Bulk allowlist chuẩn hóa và loại trùng email ở server, validate toàn bộ trước
+  khi ghi và upsert trong một transaction; có thể liên kết user hiện có cùng
+  email nhưng không tạo user hoặc role. Kết quả phải phân biệt linked và
+  unlinked; audit chỉ ghi aggregate an toàn.
 - Disable/enable IMeal user.
 - Penalty report/resolve/export.
 - Serving/delegation audit lookup.

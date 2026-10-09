@@ -203,7 +203,7 @@ export const vi = {
   'profile.notificationsDisabledWarning': 'Thông báo thiết bị đang tắt',
   'profile.openSettings': 'Cài đặt',
   'profile.notificationsUnavailableHint':
-    'Thông báo hệ thống không khả dụng trên nền tảng này',
+    'Thông báo đẩy không khả dụng trong Expo Go hoặc trên nền tảng này',
   'profile.signOut': 'Đăng xuất',
   'profile.signOutConfirm': 'Đăng xuất khỏi thiết bị này?',
   'profile.signOutHint': 'Mở xác nhận để đăng xuất khỏi thiết bị này',
@@ -802,7 +802,7 @@ export const en: Record<TranslationKey, string> = {
   'profile.notificationsDisabledWarning': 'Device notifications are off',
   'profile.openSettings': 'Settings',
   'profile.notificationsUnavailableHint':
-    'System notifications are unavailable on this platform',
+    'Push notifications are unavailable in Expo Go or on this platform',
   'profile.signOut': 'Sign out',
   'profile.signOutConfirm': 'Sign out of this device?',
   'profile.signOutHint':

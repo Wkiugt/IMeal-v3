@@ -147,13 +147,17 @@ read-only audit and do not authorize current check-in.
 
 Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
 
-- Menu draft/edit/publish: `:419-511`, backend `apps/api/src/admin/weekly-menus/weekly-menus.controller.ts`.
-- Penalties list/paid/waive: `:513-577`, backend `apps/api/src/admin/penalties/penalties.controller.ts`.
-- Locations/policy/scanner: `:579-735`, backend `apps/api/src/admin/locations/locations.controller.ts`.
-- Allowlist list/create/toggle: `:737-844`, backend `apps/api/src/admin/allowlist/allowlist.controller.ts`.
-- Roster preview/all-or-nothing commit: `:846-948`, `apps/admin-web/src/admin-operations.ts:230-295`, backend roster import controller/service.
+- Menu draft/edit/publish: `:516-663`, backend `apps/api/src/admin/weekly-menus/weekly-menus.controller.ts`.
+- Penalties list/paid/waive: `:665-763`, backend `apps/api/src/admin/penalties/penalties.controller.ts`.
+- Locations/policy/scanner: `:787-1023`, backend `apps/api/src/admin/locations/locations.controller.ts`.
+- Allowlist list/create/toggle and bulk add (up to 500 submitted email
+  entries, normalized and deduplicated server-side): `:1025-1361`, backend
+  `apps/api/src/admin/allowlist/allowlist.controller.ts` and
+  `apps/api/src/admin/allowlist/allowlist.service.ts`.
+- Roster preview/all-or-nothing commit: `:1429-1508`,
+  `apps/admin-web/src/admin-operations.ts:230-295`, backend roster import controller/service.
 
-**Trạng thái:** từng module từ **implemented** đến **partial**. Menu không có image upload/progress; location UI không có đầy đủ create/import lifecycle; roster cần paste JSON. Admin local schemas được khai báo trong `main.ts:14-189` thay vì dùng `@imeal/contracts`, tạo drift risk.
+**Trạng thái:** từng module từ **implemented** đến **partial**. Menu không có image upload/progress; location UI không có đầy đủ create/import lifecycle; roster cần paste JSON. Nhiều schema UI vẫn được khai báo cục bộ trong `main.ts:21-211` thay vì dùng `@imeal/contracts`; riêng request/response bulk allowlist dùng shared v1 contracts.
 
 **Admin user lifecycle is not missing.** Admin Web has a users surface for Staff/Kitchen roles, disable preview/confirm, enable, session revoke, and server-backed audit (`apps/admin-web/src/admin-users.ts`, `apps/admin-web/src/main.ts`). Jobs/health is a separate oversight surface (`apps/admin-web/src/admin-oversight.ts`). Staging approval is separate and is not claimed here.
 
@@ -184,8 +188,10 @@ Các path đã có client calls thật trong `apps/admin-web/src/main.ts`:
 - User/role/disable/enable and session revoke are not missing; see `apps/admin-web/src/admin-users.ts`.
 - Jobs/health is not missing as a surface; see `apps/admin-web/src/admin-oversight.ts`. Qualification evidence remains separate.
 - Server-backed audit lookup exists for admin users; do not describe audit as only an in-memory session list.
-- API helper không có timeout/retry/idempotency/canonical error envelope (`main.ts:199-303`).
-- Admin local validation/schema không dùng shared v1 contracts.
+- API helper không có timeout/retry/idempotency/canonical error envelope
+  (`main.ts:315-360`).
+- Nhiều schema validation của Admin vẫn cục bộ thay vì dùng shared v1
+  contracts; riêng request/response bulk allowlist dùng shared v1 contracts.
 - Input/loading/error accessibility và operational UX còn cơ bản; waive dùng `window.prompt`.
 - `preview.html` và `penalties-preview.html` là static/reference demo, không phải runtime API UI (`preview.html:682-689`, `penalties-preview.html:939-1043`).
 

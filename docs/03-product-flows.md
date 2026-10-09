@@ -666,6 +666,15 @@ cannot add/replace an item, resolve a Staff member or confirm a Staff serving.
   server-resolved IMeal roles/permissions.
 - Manage `staff`/`kitchen` role assignments with actor audit; **Admin Web cannot grant or revoke `admin`**.
 - Disable/enable IMeal account.
+- Allowlist A operations require `allowlist.manage`. Existing single add/list/toggle
+  operations remain available; the Admin Web bulk textarea submits at most 500
+  email entries to `POST /v1/admin/allowlist/bulk` (also
+  `POST /admin/allowlist/bulk`) with one shared state, effective-date range and
+  reason; the server normalizes entries before deduplicating them.
+- The batch is validated atomically, then upserted in one transaction. Existing
+  same-email users may be linked, but no user or role is created. The result
+  reports linked and unlinked addresses, and the operation emits only a safe
+  aggregate audit.
 - Manage only the four approved location records and their effective GPS
   policies; no seed action exists and real names/addresses/coordinates remain
   outside source control until organization approval/import.

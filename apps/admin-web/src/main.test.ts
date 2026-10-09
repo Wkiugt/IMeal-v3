@@ -336,10 +336,7 @@ describe('Admin Web menu surface', () => {
         body: typeof init?.body === 'string' ? init.body : undefined,
       });
       if (url.endsWith('/auth/me')) return response(profile(['menu.manage']));
-      if (
-        url.endsWith('/admin/weekly-menus') &&
-        method === 'GET'
-      ) {
+      if (url.endsWith('/admin/weekly-menus') && method === 'GET') {
         return response(draftCreated ? [draft] : []);
       }
       if (url.endsWith('/admin/weekly-menus/draft')) {
@@ -408,7 +405,8 @@ describe('Admin Web menu surface', () => {
     );
     if (!mealName || !save) throw new Error('Missing meal editor');
     mealName.value = 'Chicken rice';
-    const description = document.querySelector<HTMLTextAreaElement>('.meal-description');
+    const description =
+      document.querySelector<HTMLTextAreaElement>('.meal-description');
     if (!description) throw new Error('Missing meal description');
     description.value = 'Lunch';
     save.click();
@@ -826,7 +824,452 @@ describe('Admin Web persisted oversight', () => {
       expect(document.body.textContent).toContain('Kiểm toán đã lưu');
       expect(document.body.textContent).toContain('USER_DISABLED');
     });
-    expect(records.some((entry) => entry.url.includes('/v1/admin/audit'))).toBe(true);
-    expect(document.body.textContent).not.toContain('Nhật ký phiên trình duyệt');
+    expect(records.some((entry) => entry.url.includes('/v1/admin/audit'))).toBe(
+      true,
+    );
+    expect(document.body.textContent).not.toContain(
+      'Nhật ký phiên trình duyệt',
+    );
+  });
+});
+describe('Admin Web allowlist bulk surface', () => {
+  function bulkAllowlistResponse() {
+    return {
+      acceptedCount: 2,
+      createdCount: 1,
+      updatedCount: 1,
+      linkedCount: 1,
+      unlinkedCount: 1,
+      duplicateCount: 1,
+      items: [
+        {
+          normalizedEmail: 'alice@example.test',
+          outcome: 'CREATED',
+          userLink: 'LINKED',
+        },
+        {
+          normalizedEmail: 'bob@example.test',
+          outcome: 'UPDATED',
+          userLink: 'UNLINKED',
+        },
+      ],
+    };
+  }
+
+  it('previews deterministic row validity and duplicate counts before submit', async () => {
+    const records: RequestRecord[] = [];
+    await loadMain(async (input, init) => {
+      const url = String(input);
+      records.push({
+        url,
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      });
+      if (url.endsWith('/auth/me'))
+        return response(profile(['allowlist.manage']));
+      if (url.endsWith('/admin/allowlist')) return response([]);
+      return response({});
+    });
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('#bulk-allowlist-emails')).not.toBeNull(),
+    );
+    const emails = document.querySelector<HTMLTextAreaElement>(
+      '#bulk-allowlist-emails',
+    );
+    if (!emails) throw new Error('Missing bulk email textarea');
+    emails.value =
+      ' Alice@example.test \nBOB@example.test\nnot-an-email\nalice@example.test\n';
+    emails.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(
+      document.querySelector('#bulk-allowlist-counts')?.textContent,
+    ).toContain('4 dòng không trống');
+    expect(
+      document.querySelector('#bulk-allowlist-counts')?.textContent,
+    ).toContain('3 dòng hợp lệ');
+    expect(
+      document.querySelector('#bulk-allowlist-counts')?.textContent,
+    ).toContain('1 dòng không hợp lệ');
+    expect(
+      document.querySelector('#bulk-allowlist-counts')?.textContent,
+    ).toContain('1 dòng trùng');
+    expect(
+      document.querySelector('#bulk-allowlist-confirmation-context')
+        ?.textContent,
+    ).toEqual(expect.stringContaining('Admin User (admin@example.test)'));
+    expect(
+      document.querySelector('#bulk-allowlist-confirmation-context')
+        ?.textContent,
+    ).toContain('3 dòng hợp lệ');
+    expect(
+      document.querySelector('#bulk-allowlist-confirmation-context')
+        ?.textContent,
+    ).toContain('Đang cho phép');
+    expect(
+      document.querySelector('#bulk-allowlist-confirmation-context')
+        ?.textContent,
+    ).toContain('Hiệu lực');
+    expect(records.filter((request) => request.method === 'POST')).toHaveLength(
+      0,
+    );
+  });
+
+  it('submits normalized bulk emails and renders response counts before refreshing list', async () => {
+    window.confirm = vi.fn(() => true);
+    const records: RequestRecord[] = [];
+    const bulkResponse = bulkAllowlistResponse();
+    let listLoads = 0;
+    await loadMain(async (input, init) => {
+      const url = String(input);
+      records.push({
+        url,
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      });
+      if (url.endsWith('/auth/me'))
+        return response(profile(['allowlist.manage']));
+      if (
+        url.endsWith('/admin/allowlist') &&
+        (init?.method ?? 'GET') === 'GET'
+      ) {
+        listLoads += 1;
+        return response(
+          listLoads > 1
+            ? [
+                {
+                  id: 'allowlist-1',
+                  normalizedEmail: 'alice@example.test',
+                  userId: 'user-1',
+                  state: 'ACTIVE',
+                  purpose: 'A',
+                  effectiveFrom: NOW,
+                  effectiveTo: null,
+                  reason: null,
+                },
+              ]
+            : [],
+        );
+      }
+      if (url.endsWith('/admin/allowlist/bulk')) {
+        return response(bulkResponse);
+      }
+      return response({});
+    });
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('#bulk-allowlist-emails')).not.toBeNull(),
+    );
+    const emails = document.querySelector<HTMLTextAreaElement>(
+      '#bulk-allowlist-emails',
+    );
+    const form = document.querySelector<HTMLFormElement>(
+      '#bulk-allowlist-form',
+    );
+    if (!emails || !form) throw new Error('Missing bulk allowlist form');
+    emails.value = ' Alice@example.test \nBOB@example.test\nalice@example.test';
+    emails.dispatchEvent(new Event('input', { bubbles: true }));
+    form.dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    );
+
+    await vi.waitFor(() =>
+      expect(
+        records.some(
+          (request) =>
+            request.url.endsWith('/admin/allowlist/bulk') &&
+            request.method === 'POST',
+        ),
+      ).toBe(true),
+    );
+    const bulkRequest = records.find((request) =>
+      request.url.endsWith('/admin/allowlist/bulk'),
+    );
+    expect(JSON.parse(bulkRequest?.body ?? '')).toMatchObject({
+      emails: ['alice@example.test', 'bob@example.test', 'alice@example.test'],
+      state: 'ACTIVE',
+      effectiveFrom: expect.stringMatching(/Z$/),
+      effectiveTo: null,
+      reason: null,
+    });
+    expect(bulkResponse.duplicateCount).toBe(1);
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('#bulk-allowlist-feedback')?.textContent,
+      ).toContain(
+        '1 tạo mới · 1 cập nhật · 1 liên kết · 1 chưa liên kết · 1 trùng',
+      ),
+    );
+    await vi.waitFor(() => expect(listLoads).toBeGreaterThanOrEqual(2));
+  });
+
+  it('cancels bulk submission safely without calling the API', async () => {
+    const records: RequestRecord[] = [];
+    window.confirm = vi.fn(() => false);
+    await loadMain(async (input, init) => {
+      const url = String(input);
+      records.push({
+        url,
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      });
+      if (url.endsWith('/auth/me'))
+        return response(profile(['allowlist.manage']));
+      if (url.endsWith('/admin/allowlist')) return response([]);
+      return response({});
+    });
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('#bulk-allowlist-emails')).not.toBeNull(),
+    );
+    const emails = document.querySelector<HTMLTextAreaElement>(
+      '#bulk-allowlist-emails',
+    );
+    const form = document.querySelector<HTMLFormElement>(
+      '#bulk-allowlist-form',
+    );
+    if (!emails || !form) throw new Error('Missing bulk cancellation controls');
+    emails.value = 'alice@example.test';
+    emails.dispatchEvent(new Event('input', { bubbles: true }));
+    form.requestSubmit();
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('#bulk-allowlist-feedback')?.textContent,
+      ).toBe(
+        'Đã hủy thao tác lưu allowlist; không có thay đổi nào được thực hiện.',
+      ),
+    );
+    expect(records.filter((request) => request.method === 'POST')).toHaveLength(
+      0,
+    );
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('Admin User (admin@example.test)'),
+    );
+  });
+
+  it('shows the 500-row limit before attempting bulk submission', async () => {
+    const records: RequestRecord[] = [];
+    await loadMain(async (input, init) => {
+      const url = String(input);
+      records.push({
+        url,
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      });
+      if (url.endsWith('/auth/me'))
+        return response(profile(['allowlist.manage']));
+      if (url.endsWith('/admin/allowlist')) return response([]);
+      return response({});
+    });
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('#bulk-allowlist-emails')).not.toBeNull(),
+    );
+    const emails = document.querySelector<HTMLTextAreaElement>(
+      '#bulk-allowlist-emails',
+    );
+    const form = document.querySelector<HTMLFormElement>(
+      '#bulk-allowlist-form',
+    );
+    if (!emails || !form) throw new Error('Missing bulk limit controls');
+    emails.value = Array.from(
+      { length: 501 },
+      (_, index) => `user-${index}@example.test`,
+    ).join('\n');
+    emails.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(
+      document.querySelector('#bulk-allowlist-counts')?.textContent,
+    ).toContain('Vượt quá giới hạn 500 dòng');
+    form.requestSubmit();
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('#bulk-allowlist-feedback')?.textContent,
+      ).toBe(
+        'Danh sách email vượt quá giới hạn 500 dòng. Vui lòng giảm số dòng trước khi gửi.',
+      ),
+    );
+    expect(records.filter((request) => request.method === 'POST')).toHaveLength(
+      0,
+    );
+  });
+
+  it('exposes stable loading state while bulk save and list refresh are pending', async () => {
+    window.confirm = vi.fn(() => true);
+    const records: RequestRecord[] = [];
+    let listLoads = 0;
+    let releasePost: (() => void) | undefined;
+    let releaseList: (() => void) | undefined;
+    await loadMain(async (input, init) => {
+      const url = String(input);
+      records.push({
+        url,
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      });
+      if (url.endsWith('/auth/me'))
+        return response(profile(['allowlist.manage']));
+      if (
+        url.endsWith('/admin/allowlist') &&
+        (init?.method ?? 'GET') === 'GET'
+      ) {
+        listLoads += 1;
+        if (listLoads > 1) {
+          return new Promise<Response>((resolve) => {
+            releaseList = () => resolve(response([]));
+          });
+        }
+        return response([]);
+      }
+      if (url.endsWith('/admin/allowlist/bulk')) {
+        return new Promise<Response>((resolve) => {
+          releasePost = () => resolve(response(bulkAllowlistResponse()));
+        });
+      }
+      return response({});
+    });
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('#bulk-allowlist-emails')).not.toBeNull(),
+    );
+    const emails = document.querySelector<HTMLTextAreaElement>(
+      '#bulk-allowlist-emails',
+    );
+    const form = document.querySelector<HTMLFormElement>(
+      '#bulk-allowlist-form',
+    );
+    const submit = document.querySelector<HTMLButtonElement>(
+      '#bulk-allowlist-submit',
+    );
+    if (!emails || !form || !submit)
+      throw new Error('Missing bulk loading controls');
+    emails.value = 'alice@example.test';
+    emails.dispatchEvent(new Event('input', { bubbles: true }));
+    form.dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    );
+
+    await vi.waitFor(() => expect(releasePost).toBeTypeOf('function'));
+    expect(form.getAttribute('aria-busy')).toBe('true');
+    expect(submit.disabled).toBe(true);
+    expect(submit.textContent).toBe('Đang lưu…');
+    expect(document.querySelector('#bulk-allowlist-feedback')).toMatchObject({
+      textContent: 'Đang lưu…',
+      role: 'status',
+    });
+
+    releasePost?.();
+    await vi.waitFor(() => expect(releaseList).toBeTypeOf('function'));
+    const list = document.querySelector('#bulk-allowlist-list');
+    expect(list?.getAttribute('aria-busy')).toBe('true');
+    expect(list?.textContent).toContain('Đang tải danh sách allowlist…');
+    releaseList?.();
+    await vi.waitFor(() => {
+      expect(form.getAttribute('aria-busy')).toBe('false');
+      expect(submit.disabled).toBe(false);
+    });
+  });
+
+  it('uses custom empty-input validation instead of native required blocking', async () => {
+    const records: RequestRecord[] = [];
+    await loadMain(async (input, init) => {
+      const url = String(input);
+      records.push({
+        url,
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      });
+      if (url.endsWith('/auth/me'))
+        return response(profile(['allowlist.manage']));
+      if (url.endsWith('/admin/allowlist')) return response([]);
+      return response({});
+    });
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('#bulk-allowlist-emails')).not.toBeNull(),
+    );
+    const form = document.querySelector<HTMLFormElement>(
+      '#bulk-allowlist-form',
+    );
+    const emails = document.querySelector<HTMLTextAreaElement>(
+      '#bulk-allowlist-emails',
+    );
+    if (!form || !emails) throw new Error('Missing bulk empty-input controls');
+    expect(emails.required).toBe(false);
+    form.requestSubmit();
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('#bulk-allowlist-feedback')?.textContent,
+      ).toBe('Vui lòng nhập ít nhất một email.'),
+    );
+    expect(records.filter((request) => request.method === 'POST')).toHaveLength(
+      0,
+    );
+  });
+
+  it('shows a Vietnamese recovery error when bulk API submission fails', async () => {
+    window.confirm = vi.fn(() => true);
+    const records: RequestRecord[] = [];
+    await loadMain(async (input, init) => {
+      const url = String(input);
+      records.push({
+        url,
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      });
+      if (url.endsWith('/auth/me'))
+        return response(profile(['allowlist.manage']));
+      if (url.endsWith('/admin/allowlist') && (init?.method ?? 'GET') === 'GET')
+        return response([]);
+      if (url.endsWith('/admin/allowlist/bulk'))
+        return response(
+          {
+            statusCode: 422,
+            errorCode: 'VALIDATION_ERROR',
+            message: 'Dữ liệu allowlist không hợp lệ.',
+            requestId: '550e8400-e29b-41d4-a716-446655440032',
+          },
+          422,
+        );
+      return response({});
+    });
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('#bulk-allowlist-emails')).not.toBeNull(),
+    );
+    const emails = document.querySelector<HTMLTextAreaElement>(
+      '#bulk-allowlist-emails',
+    );
+    const form = document.querySelector<HTMLFormElement>(
+      '#bulk-allowlist-form',
+    );
+    if (!emails || !form) throw new Error('Missing bulk allowlist form');
+    emails.value = 'alice@example.test';
+    emails.dispatchEvent(new Event('input', { bubbles: true }));
+    form.dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    );
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('#bulk-allowlist-feedback')?.textContent,
+      ).toBe('Dữ liệu allowlist không hợp lệ.'),
+    );
+    expect(
+      document.querySelector('#bulk-allowlist-feedback')?.textContent,
+    ).not.toContain('secret-request-id');
+    expect(document.querySelector('#bulk-allowlist-feedback')).toMatchObject({
+      role: 'alert',
+    });
+    expect(
+      document
+        .querySelector('#bulk-allowlist-feedback')
+        ?.getAttribute('aria-live'),
+    ).toBe('assertive');
+    expect(
+      document.querySelector<HTMLButtonElement>('#bulk-allowlist-submit')
+        ?.disabled,
+    ).toBe(false);
   });
 });

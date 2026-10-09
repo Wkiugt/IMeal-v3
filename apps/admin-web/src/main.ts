@@ -442,7 +442,10 @@ function renderShell(): HTMLElement {
     nav.append(usersButton);
   }
   if (profile?.permissions.includes('audit.read')) {
-    const auditButton = actionButton('Kiểm toán đã lưu', () => void renderPersistedAuditView());
+    const auditButton = actionButton(
+      'Kiểm toán đã lưu',
+      () => void renderPersistedAuditView(),
+    );
     auditButton.setAttribute('aria-pressed', String(currentView === 'audit'));
     nav.append(auditButton);
   }
@@ -451,11 +454,17 @@ function renderShell(): HTMLElement {
       'Kiểm toán phục vụ',
       () => void renderServingAuditView(),
     );
-    servingButton.setAttribute('aria-pressed', String(currentView === 'servings'));
+    servingButton.setAttribute(
+      'aria-pressed',
+      String(currentView === 'servings'),
+    );
     nav.append(servingButton);
   }
   if (profile?.permissions.includes('jobs.read')) {
-    const jobsButton = actionButton('Tác vụ & sức khỏe', () => void renderJobsView());
+    const jobsButton = actionButton(
+      'Tác vụ & sức khỏe',
+      () => void renderJobsView(),
+    );
     jobsButton.setAttribute('aria-pressed', String(currentView === 'jobs'));
     nav.append(jobsButton);
   }
@@ -599,7 +608,10 @@ async function renderMenus(): Promise<void> {
           'aria-label',
           `Mô tả món ăn ngày ${formatDate(day.date)}`,
         );
-        descriptionField.append(element('label', '', 'Mô tả'), descriptionInput);
+        descriptionField.append(
+          element('label', '', 'Mô tả'),
+          descriptionInput,
+        );
         const imageUrlField = inputField(
           'URL hình ảnh',
           day.imageUrl,
@@ -1072,6 +1084,15 @@ function renderAllowlistEntry(entry: AllowlistEntry): HTMLElement {
   return card;
 }
 
+type BulkEmailPreview = {
+  emails: string[];
+  uniqueEmails: string[];
+  nonEmptyCount: number;
+  validCount: number;
+  invalidCount: number;
+  duplicateCount: number;
+};
+
 async function renderAllowlist(root: HTMLElement): Promise<void> {
   const section = element('section', 'operation-section');
   section.append(
@@ -1160,25 +1181,313 @@ async function renderAllowlist(root: HTMLElement): Promise<void> {
   });
   section.append(form);
 
-  const list = element('div', 'stack');
-  try {
-    const entries = z
-      .array(AllowlistEntrySchema)
-      .parse(await api('/admin/allowlist'));
-    if (entries.length === 0)
-      list.append(element('div', 'card empty', 'Chưa có allowlist record.'));
-    else for (const entry of entries) list.append(renderAllowlistEntry(entry));
-  } catch (error: unknown) {
-    list.append(
-      element(
-        'div',
-        'error',
-        userFacingMessage(error, 'Không thể tải allowlist.'),
-      ),
+  const bulkForm = element('form', 'card operation-form bulk-allowlist-form');
+  bulkForm.id = 'bulk-allowlist-form';
+  bulkForm.append(
+    operationHeading(
+      'Nhập nhiều email',
+      'Mỗi dòng một email. Các dòng trùng vẫn được gửi sau khi chuẩn hóa để máy chủ áp dụng giới hạn 500 email và báo duplicateCount.',
+    ),
+  );
+  const bulkGrid = element('div', 'form-grid');
+  const bulkEmailField = element('div', 'field bulk-allowlist-emails-field');
+  const bulkEmailsLabel = element(
+    'label',
+    '',
+    'Danh sách email (mỗi dòng một email)',
+  );
+  bulkEmailsLabel.htmlFor = 'bulk-allowlist-emails';
+  const bulkEmails = element('textarea');
+  bulkEmails.id = 'bulk-allowlist-emails';
+  bulkEmails.rows = 6;
+  bulkEmails.setAttribute('aria-describedby', 'bulk-allowlist-counts');
+  bulkEmailField.append(bulkEmailsLabel, bulkEmails);
+  bulkGrid.append(bulkEmailField);
+
+  const bulkStateField = element('div', 'field');
+  const bulkStateLabel = element('label', '', 'Trạng thái cho các email');
+  bulkStateLabel.htmlFor = 'bulk-allowlist-state';
+  const bulkState = element('select');
+  bulkState.id = 'bulk-allowlist-state';
+  for (const value of ['ACTIVE', 'DISABLED'] as const) {
+    const option = element(
+      'option',
+      '',
+      value === 'ACTIVE' ? 'Đang cho phép' : 'Đã tắt',
     );
+    option.value = value;
+    bulkState.append(option);
+  }
+  bulkStateField.append(bulkStateLabel, bulkState);
+
+  const bulkFromField = element('div', 'field');
+  const bulkFromLabel = element('label', '', 'Hiệu lực từ cho các email');
+  bulkFromLabel.htmlFor = 'bulk-allowlist-effective-from';
+  const bulkFrom = element('input');
+  bulkFrom.type = 'datetime-local';
+  bulkFrom.id = 'bulk-allowlist-effective-from';
+  bulkFrom.required = true;
+  bulkFrom.value = dateTimeInputValue(new Date());
+  bulkFromField.append(bulkFromLabel, bulkFrom);
+
+  const bulkToField = element('div', 'field');
+  const bulkToLabel = element('label', '', 'Hiệu lực đến (tùy chọn)');
+  bulkToLabel.htmlFor = 'bulk-allowlist-effective-to';
+  const bulkTo = element('input');
+  bulkTo.type = 'datetime-local';
+  bulkTo.id = 'bulk-allowlist-effective-to';
+  bulkToField.append(bulkToLabel, bulkTo);
+
+  const bulkReasonField = element('div', 'field');
+  const bulkReasonLabel = element('label', '', 'Lý do chung (tùy chọn)');
+  bulkReasonLabel.htmlFor = 'bulk-allowlist-reason';
+  const bulkReason = element('input');
+  bulkReason.id = 'bulk-allowlist-reason';
+  bulkReason.maxLength = 500;
+  bulkReasonField.append(bulkReasonLabel, bulkReason);
+  bulkGrid.append(bulkStateField, bulkFromField, bulkToField, bulkReasonField);
+
+  const bulkCounts = element('div', 'notice bulk-allowlist-counts');
+  bulkCounts.id = 'bulk-allowlist-counts';
+  bulkCounts.setAttribute('aria-live', 'polite');
+  const bulkConfirmationContext = element(
+    'div',
+    'notice bulk-allowlist-confirmation-context',
+  );
+  bulkConfirmationContext.id = 'bulk-allowlist-confirmation-context';
+  bulkConfirmationContext.setAttribute('role', 'region');
+  bulkConfirmationContext.setAttribute(
+    'aria-label',
+    'Ngữ cảnh xác nhận lưu allowlist hàng loạt',
+  );
+  const bulkFeedback = element('div', 'form-feedback bulk-feedback-loading');
+  bulkFeedback.id = 'bulk-allowlist-feedback';
+  bulkFeedback.setAttribute('aria-live', 'polite');
+  bulkFeedback.setAttribute('role', 'status');
+  const bulkSubmit = actionButton('Lưu nhiều allowlist', () => undefined);
+  bulkSubmit.id = 'bulk-allowlist-submit';
+  bulkSubmit.type = 'submit';
+  bulkForm.setAttribute('aria-busy', 'false');
+  bulkForm.append(
+    bulkGrid,
+    bulkCounts,
+    bulkConfirmationContext,
+    bulkSubmit,
+    bulkFeedback,
+  );
+
+  const setBulkFeedback = (
+    message: string,
+    kind: 'success' | 'error' | 'loading',
+  ): void => {
+    bulkFeedback.className = `form-feedback bulk-feedback-${kind}`;
+    bulkFeedback.textContent = message;
+    bulkFeedback.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+    bulkFeedback.setAttribute(
+      'aria-live',
+      kind === 'error' ? 'assertive' : 'polite',
+    );
+  };
+
+  const parseBulkRows = (): BulkEmailPreview => {
+    const rows = bulkEmails.value
+      .split(/\r?\n/)
+      .map((row) => row.trim())
+      .filter(Boolean);
+    const normalized: string[] = [];
+    let invalidCount = 0;
+    for (const row of rows) {
+      const parsed = v1.AdminAllowlistBulkUpsertRequestSchema.safeParse({
+        emails: [row],
+        state: 'ACTIVE',
+        effectiveFrom: '1970-01-01T00:00:00.000Z',
+        effectiveTo: null,
+        reason: null,
+      });
+      if (parsed.success) normalized.push(parsed.data.emails[0]);
+      else invalidCount += 1;
+    }
+    const uniqueEmails = [...new Set(normalized)];
+    return {
+      emails: normalized,
+      uniqueEmails,
+      nonEmptyCount: rows.length,
+      validCount: normalized.length,
+      invalidCount,
+      duplicateCount: normalized.length - uniqueEmails.length,
+    };
+  };
+  const updateBulkConfirmationContext = (preview: BulkEmailPreview): void => {
+    const actorName = profile?.name?.trim() || 'Không xác định';
+    const actorEmail = profile?.email || 'Không xác định';
+    const fromLabel = bulkFrom.value
+      ? formatDateTime(isoOrFallback(bulkFrom.value, ''))
+      : 'Chưa chọn';
+    const toLabel = bulkTo.value
+      ? formatDateTime(isoOrFallback(bulkTo.value, ''))
+      : 'Không hết hạn';
+    const stateLabel =
+      bulkState.value === 'DISABLED' ? 'Đã tắt' : 'Đang cho phép';
+    bulkConfirmationContext.textContent =
+      `Người thực hiện: ${actorName} (${actorEmail}) · ` +
+      `Phạm vi gửi: ${preview.validCount} dòng hợp lệ, ` +
+      `${preview.uniqueEmails.length} email duy nhất, ` +
+      `${preview.duplicateCount} dòng trùng · ` +
+      `Trạng thái: ${stateLabel} · ` +
+      `Hiệu lực: ${fromLabel} – ${toLabel}`;
+  };
+
+  const updateBulkCounts = (): BulkEmailPreview => {
+    const preview = parseBulkRows();
+    const limitMessage =
+      preview.nonEmptyCount > 500 ? ' · Vượt quá giới hạn 500 dòng' : '';
+    bulkCounts.textContent = `${preview.nonEmptyCount} dòng không trống · ${preview.validCount} dòng hợp lệ · ${preview.invalidCount} dòng không hợp lệ · ${preview.duplicateCount} dòng trùng${limitMessage}`;
+    updateBulkConfirmationContext(preview);
+    return preview;
+  };
+  bulkEmails.addEventListener('input', updateBulkCounts);
+  bulkState.addEventListener('input', updateBulkCounts);
+  bulkState.addEventListener('change', updateBulkCounts);
+  bulkFrom.addEventListener('input', updateBulkCounts);
+  bulkTo.addEventListener('input', updateBulkCounts);
+  bulkFrom.addEventListener('change', updateBulkCounts);
+  bulkTo.addEventListener('change', updateBulkCounts);
+  updateBulkCounts();
+  bulkForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const preview = updateBulkCounts();
+    if (preview.nonEmptyCount === 0) {
+      setBulkFeedback('Vui lòng nhập ít nhất một email.', 'error');
+      return;
+    }
+    if (preview.nonEmptyCount > 500) {
+      setBulkFeedback(
+        'Danh sách email vượt quá giới hạn 500 dòng. Vui lòng giảm số dòng trước khi gửi.',
+        'error',
+      );
+      return;
+    }
+    if (preview.invalidCount > 0) {
+      setBulkFeedback(
+        'Vui lòng sửa các email không hợp lệ trước khi gửi.',
+        'error',
+      );
+      return;
+    }
+    const payload = {
+      emails: preview.emails,
+      state: bulkState.value as 'ACTIVE' | 'DISABLED',
+      effectiveFrom: isoOrFallback(bulkFrom.value, new Date().toISOString()),
+      effectiveTo: bulkTo.value
+        ? isoOrFallback(bulkTo.value, new Date().toISOString())
+        : null,
+      reason: bulkReason.value.trim() || null,
+    };
+    const parsedPayload =
+      v1.AdminAllowlistBulkUpsertRequestSchema.safeParse(payload);
+    if (!parsedPayload.success) {
+      setBulkFeedback('Thông tin allowlist chưa hợp lệ.', 'error');
+      return;
+    }
+    const actorName = profile?.name?.trim() || 'Không xác định';
+    const actorEmail = profile?.email || 'Không xác định';
+    const effectiveToLabel = parsedPayload.data.effectiveTo
+      ? formatDateTime(parsedPayload.data.effectiveTo)
+      : 'Không hết hạn';
+    const confirmed = window.confirm(
+      `Xác nhận lưu allowlist hàng loạt?\n` +
+        `Người thực hiện: ${actorName} (${actorEmail})\n` +
+        `Phạm vi: ${preview.validCount} dòng hợp lệ, ` +
+        `${preview.uniqueEmails.length} email duy nhất, ` +
+        `${preview.duplicateCount} dòng trùng\n` +
+        `Trạng thái: ${bulkState.value === 'DISABLED' ? 'Đã tắt' : 'Đang cho phép'}\n` +
+        `Hiệu lực: ${formatDateTime(parsedPayload.data.effectiveFrom)} – ${effectiveToLabel}`,
+    );
+    if (!confirmed) {
+      setBulkFeedback(
+        'Đã hủy thao tác lưu allowlist; không có thay đổi nào được thực hiện.',
+        'success',
+      );
+      return;
+    }
+    bulkForm.setAttribute('aria-busy', 'true');
+    bulkSubmit.disabled = true;
+    bulkSubmit.textContent = 'Đang lưu…';
+    setBulkFeedback('Đang lưu…', 'loading');
+    void (async () => {
+      try {
+        const response = await api('/admin/allowlist/bulk', {
+          method: 'POST',
+          body: JSON.stringify(parsedPayload.data),
+        });
+        const parsedResponse =
+          v1.AdminAllowlistBulkUpsertResponseSchema.safeParse(response);
+        if (!parsedResponse.success)
+          throw new AdminDisplayError('Phản hồi từ máy chủ không hợp lệ.');
+        const result = parsedResponse.data;
+        recordAudit('ALLOWLIST_BULK_UPSERTED', {
+          result: 'ACCEPTED',
+          acceptedCount: result.acceptedCount,
+        });
+        setBulkFeedback(
+          `Đã lưu ${result.acceptedCount} email: ${result.createdCount} tạo mới · ${result.updatedCount} cập nhật · ${result.linkedCount} liên kết · ${result.unlinkedCount} chưa liên kết · ${result.duplicateCount} trùng.`,
+          'success',
+        );
+        await loadEntries();
+      } catch (error: unknown) {
+        setBulkFeedback(
+          userFacingMessage(error, 'Không thể lưu danh sách allowlist.'),
+          'error',
+        );
+      } finally {
+        bulkForm.setAttribute('aria-busy', 'false');
+        bulkSubmit.disabled = false;
+        bulkSubmit.textContent = 'Lưu nhiều allowlist';
+      }
+    })();
+  });
+  section.append(bulkForm);
+
+  const list = element('div', 'stack');
+  list.id = 'bulk-allowlist-list';
+  list.setAttribute('aria-busy', 'false');
+  async function loadEntries(): Promise<void> {
+    const loading = element(
+      'div',
+      'list-loading',
+      'Đang tải danh sách allowlist…',
+    );
+    loading.setAttribute('role', 'status');
+    loading.setAttribute('aria-live', 'polite');
+    list.setAttribute('aria-busy', 'true');
+    list.prepend(loading);
+    try {
+      const entries = z
+        .array(AllowlistEntrySchema)
+        .parse(await api('/admin/allowlist'));
+      if (entries.length === 0)
+        list.replaceChildren(
+          element('div', 'card empty', 'Chưa có allowlist record.'),
+        );
+      else {
+        list.replaceChildren();
+        for (const entry of entries) list.append(renderAllowlistEntry(entry));
+      }
+    } catch (error: unknown) {
+      list.replaceChildren(
+        element(
+          'div',
+          'error',
+          userFacingMessage(error, 'Không thể tải allowlist.'),
+        ),
+      );
+    } finally {
+      list.setAttribute('aria-busy', 'false');
+    }
   }
   section.append(list);
   root.append(section);
+  await loadEntries();
 }
 
 function renderRosterPreview(
@@ -1511,7 +1820,13 @@ async function renderPersistedAuditView(): Promise<void> {
   app.replaceChildren(renderShell());
   const root = contentRoot();
   if (!profile?.permissions.includes('audit.read')) {
-    root.append(element('div', 'card empty', 'Tài khoản không có quyền kiểm toán đã lưu.'));
+    root.append(
+      element(
+        'div',
+        'card empty',
+        'Tài khoản không có quyền kiểm toán đã lưu.',
+      ),
+    );
     return;
   }
   await renderPersistedAudit(root, { api });
@@ -1522,7 +1837,13 @@ async function renderServingAuditView(): Promise<void> {
   app.replaceChildren(renderShell());
   const root = contentRoot();
   if (!profile?.permissions.includes('serving.read')) {
-    root.append(element('div', 'card empty', 'Tài khoản không có quyền kiểm toán phục vụ.'));
+    root.append(
+      element(
+        'div',
+        'card empty',
+        'Tài khoản không có quyền kiểm toán phục vụ.',
+      ),
+    );
     return;
   }
   await renderServingAudit(root, { api });
@@ -1533,7 +1854,9 @@ async function renderJobsView(): Promise<void> {
   app.replaceChildren(renderShell());
   const root = contentRoot();
   if (!profile?.permissions.includes('jobs.read')) {
-    root.append(element('div', 'card empty', 'Tài khoản không có quyền xem tác vụ.'));
+    root.append(
+      element('div', 'card empty', 'Tài khoản không có quyền xem tác vụ.'),
+    );
     return;
   }
   await renderJobsHealth(root, { api });

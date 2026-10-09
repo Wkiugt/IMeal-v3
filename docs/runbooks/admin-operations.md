@@ -12,6 +12,33 @@ Migration `20261006120000_admin_audit_and_job_runs` grants the admin role:
 
 The same paths are also mounted without the `/v1` prefix. Guards match the other admin routes. HTTP tests that override the session service do not prove production authentication.
 
+Allowlist operations separately require the explicit `allowlist.manage`
+permission. The existing single allowlist add/list/toggle operations remain
+available; bulk provisioning is available at `POST /v1/admin/allowlist/bulk`
+(also `POST /admin/allowlist/bulk`).
+
+## Allowlist provisioning
+
+Allowlist A is server-authoritative login-eligibility data. Admin Web sends
+allowlist mutations to the API; it does not infer eligibility from email domain,
+client claims, account status or role. Every operation requires an authenticated
+session with the explicit `allowlist.manage` permission.
+
+The existing single add, list and toggle operations remain available. For a
+cohort, use the Admin Web bulk textarea and submit up to 500 email entries with
+one shared state, effective-date range and reason. The API normalizes each
+email before deduplicating, validates the complete request before writing, and
+upserts the batch in one PostgreSQL transaction. A validation failure leaves
+the allowlist unchanged.
+
+Bulk upsert links an existing user only when the normalized email matches. It
+does not create users, assign roles, or otherwise grant authorization. The
+response reports linked and unlinked results so operators can distinguish
+allowlist eligibility from account and role provisioning. A successful batch
+writes one safe aggregate audit outcome; do not use audit/log output as a
+place to expose OTPs, session tokens, hashes, raw GPS or other secrets.
+
+
 ## Persisted audit
 
 The API queries `AuditLog` with page pagination. Filters are time range, action, actor (`userId`), target user, result, and resource type. Target, result, and resource type are nullable indexed columns. Rows written before the columns were populated can still match the exact JSON keys `targetUserId`, `result`, and `resourceType`.

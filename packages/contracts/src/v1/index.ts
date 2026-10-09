@@ -12,3 +12,4 @@ export * from './locations';
 export * from './notifications';
 export * from './admin-users';
 export * from './admin-operations';
+export * from './admin-allowlist';

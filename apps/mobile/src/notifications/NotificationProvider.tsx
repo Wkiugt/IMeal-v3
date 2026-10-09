@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 import { AppState, Linking, Modal, Platform, StyleSheet, Text, View } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import { isRunningInExpoGo } from 'expo';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
@@ -12,6 +12,10 @@ import { notificationAPI } from '../api/notificationAPI';
 import { navigateToNotification } from '../navigation';
 import { designTokens, getElevationStyle } from '../ui/designTokens';
 import { ActionButton } from '../ui/components';
+import {
+  loadNotificationModule,
+  supportsNotificationModule,
+} from './notificationRuntime';
 
 const EXPLAINER_KEY = 'imeal.notification-explainer-seen.v1';
 const FOREGROUND_NOTIFICATION_BEHAVIOR = {
@@ -92,10 +96,17 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const { t } = useLanguage();
   const { token } = useSession();
   const native = Platform.OS !== 'web';
+  const runningInExpoGo = isRunningInExpoGo();
+  const notificationsAvailable = supportsNotificationModule(
+    Platform.OS,
+    runningInExpoGo,
+  );
   const physicalDevice = native && Device.isDevice;
   const easProjectId = projectId();
   const [unreadCount, setUnreadCount] = useState(0);
-  const [permissionStatus, setPermissionStatus] = useState<PermissionStatus>(native ? 'undetermined' : 'unavailable');
+  const [permissionStatus, setPermissionStatus] = useState<PermissionStatus>(
+    notificationsAvailable && native ? 'undetermined' : 'unavailable',
+  );
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
   const [configurationError, setConfigurationError] = useState<string | null>(null);
   const [lastNotificationId, setLastNotificationId] = useState<string | null>(null);
@@ -132,7 +143,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const refreshPermissionStatus = useCallback(async (): Promise<PermissionStatus> => {
-    if (!native) {
+    if (!notificationsAvailable) {
       setPermissionStatus('unavailable');
       return 'unavailable';
     }
@@ -141,6 +152,14 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       return 'simulator';
     }
     try {
+      const Notifications = await loadNotificationModule(
+        Platform.OS,
+        runningInExpoGo,
+      );
+      if (!Notifications) {
+        setPermissionStatus('unavailable');
+        return 'unavailable';
+      }
       const permissions = await Notifications.getPermissionsAsync();
       const nextStatus = permissions.status === 'granted' ? 'granted' : permissions.status === 'denied' ? 'denied' : 'undetermined';
       setPermissionStatus(nextStatus);
@@ -149,7 +168,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       setPermissionStatus('undetermined');
       return 'undetermined';
     }
-  }, [native, physicalDevice]);
+  }, [notificationsAvailable, physicalDevice, runningInExpoGo]);
 
   const revokeRegisteredToken = useCallback(async (accessToken: string, pushToken: string) => {
     try {
@@ -172,7 +191,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const registerCurrentDevice = useCallback(async (permissionOverride?: PermissionStatus) => {
     const accessToken = token;
     const effectivePermissionStatus = permissionOverride ?? permissionStatus;
-    if (!accessToken || !native || !physicalDevice || effectivePermissionStatus !== 'granted') return;
+    if (!accessToken || !notificationsAvailable || !physicalDevice || effectivePermissionStatus !== 'granted') return;
     if (registrationInFlightRef.current) {
       registrationRetryRef.current = true;
       return;
@@ -183,6 +202,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     }
     registrationInFlightRef.current = true;
     try {
+      const Notifications = await loadNotificationModule(
+        Platform.OS,
+        runningInExpoGo,
+      );
+      if (!Notifications) return;
       const response = await Notifications.getExpoPushTokenAsync({ projectId: easProjectId });
       const nextToken = response.data;
       const parsed = v1.ExpoPushTokenSchema.safeParse(nextToken);
@@ -214,13 +238,13 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         setRegistrationKick((current) => current + 1);
       }
     }
-  }, [easProjectId, native, permissionStatus, physicalDevice, revokeRegisteredToken, t, token]);
+  }, [easProjectId, notificationsAvailable, permissionStatus, physicalDevice, revokeRegisteredToken, runningInExpoGo, t, token]);
 
   const enableNotifications = useCallback(async () => {
     await writeExplainerSeen().catch(() => undefined);
     setExplainerVisible(false);
-    if (!native || !physicalDevice) {
-      setPermissionStatus(native ? 'simulator' : 'unavailable');
+    if (!notificationsAvailable || !physicalDevice) {
+      setPermissionStatus(notificationsAvailable ? 'simulator' : 'unavailable');
       return;
     }
     if (permissionStatus === 'denied') {
@@ -228,6 +252,14 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       return;
     }
     try {
+      const Notifications = await loadNotificationModule(
+        Platform.OS,
+        runningInExpoGo,
+      );
+      if (!Notifications) {
+        setPermissionStatus('unavailable');
+        return;
+      }
       const permissions = await Notifications.requestPermissionsAsync();
 
       const nextStatus = permissions.status === 'granted' ? 'granted' : permissions.status === 'denied' ? 'denied' : 'undetermined';
@@ -236,22 +268,32 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     } catch {
       setPermissionStatus('denied');
     }
-  }, [native, openSettings, permissionStatus, physicalDevice, registerCurrentDevice]);
+  }, [notificationsAvailable, openSettings, permissionStatus, physicalDevice, registerCurrentDevice, runningInExpoGo]);
 
   useEffect(() => {
-    if (!native) return;
-    Notifications.setNotificationHandler({
-      handleNotification: async () => FOREGROUND_NOTIFICATION_BEHAVIOR,
-    });
-  }, [native]);
+    if (!notificationsAvailable) return;
+    void loadNotificationModule(Platform.OS, runningInExpoGo)
+      .then((Notifications) => {
+        if (!Notifications) return;
+        Notifications.setNotificationHandler({
+          handleNotification: async () => FOREGROUND_NOTIFICATION_BEHAVIOR,
+        });
+      })
+      .catch(() => undefined);
+  }, [notificationsAvailable, runningInExpoGo]);
   useEffect(() => {
-    if (!native || Platform.OS !== 'android') return;
-    void Notifications.setNotificationChannelAsync('imeal-default', {
-      name: 'IMeal',
-      importance: Notifications.AndroidImportance.HIGH,
-      sound: 'default',
-    });
-  }, [native]);
+    if (!notificationsAvailable || Platform.OS !== 'android') return;
+    void loadNotificationModule(Platform.OS, runningInExpoGo)
+      .then((Notifications) => {
+        if (!Notifications) return;
+        return Notifications.setNotificationChannelAsync('imeal-default', {
+          name: 'IMeal',
+          importance: Notifications.AndroidImportance.HIGH,
+          sound: 'default',
+        });
+      })
+      .catch(() => undefined);
+  }, [notificationsAvailable, runningInExpoGo]);
 
 
   useEffect(() => {
@@ -277,7 +319,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     if (token) void refreshPermissionStatus();
   }, [refreshPermissionStatus, token]);
   useEffect(() => {
-    if (!token || !native) return;
+    if (!token || !notificationsAvailable) return;
     let mounted = true;
     void readExplainerSeen().then((seen) => {
       if (mounted && !seen) setExplainerVisible(true);
@@ -285,17 +327,17 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     return () => {
       mounted = false;
     };
-  }, [native, token]);
+  }, [notificationsAvailable, token]);
 
   useEffect(() => {
     void registerCurrentDevice();
   }, [registerCurrentDevice, registrationKick]);
 
   useEffect(() => {
-    if (!native) return;
-    const received = Notifications.addNotificationReceivedListener(() => {
-      void refreshUnread();
-    });
+    if (!notificationsAvailable) return;
+    let mounted = true;
+    let receivedSubscription: { remove: () => void } | null = null;
+    let responseSubscription: { remove: () => void } | null = null;
     const handleResponse = (response: unknown) => {
       const notificationId = responseNotificationId(response);
       const previousResponse = lastResponseRef.current;
@@ -309,15 +351,24 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       else pendingResponseIdRef.current = notificationId;
       void refreshUnread();
     };
-    const response = Notifications.addNotificationResponseReceivedListener(handleResponse);
-    void Notifications.getLastNotificationResponseAsync().then((lastResponse) => {
-      if (lastResponse) handleResponse(lastResponse);
-    });
+    void loadNotificationModule(Platform.OS, runningInExpoGo)
+      .then((Notifications) => {
+        if (!mounted || !Notifications) return;
+        receivedSubscription = Notifications.addNotificationReceivedListener(() => {
+          void refreshUnread();
+        });
+        responseSubscription = Notifications.addNotificationResponseReceivedListener(handleResponse);
+        return Notifications.getLastNotificationResponseAsync().then((lastResponse) => {
+          if (mounted && lastResponse) handleResponse(lastResponse);
+        });
+      })
+      .catch(() => undefined);
     return () => {
-      received.remove();
-      response.remove();
+      mounted = false;
+      receivedSubscription?.remove();
+      responseSubscription?.remove();
     };
-  }, [native, refreshUnread, token]);
+  }, [notificationsAvailable, refreshUnread, runningInExpoGo, token]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
