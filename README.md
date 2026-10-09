@@ -38,9 +38,13 @@ corepack yarn install --immutable
 Copy-Item .env.example .env
 ```
 
-macOS/Linux: đổi `Copy-Item .env.example .env` thành `cp .env.example .env`. Các biến shell bên dưới dùng `$env:NAME='value'`; shell bash dùng `export NAME='value'`.
+macOS/Linux: đổi `Copy-Item .env.example .env` thành `cp .env.example .env`.
+Các workflow local bên dưới dùng file env bị ignore, không cần gán biến trong
+PowerShell hoặc shell hiện tại.
 
-Mở `.env` và thay mọi `CHANGE_ME_LOCAL` cùng secret OTP/session bằng giá trị local riêng. Giữ `AUTH_MODE=otp` và `REQUIRE_AUTH=true`. API đọc file này; worker thì không.
+Mở `.env` và thay mọi `CHANGE_ME_LOCAL` cùng secret OTP/session bằng giá trị
+local riêng. Giữ `AUTH_MODE=otp` và `REQUIRE_AUTH=true`. API đọc file này;
+worker Compose chỉ nhận các biến worker mà `docker compose` truyền vào.
 
 ### 2. Database và migration
 
@@ -70,48 +74,84 @@ Mỗi lệnh một terminal. API phải chạy trước mobile.
 
 | App | Lệnh | Đích |
 | --- | --- | --- |
-| Admin Web | `$env:VITE_API_URL='http://localhost:3000'; corepack yarn workspace @imeal/admin-web dev` | `http://localhost:5173` |
+| Admin Web | sửa `apps/admin-web/.env.local`, rồi `corepack yarn workspace @imeal/admin-web dev` | `http://localhost:5173` |
 | Mobile (native) | `corepack yarn workspace @imeal/mobile start` | Expo Go trên Android hoặc iOS |
 | Worker | xem khối bên dưới | `localhost:3001` |
+
+Admin Web dùng env riêng của Vite; file local này bị ignore và không được dùng
+cho mobile hoặc worker:
+
+```dotenv
+# apps/admin-web/.env.local (không commit)
+VITE_API_URL=http://localhost:3000
+```
 
 Expo Web is not a supported staging or production client. Use the native Android/iOS
 paths above for release qualification; a local `expo start --web` session is only
 for development/UI inspection and is not evidence that the API supports browser
 origins or CORS preflight.
 
-Worker không tự đọc `.env`:
+Worker không tự đọc root `.env`. Với worker chạy trực tiếp, tạo file bị ignore
+`apps/worker/.env.local` và thay placeholder/SMTP local bằng giá trị riêng:
 
-```powershell
-$env:DATABASE_URL='postgresql://CHANGE_ME_LOCAL:CHANGE_ME_LOCAL@localhost:6432/imeal?schema=public&pgbouncer=true'
-$env:PORT='3001'
-corepack yarn workspace @imeal/worker start:dev
+```dotenv
+# apps/worker/.env.local (không commit)
+NODE_ENV=development
+DATABASE_URL=postgresql://<POSTGRES_USER>:<POSTGRES_PASSWORD>@localhost:6432/<POSTGRES_DB>?schema=public&pgbouncer=true
+PORT=3001
+OTP_DELIVERY_ENCRYPTION_KEY=CHANGE_ME_LOCAL_CHANGE_ME_LOCAL_CHANGE_ME_LOCAL
+OTP_SMTP_HOST=smtp.gmail.com
+OTP_SMTP_PORT=587
+OTP_SMTP_USERNAME=otp-local@example.test
+OTP_SMTP_PASSWORD=CHANGE_ME_LOCAL
+OTP_SMTP_FROM=otp-local@example.test
+OTP_SMTP_FROM_NAME=IMeal
+OTP_SMTP_REQUIRE_TLS=true
 ```
 
-Thay user/password bằng đúng giá trị trong `.env`.
-For Gmail OTP setup, see the [OTP email runbook](./docs/runbooks/otp-email.md). Use a dedicated mailbox with 2-Step Verification and a Google App Password; never put a regular Google password or a real credential in this repository.
+Chạy worker trực tiếp bằng script chỉ nạp file này:
+
+```powershell
+corepack yarn workspace @imeal/worker start:dev:env
+```
+
+Compose vẫn dùng root `.env` và chỉ truyền các biến worker cần thiết vào
+container; không nạp root `.env` wholesale vào worker process. For Gmail OTP
+setup, see the [OTP email runbook](./docs/runbooks/otp-email.md). Use a
+dedicated mailbox with 2-Step Verification and a Google App Password; never
+put a regular Google password or a real credential in this repository.
 
 Local SMTP injection has two supported modes:
 
-- **Compose (selected local behavior):** `docker compose` reads the untracked `.env` and passes `OTP_SMTP_USERNAME`, `OTP_SMTP_PASSWORD`, `OTP_SMTP_FROM`, and optional `OTP_SMTP_FROM_NAME` to the worker only. The API receives no SMTP credentials.
-- **Direct worker:** because the worker does not read `.env`, set the same variables in the worker process before starting it:
-
-  ```powershell
-  $env:OTP_SMTP_HOST='smtp.gmail.com'
-  $env:OTP_SMTP_PORT='587'
-  $env:OTP_SMTP_USERNAME='otp-local@example.test'
-  $env:OTP_SMTP_PASSWORD='CHANGE_ME_LOCAL'
-  $env:OTP_SMTP_FROM='otp-local@example.test'
-  $env:OTP_SMTP_FROM_NAME='IMeal'
-  $env:OTP_SMTP_REQUIRE_TLS='true'
-  corepack yarn workspace @imeal/worker start:dev
-  ```
-
-Both modes use STARTTLS over TCP `587`; production validation remains fail-closed. Rotate by creating a replacement App Password, updating the protected worker environment, restarting the worker, verifying delivery, and then revoking the old App Password. Do not add `OTP_PROVIDER_API_KEY` or any SMTP credential to the API environment.
+- **Compose (selected local behavior):** `docker compose` reads the untracked
+  `.env` and passes `OTP_SMTP_USERNAME`, `OTP_SMTP_PASSWORD`, `OTP_SMTP_FROM`,
+  and optional `OTP_SMTP_FROM_NAME` to the worker only. The API receives no
+  SMTP credentials.
+- **Direct worker:** use `apps/worker/.env.local` and
+  `start:dev:env` above. Both modes use STARTTLS over TCP `587`; production
+  validation remains fail-closed. Rotate by creating a replacement App
+  Password, updating the protected worker environment, restarting the worker,
+  verifying delivery, and then revoking the old App Password. Do not add
+  `OTP_PROVIDER_API_KEY` or any SMTP credential to the API environment.
 
 
 ## Mobile
 
-Để trống `EXPO_PUBLIC_API_URL` khi chạy local hoặc cùng LAN. App tự dùng `http://<Metro-host>:3000/api`.
+Các lệnh Expo trực tiếp (`start`, `android`, `ios`, `web`) chạy trong
+`apps/mobile` không tự đọc `.env` ở thư mục gốc. Với local/LAN, dùng file
+riêng bị ignore `apps/mobile/.env.lan.local`; file này không chứa secret:
+
+```dotenv
+# apps/mobile/.env.lan.local (không commit)
+IMEAL_LAN_HOST=<LAN IPv4>
+EXPO_PUBLIC_API_URL=
+```
+
+`IMEAL_LAN_HOST` là địa chỉ IPv4 mà điện thoại có thể truy cập. Để trống
+`EXPO_PUBLIC_API_URL` khi chạy local hoặc cùng LAN để app tự dùng
+`http://<Metro-host>:3000/api`. File trên chỉ được nạp bởi
+`start:lan:env`; lệnh `start:lan` hiện tại vẫn giữ cơ chế tự dò một IPv4
+hoặc nhận biến môi trường đã có sẵn.
 
 Android Expo Go từ SDK 53 không còn hỗ trợ remote push notifications của
 `expo-notifications`. Khi chạy bundle bằng Expo Go, app sẽ giữ inbox và các
@@ -131,7 +171,8 @@ Không dùng `expo start`/Expo Go để kiểm thử việc nhận push.
 | Nhiều máy ADB | reverse thủ công rồi `start --localhost` | xem bên dưới |
 | Android emulator | `corepack yarn workspace @imeal/mobile android` | AVD đang chạy |
 | iOS Simulator | `corepack yarn workspace @imeal/mobile ios` | chỉ macOS + Xcode |
-| Điện thoại cùng LAN | `corepack yarn workspace @imeal/mobile start:lan` | output có `exp://<LAN-IP>:8081` |
+| Điện thoại cùng LAN (tự dò) | `corepack yarn workspace @imeal/mobile start:lan` | output có `exp://<LAN-IP>:8081` |
+| Điện thoại cùng LAN (dùng file env) | `corepack yarn workspace @imeal/mobile start:lan:env` | dùng `apps/mobile/.env.lan.local` |
 | Ngoài LAN | `start:remote` | có cả URL API và URL Metro public |
 
 ### Nhiều target ADB
@@ -145,20 +186,22 @@ corepack yarn workspace @imeal/mobile start --localhost
 
 ### Điện thoại cùng LAN
 
-Điện thoại và máy dev cùng LAN. Mở inbound TCP `3000` và `8081` trên firewall. Không dùng `start --lan`, ngrok hay cloudflared cho flow này.
+Điện thoại và máy dev cùng LAN. Mở inbound TCP `3000` và `8081` trên firewall.
+Không dùng `start --lan`, ngrok hay cloudflared cho flow này.
+
+Khi máy dev chỉ có một IPv4 usable, launcher tự chọn địa chỉ đó:
 
 ```powershell
 corepack yarn workspace @imeal/mobile start:lan
 ```
 
-`exp://127.0.0.1:8081` là sai với điện thoại vật lý. Chỉ đặt `IMEAL_LAN_HOST` khi launcher báo nhiều IPv4:
+`exp://127.0.0.1:8081` là sai với điện thoại vật lý. Nếu launcher báo nhiều
+IPv4, ghi địa chỉ mà điện thoại có thể truy cập vào
+`apps/mobile/.env.lan.local` (đã bị ignore), giữ `EXPO_PUBLIC_API_URL=` để
+app dùng host của Metro, rồi chạy:
 
 ```powershell
-Get-NetIPAddress -AddressFamily IPv4 |
-  Where-Object { $_.IPAddress -notlike '127.*' } |
-  Format-Table InterfaceAlias, IPAddress
-$env:IMEAL_LAN_HOST = '<LAN IPv4>'
-corepack yarn workspace @imeal/mobile start:lan
+corepack yarn workspace @imeal/mobile start:lan:env
 ```
 
 ### Ngoài LAN
@@ -167,7 +210,6 @@ Cần hai endpoint riêng. Ngrok chỉ public API. Metro dùng proxy riêng tr�
 
 ```powershell
 ngrok http 3000
-corepack yarn workspace @imeal/mobile start:lan
 ```
 
 Terminal khác:
@@ -176,23 +218,31 @@ Terminal khác:
 cloudflared tunnel --url http://localhost:8081
 ```
 
-Ghi vào `.env` gốc, không commit giá trị thật:
+Sau khi cả hai tunnel đã sẵn sàng, dùng `start:remote`: script này mới nạp
+`.env` ở thư mục gốc bằng `dotenv`. Các lệnh Expo trực tiếp và `start:lan`
+không nạp file đó. Ghi endpoint remote vào `.env` gốc, không commit giá trị
+thật:
 
 ```dotenv
 EXPO_PUBLIC_API_URL=https://<api-id>.ngrok-free.app/api
 EXPO_PACKAGER_PROXY_URL=https://<metro-id>.trycloudflare.com
 ```
 
-Dừng Metro tạm, rồi:
+Sau khi cập nhật `.env`, chạy:
 
 ```powershell
 corepack yarn workspace @imeal/mobile start:remote
 ```
 
-Giữ cả hai tunnel sống. Đổi URL thì sửa `.env` và chạy lại `start:remote`. Admin Web qua ngrok dùng origin không có suffix `/api`:
+Giữ cả hai tunnel sống. Đổi URL thì sửa `.env` và chạy lại `start:remote`.
+Admin Web có env riêng của Vite, không dùng `apps/mobile/.env.lan.local`:
+
+```dotenv
+# apps/admin-web/.env.local (không commit)
+VITE_API_URL=https://<api-id>.ngrok-free.app
+```
 
 ```powershell
-$env:VITE_API_URL='https://<api-id>.ngrok-free.app'
 corepack yarn workspace @imeal/admin-web dev
 ```
 
@@ -220,30 +270,86 @@ Không có Kitchen scanner, delegation/proxy pickup hay SSE trong flow này.
 
 ## Seed local
 
-Chỉ cho database disposable local, `NODE_ENV=test` hoặc `development`. Không chạy trên staging, production, preview hay database dùng chung. CLI không tự đọc `.env`. Không có chế độ reset, purge hay delete.
+### Điều kiện và an toàn
+
+Chạy các lệnh từ thư mục gốc repository. Cần có Node.js `>=24 <25`,
+Corepack/Yarn `4.18.0`, Docker Desktop đang chạy và file env local (không
+được commit):
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Đối với seed file-based, tạo `packages/domain/.env.seed.local` (đã bị ignore)
+với các gate local-only và kết nối trực tiếp PostgreSQL:
+
+```dotenv
+# packages/domain/.env.seed.local (không commit)
+NODE_ENV=development
+IMEAL_LOCAL_SEED=1
+IMEAL_LOCAL_SEED_CONFIRM=I_UNDERSTAND_LOCAL_ONLY
+IMEAL_LOCAL_SEED_BASE_EMAIL=imeal.seed@example.test
+DATABASE_URL=postgresql://<POSTGRES_USER>:<POSTGRES_PASSWORD>@localhost:5432/<POSTGRES_DB>?schema=public
+```
+
+`imeal.seed@example.test` là ví dụ synthetic; có thể thay bằng dedicated local
+mailbox. Không thêm các gate seed vào `.env.example`; repository cố ý không bật
+seed trong template tracked. Database dùng cho seed phải là database disposable
+của máy dev.
+
+`seed:local` vẫn là lệnh process-env-only. `seed:local:env` vẫn nạp root `.env`
+để giữ tương thích hiện có; `seed:local:file` chỉ nạp
+`packages/domain/.env.seed.local`, không nạp root `.env` wholesale và không
+nhận secret/API setting không liên quan.
+
+### Khởi động database và migration
 
 ```powershell
 docker compose up -d db pgbouncer minio minio-create-bucket migrate
 docker compose wait migrate
-
-$env:NODE_ENV='test'
-$env:IMEAL_LOCAL_SEED='1'
-$env:IMEAL_LOCAL_SEED_CONFIRM='I_UNDERSTAND_LOCAL_ONLY'
-$env:IMEAL_LOCAL_SEED_BASE_EMAIL='imeal.seed@example.test'
-$env:DATABASE_URL='postgresql://CHANGE_ME_LOCAL:CHANGE_ME_LOCAL@localhost:5432/imeal?schema=public'
-
-corepack yarn workspace @imeal/core seed:local --help
-corepack yarn workspace @imeal/core seed:local --dry-run
-corepack yarn workspace @imeal/core seed:local
+docker compose ps --all
+docker compose logs --no-color --tail=100 db pgbouncer minio minio-create-bucket migrate
 ```
 
-Thay user, password và tên database bằng đúng `POSTGRES_USER`, `POSTGRES_PASSWORD` và `POSTGRES_DB` trong `.env`. Dùng port `5432` (PostgreSQL trực tiếp). `migrate` đã apply schema vào database này. Không dùng port `6432` và không đổi tên database thành `imeal_local` trừ khi database đó đã được tạo và migrate riêng.
+`migrate` và `minio-create-bucket` là service one-shot nên trạng thái `Exited (0)` là bình thường. Tiếp tục chỉ khi `db`/`pgbouncer`/`minio` ở trạng thái running/healthy và `migrate` hoàn tất thành công. Theo dõi log trực tiếp khi cần:
 
-`--dry-run` không ghi database. Host phải là `localhost`, `127.0.0.1`, `::1` hoặc service Compose `db`. Sai biến safety, host không local, marker production hoặc xung đột unique đều fail closed.
+```powershell
+docker compose logs -f db pgbouncer minio migrate
+```
 
-Seed tạo 50 email tổng hợp, cohort `staff`/`kitchen`/`admin`, bốn location `LOCAL-A`..`LOCAL-D`, assignment, menu, registration và lịch sử serving. Cùng base email, tuần và database thì lần chạy sau không thêm dòng. Base email hoặc tuần khác cần schema disposable riêng.
+### Dry-run và seed thật
 
-Chi tiết cohort và bypass test: [local role testing](./docs/local-role-testing.md), [seed design](./docs/superpowers/specs/2026-09-24-imeal-local-seed-design.md).
+Seed phải kết nối PostgreSQL trực tiếp qua `localhost:5432`, không qua
+PgBouncer `localhost:6432`. File `packages/domain/.env.seed.local` ở trên đã
+giữ database URL riêng cho seed; không sửa file tracked và không âm thầm đổi
+`DATABASE_URL` dùng chung.
+
+```powershell
+corepack yarn workspace @imeal/core seed:local:file --help
+corepack yarn workspace @imeal/core seed:local:file --dry-run
+corepack yarn workspace @imeal/core seed:local:file
+```
+
+`seed:local:file` nạp `NODE_ENV`, `IMEAL_LOCAL_SEED=1`,
+`IMEAL_LOCAL_SEED_CONFIRM=I_UNDERSTAND_LOCAL_ONLY`,
+`IMEAL_LOCAL_SEED_BASE_EMAIL` và `DATABASE_URL` chỉ từ file seed bị ignore.
+Dùng `imeal.seed@example.test` hoặc dedicated local mailbox làm ví dụ base
+email; workspace này có thể có giá trị admin private đã được phê duyệt trong
+file local, nhưng không bao giờ sao chép địa chỉ đó, secret hoặc dữ liệu vận
+hành vào README hay file tracked.
+
+`--dry-run` kiểm tra toàn bộ plan nhưng không ghi database. Seed thật tạo dữ
+liệu synthetic (50 users, bốn location `LOCAL-A`..`LOCAL-D`, assignment, menu,
+registration và lịch sử serving). Cùng base email, tuần và database thì chạy
+lại là idempotent; base email hoặc tuần khác cần database/schema disposable
+riêng. CLI không có reset, purge hoặc delete.
+
+Nếu thấy `INVALID_ENVIRONMENT`, kiểm tra `NODE_ENV`, marker
+`IMEAL_LOCAL_SEED`, confirmation, `APP_ENV`/`RUNTIME_ENV`/`DEPLOYMENT_ENV` và
+đường dẫn `packages/domain/.env.seed.local`. Không dùng env staging/production;
+thiếu hoặc sai safety gate bắt buộc sẽ fail closed.
+
+Chi tiết cohort và test bypass: [local role testing](./docs/local-role-testing.md), [seed design](./docs/superpowers/specs/2026-09-24-imeal-local-seed-design.md).
 
 ## Triển khai
 
@@ -293,27 +399,69 @@ Không chọn context con của matrix như `staging-readiness / Security matrix
 
 ## Docker local
 
-Các lệnh này chỉ cho máy dev.
+Các lệnh dưới đây chạy từ thư mục gốc trong PowerShell và chỉ dành cho máy dev. Docker Compose lấy service credentials từ `.env`; không dùng database staging, production hoặc database dùng chung.
+
+### Khởi động, chờ, xem trạng thái và log
 
 ```powershell
-docker compose ps
+docker compose up -d db pgbouncer minio minio-create-bucket migrate
+docker compose wait migrate
+docker compose ps --all
+docker compose logs --no-color --tail=100 db pgbouncer minio minio-create-bucket migrate
+```
+
+Theo dõi log trực tiếp:
+
+```powershell
 docker compose logs -f db pgbouncer minio migrate
+```
+
+`migrate` và `minio-create-bucket` kết thúc với `Exited (0)` sau khi hoàn tất; `db`, `pgbouncer` và `minio` phải running/healthy. Client ngoài container dùng PostgreSQL `localhost:5432` hoặc PgBouncer `localhost:6432`. Seed local luôn dùng `5432`.
+
+### Kiểm tra bảng và rows bằng psql
+
+`db` phải đang chạy và healthy. Dùng `exec -T` cho các lệnh không tương tác, đồng thời truyền `PGPASSWORD` từ environment của container:
+
+```powershell
+docker compose exec -T db sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"'
+docker compose exec -T db sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT email, name, is_active FROM public.users ORDER BY email LIMIT 10;"'
+docker compose exec -T db sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT name, count(*) FROM public.roles GROUP BY name ORDER BY name;"'
+docker compose exec -T db sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT short_code, display_name FROM public.locations ORDER BY short_code;"'
+```
+
+Tên bảng là tên map thật trong `packages/domain/prisma/schema.prisma`: `users`, `roles`, `user_roles`, `locations`, `registrations`, `meal_servings` và `_prisma_migrations`. Muốn mở phiên psql tương tác:
+
+```powershell
+docker compose exec db sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+Trong `psql`, dùng `\dt`, `\d public.users`, `SELECT ...;` và `\q`. Không ghi password vào command hoặc README; `PGPASSWORD` ở trên chỉ đọc giá trị đã inject vào container.
+
+### Migration, dừng và reset
+
+Kiểm tra migration bằng Prisma và xem history đã apply:
+
+```powershell
+docker compose run --rm migrate yarn workspace @imeal/core prisma migrate status
+docker compose exec -T db sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT migration_name, finished_at, rolled_back_at FROM public.\"_prisma_migrations\" ORDER BY finished_at DESC NULLS LAST;"'
+```
+
+Dừng service mà giữ dữ liệu:
+
+```powershell
+docker compose stop
 docker compose down
 ```
 
-`down` giữ volume. Không xóa `db_data` trên staging hoặc production.
+`docker compose down` xóa container/network nhưng giữ các named volume. Reset chỉ được phép trên database disposable local và xóa toàn bộ dữ liệu:
 
 ```powershell
-docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+docker compose down --volumes
+docker compose up -d db pgbouncer minio minio-create-bucket migrate
+docker compose wait migrate
 ```
 
-Trong `psql`: `\dt`, `\d "TênBảng"`, `\q`. Một query không cần shell:
-
-```powershell
-docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"'
-```
-
-Client ngoài container: PostgreSQL `localhost:5432`, PgBouncer `localhost:6432`. User, database và password lấy từ `.env`.
+Không chạy `down --volumes` trên staging/production hoặc database dùng chung. `seed:local` không có reset/purge/delete; muốn đổi base email hoặc tuần hãy tạo database/schema disposable mới.
 
 | Port | Service |
 | --- | --- |
@@ -332,17 +480,18 @@ corepack yarn build
 corepack yarn test:unit
 ```
 
-DB/e2e dùng PostgreSQL trực tiếp, không qua PgBouncer và không dùng database production:
+DB/e2e dùng PostgreSQL trực tiếp, không qua PgBouncer và không dùng database
+production. Tạo file bị ignore `.env.db.local`:
 
-```powershell
-$env:DATABASE_URL='postgresql://CHANGE_ME_LOCAL:CHANGE_ME_LOCAL@localhost:5432/imeal?schema=public'
-corepack yarn test:db
+```dotenv
+# .env.db.local (không commit)
+DATABASE_URL=postgresql://<POSTGRES_USER>:<POSTGRES_PASSWORD>@localhost:5432/<POSTGRES_DB>?schema=public
 ```
 
-Trạng thái migration local:
+Sau đó chạy script chỉ nạp file này:
 
 ```powershell
-docker compose run --rm migrate yarn workspace @imeal/core prisma migrate status
+corepack yarn test:db:env
 ```
 
 ## Tài liệu

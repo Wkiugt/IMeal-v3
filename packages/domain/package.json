@@ -19,6 +19,8 @@
     "test:unit": "vitest run --config ./vitest.unit.config.ts",
     "test:db": "vitest run --exclude \"**/*.unit.test.ts\"",
     "seed:local": "node --import tsx src/local-seed/cli.ts",
+    "seed:local:env": "node --env-file=../../.env --import tsx src/local-seed/cli.ts",
+    "seed:local:file": "node --env-file=.env.seed.local --import tsx src/local-seed/cli.ts",
     "prisma": "prisma",
     "prisma:generate": "node scripts/generate-prisma.mjs"
   },

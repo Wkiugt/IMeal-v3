@@ -7,9 +7,9 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run",
-    "test:unit": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --exclude \"dist/**\"",
+    "test:unit": "vitest run --exclude \"dist/**\"",
+    "test:watch": "vitest --exclude \"dist/**\""
   },
   "dependencies": {
     "zod": "^3.25.76"

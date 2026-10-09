@@ -1453,11 +1453,12 @@ function indexRows<T>(rows: readonly T[], entity: string, keyOf: (row: T) => str
 }
 
 function rolesForOrdinal(ordinal: number): readonly SeedRole[] {
+  if (ordinal === 0) return ['admin', 'staff'];
   if (ordinal < 36) return ['staff'];
   if (ordinal < 42) return ['kitchen'];
   if (ordinal < 47) return ['staff', 'kitchen'];
   if (ordinal < 49) return ['admin'];
-  return ['admin', 'staff'];
+  return ['staff'];
 }
 
 function assignmentRoleForRoles(roles: readonly SeedRole[]): string {

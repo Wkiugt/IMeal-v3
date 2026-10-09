@@ -83,6 +83,9 @@ describe('local seed plan', () => {
 
   it('keeps the role matrix explicit and limits registration owners to staff-capable users', () => {
     const plan = buildLocalSeedPlan(CONFIG);
+    expect(plan.users[0]?.roles).toEqual(['admin', 'staff']);
+    expect(plan.users[49]?.roles).toEqual(['staff']);
+
     const rolesByUser = new Map<string, string[]>();
     for (const row of plan.userRoles) {
       const roles = rolesByUser.get(row.userId) ?? [];

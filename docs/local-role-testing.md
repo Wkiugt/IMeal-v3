@@ -39,7 +39,9 @@ placeholders out of band, and start only synthetic/local services:
 
 ```powershell
 Copy-Item .env.example .env
-docker compose up --build
+docker compose up -d db pgbouncer minio minio-create-bucket migrate
+docker compose wait migrate
+docker compose ps --all
 ```
 
 The API startup validator requires the OTP/session/GPS/serving settings in every
@@ -60,38 +62,48 @@ against a disposable PostgreSQL database owned by the local environment. It
 never runs against production, staging, preview, remote, or any other shared
 database. The command requires all of these safety variables:
 
-- `NODE_ENV=development` or `NODE_ENV=test` (the invocation below uses
-  `test`);
+- `NODE_ENV=development` or `NODE_ENV=test` (the file-based invocation below
+  uses `packages/domain/.env.seed.local`);
 - `IMEAL_LOCAL_SEED=1`;
 - `IMEAL_LOCAL_SEED_CONFIRM=I_UNDERSTAND_LOCAL_ONLY`;
-- `IMEAL_LOCAL_SEED_BASE_EMAIL`, a synthetic `.test` base email; and
+- `IMEAL_LOCAL_SEED_BASE_EMAIL`, documented here as the synthetic
+  `imeal.seed@example.test` or a dedicated local mailbox; and
 - `DATABASE_URL`, which must be a PostgreSQL URL whose host is `localhost`,
   `127.0.0.1`, `::1`, or the local Compose service `db`.
+Fresh `.env.example` intentionally omits the `IMEAL_LOCAL_SEED*` safety
+variables. Create the ignored `packages/domain/.env.seed.local` with the
+local-only gates and direct PostgreSQL connection below; do not add these
+values to the tracked template:
 
-The `seed:local` CLI reads the current process environment only; it does not
-load `.env` automatically. A local `.env` file may still be used by other
-services, but operators must explicitly set the seed variables in the current
-PowerShell session before invoking the CLI. The seed CLI does not create
-databases. The example below targets the canonical local Compose database
-`${POSTGRES_DB:-imeal}` on localhost port 5432; the operator must match
-`POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` from the ignored
-`.env`, and must not use port 6432. Do not point this URL at a shared or
-production database.
+```dotenv
+# packages/domain/.env.seed.local (ignored)
+NODE_ENV=development
+IMEAL_LOCAL_SEED=1
+IMEAL_LOCAL_SEED_CONFIRM=I_UNDERSTAND_LOCAL_ONLY
+IMEAL_LOCAL_SEED_BASE_EMAIL=imeal.seed@example.test
+DATABASE_URL=postgresql://<POSTGRES_USER>:<POSTGRES_PASSWORD>@localhost:5432/<POSTGRES_DB>?schema=public
+```
+
+`seed:local` remains process-env-only and never reads files. The
+`seed:local:env` convenience script still loads the ignored repository-root
+`.env` for compatibility. Prefer `seed:local:file` for this workflow: it loads
+only `packages/domain/.env.seed.local`, keeps the direct `5432` target, and
+does not import unrelated root API/worker settings. The seed CLI does not
+create databases. Never point this URL at a shared or production database.
 
 ```powershell
-$env:NODE_ENV='test'
-$env:IMEAL_LOCAL_SEED='1'
-$env:IMEAL_LOCAL_SEED_CONFIRM='I_UNDERSTAND_LOCAL_ONLY'
-$env:IMEAL_LOCAL_SEED_BASE_EMAIL='imeal.seed@example.test'
-$env:DATABASE_URL='postgresql://CHANGE_ME_LOCAL:CHANGE_ME_LOCAL@localhost:5432/imeal?schema=public'
-yarn workspace @imeal/core seed:local --dry-run
-yarn workspace @imeal/core seed:local
+yarn workspace @imeal/core seed:local:file --dry-run
+yarn workspace @imeal/core seed:local:file
 ```
+
+The documented example uses the synthetic or dedicated-local base email. This
+workspace may have a private approved admin value in its ignored `.env`; never
+copy that address or any secret into source control. The first generated user
+receives both `admin` and `staff`; the seed generates suffixes `-1` through
+`-49` for the remaining local cohorts.
 
 The four synthetic locations are `LOCAL-A`, `LOCAL-B`, `LOCAL-C`, and
 `LOCAL-D`; no other location values are created by this workflow.
-The generated user addresses follow the base+-1..-49 convention: the base
-address plus suffixes `-1` through `-49`.
 
 The dry run validates the complete plan without writing. A write creates 50
 synthetic users, exactly four synthetic locations (`LOCAL-A` through

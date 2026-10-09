@@ -194,11 +194,8 @@ function redactString(
   if (context === 'event' || key === 'providerCode' || key === 'message') {
     redacted = redactPayloadLabels(redacted);
   }
-  redacted = redacted.replace(
-    STRUCTURED_PAYLOAD_PATTERN,
-    `$1${REDACTED}`,
-  );
 
+  redacted = redactStructuredPayloads(redacted);
   return redacted;
 }
 

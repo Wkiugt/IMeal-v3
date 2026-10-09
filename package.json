@@ -15,6 +15,7 @@
     "typecheck": "turbo run typecheck",
     "test:unit": "turbo run test:unit --concurrency=1 --filter=@imeal/core --filter=@imeal/contracts --filter=@imeal/api --filter=@imeal/worker",
     "test:db": "turbo run test:db --concurrency=1 --filter=@imeal/core --filter=@imeal/api --filter=@imeal/worker",
+    "test:db:env": "node --env-file=.env.db.local node_modules/turbo/bin/turbo run test:db --concurrency=1 --filter=@imeal/core --filter=@imeal/api --filter=@imeal/worker",
     "test:build-order": "node --test scripts/build-order.test.mjs",
     "ci:verify": "node scripts/ci/ci-verify.mjs",
     "verify:production-boundary": "node scripts/verify-production-boundary.mjs",

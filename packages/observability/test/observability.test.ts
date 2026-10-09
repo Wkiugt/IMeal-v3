@@ -155,6 +155,30 @@ describe('JSON structured logging', () => {
     expect(output.message).toContain('\nX-Safe: ok');
     expect(output.message).not.toContain('line-secret');
   });
+  it('redacts structured payloads in stack diagnostics', () => {
+    const lines: string[] = [];
+    const logger = new JsonStructuredLogger('api', 'r1', (line) =>
+      lines.push(line),
+    );
+
+    logger.error('http.exception', {
+      service: 'api',
+      release: 'r1',
+      stack: `Error: response={"response-secret":"response-secret"}
+headers={"header-secret":"header-secret"}
+body={"body-secret":"body-secret"}
+response=[{"array-secret":"array-secret"}]
+at usefulHandler (diagnostics.ts:10:2)`,
+    });
+
+    const output = JSON.parse(lines[0]);
+    expect(output.stack).toContain('usefulHandler');
+    expect(lines[0]).not.toContain('response-secret');
+    expect(lines[0]).not.toContain('header-secret');
+    expect(lines[0]).not.toContain('body-secret');
+    expect(lines[0]).not.toContain('array-secret');
+  });
+
 
 
   it('serializes error fields and sanitizes server diagnostics', () => {
